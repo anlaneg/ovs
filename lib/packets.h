@@ -118,6 +118,7 @@ pkt_metadata_init_tnl(struct pkt_metadata *md)
     memset(md, 0, offsetof(struct pkt_metadata, tunnel.metadata.opts));
 }
 
+//将结构清０，主要是设置入接口
 static inline void
 pkt_metadata_init(struct pkt_metadata *md, odp_port_t port)
 {

@@ -58,7 +58,7 @@ struct dp_packet {
     uint32_t rss_hash;          /* Packet hash. */
     bool rss_hash_valid;        /* Is the 'rss_hash' valid? */
 #endif
-    enum dp_packet_source source;  /* Source of memory allocated as 'base'. */
+    enum dp_packet_source source;  /* Source of memory allocated as 'base'. */ //指明packet buffer来源
     uint8_t l2_pad_size;           /* Detected l2 padding size.
                                     * Padding is non-pullable. */
     uint16_t l2_5_ofs;             /* MPLS label stack offset, or UINT16_MAX */
@@ -161,7 +161,7 @@ static inline void
 dp_packet_delete(struct dp_packet *b)
 {
     if (b) {
-        if (b->source == DPBUF_DPDK) {
+        if (b->source == DPBUF_DPDK) {//指明buffer来源是dpdk
             /* If this dp_packet was allocated by DPDK it must have been
              * created as a dp_packet */
             free_dpdk_buf((struct dp_packet*) b);
@@ -394,6 +394,7 @@ dp_packet_get_nd_payload(const struct dp_packet *b)
 #ifdef DPDK_NETDEV
 BUILD_ASSERT_DECL(offsetof(struct dp_packet, mbuf) == 0);
 
+//返回报文的buf起始地址
 static inline void *
 dp_packet_base(const struct dp_packet *b)
 {
@@ -428,6 +429,7 @@ dp_packet_set_size(struct dp_packet *b, uint32_t v)
                                       * this segment. */
 }
 
+//返回报文中报文数据在mbuf中的偏移量
 static inline uint16_t
 __packet_data(const struct dp_packet *b)
 {
@@ -529,6 +531,7 @@ dp_packet_get_cutlen(struct dp_packet *b)
     return b->cutlen;
 }
 
+//返回报文的数据起始位置
 static inline void *
 dp_packet_data(const struct dp_packet *b)
 {

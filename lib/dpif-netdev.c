@@ -458,7 +458,7 @@ struct dp_netdev_pmd_thread {
      * NON_PMD_CORE_ID can be accessed by multiple threads, and thusly
      * need to be protected by 'non_pmd_mutex'.  Every other instance
      * will only be accessed by its own pmd thread. */
-    struct emc_cache flow_cache;
+    struct emc_cache flow_cache;//精确匹配缓存（每线程一个）
 
     /* Flow-Table and classifiers
      *
@@ -3962,6 +3962,7 @@ emc_processing(struct dp_netdev_pmd_thread *pmd, struct dp_packet_batch *packets
 {
     struct emc_cache *flow_cache = &pmd->flow_cache;
     struct netdev_flow_key *key = &keys[0];
+    //n_dropped为丢掉的报文数
     size_t i, n_missed = 0, n_dropped = 0;
     struct dp_packet **packets = packets_->packets;
     int cnt = packets_->count;
@@ -3970,19 +3971,19 @@ emc_processing(struct dp_netdev_pmd_thread *pmd, struct dp_packet_batch *packets
         struct dp_netdev_flow *flow;
         struct dp_packet *packet = packets[i];
 
-        if (OVS_UNLIKELY(dp_packet_size(packet) < ETH_HEADER_LEN)) {
-            dp_packet_delete(packet);
+        if (OVS_UNLIKELY(dp_packet_size(packet) < ETH_HEADER_LEN)) {//比标准以太头还要小，丢
+            dp_packet_delete(packet);//buf释放
             n_dropped++;
             continue;
         }
 
-        if (i != cnt - 1) {
+        if (i != cnt - 1) {//如果不是最后一个，则预取下一个包
             /* Prefetch next packet data and metadata. */
-            OVS_PREFETCH(dp_packet_data(packets[i+1]));
-            pkt_metadata_prefetch_init(&packets[i+1]->md);
+            OVS_PREFETCH(dp_packet_data(packets[i+1]));//预取下一个报文的数据（64字节）
+            pkt_metadata_prefetch_init(&packets[i+1]->md);//预取metadata中的部分数据
         }
 
-        if (!md_is_valid) {
+        if (!md_is_valid) {//如果元数据还未初始化，初始化它
             pkt_metadata_init(&packet->md, port_no);
         }
         miniflow_extract(packet, &key->mf);
@@ -4187,7 +4188,7 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
 static void
 dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
                   struct dp_packet_batch *packets,
-                  bool md_is_valid, odp_port_t port_no)
+                  bool md_is_valid, odp_port_t port_no)//port_no表示报文自哪个接口来
 {
     int cnt = packets->count;
 #if !defined(__CHECKER__) && !defined(_WIN32)

@@ -51,6 +51,7 @@ extern char *program_name;
 #define CACHE_LINE_SIZE 64
 BUILD_ASSERT_DECL(IS_POW2(CACHE_LINE_SIZE));
 
+//预取一段内存，从start起始，预取size个字节
 static inline void
 ovs_prefetch_range(const void *start, size_t size)
 {

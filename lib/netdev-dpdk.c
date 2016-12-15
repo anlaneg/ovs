@@ -432,7 +432,7 @@ dpdk_rte_mzalloc(size_t sz)
 }
 
 void
-free_dpdk_buf(struct dp_packet *p)
+free_dpdk_buf(struct dp_packet *p)//释放dpdk mbuf
 {
     struct rte_mbuf *pkt = (struct rte_mbuf *) p;
 
