@@ -247,6 +247,7 @@ typedef unsigned long long map_t;
 #define MAP_FOR_EACH_INDEX(IDX, MAP)            \
     ULLONG_FOR_EACH_1(IDX, MAP)
 
+//sizeof(flow)，每８个字节算一个bit,一共需要占用多少bits,这些bit需要多少个uint64_t来容纳
 #define FLOWMAP_UNITS DIV_ROUND_UP(FLOW_U64S, MAP_T_BITS)
 
 struct flowmap {
@@ -350,6 +351,7 @@ flowmap_are_set(const struct flowmap *fm, size_t idx, unsigned int n_bits)
 
 /* Set the 'n_bits' consecutive bits in 'fm', starting at bit 'idx'.
  * 'n_bits' can be at most MAP_T_BITS. */
+//在idx位置处填充fm为１,填充的位数为n_bits
 static inline void
 flowmap_set(struct flowmap *fm, size_t idx, unsigned int n_bits)
 {
@@ -361,7 +363,7 @@ flowmap_set(struct flowmap *fm, size_t idx, unsigned int n_bits)
     fm->bits[unit] |= n_bits_mask << idx;
     /* The seemingly unnecessary bounds check on 'unit' is a workaround for a
      * false-positive array out of bounds error by GCC 4.9. */
-    if (unit + 1 < FLOWMAP_UNITS && idx + n_bits > MAP_T_BITS) {
+    if (unit + 1 < FLOWMAP_UNITS && idx + n_bits > MAP_T_BITS) {//如果刚才的左移，导致部分位丢失，则在下一个字节中设置这些位
         /* 'MAP_T_BITS - idx' bits were set on 'unit', set the remaining
          * bits from the next unit. */
         fm->bits[unit + 1] |= n_bits_mask >> (MAP_T_BITS - idx);
@@ -370,6 +372,7 @@ flowmap_set(struct flowmap *fm, size_t idx, unsigned int n_bits)
 
 /* Clears the 'n_bits' consecutive bits in 'fm', starting at bit 'idx'.
  * 'n_bits' can be at most MAP_T_BITS. */
+//在idx位置处空除fm为０，清除的位数为n_bits
 static inline void
 flowmap_clear(struct flowmap *fm, size_t idx, unsigned int n_bits)
 {
@@ -389,6 +392,7 @@ flowmap_clear(struct flowmap *fm, size_t idx, unsigned int n_bits)
 }
 
 /* OR the bits in the flowmaps. */
+//取或操作
 static inline struct flowmap
 flowmap_or(struct flowmap a, struct flowmap b)
 {
@@ -402,6 +406,7 @@ flowmap_or(struct flowmap a, struct flowmap b)
 }
 
 /* AND the bits in the flowmaps. */
+//取与操作
 static inline struct flowmap
 flowmap_and(struct flowmap a, struct flowmap b)
 {
@@ -414,6 +419,7 @@ flowmap_and(struct flowmap a, struct flowmap b)
     return map;
 }
 
+//检查是否所有位都为0
 static inline bool
 flowmap_is_empty(struct flowmap fm)
 {
@@ -427,6 +433,7 @@ flowmap_is_empty(struct flowmap fm)
     return true;
 }
 
+//计算fm中共出现多少个字段
 static inline unsigned int
 flowmap_n_1bits(struct flowmap fm)
 {
@@ -487,7 +494,7 @@ flowmap_next_index(struct flowmap_aux *aux, size_t *idx)
  * A miniflow is always dynamically allocated so that the maps are followed by
  * at least as many elements as there are 1-bits in maps. */
 struct miniflow {
-    struct flowmap map;
+    struct flowmap map;//1.节省内存;2.按cache line抽象，优先内存访问;3.如果mask空出来一段（特指８个字节的空），则可以节省时间
     /* Followed by:
      *     uint64_t values[n];
      * where 'n' is miniflow_n_values(miniflow). */
@@ -496,11 +503,13 @@ BUILD_ASSERT_DECL(sizeof(struct miniflow) % sizeof(uint64_t) == 0);
 
 #define MINIFLOW_VALUES_SIZE(COUNT) ((COUNT) * sizeof(uint64_t))
 
+//返回mf内存后的位置（由于miniflow从属于key,而key后面的是buf,故实际上获取buf的位置）
 static inline uint64_t *miniflow_values(struct miniflow *mf)
 {
     return (uint64_t *)(mf + 1);
 }
 
+//返回mf内存后的位置（由于miniflow从属于key,而key后面的是buf,故实际上获取buf的位置）
 static inline const uint64_t *miniflow_get_values(const struct miniflow *mf)
 {
     return (const uint64_t *)(mf + 1);
@@ -533,6 +542,7 @@ static inline uint64_t *flow_u64_lvalue(struct flow *flow, size_t index)
     return &((uint64_t *)flow)[index];
 }
 
+//返回共出现多少个1 bits
 static inline size_t
 miniflow_n_values(const struct miniflow *flow)
 {

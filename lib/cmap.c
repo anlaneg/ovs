@@ -143,8 +143,8 @@ struct cmap_bucket {
      * The slots are in no particular order.  A null pointer indicates that a
      * pair is unused.  In-use slots are not necessarily in the earliest
      * slots. */
-    uint32_t hashes[CMAP_K];
-    struct cmap_node nodes[CMAP_K];
+    uint32_t hashes[CMAP_K];//存储hash值
+    struct cmap_node nodes[CMAP_K];//存储node
 
     /* Padding to make cmap_bucket exactly one cache line long. */
 #if CMAP_PADDING > 0
@@ -201,6 +201,7 @@ rehash(const struct cmap_impl *impl, uint32_t hash)
 }
 
 /* Not always without the inline keyword. */
+//取cmap下的impl指针
 static inline struct cmap_impl *
 cmap_get_impl(const struct cmap *cmap)
 {

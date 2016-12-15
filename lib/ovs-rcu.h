@@ -161,7 +161,7 @@
 #include "ovs-atomic.h"
 
 #if __GNUC__
-#define OVSRCU_TYPE(TYPE) struct { ATOMIC(TYPE) p; }
+#define OVSRCU_TYPE(TYPE) struct { ATOMIC(TYPE) p; }//定义名称为p的Ｔype类型struct
 #define OVSRCU_INITIALIZER(VALUE) { ATOMIC_VAR_INIT(VALUE) }
 #define ovsrcu_get__(TYPE, VAR, ORDER)                                  \
     ({                                                                  \

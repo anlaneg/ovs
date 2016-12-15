@@ -59,7 +59,7 @@ struct dp_packet {
     bool rss_hash_valid;        /* Is the 'rss_hash' valid? */
 #endif
     enum dp_packet_source source;  /* Source of memory allocated as 'base'. */ //指明packet buffer来源
-    uint8_t l2_pad_size;           /* Detected l2 padding size.
+    uint8_t l2_pad_size;           /* Detected l2 padding size.　//l2层占用的size
                                     * Padding is non-pullable. */
     uint16_t l2_5_ofs;             /* MPLS label stack offset, or UINT16_MAX */
     uint16_t l3_ofs;               /* Network-level header offset,
@@ -466,6 +466,7 @@ dp_packet_set_base(struct dp_packet *b, void *d)
     b->base_ = d;
 }
 
+//报文大小
 static inline uint32_t
 dp_packet_size(const struct dp_packet *b)
 {

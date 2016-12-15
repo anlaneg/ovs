@@ -63,7 +63,7 @@ struct cmap_node {
 };
 
 static inline struct cmap_node *
-cmap_node_next(const struct cmap_node *node)
+cmap_node_next(const struct cmap_node *node)//获取下一个元素
 {
     return ovsrcu_get(struct cmap_node *, &node->next);
 }
