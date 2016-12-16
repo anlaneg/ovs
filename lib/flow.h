@@ -846,6 +846,7 @@ minimask_get_metadata_mask(const struct minimask *mask)
 /* Perform a bitwise OR of miniflow 'src' flow data specified in 'subset' with
  * the equivalent fields in 'dst', storing the result in 'dst'.  'subset' must
  * be a subset of 'src's map. */
+//miniflow型数据向flow型数据转换，依据map中的索引，知道填充那几个成员
 static inline void
 flow_union_with_miniflow_subset(struct flow *dst, const struct miniflow *src,
                                 struct flowmap subset)

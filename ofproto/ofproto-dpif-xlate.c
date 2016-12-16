@@ -1151,8 +1151,9 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer, const struct flow *flow,
     struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     const struct xport *xport;
 
-    xport = xport_lookup(xcfg, tnl_port_should_receive(flow)
-                         ? tnl_port_receive(flow)
+    //查找xport
+    xport = xport_lookup(xcfg, tnl_port_should_receive(flow)//是否tunnel　接口收到报文
+                         ? tnl_port_receive(flow)//tunnel收取到报文
                          : odp_port_to_ofport(backer, flow->in_port.odp_port));
     if (OVS_UNLIKELY(!xport)) {
         return NULL;
@@ -1193,6 +1194,7 @@ xlate_lookup(const struct dpif_backer *backer, const struct flow *flow,
     struct ofproto_dpif *ofproto;
     const struct xport *xport;
 
+    //查找ofproto,隧道口是逻辑口，逻辑口是按照flow来进行配置的，而普通口按in_port匹配
     ofproto = xlate_lookup_ofproto_(backer, flow, ofp_in_port, &xport);
 
     if (!ofproto) {
@@ -1273,6 +1275,7 @@ xbundle_lookup(struct xlate_cfg *xcfg, const struct ofbundle *ofbundle)
     return NULL;
 }
 
+//给定ofport查找xport
 static struct xport *
 xport_lookup(struct xlate_cfg *xcfg, const struct ofport_dpif *ofport)
 {
@@ -5510,7 +5513,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     }
     ctx.wc->masks.tunnel.metadata.tab = flow->tunnel.metadata.tab;
 
-    if (!xin->ofpacts && !ctx.rule) {
+    if (!xin->ofpacts && !ctx.rule) {//需要查规则
         ctx.rule = rule_dpif_lookup_from_table(
             ctx.xbridge->ofproto, ctx.xin->tables_version, flow, ctx.wc,
             ctx.xin->resubmit_stats, &ctx.table_id,

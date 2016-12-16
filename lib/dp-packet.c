@@ -150,7 +150,7 @@ dp_packet_new_with_headroom(size_t size, size_t headroom)
  * 'dp_packet_size(buffer)' bytes of data starting at 'buffer->data' with no headroom or
  * tailroom. */
 struct dp_packet *
-dp_packet_clone(const struct dp_packet *buffer)
+dp_packet_clone(const struct dp_packet *buffer)//报文copy
 {
     return dp_packet_clone_with_headroom(buffer, 0);
 }
@@ -158,7 +158,7 @@ dp_packet_clone(const struct dp_packet *buffer)
 /* Creates and returns a new dp_packet whose data are copied from 'buffer'.   The
  * returned dp_packet will additionally have 'headroom' bytes of headroom. */
 struct dp_packet *
-dp_packet_clone_with_headroom(const struct dp_packet *buffer, size_t headroom)
+dp_packet_clone_with_headroom(const struct dp_packet *buffer, size_t headroom)//创建相同报文
 {
     struct dp_packet *new_buffer;
 
@@ -199,6 +199,7 @@ dp_packet_clone_data(const void *data, size_t size)
 /* Creates and returns a new dp_packet that initially contains 'headroom' bytes of
  * headroom followed by a copy of the 'size' bytes of data starting at
  * 'data'. */
+//报文copy,并创建相同的headroom空间
 struct dp_packet *
 dp_packet_clone_data_with_headroom(const void *data, size_t size, size_t headroom)
 {

@@ -141,7 +141,7 @@ struct netdev_flow_key {
  */
 
 #define EM_FLOW_HASH_SHIFT 13
-#define EM_FLOW_HASH_ENTRIES (1u << EM_FLOW_HASH_SHIFT) //emc表大小
+#define EM_FLOW_HASH_ENTRIES (1u << EM_FLOW_HASH_SHIFT) //emc表大小(8192项）
 #define EM_FLOW_HASH_MASK (EM_FLOW_HASH_ENTRIES - 1) //emc表hash表的mask
 #define EM_FLOW_HASH_SEGS 2 //最多冲突检查多少次
 
@@ -255,7 +255,7 @@ struct dp_netdev {
 
     uint64_t last_tnl_conf_seq;
 
-    struct conntrack conntrack;
+    struct conntrack conntrack;//提供连接跟踪功能
 };
 
 static struct dp_netdev_port *dp_netdev_lookup_port(const struct dp_netdev *dp,
@@ -367,7 +367,7 @@ struct dp_netdev_flow {
     struct dp_netdev_flow_stats stats;
 
     /* Actions. */
-    OVSRCU_TYPE(struct dp_netdev_actions *) actions;
+    OVSRCU_TYPE(struct dp_netdev_actions *) actions;//flow中的actions
 
     /* While processing a group of input packets, the datapath uses the next
      * member to store a pointer to the output batch for the flow.  It is
@@ -426,7 +426,7 @@ struct rxq_poll {
 
 /* Contained by struct dp_netdev_pmd_thread's 'port_cache' or 'tx_ports'. */
 struct tx_port {
-    struct dp_netdev_port *port;
+    struct dp_netdev_port *port;//port从属的设备
     int qid;
     long long last_used;
     struct hmap_node node;
@@ -510,7 +510,7 @@ struct dp_netdev_pmd_thread {
      * 'tx_ports'. The instance for cpu core NON_PMD_CORE_ID can be accessed
      * by multiple threads, and thusly need to be protected by 'non_pmd_mutex'.
      * Every other instance will only be accessed by its own pmd thread. */
-    struct hmap port_cache;
+    struct hmap port_cache;//port信息表（查不到就丢包了）
 
     /* Only a pmd thread can write on its own 'cycles' and 'stats'.
      * The main thread keeps 'stats_zero' and 'cycles_zero' as base
@@ -1973,7 +1973,7 @@ emc_insert(struct emc_cache *cache, const struct netdev_flow_key *key,
     struct emc_entry *current_entry;
 
     EMC_FOR_EACH_POS_WITH_HASH(cache, current_entry, key->hash) {
-        if (netdev_flow_key_equal(&current_entry->key, key)) {
+        if (netdev_flow_key_equal(&current_entry->key, key)) {//换流
             /* We found the entry with the 'mf' miniflow */
             emc_change_entry(current_entry, flow, NULL);
             return;
@@ -1991,7 +1991,7 @@ emc_insert(struct emc_cache *cache, const struct netdev_flow_key *key,
     /* We didn't find the miniflow in the cache.
      * The 'to_be_replaced' entry is where the new flow will be stored */
 
-    emc_change_entry(to_be_replaced, flow, key);
+    emc_change_entry(to_be_replaced, flow, key);//淘汰掉to_be_replaced
 }
 
 //在ecm中查找
@@ -3829,11 +3829,11 @@ dp_netdev_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet_,
 {
     struct dp_netdev *dp = pmd->dp;
 
-    if (OVS_UNLIKELY(!dp->upcall_cb)) {
+    if (OVS_UNLIKELY(!dp->upcall_cb)) {//设备无upcall_cb，返回
         return ENODEV;
     }
 
-    if (OVS_UNLIKELY(!VLOG_DROP_DBG(&upcall_rl))) {
+    if (OVS_UNLIKELY(!VLOG_DROP_DBG(&upcall_rl))) {//debug代码
         struct ds ds = DS_EMPTY_INITIALIZER;
         char *packet_str;
         struct ofpbuf key;
@@ -3859,6 +3859,7 @@ dp_netdev_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet_,
         ds_destroy(&ds);
     }
 
+    //upcall_cb回调调用
     return dp->upcall_cb(packet_, flow, ufid, pmd->core_id, type, userdata,
                          actions, wc, put_actions, dp->upcall_aux);
 }
@@ -4030,7 +4031,7 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet,
     int error;
 
     match.tun_md.valid = false;
-    miniflow_expand(&key->mf, &match.flow);
+    miniflow_expand(&key->mf, &match.flow);//如果我们将key->mf展开形式从上面传入的话，这里就不用这么麻烦了
 
     ofpbuf_clear(actions);
     ofpbuf_clear(put_actions);
@@ -4039,7 +4040,7 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet,
     error = dp_netdev_upcall(pmd, packet, &match.flow, &match.wc,
                              &ufid, DPIF_UC_MISS, NULL, actions,
                              put_actions);
-    if (OVS_UNLIKELY(error && error != ENOSPC)) {
+    if (OVS_UNLIKELY(error && error != ENOSPC)) {//丢包
         dp_packet_delete(packet);
         (*lost_cnt)++;
         return;
@@ -4081,7 +4082,7 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet,
         }
         ovs_mutex_unlock(&pmd->flow_mutex);
 
-        emc_insert(&pmd->flow_cache, key, netdev_flow);
+        emc_insert(&pmd->flow_cache, key, netdev_flow);//向flow缓存中加入
     }
 }
 
@@ -4115,7 +4116,7 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
         keys[i].len = netdev_flow_key_size(miniflow_n_values(&keys[i].mf));//设置在emc中解释后key解释出来的数据长度
     }
     /* Get the classifier for the in_port */
-    cls = dp_netdev_pmd_lookup_dpcls(pmd, in_port);//通过in_port分类
+    cls = dp_netdev_pmd_lookup_dpcls(pmd, in_port);//通过in_port分类(如果规则不能port做为匹配条件，如何构造cls，每个cls中都加入？）
     if (OVS_LIKELY(cls)) {
         any_miss = !dpcls_lookup(cls, keys, rules, cnt, &lookup_cnt);
     } else {
@@ -4139,6 +4140,10 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
             /* It's possible that an earlier slow path execution installed
              * a rule covering this flow.  In this case, it's a lot cheaper
              * to catch it here than execute a miss. */
+            //由于这里在一个循环里进行批量处理，我们认为handle_packet_upcall是比较慢的
+            //所以后面的报文有可能因为handle_packet_upcall的调用中加入了新的flow而导致
+            //月能查到了，所以这里针对没有查到的flow,再执行一次l2查询，如果找到就continue
+            //否则走handle_packet_upcall　（已经要查l3了，所以就不妨在慢一点，期待捡个现成的。:-P)
             netdev_flow = dp_netdev_pmd_lookup_flow(pmd, &keys[i],
                                                     &add_lookup_cnt);
             if (netdev_flow) {
@@ -4149,13 +4154,13 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
 
             miss_cnt++;
             handle_packet_upcall(pmd, packets[i], &keys[i], &actions,
-                                 &put_actions, &lost_cnt, now);
+                                 &put_actions, &lost_cnt, now);//走upcall
         }
 
         ofpbuf_uninit(&actions);
         ofpbuf_uninit(&put_actions);
         fat_rwlock_unlock(&dp->upcall_rwlock);
-        dp_netdev_count_packet(pmd, DP_STAT_LOST, lost_cnt);
+        dp_netdev_count_packet(pmd, DP_STAT_LOST, lost_cnt);//增加丢包计数
     } else if (OVS_UNLIKELY(any_miss)) {//否则丢包
         for (i = 0; i < cnt; i++) {
             if (OVS_UNLIKELY(!rules[i])) {
@@ -4355,6 +4360,7 @@ pmd_tx_port_cache_lookup(const struct dp_netdev_pmd_thread *pmd,
     return tx_port_lookup(&pmd->port_cache, port_no);
 }
 
+//为隧道报文加头
 static int
 push_tnl_action(const struct dp_netdev_pmd_thread *pmd,
                 const struct nlattr *attr,
@@ -4394,7 +4400,7 @@ dp_execute_userspace_action(struct dp_netdev_pmd_thread *pmd,
 
     error = dp_netdev_upcall(pmd, packet, flow, NULL, ufid,
                              DPIF_UC_ACTION, userdata, actions,
-                             NULL);
+                             NULL);//走上送流程
     if (!error || error == ENOSPC) {
         packet_batch_init_packet(&b, packet);
         dp_netdev_execute_actions(pmd, &b, may_steal, flow,
@@ -4404,6 +4410,7 @@ dp_execute_userspace_action(struct dp_netdev_pmd_thread *pmd,
     }
 }
 
+//完成单个报文的动作处理（需要datapath（可以理解为虚设备）参与)
 static void
 dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
               const struct nlattr *a, bool may_steal)
@@ -4418,7 +4425,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
 
     switch ((enum ovs_action_attr)type) {
     case OVS_ACTION_ATTR_OUTPUT:
-        p = pmd_tx_port_cache_lookup(pmd, nl_attr_get_odp_port(a));
+        p = pmd_tx_port_cache_lookup(pmd, nl_attr_get_odp_port(a));//自cache中取port
         if (OVS_LIKELY(p)) {
             int tx_qid;
             bool dynamic_txqs;
@@ -4430,20 +4437,21 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 atomic_read_relaxed(&pmd->static_tx_qid, &tx_qid);
             }
 
+            //发送报文
             netdev_send(p->port->netdev, tx_qid, packets_, may_steal,
                         dynamic_txqs);
             return;
         }
         break;
 
-    case OVS_ACTION_ATTR_TUNNEL_PUSH:
+    case OVS_ACTION_ATTR_TUNNEL_PUSH://隧道报文封装，由各dev自主处理
         if (*depth < MAX_RECIRC_DEPTH) {
             struct dp_packet_batch tnl_pkt;
             struct dp_packet_batch *orig_packets_ = packets_;
             int err;
 
             if (!may_steal) {
-                dp_packet_batch_clone(&tnl_pkt, packets_);
+                dp_packet_batch_clone(&tnl_pkt, packets_);//clone一份报文tnl_pkt
                 packets_ = &tnl_pkt;
                 dp_packet_batch_reset_cutlen(orig_packets_);
             }
@@ -4453,7 +4461,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             err = push_tnl_action(pmd, a, packets_);
             if (!err) {
                 (*depth)++;
-                dp_netdev_recirculate(pmd, packets_);
+                dp_netdev_recirculate(pmd, packets_);//相当于组装好了隧道报文重走流程（重解析）
                 (*depth)--;
             }
             return;
@@ -4632,7 +4640,7 @@ dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
     struct dp_netdev_execute_aux aux = { pmd, now, flow };
 
     odp_execute_actions(&aux, packets, may_steal, actions,
-                        actions_len, dp_execute_cb);
+                        actions_len, dp_execute_cb);//dp_execute_cb是单个动作执行
 }
 
 struct dp_netdev_ct_dump {
@@ -4733,7 +4741,7 @@ const struct dpif_class dpif_netdev_class = {
     NULL,                       /* recv_wait */
     NULL,                       /* recv_purge */
     dpif_netdev_register_dp_purge_cb,
-    dpif_netdev_register_upcall_cb,
+    dpif_netdev_register_upcall_cb,//upcall_cb回调注册函数
     dpif_netdev_enable_upcall,
     dpif_netdev_disable_upcall,
     dpif_netdev_get_datapath_version,
@@ -5000,15 +5008,16 @@ dpcls_remove(struct dpcls *cls, struct dpcls_rule *rule)
 
 /* Returns true if 'target' satisfies 'key' in 'mask', that is, if each 1-bit
  * in 'mask' the values in 'key' and 'target' are the same. */
+//取出规则掩码，与target进行与运算，检查是否与规则要求的一致？
 static inline bool
 dpcls_rule_matches_key(const struct dpcls_rule *rule,
                        const struct netdev_flow_key *target)
 {
-    const uint64_t *keyp = miniflow_get_values(&rule->flow.mf);
-    const uint64_t *maskp = miniflow_get_values(&rule->mask->mf);
+    const uint64_t *keyp = miniflow_get_values(&rule->flow.mf);//规则中配置的值
+    const uint64_t *maskp = miniflow_get_values(&rule->mask->mf);//规则要求的掩码
     uint64_t value;
 
-    NETDEV_FLOW_KEY_FOR_EACH_IN_FLOWMAP(value, target, rule->flow.mf.map) {
+    NETDEV_FLOW_KEY_FOR_EACH_IN_FLOWMAP(value, target, rule->flow.mf.map) {//遍历规则的mf.map，与target进行比对
         if (OVS_UNLIKELY((value & *maskp++) != *keyp++)) {
             return false;
         }
@@ -5026,7 +5035,7 @@ dpcls_rule_matches_key(const struct dpcls_rule *rule,
  * priorities, instead returning any rule which matches the flow.
  *
  * Returns true if all miniflows found a corresponding rule. */
-//在cls中查找规则
+//在cls中查找规则，如果返回true，则所有规则被命中，否则返回false
 static bool
 dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
              struct dpcls_rule **rules, const size_t cnt,
@@ -5071,17 +5080,17 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
                                                      &subtable->mask);
         }
         /* Lookup. */
-        found_map = cmap_find_batch(&subtable->rules, keys_map, hashes, nodes);
+        found_map = cmap_find_batch(&subtable->rules, keys_map, hashes, nodes);//通过hashes在nodes中查找（返回的是bitmap)
         /* Check results.  When the i-th bit of found_map is set, it means
          * that a set of nodes with a matching hash value was found for the
          * i-th search-key.  Due to possible hash collisions we need to check
          * which of the found rules, if any, really matches our masked
          * search-key. */
-        ULLONG_FOR_EACH_1(i, found_map) {
+        ULLONG_FOR_EACH_1(i, found_map) {//由于上一步仅保证了hash命中，可能不同值的hash是相同的，故这里需要对命中的进行检测
             struct dpcls_rule *rule;
 
             CMAP_NODE_FOR_EACH (rule, cmap_node, nodes[i]) {
-                if (OVS_LIKELY(dpcls_rule_matches_key(rule, &keys[i]))) {
+                if (OVS_LIKELY(dpcls_rule_matches_key(rule, &keys[i]))) {//命中
                     rules[i] = rule;
                     /* Even at 20 Mpps the 32-bit hit_cnt cannot wrap
                      * within one second optimization interval. */

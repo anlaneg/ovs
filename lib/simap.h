@@ -28,6 +28,7 @@ struct simap {
     struct hmap map;            /* Contains "struct simap_node"s. */
 };
 
+//map，与smap不同点仅在类型不同，数据内型为int
 struct simap_node {
     struct hmap_node node;      /* In struct simap's 'map' hmap. */
     char *name;

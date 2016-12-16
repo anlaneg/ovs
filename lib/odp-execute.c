@@ -514,6 +514,7 @@ requires_datapath_assistance(const struct nlattr *a)
     return false;
 }
 
+//ovs动作执行
 void
 odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
                     const struct nlattr *actions, size_t actions_len,
@@ -527,7 +528,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
         int type = nl_attr_type(a);
-        bool last_action = (left <= NLA_ALIGN(a->nla_len));
+        bool last_action = (left <= NLA_ALIGN(a->nla_len));//是否最后一个action
 
         if (requires_datapath_assistance(a)) {
             if (dp_execute_action) {
@@ -559,7 +560,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
                 uint32_t hash;
 
                 for (i = 0; i < cnt; i++) {
-                    flow_extract(packets[i], &flow);
+                    flow_extract(packets[i], &flow);//解析报文，并填充flow
                     hash = flow_hash_5tuple(&flow, hash_act->hash_basis);
 
                     packets[i]->md.dp_hash = hash;
@@ -571,7 +572,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
         }
 
-        case OVS_ACTION_ATTR_PUSH_VLAN: {
+        case OVS_ACTION_ATTR_PUSH_VLAN: {//加vlan
             const struct ovs_action_push_vlan *vlan = nl_attr_get(a);
 
             for (i = 0; i < cnt; i++) {
@@ -580,7 +581,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
         }
 
-        case OVS_ACTION_ATTR_POP_VLAN:
+        case OVS_ACTION_ATTR_POP_VLAN://解vlan
             for (i = 0; i < cnt; i++) {
                 eth_pop_vlan(packets[i]);
             }
@@ -603,17 +604,17 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
 
         case OVS_ACTION_ATTR_SET:
             for (i = 0; i < cnt; i++) {
-                odp_execute_set_action(packets[i], nl_attr_get(a));
+                odp_execute_set_action(packets[i], nl_attr_get(a));//对报文或者元数据进行修改（直接赋值方式）
             }
             break;
 
         case OVS_ACTION_ATTR_SET_MASKED:
             for (i = 0; i < cnt; i++) {
-                odp_execute_masked_set_action(packets[i], nl_attr_get(a));
+                odp_execute_masked_set_action(packets[i], nl_attr_get(a));//对报文或者元数据进行修改（mask方式）
             }
             break;
 
-        case OVS_ACTION_ATTR_SAMPLE:
+        case OVS_ACTION_ATTR_SAMPLE://采样
             for (i = 0; i < cnt; i++) {
                 odp_execute_sample(dp, packets[i], steal && last_action, a,
                                    dp_execute_action);

@@ -5751,6 +5751,7 @@ ofp_port_to_odp_port(const struct ofproto_dpif *ofproto, ofp_port_t ofp_port)
     return ofport ? ofport->odp_port : ODPP_NONE;
 }
 
+//通过接口id号查找对应接口数据结构
 struct ofport_dpif *
 odp_port_to_ofport(const struct dpif_backer *backer, odp_port_t odp_port)
 {

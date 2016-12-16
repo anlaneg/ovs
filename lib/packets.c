@@ -196,6 +196,7 @@ compose_rarp(struct dp_packet *b, const struct eth_addr eth_src)
  * packet.  Ignores the CFI bit of 'tci' using 0 instead.
  *
  * Also adjusts the layer offsets accordingly. */
+//插入一个vlan头
 void
 eth_push_vlan(struct dp_packet *packet, ovs_be16 tpid, ovs_be16 tci)
 {
@@ -212,6 +213,7 @@ eth_push_vlan(struct dp_packet *packet, ovs_be16 tpid, ovs_be16 tci)
  *
  * 'packet->l2_5' should initially point to 'packet''s outer-most VLAN header
  * or may be NULL if there are no VLAN headers. */
+//移除掉vlan头
 void
 eth_pop_vlan(struct dp_packet *packet)
 {

@@ -44,7 +44,7 @@ struct ds;
 static inline bool ipv6_addr_is_set(const struct in6_addr *addr);
 
 static inline bool
-flow_tnl_dst_is_set(const struct flow_tnl *tnl)
+flow_tnl_dst_is_set(const struct flow_tnl *tnl)//tunnel的目的地址被设置了
 {
     return tnl->ip_dst || ipv6_addr_is_set(&tnl->ipv6_dst);
 }

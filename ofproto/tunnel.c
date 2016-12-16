@@ -102,6 +102,7 @@ enum ip_src_type {
 /* Each hmap contains "struct tnl_port"s.
  * The index is a combination of how each of the fields listed under "Tunnel
  * matches" above matches, see the final paragraph for ordering. */
+//记录了所有tunnel的匹配信息的map
 static struct hmap *tnl_match_maps[N_MATCH_TYPES] OVS_GUARDED_BY(rwlock);
 static struct hmap **tnl_match_map(const struct tnl_match *);
 
@@ -290,6 +291,7 @@ tnl_port_del(const struct ofport_dpif *ofport) OVS_EXCLUDED(rwlock)
  *
  * Callers should verify that 'flow' needs to be received by calling
  * tnl_port_should_receive() before this function. */
+//查找flow对应的tunnel口，如果无对应的，返回NULL
 const struct ofport_dpif *
 tnl_port_receive(const struct flow *flow) OVS_EXCLUDED(rwlock)
 {
@@ -300,7 +302,7 @@ tnl_port_receive(const struct flow *flow) OVS_EXCLUDED(rwlock)
     fat_rwlock_rdlock(&rwlock);
     tnl_port = tnl_find(flow);
     ofport = tnl_port ? tnl_port->ofport : NULL;
-    if (!tnl_port) {
+    if (!tnl_port) {//没有找到这样的tunnel口
         char *flow_str = flow_to_string(flow);
 
         VLOG_WARN_RL(&rl, "receive tunnel port not found (%s)", flow_str);
@@ -308,11 +310,11 @@ tnl_port_receive(const struct flow *flow) OVS_EXCLUDED(rwlock)
         goto out;
     }
 
-    if (!VLOG_DROP_DBG(&dbg_rl)) {
+    if (!VLOG_DROP_DBG(&dbg_rl)) {//debug
         pre_flow_str = flow_to_string(flow);
     }
 
-    if (pre_flow_str) {
+    if (pre_flow_str) {//debug代码
         char *post_flow_str = flow_to_string(flow);
         char *tnl_str = tnl_port_fmt(tnl_port);
         VLOG_DBG("flow received\n"
@@ -500,6 +502,7 @@ tnl_find_ofport(const struct ofport_dpif *ofport) OVS_REQ_RDLOCK(rwlock)
     return NULL;
 }
 
+//检查match是否与map中port配置有匹配的，有就返回对应port,没有就返回NULL
 static struct tnl_port *
 tnl_find_exact(struct tnl_match *match, struct hmap *map)
     OVS_REQ_RDLOCK(rwlock)
@@ -518,6 +521,7 @@ tnl_find_exact(struct tnl_match *match, struct hmap *map)
 
 /* Returns the tnl_port that is the best match for the tunnel data in 'flow',
  * or NULL if no tnl_port matches 'flow'. */
+//针对flow配置tunnel port（这几个循环次数目前暂不明白意义）
 static struct tnl_port *
 tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)
 {
@@ -529,7 +533,7 @@ tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)
     i = 0;
     for (in_key_flow = 0; in_key_flow < 2; in_key_flow++) {
         for (ip_dst_flow = 0; ip_dst_flow < 2; ip_dst_flow++) {
-            for (ip_src = 0; ip_src < 3; ip_src++) {
+            for (ip_src = 0; ip_src < 3; ip_src++) {//为什么是３，看IP_SRC_CFG枚举
                 struct hmap *map = tnl_match_maps[i];
 
                 if (map) {

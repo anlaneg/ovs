@@ -1678,7 +1678,7 @@ flow_hash_5tuple(const struct flow *flow, uint32_t basis)
 
     if (flow) {
 
-        if (flow->dl_type == htons(ETH_TYPE_IPV6)) {
+        if (flow->dl_type == htons(ETH_TYPE_IPV6)) {//ipv6报文处理
             const uint64_t *flow_u64 = (const uint64_t *)flow;
             int ofs = offsetof(struct flow, ipv6_src) / 8;
             int end = ofs + 2 * sizeof flow->ipv6_src / 8;
@@ -1687,7 +1687,7 @@ flow_hash_5tuple(const struct flow *flow, uint32_t basis)
                 hash = hash_add64(hash, flow_u64[ofs]);
             }
         } else if (flow->dl_type == htons(ETH_TYPE_IP)
-                   || flow->dl_type == htons(ETH_TYPE_ARP)) {
+                   || flow->dl_type == htons(ETH_TYPE_ARP)) {//ip,arp协议
             hash = hash_add(hash, (OVS_FORCE uint32_t) flow->nw_src);
             hash = hash_add(hash, (OVS_FORCE uint32_t) flow->nw_dst);
         } else {
@@ -1697,14 +1697,14 @@ flow_hash_5tuple(const struct flow *flow, uint32_t basis)
         hash = hash_add(hash, flow->nw_proto);
         if (flow->nw_proto != IPPROTO_TCP && flow->nw_proto != IPPROTO_UDP
             && flow->nw_proto != IPPROTO_SCTP && flow->nw_proto != IPPROTO_ICMP
-            && flow->nw_proto != IPPROTO_ICMPV6) {
+            && flow->nw_proto != IPPROTO_ICMPV6) {//tcp,sctp,udp,icmp协议
             goto out;
         }
 
         /* Add both ports at once. */
         hash = hash_add(hash,
                         ((const uint32_t *)flow)[offsetof(struct flow, tp_src)
-                                                 / sizeof(uint32_t)]);
+                                                 / sizeof(uint32_t)]);//取两个port
     }
 out:
     return hash_finish(hash, 42); /* Arbitrary number. */
@@ -2543,6 +2543,7 @@ miniflow_clone(struct miniflow *dst, const struct miniflow *src,
 }
 
 /* Initializes 'dst' as a copy of 'src'. */
+//将miniflow展开为flow
 void
 miniflow_expand(const struct miniflow *src, struct flow *dst)
 {

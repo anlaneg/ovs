@@ -62,7 +62,7 @@ hmap_clear(struct hmap *hmap)
 {
     if (hmap->n > 0) {
         hmap->n = 0;
-        memset(hmap->buckets, 0, (hmap->mask + 1) * sizeof *hmap->buckets);
+        memset(hmap->buckets, 0, (hmap->mask + 1) * sizeof *hmap->buckets);//仅清空内存
     }
 }
 
@@ -97,7 +97,7 @@ resize(struct hmap *hmap, size_t new_mask, const char *where)
 
     hmap_init(&tmp);
     if (new_mask) {
-        tmp.buckets = xmalloc(sizeof *tmp.buckets * (new_mask + 1));
+        tmp.buckets = xmalloc(sizeof *tmp.buckets * (new_mask + 1));//申请指针数组内存
         tmp.mask = new_mask;
         for (i = 0; i <= tmp.mask; i++) {
             tmp.buckets[i] = NULL;

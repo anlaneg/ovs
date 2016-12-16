@@ -26,10 +26,11 @@ extern "C" {
 
 struct sset_node {
     struct hmap_node hmap_node;
-    char name[1];
+    char name[1];//这个name仅用来说明字符串的起始位置，申请sset_node时，进行了字符串length长度的申请
 };
 
 /* A set of strings. */
+//提供字符串集合（set数据类型）
 struct sset {
     struct hmap map;
 };

@@ -57,11 +57,12 @@ hmap_node_nullify(struct hmap_node *node)
 }
 
 /* A hash map. */
+//普通hash表，mask为０时，为单链表
 struct hmap {
-    struct hmap_node **buckets; /* Must point to 'one' iff 'mask' == 0. */
-    struct hmap_node *one;
-    size_t mask;
-    size_t n;
+    struct hmap_node **buckets; /* Must point to 'one' iff 'mask' == 0. */ //桶指针
+    struct hmap_node *one;//mask等于０时，指向one,特殊结果，无其它作用
+    size_t mask;//mask ,加１后为２的n次方
+    size_t n;//节点数
 };
 
 /* Initializer for an empty hash map. */

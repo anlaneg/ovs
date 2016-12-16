@@ -710,7 +710,7 @@ int
 netdev_send(struct netdev *netdev, int qid, struct dp_packet_batch *batch,
             bool may_steal, bool concurrent_txq)
 {
-    if (!netdev->netdev_class->send) {
+    if (!netdev->netdev_class->send) {//没有send函数
         dp_packet_delete_batch(batch, may_steal);
         return EOPNOTSUPP;
     }
@@ -726,6 +726,7 @@ netdev_send(struct netdev *netdev, int qid, struct dp_packet_batch *batch,
     return error;
 }
 
+//dev 移除header，由pop_header函数完成
 void
 netdev_pop_header(struct netdev *netdev, struct dp_packet_batch *batch)
 {
@@ -771,6 +772,7 @@ int netdev_build_header(const struct netdev *netdev,
     return EOPNOTSUPP;
 }
 
+//调用netdev来push_header(隧道口的加入，与各隧道方式有关）
 int
 netdev_push_header(const struct netdev *netdev,
                    struct dp_packet_batch *batch,
@@ -784,7 +786,7 @@ netdev_push_header(const struct netdev *netdev,
 
     for (i = 0; i < batch->count; i++) {
         netdev->netdev_class->push_header(batch->packets[i], data);
-        pkt_metadata_init(&batch->packets[i]->md, u32_to_odp(data->out_port));
+        pkt_metadata_init(&batch->packets[i]->md, u32_to_odp(data->out_port));//改入接口
     }
 
     return 0;

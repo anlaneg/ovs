@@ -661,7 +661,7 @@ dp_packet_batch_apply_cutlen(struct dp_packet_batch *pktb)
         uint32_t cutlen = dp_packet_get_cutlen(pktb->packets[i]);
 
         dp_packet_set_size(pktb->packets[i],
-                    dp_packet_size(pktb->packets[i]) - cutlen);
+                    dp_packet_size(pktb->packets[i]) - cutlen);//截断报文大小
         dp_packet_reset_cutlen(pktb->packets[i]);
     }
     pktb->trunc = false;

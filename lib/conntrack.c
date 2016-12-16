@@ -329,7 +329,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
 
             conn_key_lookup(ctb, &ctxs[j], now);
 
-            conn = process_one(ct, pkts[j], &ctxs[j], zone, commit, now);
+            conn = process_one(ct, pkts[j], &ctxs[j], zone, commit, now);//创建连接
 
             if (conn && setmark) {
                 set_mark(pkts[j], conn, setmark[0], setmark[1]);

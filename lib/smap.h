@@ -23,6 +23,7 @@ struct json;
 struct uuid;
 
 /* A map from string to string. */
+//smap与shash的区别就是，smap只容许数据为字符串。key,和value都是copy保存
 struct smap {
     struct hmap map;           /* Contains "struct smap_node"s. */
 };

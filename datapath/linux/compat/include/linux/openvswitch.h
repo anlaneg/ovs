@@ -796,28 +796,28 @@ enum ovs_nat_attr {
  * tunnel header.
  */
 
-enum ovs_action_attr {
+enum ovs_action_attr {//action类型
 	OVS_ACTION_ATTR_UNSPEC,
-	OVS_ACTION_ATTR_OUTPUT,	      /* u32 port number. */
-	OVS_ACTION_ATTR_USERSPACE,    /* Nested OVS_USERSPACE_ATTR_*. */
-	OVS_ACTION_ATTR_SET,          /* One nested OVS_KEY_ATTR_*. */
-	OVS_ACTION_ATTR_PUSH_VLAN,    /* struct ovs_action_push_vlan. */
-	OVS_ACTION_ATTR_POP_VLAN,     /* No argument. */
+	OVS_ACTION_ATTR_OUTPUT,	      /* u32 port number. */ //输出包到某个端口
+	OVS_ACTION_ATTR_USERSPACE,    /* Nested OVS_USERSPACE_ATTR_*. */ //送到userspace进行处理（用户态）
+	OVS_ACTION_ATTR_SET,          /* One nested OVS_KEY_ATTR_*. */ //对报文或者元数据进行修改（直接赋值方式）
+	OVS_ACTION_ATTR_PUSH_VLAN,    /* struct ovs_action_push_vlan. */ //在报文最外侧插入vlan头
+	OVS_ACTION_ATTR_POP_VLAN,     /* No argument. */ //移除掉vlan头
 	OVS_ACTION_ATTR_SAMPLE,       /* Nested OVS_SAMPLE_ATTR_*. */
-	OVS_ACTION_ATTR_RECIRC,       /* u32 recirc_id. */
-	OVS_ACTION_ATTR_HASH,	      /* struct ovs_action_hash. */
-	OVS_ACTION_ATTR_PUSH_MPLS,    /* struct ovs_action_push_mpls. */
-	OVS_ACTION_ATTR_POP_MPLS,     /* __be16 ethertype. */
-	OVS_ACTION_ATTR_SET_MASKED,   /* One nested OVS_KEY_ATTR_* including
+	OVS_ACTION_ATTR_RECIRC,       /* u32 recirc_id. */ //变更recirc_id,并重新使报文进入inport
+	OVS_ACTION_ATTR_HASH,	      /* struct ovs_action_hash. */ //按报文计算hash（５元组）值,见odp_execute_actions
+	OVS_ACTION_ATTR_PUSH_MPLS,    /* struct ovs_action_push_mpls. */ //mpls头添加
+	OVS_ACTION_ATTR_POP_MPLS,     /* __be16 ethertype. */ //mpls头移除
+	OVS_ACTION_ATTR_SET_MASKED,   /* One nested OVS_KEY_ATTR_* including //对报文或者元数据进行修改（mask方式）
 				       * data immediately followed by a mask.
 				       * The data must be zero for the unmasked
 				       * bits. */
 	OVS_ACTION_ATTR_CT,           /* Nested OVS_CT_ATTR_* . */
-	OVS_ACTION_ATTR_TRUNC,        /* u32 struct ovs_action_trunc. */
+	OVS_ACTION_ATTR_TRUNC,        /* u32 struct ovs_action_trunc. */ //设置cut_len
 
 #ifndef __KERNEL__
-	OVS_ACTION_ATTR_TUNNEL_PUSH,   /* struct ovs_action_push_tnl*/
-	OVS_ACTION_ATTR_TUNNEL_POP,    /* u32 port number. */
+	OVS_ACTION_ATTR_TUNNEL_PUSH,   /* struct ovs_action_push_tnl*/ //隧道口添加
+	OVS_ACTION_ATTR_TUNNEL_POP,    /* u32 port number. */ //隧道口移除
 #endif
 	__OVS_ACTION_ATTR_MAX,	      /* Nothing past this will be accepted
 				       * from userspace. */

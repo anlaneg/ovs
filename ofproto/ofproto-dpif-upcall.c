@@ -971,8 +971,8 @@ classify_upcall(enum dpif_upcall_type type, const struct nlattr *userdata)
     case DPIF_UC_ACTION:
         break;
 
-    case DPIF_UC_MISS:
-        return MISS_UPCALL;
+    case DPIF_UC_MISS://缺少流表
+        return MISS_UPCALL;//流缺失
 
     case DPIF_N_UC_TYPES:
     default:
@@ -1049,6 +1049,7 @@ upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
 {
     int error;
 
+    //填充upcall中的信息
     error = xlate_lookup(backer, flow, &upcall->ofproto, &upcall->ipfix,
                          &upcall->sflow, NULL, &upcall->in_port);
     if (error) {
@@ -1061,7 +1062,7 @@ upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
     upcall->packet = packet;
     upcall->ufid = ufid;
     upcall->pmd_id = pmd_id;
-    upcall->type = type;
+    upcall->type = type;//设置upcall的type
     upcall->userdata = userdata;
     ofpbuf_use_stub(&upcall->odp_actions, upcall->odp_actions_stub,
                     sizeof upcall->odp_actions_stub);
@@ -1197,6 +1198,7 @@ should_install_flow(struct udpif *udpif, struct upcall *upcall)
     return true;
 }
 
+//设备upcall回调函数入口
 static int
 upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufid,
           unsigned pmd_id, enum dpif_upcall_type type,
@@ -1212,7 +1214,7 @@ upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufi
     atomic_read_relaxed(&enable_megaflows, &megaflow);
 
     error = upcall_receive(&upcall, udpif->backer, packet, type, userdata,
-                           flow, 0, ufid, pmd_id);
+                           flow, 0, ufid, pmd_id);//做upcall初始化
     if (error) {
         return error;
     }
@@ -1257,8 +1259,8 @@ process_upcall(struct udpif *udpif, struct upcall *upcall,
     const struct flow *flow = upcall->flow;
 
     switch (classify_upcall(upcall->type, userdata)) {
-    case MISS_UPCALL:
-        upcall_xlate(udpif, upcall, odp_actions, wc);
+    case MISS_UPCALL://未命中流表
+        upcall_xlate(udpif, upcall, odp_actions, wc);//DPIF_UC_MISS会走此函数
         return 0;
 
     case SFLOW_UPCALL:
