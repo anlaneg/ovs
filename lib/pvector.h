@@ -57,7 +57,7 @@
  */
 
 struct pvector_entry {
-    int priority;
+    int priority;//优先级
     void *ptr;
 };
 
@@ -68,6 +68,7 @@ struct pvector_impl {
 };
 
 /* Concurrent priority vector. */
+//支持优先级的vector
 struct pvector {
     OVSRCU_TYPE(struct pvector_impl *) impl;
     struct pvector_impl *temp;

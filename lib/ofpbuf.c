@@ -98,7 +98,7 @@ ofpbuf_use_stack(struct ofpbuf *b, void *base, size_t allocated)
  * on an ofpbuf initialized by this function, so that if it expanded into the
  * heap, that memory is freed. */
 void
-ofpbuf_use_stub(struct ofpbuf *b, void *base, size_t allocated)
+ofpbuf_use_stub(struct ofpbuf *b, void *base, size_t allocated)//用静态内存初始化ofpbuf
 {
     ofpbuf_use__(b, base, allocated, 0, OFPBUF_STUB);
 }
@@ -231,7 +231,7 @@ ofpbuf_copy__(struct ofpbuf *b, uint8_t *new_base,
 /* Reallocates 'b' so that it has exactly 'new_headroom' and 'new_tailroom'
  * bytes of headroom and tailroom, respectively. */
 static void
-ofpbuf_resize__(struct ofpbuf *b, size_t new_headroom, size_t new_tailroom)
+ofpbuf_resize__(struct ofpbuf *b, size_t new_headroom, size_t new_tailroom)//空间扩大
 {
     void *new_base, *new_data;
     size_t new_allocated;
@@ -249,10 +249,10 @@ ofpbuf_resize__(struct ofpbuf *b, size_t new_headroom, size_t new_tailroom)
         }
         break;
 
-    case OFPBUF_STACK:
+    case OFPBUF_STACK://栈的就不能够扩大了
         OVS_NOT_REACHED();
 
-    case OFPBUF_STUB:
+    case OFPBUF_STUB://stub这种可以进行变化为malloc，当空间不足时
         b->source = OFPBUF_MALLOC;
         new_base = xmalloc(new_allocated);
         ofpbuf_copy__(b, new_base, new_headroom, new_tailroom);
@@ -287,7 +287,7 @@ ofpbuf_resize__(struct ofpbuf *b, size_t new_headroom, size_t new_tailroom)
 void
 ofpbuf_prealloc_tailroom(struct ofpbuf *b, size_t size)
 {
-    if (size > ofpbuf_tailroom(b)) {
+    if (size > ofpbuf_tailroom(b)) {//空间不够
         ofpbuf_resize__(b, ofpbuf_headroom(b), MAX(size, 64));
     }
 }
@@ -359,10 +359,10 @@ ofpbuf_shift(struct ofpbuf *b, int delta)
  * copying its data if necessary.  Returns a pointer to the first byte of the
  * new data, which is left uninitialized. */
 void *
-ofpbuf_put_uninit(struct ofpbuf *b, size_t size)
+ofpbuf_put_uninit(struct ofpbuf *b, size_t size)//提前预支出一个size大小的未初始化区域
 {
     void *p;
-    ofpbuf_prealloc_tailroom(b, size);
+    ofpbuf_prealloc_tailroom(b, size);//尝试扩大空间
     p = ofpbuf_tail(b);
     b->size += size;
     return p;
@@ -383,7 +383,7 @@ ofpbuf_put_zeros(struct ofpbuf *b, size_t size)
  * is reallocated and copied if necessary.  Returns a pointer to the first
  * byte of the data's location in the ofpbuf. */
 void *
-ofpbuf_put(struct ofpbuf *b, const void *p, size_t size)
+ofpbuf_put(struct ofpbuf *b, const void *p, size_t size)//在写当读写头位置用p来填充size个字节,返回填充后的起始位置
 {
     void *dst = ofpbuf_put_uninit(b, size);
     memcpy(dst, p, size);

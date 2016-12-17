@@ -329,6 +329,7 @@ enum {
 };
 
 /* A flow classifier. */
+//流分类
 struct classifier {
     int n_rules;                    /* Total number of rules. */
     uint8_t n_flow_segments;
@@ -338,7 +339,7 @@ struct classifier {
     struct pvector subtables;
     struct cmap partitions;         /* Contains "struct cls_partition"s. */
     struct cls_trie tries[CLS_MAX_TRIES]; /* Prefix tries. */
-    unsigned int n_tries;
+    unsigned int n_tries;//tires的数目，用于指出tries成员中有效的最大元素下标
     bool publish;                   /* Make changes visible to lookups? */
 };
 

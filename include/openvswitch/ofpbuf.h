@@ -55,10 +55,10 @@ enum OVS_PACKED_ENUM ofpbuf_source {
  * rconn: Reuses 'header' as a private pointer while queuing.
  */
 struct ofpbuf {
-    void *base;                 /* First byte of allocated space. */
-    void *data;                 /* First byte actually in use. */
-    uint32_t size;              /* Number of bytes in use. */
-    uint32_t allocated;         /* Number of bytes allocated. */
+    void *base;                 /* First byte of allocated space. */ //基地址
+    void *data;                 /* First byte actually in use. */ //当前的buf读写头
+    uint32_t size;              /* Number of bytes in use. */ //当前用了多少
+    uint32_t allocated;         /* Number of bytes allocated. */ //申请多少字节
 
     void *header;               /* OpenFlow header. */
     void *msg;                  /* message's body */
@@ -197,7 +197,7 @@ static inline void *ofpbuf_tail(const struct ofpbuf *b)
 
 /* Returns a pointer to byte following the last byte allocated for use (but
  * not necessarily in use) in 'b'. */
-static inline void *ofpbuf_end(const struct ofpbuf *b)
+static inline void *ofpbuf_end(const struct ofpbuf *b)//返回结尾
 {
     return (char *) b->base + b->allocated;
 }
@@ -206,14 +206,14 @@ static inline void *ofpbuf_end(const struct ofpbuf *b)
  * of unused space in ofpbuf 'b' before the data that is in use.  (Most
  * commonly, the data in a ofpbuf is at its beginning, and thus the ofpbuf's
  * headroom is 0.) */
-static inline size_t ofpbuf_headroom(const struct ofpbuf *b)
+static inline size_t ofpbuf_headroom(const struct ofpbuf *b)//data与基地址之间的长度
 {
     return (char*)b->data - (char*)b->base;
 }
 
 /* Returns the number of bytes that may be appended to the tail end of ofpbuf
  * 'b' before the ofpbuf must be reallocated. */
-static inline size_t ofpbuf_tailroom(const struct ofpbuf *b)
+static inline size_t ofpbuf_tailroom(const struct ofpbuf *b)//还有多少空间？
 {
     return (char*)ofpbuf_end(b) - (char*)ofpbuf_tail(b);
 }

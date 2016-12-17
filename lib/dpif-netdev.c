@@ -172,7 +172,7 @@ struct emc_cache {
 struct dpcls {
     struct cmap_node node;      /* Within dp_netdev_pmd_thread.classifiers */
     odp_port_t in_port;//按入接口分类
-    struct cmap subtables_map;
+    struct cmap subtables_map;//按不同mask分类的subtable,属dpcls_subtable类型
     struct pvector subtables;//子表
 };
 
@@ -376,7 +376,7 @@ struct dp_netdev_flow {
     struct packet_batch_per_flow *batch;
 
     /* Packet classification. */
-    struct dpcls_rule cr;        /* In owning dp_netdev's 'cls'. */
+    struct dpcls_rule cr;        /* In owning dp_netdev's 'cls'. */ //记录cls的规则
     /* 'cr' must be the last member. */
 };
 
@@ -469,10 +469,10 @@ struct dp_netdev_pmd_thread {
      * 'flow_mutex'.
      */
     struct ovs_mutex flow_mutex;
-    struct cmap flow_table OVS_GUARDED; /* Flow table. */
+    struct cmap flow_table OVS_GUARDED; /* Flow table. */ //二级缓存表
 
     /* One classifier per in_port polled by the pmd */
-    struct cmap classifiers;
+    struct cmap classifiers;//cls分类表，dpcls类型
     /* Periodically sort subtable vectors according to hit frequencies */
     long long int next_optimization;
 
@@ -1636,6 +1636,7 @@ dp_netdev_pmd_lookup_dpcls(struct dp_netdev_pmd_thread *pmd,
     return NULL;
 }
 
+//通过in_port检查分类器，如果没有找到创建一个
 static inline struct dpcls *
 dp_netdev_pmd_find_dpcls(struct dp_netdev_pmd_thread *pmd,
                          odp_port_t in_port)
@@ -1776,6 +1777,7 @@ dpif_netdev_port_poll_wait(const struct dpif *dpif_)
     seq_wait(dpif->dp->port_seq, dpif->last_port_seq);
 }
 
+//将dpcls_rule转为dp_netdev_flow
 static struct dp_netdev_flow *
 dp_netdev_flow_cast(const struct dpcls_rule *cr)
 {
@@ -2013,6 +2015,7 @@ emc_lookup(struct emc_cache *cache, const struct netdev_flow_key *key)
     return NULL;
 }
 
+//l2表查询办法：先找到dpcls,利用inport,然后通过dpcls_lookup进行查询rule,然后将rule转化为dp_netdev_flow
 static struct dp_netdev_flow *
 dp_netdev_pmd_lookup_flow(struct dp_netdev_pmd_thread *pmd,
                           const struct netdev_flow_key *key,
@@ -2249,6 +2252,7 @@ out:
     return error;
 }
 
+//向flow_table中加入流，match为匹配条件
 static struct dp_netdev_flow *
 dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
                    struct match *match, const ovs_u128 *ufid,
@@ -2266,7 +2270,7 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
                && !FLOWMAP_HAS_FIELD(&mask.mf.map, regs));
 
     /* Do not allocate extra space. */
-    flow = xmalloc(sizeof *flow - sizeof flow->cr.flow.mf + mask.len);
+    flow = xmalloc(sizeof *flow - sizeof flow->cr.flow.mf + mask.len);//这个flow的空间不完全（在这个结构的前半部分按成员放了数据，故最后面的不要）
     memset(&flow->stats, 0, sizeof flow->stats);
     flow->dead = false;
     flow->batch = NULL;
@@ -2274,19 +2278,19 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     *CONST_CAST(struct flow *, &flow->flow) = match->flow;
     *CONST_CAST(ovs_u128 *, &flow->ufid) = *ufid;
     ovs_refcount_init(&flow->ref_cnt);
-    ovsrcu_set(&flow->actions, dp_netdev_actions_create(actions, actions_len));
+    ovsrcu_set(&flow->actions, dp_netdev_actions_create(actions, actions_len));//申请空间，并存放actions到flow中
 
     netdev_flow_key_init_masked(&flow->cr.flow, &match->flow, &mask);
 
     /* Select dpcls for in_port. Relies on in_port to be exact match */
     ovs_assert(match->wc.masks.in_port.odp_port == ODPP_NONE);
-    cls = dp_netdev_pmd_find_dpcls(pmd, in_port);
+    cls = dp_netdev_pmd_find_dpcls(pmd, in_port);//如果这个in_port不存在，则创建对应dpcls
     dpcls_insert(cls, &flow->cr, &mask);
 
-    cmap_insert(&pmd->flow_table, CONST_CAST(struct cmap_node *, &flow->node),
+    cmap_insert(&pmd->flow_table, CONST_CAST(struct cmap_node *, &flow->node),//将flow加入到flow_table表中，flow_table为l2表
                 dp_netdev_flow_hash(&flow->ufid));
 
-    if (OVS_UNLIKELY(VLOG_IS_DBG_ENABLED())) {
+    if (OVS_UNLIKELY(VLOG_IS_DBG_ENABLED())) {//调试代码
         struct ds ds = DS_EMPTY_INITIALIZER;
         struct ofpbuf key_buf, mask_buf;
         struct odp_flow_key_parms odp_parms = {
@@ -4037,10 +4041,11 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet,
     ofpbuf_clear(put_actions);
 
     dpif_flow_hash(pmd->dp->dpif, &match.flow, sizeof match.flow, &ufid);
+    //走upcall处理(actions,put_actions将被返回，如果put_actions->size为０，则action才会被加入）
     error = dp_netdev_upcall(pmd, packet, &match.flow, &match.wc,
                              &ufid, DPIF_UC_MISS, NULL, actions,
                              put_actions);
-    if (OVS_UNLIKELY(error && error != ENOSPC)) {//丢包
+    if (OVS_UNLIKELY(error && error != ENOSPC)) {//有error,但error不为ENOSPC,则丢包
         dp_packet_delete(packet);
         (*lost_cnt)++;
         return;
@@ -4061,10 +4066,10 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet,
      * we'll send the packet up twice. */
     packet_batch_init_packet(&b, packet);
     dp_netdev_execute_actions(pmd, &b, true, &match.flow,
-                              actions->data, actions->size, now);
+                              actions->data, actions->size, now);//执行动作
 
     add_actions = put_actions->size ? put_actions : actions;
-    if (OVS_LIKELY(error != ENOSPC)) {
+    if (OVS_LIKELY(error != ENOSPC)) {//说明成功执行了（前面对有错误，但错误不是ENOSPC的已处理）
         struct dp_netdev_flow *netdev_flow;
 
         /* XXX: There's a race window where a flow covering this packet
@@ -4075,10 +4080,10 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet,
          * move to a per-core classifier, it would be reasonable. */
         ovs_mutex_lock(&pmd->flow_mutex);
         netdev_flow = dp_netdev_pmd_lookup_flow(pmd, key, NULL);
-        if (OVS_LIKELY(!netdev_flow)) {
+        if (OVS_LIKELY(!netdev_flow)) {//当前还没有人加入此条规则，我们来加入它
             netdev_flow = dp_netdev_flow_add(pmd, &match, &ufid,
                                              add_actions->data,
-                                             add_actions->size);
+                                             add_actions->size);//l2层cache维护入口(将此flow加入）
         }
         ovs_mutex_unlock(&pmd->flow_mutex);
 
@@ -4127,6 +4132,7 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
         uint64_t actions_stub[512 / 8], slow_stub[512 / 8];
         struct ofpbuf actions, put_actions;
 
+        //用actions_stub,slow_stub初始化actions,put_actions
         ofpbuf_use_stub(&actions, actions_stub, sizeof actions_stub);
         ofpbuf_use_stub(&put_actions, slow_stub, sizeof slow_stub);
 
@@ -4239,7 +4245,7 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
     }
 
     for (i = 0; i < n_batches; i++) {
-        packet_batch_per_flow_execute(&batches[i], pmd, now);
+        packet_batch_per_flow_execute(&batches[i], pmd, now);//动作处理
     }
 }
 
@@ -4255,7 +4261,7 @@ static void
 dp_netdev_recirculate(struct dp_netdev_pmd_thread *pmd,
                       struct dp_packet_batch *packets)
 {
-    dp_netdev_input__(pmd, packets, true, 0);
+    dp_netdev_input__(pmd, packets, true, 0);//入接口未知
 }
 
 struct dp_netdev_execute_aux {
@@ -4630,6 +4636,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
     dp_packet_delete_batch(packets_, may_steal);
 }
 
+//执行动作
 static void
 dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
                           struct dp_packet_batch *packets,
@@ -4857,13 +4864,13 @@ dpif_dummy_register(enum dummy_level level)
 /* A set of rules that all have the same fields wildcarded. */
 struct dpcls_subtable {
     /* The fields are only used by writers. */
-    struct cmap_node cmap_node OVS_GUARDED; /* Within dpcls 'subtables_map'. */
+    struct cmap_node cmap_node OVS_GUARDED; /* Within dpcls 'subtables_map'. */　//此节点用于挂载subtables_map表，用于加快规则的增删改查
 
     /* These fields are accessed by readers. */
-    struct cmap rules;           /* Contains "struct dpcls_rule"s. */
-    uint32_t hit_cnt;            /* Number of match hits in subtable in current
+    struct cmap rules;           /* Contains "struct dpcls_rule"s. */ //规则挂在这个hash表上
+    uint32_t hit_cnt;            /* Number of match hits in subtable in current　//子表被命中的次数
                                     optimization interval. */
-    struct netdev_flow_key mask; /* Wildcards for fields (const). */
+    struct netdev_flow_key mask; /* Wildcards for fields (const). */ //子表对应的mask
     /* 'mask' must be the last field, additional space is allocated here. */
 };
 
@@ -4905,6 +4912,7 @@ dpcls_destroy(struct dpcls *cls)
     }
 }
 
+//创建一个dpcls子表
 static struct dpcls_subtable *
 dpcls_create_subtable(struct dpcls *cls, const struct netdev_flow_key *mask)
 {
@@ -4914,11 +4922,11 @@ dpcls_create_subtable(struct dpcls *cls, const struct netdev_flow_key *mask)
     subtable = xmalloc(sizeof *subtable
                        - sizeof subtable->mask.mf + mask->len);
     cmap_init(&subtable->rules);
-    subtable->hit_cnt = 0;
-    netdev_flow_key_clone(&subtable->mask, mask);
-    cmap_insert(&cls->subtables_map, &subtable->cmap_node, mask->hash);
+    subtable->hit_cnt = 0;//命中数为０
+    netdev_flow_key_clone(&subtable->mask, mask);//填充其对应的mask
+    cmap_insert(&cls->subtables_map, &subtable->cmap_node, mask->hash);//将其加入subtables_map表
     /* Add the new subtable at the end of the pvector (with no hits yet) */
-    pvector_insert(&cls->subtables, subtable, 0);
+    pvector_insert(&cls->subtables, subtable, 0);//将其的指针加入subtables表
     VLOG_DBG("Creating %"PRIuSIZE". subtable %p for in_port %d",
              cmap_count(&cls->subtables_map), subtable, cls->in_port);
     pvector_publish(&cls->subtables);
@@ -4933,15 +4941,16 @@ dpcls_find_subtable(struct dpcls *cls, const struct netdev_flow_key *mask)
 
     CMAP_FOR_EACH_WITH_HASH (subtable, cmap_node, mask->hash,
                              &cls->subtables_map) {
-        if (netdev_flow_key_equal(&subtable->mask, mask)) {
+        if (netdev_flow_key_equal(&subtable->mask, mask)) {//找到了
             return subtable;
         }
     }
-    return dpcls_create_subtable(cls, mask);
+    return dpcls_create_subtable(cls, mask);//没有找到，重新创建一份
 }
 
 
 /* Periodically sort the dpcls subtable vectors according to hit counts */
+//按命中次数对cls中的子表进行排序
 static void
 dpcls_sort_subtable_vector(struct dpcls *cls)
 {
@@ -4977,11 +4986,12 @@ dp_netdev_pmd_try_optimize(struct dp_netdev_pmd_thread *pmd)
 }
 
 /* Insert 'rule' into 'cls'. */
+//将rule加入到cls中
 static void
 dpcls_insert(struct dpcls *cls, struct dpcls_rule *rule,
              const struct netdev_flow_key *mask)
 {
-    struct dpcls_subtable *subtable = dpcls_find_subtable(cls, mask);
+    struct dpcls_subtable *subtable = dpcls_find_subtable(cls, mask);//返回mask对应的subtable
 
     /* Refer to subtable's mask, also for later removal. */
     rule->mask = &subtable->mask;
@@ -5069,7 +5079,7 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
      * search-key against each subtable, but when a match is found for a
      * search-key, the search for that key can stop because the rules are
      * non-overlapping. */
-    PVECTOR_FOR_EACH (subtable, &cls->subtables) {
+    PVECTOR_FOR_EACH (subtable, &cls->subtables) {//遍历classifier对应的子表
         int i;
 
         /* Compute hashes for the remaining keys.  Each search-key is
@@ -5080,6 +5090,7 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
                                                      &subtable->mask);
         }
         /* Lookup. */
+        //查找当前子表的rules
         found_map = cmap_find_batch(&subtable->rules, keys_map, hashes, nodes);//通过hashes在nodes中查找（返回的是bitmap)
         /* Check results.  When the i-th bit of found_map is set, it means
          * that a set of nodes with a matching hash value was found for the
@@ -5094,7 +5105,7 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
                     rules[i] = rule;
                     /* Even at 20 Mpps the 32-bit hit_cnt cannot wrap
                      * within one second optimization interval. */
-                    subtable->hit_cnt++;
+                    subtable->hit_cnt++;//子表命中计数增长，方便subtable的排序
                     lookups_match += subtable_pos;
                     goto next;
                 }

@@ -1226,7 +1226,7 @@ upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufi
 
     if (upcall.xout.slow && put_actions) {
         ofpbuf_put(put_actions, upcall.put_actions.data,
-                   upcall.put_actions.size);
+                   upcall.put_actions.size);//将upcall.put_actions.data中的存入
     }
 
     if (OVS_UNLIKELY(!megaflow && wc)) {
