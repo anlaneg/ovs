@@ -45,7 +45,7 @@ versions_set_remove_version(struct versions *versions, ovs_version_t version)
 }
 
 static inline bool
-versions_visible_in_version(const struct versions *versions,
+versions_visible_in_version(const struct versions *versions,//需要保证version版本号在version的add(>=),remove(<)之间，才可见
                             ovs_version_t version)
 {
     ovs_version_t remove_version;

@@ -460,6 +460,7 @@ nl_msg_start_nested(struct ofpbuf *msg, uint16_t type)
 
 /* Finalizes a nested Netlink attribute in 'msg'.  'offset' should be the value
  * returned by nl_msg_start_nested(). */
+//设置attr的长度
 void
 nl_msg_end_nested(struct ofpbuf *msg, size_t offset)
 {

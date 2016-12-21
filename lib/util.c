@@ -1147,6 +1147,7 @@ is_all_zeros(const void *p_, size_t n)
 }
 
 /* Returns true if the 'n' bytes starting at 'p' are 0xff. */
+//如果p指针位置开始n字节长度，全部为0xff,则返回true,否则返回false
 bool
 is_all_ones(const void *p_, size_t n)
 {

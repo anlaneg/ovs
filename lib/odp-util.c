@@ -2043,6 +2043,7 @@ odp_mask_attr_is_wildcard(const struct nlattr *ma)
     return is_all_zeros(nl_attr_get(ma), nl_attr_get_size(ma));
 }
 
+//检查是否为严格匹配
 static bool
 odp_mask_is_exact(enum ovs_key_attr attr, const void *mask, size_t size)
 {
@@ -2074,7 +2075,7 @@ odp_mask_is_exact(enum ovs_key_attr attr, const void *mask, size_t size)
         ovs_assert(((uint16_t *)mask)[size/2] == 0);
     }
 
-    return is_all_ones(mask, size);
+    return is_all_ones(mask, size);//是否全1
 }
 
 static bool
@@ -5350,13 +5351,14 @@ odp_put_tnl_push_action(struct ofpbuf *odp_actions,
 
 /* The commit_odp_actions() function and its helpers. */
 
+//添加(key_type,key,key_size)到缓冲区（odp_actions)
 static void
 commit_set_action(struct ofpbuf *odp_actions, enum ovs_key_attr key_type,
                   const void *key, size_t key_size)
 {
-    size_t offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_SET);
-    nl_msg_put_unspec(odp_actions, key_type, key, key_size);
-    nl_msg_end_nested(odp_actions, offset);
+    size_t offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_SET);//获取未放数据前的offset
+    nl_msg_put_unspec(odp_actions, key_type, key, key_size);//放数据
+    nl_msg_end_nested(odp_actions, offset);//设置长度
 }
 
 /* Masked set actions have a mask following the data within the netlink
@@ -5406,20 +5408,20 @@ commit(enum ovs_key_attr attr, bool use_masked_set,
        const void *key, void *base, void *mask, size_t size,
        struct ofpbuf *odp_actions)
 {
-    if (memcmp(key, base, size)) {
-        bool fully_masked = odp_mask_is_exact(attr, mask, size);
+    if (memcmp(key, base, size)) {//如果key与base不同
+        bool fully_masked = odp_mask_is_exact(attr, mask, size);//是否全匹配
 
-        if (use_masked_set && !fully_masked) {
-            commit_masked_set_action(odp_actions, attr, key, mask, size);
+        if (use_masked_set && !fully_masked) {//用户设置了mask,且非全匹配
+            commit_masked_set_action(odp_actions, attr, key, mask, size);//填充attr,key,mask,
         } else {
             if (!fully_masked) {
-                memset(mask, 0xff, size);
+                memset(mask, 0xff, size);//将mask变更为全ff
             }
             commit_set_action(odp_actions, attr, key, size);
         }
-        memcpy(base, key, size);
+        memcpy(base, key, size);//更改base(完成到key的转化）
         return true;
-    } else {
+    } else {//完全相同，没有发生变化，返回false
         /* Mask bits are set when we have either read or set the corresponding
          * values.  Masked bits will be exact-matched, no need to set them
          * if the value did not actually change. */
@@ -5449,14 +5451,14 @@ commit_set_ether_addr_action(const struct flow *flow, struct flow *base_flow,
 {
     struct ovs_key_ethernet key, base, mask;
 
-    get_ethernet_key(flow, &key);
-    get_ethernet_key(base_flow, &base);
-    get_ethernet_key(&wc->masks, &mask);
+    get_ethernet_key(flow, &key);//取flow中的
+    get_ethernet_key(base_flow, &base);//取base_flow中的
+    get_ethernet_key(&wc->masks, &mask);//取wc->masks
 
     if (commit(OVS_KEY_ATTR_ETHERNET, use_masked,
                &key, &base, &mask, sizeof key, odp_actions)) {
-        put_ethernet_key(&base, base_flow);
-        put_ethernet_key(&mask, &wc->masks);
+        put_ethernet_key(&base, base_flow);//base_flow变更
+        put_ethernet_key(&mask, &wc->masks);//wc->masks变更
     }
 }
 
@@ -5598,8 +5600,8 @@ commit_set_ipv4_action(const struct flow *flow, struct flow *base_flow,
     get_ipv4_key(flow, &key, false);
     get_ipv4_key(base_flow, &base, false);
     get_ipv4_key(&wc->masks, &mask, true);
-    mask.ipv4_proto = 0;        /* Not writeable. */
-    mask.ipv4_frag = 0;         /* Not writable. */
+    mask.ipv4_proto = 0;        /* Not writeable. */ //不容许改proto
+    mask.ipv4_frag = 0;         /* Not writable. */  //不容许改分片
 
     if (commit(OVS_KEY_ATTR_IPV4, use_masked, &key, &base, &mask, sizeof key,
                odp_actions)) {
@@ -5841,7 +5843,7 @@ commit_set_port_action(const struct flow *flow, struct flow *base_flow,
         return;
     }
 
-    if (!is_ip_any(base_flow)) {
+    if (!is_ip_any(base_flow)) {//非ip报文，就不处理了
         return;
     }
 
@@ -5913,6 +5915,7 @@ commit_set_pkt_mark_action(const struct flow *flow, struct flow *base_flow,
  *
  * Returns a reason to force processing the flow's packets into the userspace
  * slow path, if there is one, otherwise 0. */
+//如果base与flow之间有不同，则加入到odp_actions中
 enum slow_path_reason
 commit_odp_actions(const struct flow *flow, struct flow *base,
                    struct ofpbuf *odp_actions, struct flow_wildcards *wc,
@@ -5924,19 +5927,19 @@ commit_odp_actions(const struct flow *flow, struct flow *base,
     commit_set_ether_addr_action(flow, base, odp_actions, wc, use_masked);
     /* Make packet a non-MPLS packet before committing L3/4 actions,
      * which would otherwise do nothing. */
-    if (eth_type_mpls(base->dl_type) && !eth_type_mpls(flow->dl_type)) {
+    if (eth_type_mpls(base->dl_type) && !eth_type_mpls(flow->dl_type)) {//mpls处理
         commit_mpls_action(flow, base, odp_actions);
         mpls_done = true;
     }
-    slow1 = commit_set_nw_action(flow, base, odp_actions, wc, use_masked);
-    commit_set_port_action(flow, base, odp_actions, wc, use_masked);
-    slow2 = commit_set_icmp_action(flow, base, odp_actions, wc);
+    slow1 = commit_set_nw_action(flow, base, odp_actions, wc, use_masked);//ipv4,ipv6,arp处理
+    commit_set_port_action(flow, base, odp_actions, wc, use_masked);//tcp,udp,sctp处理
+    slow2 = commit_set_icmp_action(flow, base, odp_actions, wc);//icmpv4,icmpv6
     if (!mpls_done) {
         commit_mpls_action(flow, base, odp_actions);
     }
-    commit_vlan_action(flow->vlan_tci, base, odp_actions, wc);
-    commit_set_priority_action(flow, base, odp_actions, wc, use_masked);
-    commit_set_pkt_mark_action(flow, base, odp_actions, wc, use_masked);
+    commit_vlan_action(flow->vlan_tci, base, odp_actions, wc);//vlan处理
+    commit_set_priority_action(flow, base, odp_actions, wc, use_masked);//ip报文的优先级(qos)
+    commit_set_pkt_mark_action(flow, base, odp_actions, wc, use_masked);//pkt mark
 
     return slow1 ? slow1 : slow2;
 }

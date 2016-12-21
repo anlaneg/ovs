@@ -856,6 +856,7 @@ flow_zero_wildcards(struct flow *flow, const struct flow_wildcards *wildcards)
     }
 }
 
+//设置非模糊匹配ports
 void
 flow_unwildcard_tp_ports(const struct flow *flow, struct flow_wildcards *wc)
 {
@@ -2533,6 +2534,7 @@ miniflow_create(const struct flow *src)
 
 /* Initializes 'dst' as a copy of 'src'.  The caller must have allocated
  * 'dst' to have inline space for 'n_values' data in 'src'. */
+//同时填充miniflow及buf
 void
 miniflow_clone(struct miniflow *dst, const struct miniflow *src,
                size_t n_values)

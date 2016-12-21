@@ -95,11 +95,11 @@ netflow_mask_wc(const struct flow *flow, struct flow_wildcards *wc)
     if (flow->dl_type != htons(ETH_TYPE_IP)) {
         return;
     }
-    memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);
-    memset(&wc->masks.nw_src, 0xff, sizeof wc->masks.nw_src);
-    memset(&wc->masks.nw_dst, 0xff, sizeof wc->masks.nw_dst);
-    flow_unwildcard_tp_ports(flow, wc);
-    wc->masks.nw_tos |= IP_DSCP_MASK;
+    memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);//协议
+    memset(&wc->masks.nw_src, 0xff, sizeof wc->masks.nw_src);//源ip
+    memset(&wc->masks.nw_dst, 0xff, sizeof wc->masks.nw_dst);//目的ip
+    flow_unwildcard_tp_ports(flow, wc);//port
+    wc->masks.nw_tos |= IP_DSCP_MASK;//tos
 }
 
 static void

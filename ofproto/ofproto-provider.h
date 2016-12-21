@@ -204,7 +204,7 @@ enum oftable_flags {
  * Refer to the thread-safety notes on struct rule for more information.*/
 struct oftable {
     enum oftable_flags flags;
-    struct classifier cls;      /* Contains "struct rule"s. */
+    struct classifier cls;      /* Contains "struct rule"s. */ //分类器（含规则）
     char *name;                 /* Table name exposed via OpenFlow, or NULL. */
 
     /* Maximum number of flows or UINT_MAX if there is no limit besides any

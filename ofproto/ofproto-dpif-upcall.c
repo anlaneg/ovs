@@ -1122,7 +1122,7 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
     upcall->dump_seq = seq_read(udpif->dump_seq);
     upcall->reval_seq = seq_read(udpif->reval_seq);
 
-    xlate_actions(&xin, &upcall->xout);
+    xlate_actions(&xin, &upcall->xout);//实现action转换
     if (wc) {
         /* Convert the input port wildcard from OFP to ODP format. There's no
          * real way to do this for arbitrary bitmasks since the numbering spaces

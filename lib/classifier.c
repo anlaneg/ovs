@@ -83,22 +83,23 @@ cls_conjunction_set_alloc(struct cls_match *match,
     }
 }
 
+//申请并构造cls_match
 static struct cls_match *
 cls_match_alloc(const struct cls_rule *rule, ovs_version_t version,
-                const struct cls_conjunction conj[], size_t n)
+                const struct cls_conjunction coxznj[], size_t n)
 {
     size_t count = miniflow_n_values(rule->match.flow);
 
     struct cls_match *cls_match
-        = xmalloc(sizeof *cls_match + MINIFLOW_VALUES_SIZE(count));
+        = xmalloc(sizeof *cls_match + MINIFLOW_VALUES_SIZE(count));//申请cls_match及其后的buf
 
     ovsrcu_init(&cls_match->next, NULL);
-    *CONST_CAST(const struct cls_rule **, &cls_match->cls_rule) = rule;
-    *CONST_CAST(int *, &cls_match->priority) = rule->priority;
+    *CONST_CAST(const struct cls_rule **, &cls_match->cls_rule) = rule;//填充cls_match中的cls_rule指针
+    *CONST_CAST(int *, &cls_match->priority) = rule->priority;//填充规则的优先级
     /* Make rule initially invisible. */
-    cls_match->versions = VERSIONS_INITIALIZER(version, version);
+    cls_match->versions = VERSIONS_INITIALIZER(version, version);//将规则的add_version,remove_version填充
     miniflow_clone(CONST_CAST(struct miniflow *, &cls_match->flow),
-                   rule->match.flow, count);
+                   rule->match.flow, count);//填充miniflow及其后的buf
     ovsrcu_set_hidden(&cls_match->conj_set,
                       cls_conjunction_set_alloc(cls_match, conj, n));
 
@@ -321,6 +322,7 @@ cls_rule_visible_in_version(const struct cls_rule *rule, ovs_version_t version)
 
 /* Initializes 'cls' as a classifier that initially contains no classification
  * rules. */
+//新建classfier
 void
 classifier_init(struct classifier *cls, const uint8_t *flow_segments)
 {
@@ -452,7 +454,7 @@ trie_init(struct classifier *cls, int trie_idx, const struct mf_field *field)
     if (trie_idx < cls->n_tries) {
         trie_destroy(&trie->root);
     } else {
-        ovsrcu_set_hidden(&trie->root, NULL);
+        ovsrcu_set_hidden(&trie->root, NULL);//将trie的根置为NULL
     }
     trie->field = field;
 
@@ -514,6 +516,7 @@ static inline ovs_be32 minimatch_get_ports(const struct minimatch *match)
  * rule, even rules that cannot have any effect because the new rule matches a
  * superset of their flows and has higher priority.
  */
+//规则替换
 const struct cls_rule *
 classifier_replace(struct classifier *cls, const struct cls_rule *rule,
                    ovs_version_t version,
@@ -531,11 +534,11 @@ classifier_replace(struct classifier *cls, const struct cls_rule *rule,
 
     /* 'new' is initially invisible to lookups. */
     new = cls_match_alloc(rule, version, conjs, n_conjs);
-    ovsrcu_set(&CONST_CAST(struct cls_rule *, rule)->cls_match, new);
+    ovsrcu_set(&CONST_CAST(struct cls_rule *, rule)->cls_match, new);//指明规则从属于cls_match
 
     subtable = find_subtable(cls, rule->match.mask);
     if (!subtable) {
-        subtable = insert_subtable(cls, rule->match.mask);
+        subtable = insert_subtable(cls, rule->match.mask);//创建一张新的子表插入
     }
 
     /* Compute hashes in segments. */
@@ -546,10 +549,10 @@ classifier_replace(struct classifier *cls, const struct cls_rule *rule,
                                         &mask_offset, &basis);
     }
     hash = minimatch_hash_range(&rule->match, subtable->index_maps[i],
-                                &mask_offset, &basis);
+                                &mask_offset, &basis);//最后一个index_maps的hash
 
-    head = find_equal(subtable, rule->match.flow, hash);
-    if (!head) {
+    head = find_equal(subtable, rule->match.flow, hash);//检查rule是否存在
+    if (!head) {//不存在，添加
         /* Add rule to tries.
          *
          * Concurrent readers might miss seeing the rule until this update,
@@ -566,7 +569,7 @@ classifier_replace(struct classifier *cls, const struct cls_rule *rule,
              * bits in known (zero) state, so we can include them in comparison
              * and they will always match (== their original value does not
              * matter). */
-            ovs_be32 masked_ports = minimatch_get_ports(&rule->match);
+            ovs_be32 masked_ports = minimatch_get_ports(&rule->match);//获取match中关于tcp的port与其掩码与
 
             trie_insert_prefix(&subtable->ports_trie, &masked_ports,
                                subtable->ports_mask_len);
@@ -586,14 +589,14 @@ classifier_replace(struct classifier *cls, const struct cls_rule *rule,
         FOR_EACH_RULE_IN_LIST_PROTECTED (iter, prev, head) {
             if (rule->priority > iter->priority
                 || (rule->priority == iter->priority
-                    && !cls_match_is_eventually_invisible(iter))) {
+                    && !cls_match_is_eventually_invisible(iter))) {//我们的优先级大于iter或者等于它，且iter是可见的
                 break;
             }
         }
 
         /* Replace 'iter' with 'new' or insert 'new' between 'prev' and
          * 'iter'. */
-        if (iter) {
+        if (iter) {//需要删除掉iter，然后再将我们插入
             struct cls_rule *old;
 
             if (rule->priority == iter->priority) {
@@ -627,7 +630,7 @@ classifier_replace(struct classifier *cls, const struct cls_rule *rule,
                 /* No change in subtable's max priority or max count. */
 
                 /* Make 'new' visible to lookups in the appropriate version. */
-                cls_match_set_remove_version(new, OVS_VERSION_NOT_REMOVED);
+                cls_match_set_remove_version(new, OVS_VERSION_NOT_REMOVED);//设置版本号最大，隐含查找可见
 
                 /* Make rule visible to iterators (immediately). */
                 rculist_replace(CONST_CAST(struct rculist *, &rule->node),
@@ -639,16 +642,16 @@ classifier_replace(struct classifier *cls, const struct cls_rule *rule,
             }
         } else {
             /* 'new' is new node after 'prev' */
-            cls_match_insert(prev, iter, new);
+            cls_match_insert(prev, iter, new);//直接插入（对方可能已被标为删除）
         }
     }
 
     /* Make 'new' visible to lookups in the appropriate version. */
-    cls_match_set_remove_version(new, OVS_VERSION_NOT_REMOVED);
+    cls_match_set_remove_version(new, OVS_VERSION_NOT_REMOVED);//设置为remove
 
     /* Make rule visible to iterators (immediately). */
     rculist_push_back(&subtable->rules_list,
-                      CONST_CAST(struct rculist *, &rule->node));
+                      CONST_CAST(struct rculist *, &rule->node));//将规则加入链表
 
     /* Rule was added, not replaced.  Update 'subtable's 'max_priority' and
      * 'max_count', if necessary.
@@ -665,11 +668,11 @@ classifier_replace(struct classifier *cls, const struct cls_rule *rule,
     } else if (rule->priority > subtable->max_priority) {
         subtable->max_priority = rule->priority;
         subtable->max_count = 1;
-        pvector_change_priority(&cls->subtables, subtable, rule->priority);
+        pvector_change_priority(&cls->subtables, subtable, rule->priority);//改变优先队列的顺序
     }
 
     /* Nothing was replaced. */
-    cls->n_rules++;
+    cls->n_rules++;//规则数增加
 
     if (cls->publish) {
         pvector_publish(&cls->subtables);
@@ -960,7 +963,8 @@ classifier_lookup__(const struct classifier *cls, ovs_version_t version,
 
     /* Main loop. */
     struct cls_subtable *subtable;
-    PVECTOR_FOR_EACH_PRIORITY (subtable, hard_pri + 1, 2, sizeof *subtable,
+    //遍历cls->subtables表，subtable遍历得到的元素
+    PVECTOR_FOR_EACH_PRIORITY (subtable, hard_pri + 1, 2, sizeof *subtable,//参数2,sizeof *subtable是为预取服务的，可以忽略
                                &cls->subtables) {
         struct cls_conjunction_set *conj_set;
 
@@ -968,7 +972,7 @@ classifier_lookup__(const struct classifier *cls, ovs_version_t version,
          * than some certain match we've already found. */
         match = find_match_wc(subtable, version, flow, trie_ctx, cls->n_tries,
                               wc);
-        if (!match || match->priority <= hard_pri) {
+        if (!match || match->priority <= hard_pri) {//没有匹配上，换下一个子表
             continue;
         }
 
@@ -1158,7 +1162,7 @@ classifier_lookup__(const struct classifier *cls, ovs_version_t version,
  * Any changes are restored before returning. */
 const struct cls_rule *
 classifier_lookup(const struct classifier *cls, ovs_version_t version,
-                  struct flow *flow, struct flow_wildcards *wc)
+                  struct flow *flow, struct flow_wildcards *wc)//查分类器对应的表结构
 {
     return classifier_lookup__(cls, version, flow, wc, true);
 }
@@ -1398,14 +1402,16 @@ cls_cursor_advance(struct cls_cursor *cursor)
     cursor->rule = cls_cursor_next(cursor);
 }
 
+//通过mask查找cls对应的子表，如果缺失，则返回NULL
 static struct cls_subtable *
 find_subtable(const struct classifier *cls, const struct minimask *mask)
 {
     struct cls_subtable *subtable;
 
+    //遍历挂接在subtables_map上的cls_subtable
     CMAP_FOR_EACH_WITH_HASH (subtable, cmap_node, minimask_hash(mask, 0),
                              &cls->subtables_map) {
-        if (minimask_equal(mask, &subtable->mask)) {
+        if (minimask_equal(mask, &subtable->mask)) {//如果当前的master与此子表对应的mask相等，则返回此子表
             return subtable;
         }
     }
@@ -1415,6 +1421,7 @@ find_subtable(const struct classifier *cls, const struct minimask *mask)
 /* Initializes 'map' with a subset of 'miniflow''s maps that includes only the
  * portions with u64-offset 'i' such that 'start' <= i < 'end'.  Does not copy
  * any data from 'miniflow' to 'map'. */
+//返回miniflow从start位到end位之间的数据
 static struct flowmap
 miniflow_get_map_in_range(const struct miniflow *miniflow, uint8_t start,
                           uint8_t end)
@@ -1425,25 +1432,27 @@ miniflow_get_map_in_range(const struct miniflow *miniflow, uint8_t start,
     map = miniflow->map;
 
     /* Clear the bits before 'start'. */
+    //请求从0到start位的bits
     while (start >= MAP_T_BITS) {
-        start -= MAP_T_BITS;
-        ofs += MAP_T_BITS;
-        map.bits[start / MAP_T_BITS] = 0;
+        start -= MAP_T_BITS;//按8字节跳
+        ofs += MAP_T_BITS;//跳过这些字节占用的位
+        map.bits[start / MAP_T_BITS] = 0;//清空
     }
     if (start > 0) {
-        flowmap_clear(&map, ofs, start);
+        flowmap_clear(&map, ofs, start);//清空剩余位数
     }
 
     /* Clear the bits starting at 'end'. */
     if (end < FLOW_U64S) {
         /* flowmap_clear() can handle at most MAP_T_BITS at a time. */
         ovs_assert(FLOW_U64S - end <= MAP_T_BITS);
-        flowmap_clear(&map, end, FLOW_U64S - end);
+        flowmap_clear(&map, end, FLOW_U64S - end);//将end向后的位置清空
     }
     return map;
 }
 
 /* The new subtable will be visible to the readers only after this. */
+//按照mask对应的值创建cls_subtable,并将其加入到subtables_map链中
 static struct cls_subtable *
 insert_subtable(struct classifier *cls, const struct minimask *mask)
 {
@@ -1456,27 +1465,30 @@ insert_subtable(struct classifier *cls, const struct minimask *mask)
 
     subtable = xzalloc(sizeof *subtable + MINIFLOW_VALUES_SIZE(count));
     cmap_init(&subtable->rules);
+    //填充mask
     miniflow_clone(CONST_CAST(struct miniflow *, &subtable->mask.masks),
                    &mask->masks, count);
 
     /* Init indices for segmented lookup, if any. */
     prev = 0;
-    for (i = 0; i < cls->n_flow_segments; i++) {
+    for (i = 0; i < cls->n_flow_segments; i++) {//按照不同段，将mask加入不同的index_maps中
         stage_map = miniflow_get_map_in_range(&mask->masks, prev,
                                               cls->flow_segments[i]);
         /* Add an index if it adds mask bits. */
-        if (!flowmap_is_empty(stage_map)) {
+        if (!flowmap_is_empty(stage_map)) {//如果不为空
             ccmap_init(&subtable->indices[index]);
             *CONST_CAST(struct flowmap *, &subtable->index_maps[index])
-                = stage_map;
+                = stage_map;//填入到index_maps
             index++;
         }
         prev = cls->flow_segments[i];
     }
     /* Map for the final stage. */
+    //记录最后一段
     *CONST_CAST(struct flowmap *, &subtable->index_maps[index])
         = miniflow_get_map_in_range(&mask->masks, prev, FLOW_U64S);
     /* Check if the final stage adds any bits. */
+    //防止最后一段是空的
     if (index > 0) {
         if (flowmap_is_empty(subtable->index_maps[index])) {
             /* Remove the last index, as it has the same fields as the rules
@@ -1500,7 +1512,7 @@ insert_subtable(struct classifier *cls, const struct minimask *mask)
     /* List of rules. */
     rculist_init(&subtable->rules_list);
 
-    cmap_insert(&cls->subtables_map, &subtable->cmap_node, hash);
+    cmap_insert(&cls->subtables_map, &subtable->cmap_node, hash);//将subtable加入
 
     return subtable;
 }
@@ -1552,8 +1564,8 @@ check_tries(struct trie_ctx trie_ctx[CLS_MAX_TRIES], unsigned int n_tries,
             /* On-demand trie lookup. */
             if (!ctx->lookup_done) {
                 memset(&ctx->match_plens, 0, sizeof ctx->match_plens);
-                ctx->maskbits = trie_lookup(ctx->trie, flow, &ctx->match_plens);
-                ctx->lookup_done = true;
+                ctx->maskbits = trie_lookup(ctx->trie, flow, &ctx->match_plens);//查匹配的bits数
+                ctx->lookup_done = true;//已查
             }
             /* Possible to skip the rest of the subtable if subtable's
              * prefix on the field is not included in the lookup result. */
@@ -1594,7 +1606,7 @@ check_tries(struct trie_ctx trie_ctx[CLS_MAX_TRIES], unsigned int n_tries,
  * flow->map and mask->masks.map are the same, and that this version
  * takes the 'wc'. */
 static inline bool
-miniflow_and_mask_matches_flow(const struct miniflow *flow,
+miniflow_and_mask_matches_flow(const struct miniflow *flow,//采用 flow/mask == target/mask？的方式进行检测两者是否相等
                                const struct minimask *mask,
                                const struct flow *target)
 {
@@ -1603,11 +1615,14 @@ miniflow_and_mask_matches_flow(const struct miniflow *flow,
     const uint64_t *target_u64 = (const uint64_t *)target;
     map_t map;
 
+    //沿着mask的每个uint64_t长度进行遍历（相当于将map看起是数组），这个for循环内部的第二个
+    //检查实际上仅是为了给map赋值
     FLOWMAP_FOR_EACH_MAP (map, mask->masks.map) {
         size_t idx;
 
         MAP_FOR_EACH_INDEX (idx, map) {
-            if ((*flowp++ ^ target_u64[idx]) & *maskp++) {
+        	//即是说，flowp与target_u64按位不一样的地方，一定不能在maskp中被描记，如果被标记，则肯定不相等
+            if ((*flowp++ ^ target_u64[idx]) & *maskp++) {//等价与((*maskp & *flowp++) == target_u64[idx] ＆mask);mask++
                 return false;
             }
         }
@@ -1616,19 +1631,20 @@ miniflow_and_mask_matches_flow(const struct miniflow *flow,
     return true;
 }
 
-static inline const struct cls_match *
+static inline const struct cls_match *//按掩码进行与后区配，找到的规则需要在version版本时有效
 find_match(const struct cls_subtable *subtable, ovs_version_t version,
            const struct flow *flow, uint32_t hash)
 {
     const struct cls_match *head, *rule;
 
-    CMAP_FOR_EACH_WITH_HASH (head, cmap_node, hash, &subtable->rules) {
+    CMAP_FOR_EACH_WITH_HASH (head, cmap_node, hash, &subtable->rules) {//遍历rules
         if (OVS_LIKELY(miniflow_and_mask_matches_flow(&head->flow,
                                                       &subtable->mask,
-                                                      flow))) {
+                                                      flow))) {//head规则与flow匹配
             /* Return highest priority rule that is visible. */
+        	//确认这条规则是否有效，是否可返回，如果下面的if进不去，则需要继续录找
             CLS_MATCH_FOR_EACH (rule, head) {
-                if (OVS_LIKELY(cls_match_visible_in_version(rule, version))) {
+                if (OVS_LIKELY(cls_match_visible_in_version(rule, version))) {//只保证此规则可见
                     return rule;
                 }
             }
@@ -1657,7 +1673,7 @@ find_match_wc(const struct cls_subtable *subtable, ovs_version_t version,
     /* Try to finish early by checking fields in segments. */
     for (i = 0; i < subtable->n_indices; i++) {
         if (check_tries(trie_ctx, n_tries, subtable->trie_plen,
-                        subtable->index_maps[i], flow, wc)) {
+                        subtable->index_maps[i], flow, wc)) {//无法在index_maps中命中，说明不存在能规配置的规则
             /* 'wc' bits for the trie field set, now unwildcard the preceding
              * bits used so far. */
             goto no_match;
@@ -1676,14 +1692,14 @@ find_match_wc(const struct cls_subtable *subtable, ovs_version_t version,
     }
     /* Trie check for the final range. */
     if (check_tries(trie_ctx, n_tries, subtable->trie_plen,
-                    subtable->index_maps[i], flow, wc)) {
+                    subtable->index_maps[i], flow, wc)) {//检查最后一个trie，如果未命中，说明不存在
         goto no_match;
     }
     hash = flow_hash_in_minimask_range(flow, &subtable->mask,
                                        subtable->index_maps[i],
                                        &mask_offset, &basis);
-    rule = find_match(subtable, version, flow, hash);
-    if (!rule && subtable->ports_mask_len) {
+    rule = find_match(subtable, version, flow, hash);//直接匹配
+    if (!rule && subtable->ports_mask_len) {//没有查找对应
         /* The final stage had ports, but there was no match.  Instead of
          * unwildcarding all the ports bits, use the ports trie to figure out a
          * smaller set of bits to unwildcard. */
@@ -1731,20 +1747,23 @@ find_equal(const struct cls_subtable *subtable, const struct miniflow *flow,
  * Prefixes are in the network byte order, and the offset 0 corresponds to
  * the most significant bit of the first byte.  The offset can be read as
  * "how many bits to skip from the start of the prefix starting at 'pr'". */
+//返回pr数组指向的数据中的ofs位开始的数据，如果plen要求的数据，在ofs所在索引处完成不了，则
+//补上下一个字节中的数据，如果plen要求的数据，没有当前要的数据多，则直接返回当前多的数据。
 static uint32_t
 raw_get_prefix(const ovs_be32 pr[], unsigned int ofs, unsigned int plen)
 {
     uint32_t prefix;
 
-    pr += ofs / 32; /* Where to start. */
-    ofs %= 32;      /* How many bits to skip at 'pr'. */
+    pr += ofs / 32; /* Where to start. */ //使pr指向数组中具体的一个元素
+    ofs %= 32;      /* How many bits to skip at 'pr'. */ //将ofs规范化第几位
 
+    //考虑按网络序进行编址，0位即为低字节位，我们将pr << ofs是为了使最高位恰好为ofs所在的位（网络序转主机序解决不同平台操作数不一致问题）
     prefix = ntohl(*pr) << ofs; /* Get the first 32 - ofs bits. */
-    if (plen > 32 - ofs) {      /* Need more than we have already? */
-        prefix |= ntohl(*++pr) >> (32 - ofs);
+    if (plen > 32 - ofs) {      /* Need more than we have already? */ //如果plen要求的位数，比当前有效位数多
+        prefix |= ntohl(*++pr) >> (32 - ofs);//在高字节位补上下一个字节中的若于高位
     }
     /* Return with possible unwanted bits at the end. */
-    return prefix;
+    return prefix;//返回数据
 }
 
 /* Return min(TRIE_PREFIX_BITS, plen) bits of the 'prefix', starting at bit
@@ -1752,13 +1771,14 @@ raw_get_prefix(const ovs_be32 pr[], unsigned int ofs, unsigned int plen)
  * corresponds to the most significant bit of the first byte.  The offset can
  * be read as "how many bits to skip from the start of the prefix starting at
  * 'pr'". */
+//取pr数组中自ofs开始长度为plen的数据
 static uint32_t
 trie_get_prefix(const ovs_be32 pr[], unsigned int ofs, unsigned int plen)
 {
-    if (!plen) {
+    if (!plen) {//如果plen为0，则直接生成0
         return 0;
     }
-    if (plen > TRIE_PREFIX_BITS) {
+    if (plen > TRIE_PREFIX_BITS) {//最大为32位
         plen = TRIE_PREFIX_BITS; /* Get at most TRIE_PREFIX_BITS. */
     }
     /* Return with unwanted bits cleared. */
@@ -1767,12 +1787,15 @@ trie_get_prefix(const ovs_be32 pr[], unsigned int ofs, unsigned int plen)
 
 /* Return the number of equal bits in 'n_bits' of 'prefix's MSBs and a 'value'
  * starting at "MSB 0"-based offset 'ofs'. */
+//返回自ofs开始，长度为n_bits位与prefix与value有多少位是相等的。
 static unsigned int
 prefix_equal_bits(uint32_t prefix, unsigned int n_bits, const ovs_be32 value[],
                   unsigned int ofs)
 {
     uint64_t diff = prefix ^ raw_get_prefix(value, ofs, n_bits);
     /* Set the bit after the relevant bits to limit the result. */
+    //取ofs开始长n_bits位，共有多少位被匹配相等，由于raw_get_prefix并没有考虑返回的数据是否恰好为n_bits位，故
+    //我们需要定义出匹配的结尾,unit64_c(1) << (63-...)即为解决此问题
     return raw_clz64(diff << 32 | UINT64_C(1) << (63 - n_bits));
 }
 
@@ -1789,7 +1812,7 @@ trie_prefix_equal_bits(const struct trie_node *node, const ovs_be32 prefix[],
 /* Return the bit at ("MSB 0"-based) offset 'ofs' as an int.  'ofs' can
  * be greater than 31. */
 static unsigned int
-be_get_bit_at(const ovs_be32 value[], unsigned int ofs)
+be_get_bit_at(const ovs_be32 value[], unsigned int ofs)//检查ofs位是0还是1，如果是1返回True,否则False
 {
     return (((const uint8_t *)value)[ofs / 8] >> (7 - ofs % 8)) & 1u;
 }
@@ -1797,34 +1820,34 @@ be_get_bit_at(const ovs_be32 value[], unsigned int ofs)
 /* Return the bit at ("MSB 0"-based) offset 'ofs' as an int.  'ofs' must
  * be between 0 and 31, inclusive. */
 static unsigned int
-get_bit_at(const uint32_t prefix, unsigned int ofs)
+get_bit_at(const uint32_t prefix, unsigned int ofs)//返回prefix在ofs位是‘0’，还是'1'
 {
     return (prefix >> (31 - ofs)) & 1u;
 }
 
 /* Create new branch. */
 static struct trie_node *
-trie_branch_create(const ovs_be32 *prefix, unsigned int ofs, unsigned int plen,
+trie_branch_create(const ovs_be32 *prefix, unsigned int ofs, unsigned int plen,//创建新分支
                    unsigned int n_rules)
 {
     struct trie_node *node = xmalloc(sizeof *node);
 
     node->prefix = trie_get_prefix(prefix, ofs, plen);
 
-    if (plen <= TRIE_PREFIX_BITS) {
+    if (plen <= TRIE_PREFIX_BITS) {//小于32位时的处理
         node->n_bits = plen;
         ovsrcu_set_hidden(&node->edges[0], NULL);
         ovsrcu_set_hidden(&node->edges[1], NULL);
         node->n_rules = n_rules;
-    } else { /* Need intermediate nodes. */
+    } else { /* Need intermediate nodes. */ //大于32位时的处理
         struct trie_node *subnode = trie_branch_create(prefix,
                                                        ofs + TRIE_PREFIX_BITS,
                                                        plen - TRIE_PREFIX_BITS,
-                                                       n_rules);
-        int bit = get_bit_at(subnode->prefix, 0);
-        node->n_bits = TRIE_PREFIX_BITS;
-        ovsrcu_set_hidden(&node->edges[bit], subnode);
-        ovsrcu_set_hidden(&node->edges[!bit], NULL);
+                                                       n_rules);//继续创建子节点
+        int bit = get_bit_at(subnode->prefix, 0);//检查它前缀在第0位是'1'还是'0'
+        node->n_bits = TRIE_PREFIX_BITS;//指明长度
+        ovsrcu_set_hidden(&node->edges[bit], subnode);//添加子节点
+        ovsrcu_set_hidden(&node->edges[!bit], NULL);//赋空
         node->n_rules = 0;
     }
     return node;
@@ -1869,6 +1892,7 @@ trie_is_leaf(const struct trie_node *trie)
         && !ovsrcu_get(struct trie_node *, &trie->edges[1]);
 }
 
+//将wc->masks的be32ofs开始，将n_bits位设置为1,n_bits可以超过31
 static void
 mask_set_prefix_bits(struct flow_wildcards *wc, uint8_t be32ofs,
                      unsigned int n_bits)
@@ -1902,6 +1926,7 @@ mask_prefix_bits_set(const struct flow_wildcards *wc, uint8_t be32ofs,
     return !zeroes; /* All 'n_bits' bits set. */
 }
 
+//通过ofs位置是0还是1，来决定node的的走向是向左还是向右
 static rcu_trie_ptr *
 trie_next_edge(struct trie_node *node, const ovs_be32 value[],
                unsigned int ofs)
@@ -1932,6 +1957,7 @@ be_set_bit_at(ovs_be32 value[], unsigned int ofs)
  * rules.  The caller is responsible for clearing the '*plens' prior to
  * calling this.
  */
+//一个普通的trie树查找过程
 static unsigned int
 trie_lookup_value(const rcu_trie_ptr *trie, const ovs_be32 value[],
                   ovs_be32 plens[], unsigned int n_bits)
@@ -1943,18 +1969,20 @@ trie_lookup_value(const rcu_trie_ptr *trie, const ovs_be32 value[],
     for (; node; prev = node, node = trie_next_node(node, value, match_len)) {
         unsigned int eqbits;
         /* Check if this edge can be followed. */
+        //从match_len开始进行匹配，node->n_bits是匹配长度，node->prefix是匹配标准值
         eqbits = prefix_equal_bits(node->prefix, node->n_bits, value,
                                    match_len);
         match_len += eqbits;
-        if (eqbits < node->n_bits) { /* Mismatch, nothing more to be found. */
+        if (eqbits < node->n_bits) { /* Mismatch, nothing more to be found. */ //相等的位数与node->n_bits的位数不同,说明没有完全匹配
             /* Bit at offset 'match_len' differed. */
-            return match_len + 1; /* Includes the first mismatching bit. */
+            return match_len + 1; /* Includes the first mismatching bit. */ //告知下一个匹配位
         }
         /* Full match, check if rules exist at this prefix length. */
+        //这里为全匹配
         if (node->n_rules > 0) {
-            be_set_bit_at(plens, match_len - 1);
+            be_set_bit_at(plens, match_len - 1);//记录匹配到的位置
         }
-        if (match_len >= n_bits) {
+        if (match_len >= n_bits) {//区配够了(合乎要求的n_bits)
             return n_bits; /* Full prefix. */
         }
     }
@@ -1974,7 +2002,9 @@ trie_lookup(const struct cls_trie *trie, const struct flow *flow,
     /* Check that current flow matches the prerequisites for the trie
      * field.  Some match fields are used for multiple purposes, so we
      * must check that the trie is relevant for this flow. */
-    if (mf_are_prereqs_ok(mf, flow, NULL)) {
+    //在匹配一个流之前，先检查匹配的先决条件是否满足，例如要匹配arp,则要求2层的eth_type必须指明
+    //是以arp协议。
+    if (mf_are_prereqs_ok(mf, flow, NULL)) {//先绝条件通过
         return trie_lookup_value(&trie->root,
                                  &((ovs_be32 *)flow)[mf->flow_be32ofs],
                                  &plens->be32, mf->n_bits);
@@ -2003,7 +2033,7 @@ minimask_get_prefix_len(const struct minimask *minimask,
                 return 0; /* No bits allowed after mask ended. */
             }
         } else {
-            if (~mask & (~mask + 1)) {
+            if (~mask & (~mask + 1)) {//如果连续，这个与关系就是0
                 return 0; /* Mask not contiguous. */
             }
             mask_tz = ctz32(mask);
@@ -2020,18 +2050,20 @@ minimask_get_prefix_len(const struct minimask *minimask,
  * the mask is CIDR, the storage for the flow field exists even if it
  * happened to be zeros.
  */
+//返回mf->flow_be32ofs指向buf的位置
 static const ovs_be32 *
 minimatch_get_prefix(const struct minimatch *match, const struct mf_field *mf)
 {
     size_t u64_ofs = mf->flow_be32ofs / 2;
 
     return (OVS_FORCE const ovs_be32 *)miniflow_get__(match->flow, u64_ofs)
-        + (mf->flow_be32ofs & 1);
+        + (mf->flow_be32ofs & 1);//前面用64位已定义，再加上考虑如果是奇数，则需要再向前跳4位，否则不需要了。
 }
 
 /* Insert rule in to the prefix tree.
  * 'mlen' must be the (non-zero) CIDR prefix length of the 'trie->field' mask
  * in 'rule'. */
+//向trie树添加前缀
 static void
 trie_insert(struct cls_trie *trie, const struct cls_rule *rule, int mlen)
 {
@@ -2039,6 +2071,7 @@ trie_insert(struct cls_trie *trie, const struct cls_rule *rule, int mlen)
                        minimatch_get_prefix(&rule->match, trie->field), mlen);
 }
 
+//插入前缀
 static void
 trie_insert_prefix(rcu_trie_ptr *edge, const ovs_be32 *prefix, int mlen)
 {
@@ -2050,22 +2083,23 @@ trie_insert_prefix(rcu_trie_ptr *edge, const ovs_be32 *prefix, int mlen)
          edge = trie_next_edge(node, prefix, ofs)) {
         unsigned int eqbits = trie_prefix_equal_bits(node, prefix, ofs, mlen);
         ofs += eqbits;
-        if (eqbits < node->n_bits) {
+        if (eqbits < node->n_bits) {//prefix与node没有完全匹配
             /* Mismatch, new node needs to be inserted above. */
-            int old_branch = get_bit_at(node->prefix, eqbits);
+            int old_branch = get_bit_at(node->prefix, eqbits);//获取失配的那一位是‘0’，还是'1'
             struct trie_node *new_parent;
 
+            //创建从ofs位置开始，长度为eqbits的节点，如果ofs且好等于mlen,则其上拥有规则，赋为1
             new_parent = trie_branch_create(prefix, ofs - eqbits, eqbits,
-                                            ofs == mlen ? 1 : 0);
+                                            ofs == mlen ? 1 : 0);//创建分支
             /* Copy the node to modify it. */
             node = trie_node_rcu_realloc(node);
             /* Adjust the new node for its new position in the tree. */
-            node->prefix <<= eqbits;
-            node->n_bits -= eqbits;
-            ovsrcu_set_hidden(&new_parent->edges[old_branch], node);
+            node->prefix <<= eqbits;//减小前缀长度
+            node->n_bits -= eqbits;//减少bits宽度
+            ovsrcu_set_hidden(&new_parent->edges[old_branch], node);//将原节点下移
 
             /* Check if need a new branch for the new rule. */
-            if (ofs < mlen) {
+            if (ofs < mlen) {//如果是分裂，则需要把分裂后的第二片加入
                 ovsrcu_set_hidden(&new_parent->edges[!old_branch],
                                   trie_branch_create(prefix, ofs, mlen - ofs,
                                                      1));
@@ -2075,14 +2109,14 @@ trie_insert_prefix(rcu_trie_ptr *edge, const ovs_be32 *prefix, int mlen)
         }
         /* Full match so far. */
 
-        if (ofs == mlen) {
+        if (ofs == mlen) {//规则计数增加
             /* Full match at the current node, rule needs to be added here. */
             node->n_rules++;
             return;
         }
     }
     /* Must insert a new tree branch for the new rule. */
-    ovsrcu_set(edge, trie_branch_create(prefix, ofs, mlen - ofs, 1));
+    ovsrcu_set(edge, trie_branch_create(prefix, ofs, mlen - ofs, 1));//需要在原有节点后面直接加现在节点，说明我们完全匹配。
 }
 
 /* 'mlen' must be the (non-zero) CIDR prefix length of the 'trie->field' mask

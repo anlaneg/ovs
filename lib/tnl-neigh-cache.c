@@ -43,6 +43,7 @@
 #include "util.h"
 #include "openvswitch/vlog.h"
 
+//实现缓存arp表项
 
 /* In seconds */
 #define NEIGH_ENTRY_DEFAULT_IDLE_TIME  (15 * 60)
@@ -55,7 +56,7 @@ struct tnl_neigh_entry {
     char br_name[IFNAMSIZ];
 };
 
-static struct cmap table = CMAP_INITIALIZER;
+static struct cmap table = CMAP_INITIALIZER;//邻居表缓存
 static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
 
 static uint32_t
@@ -135,7 +136,7 @@ tnl_neigh_set__(const char name[IFNAMSIZ], const struct in6_addr *dst,
     neigh->mac = mac;
     neigh->expires = time_now() + NEIGH_ENTRY_DEFAULT_IDLE_TIME;
     ovs_strlcpy(neigh->br_name, name, sizeof neigh->br_name);
-    cmap_insert(&table, &neigh->cmap_node, tnl_neigh_hash(&neigh->ip));
+    cmap_insert(&table, &neigh->cmap_node, tnl_neigh_hash(&neigh->ip));//加入缓存的arp表项
     ovs_mutex_unlock(&mutex);
 }
 
@@ -147,6 +148,7 @@ tnl_arp_set(const char name[IFNAMSIZ], ovs_be32 dst,
     tnl_neigh_set__(name, &dst6, mac);
 }
 
+//arp snooping
 static int
 tnl_arp_snoop(const struct flow *flow, struct flow_wildcards *wc,
               const char name[IFNAMSIZ])
@@ -161,6 +163,7 @@ tnl_arp_snoop(const struct flow *flow, struct flow_wildcards *wc,
     return 0;
 }
 
+//nd snooping
 static int
 tnl_nd_snoop(const struct flow *flow, struct flow_wildcards *wc,
              const char name[IFNAMSIZ])

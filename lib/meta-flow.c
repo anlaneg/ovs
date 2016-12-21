@@ -369,24 +369,24 @@ mf_is_mask_valid(const struct mf_field *mf, const union mf_value *mask)
  * Sets inspected bits in 'wc', if non-NULL. */
 bool
 mf_are_prereqs_ok(const struct mf_field *mf, const struct flow *flow,
-                  struct flow_wildcards *wc)
+                  struct flow_wildcards *wc)//检查mf->prereqs中先决条件是否匹配
 {
     switch (mf->prereqs) {
     case MFP_NONE:
         return true;
     case MFP_ARP:
         return (flow->dl_type == htons(ETH_TYPE_ARP) ||
-                flow->dl_type == htons(ETH_TYPE_RARP));
+                flow->dl_type == htons(ETH_TYPE_RARP));//arp协议
     case MFP_IPV4:
-        return flow->dl_type == htons(ETH_TYPE_IP);
+        return flow->dl_type == htons(ETH_TYPE_IP);//ipv4协议
     case MFP_IPV6:
-        return flow->dl_type == htons(ETH_TYPE_IPV6);
+        return flow->dl_type == htons(ETH_TYPE_IPV6);//ipv6协议
     case MFP_VLAN_VID:
         return is_vlan(flow, wc);
     case MFP_MPLS:
-        return eth_type_mpls(flow->dl_type);
+        return eth_type_mpls(flow->dl_type);//mpls
     case MFP_IP_ANY:
-        return is_ip_any(flow);
+        return is_ip_any(flow);//不关心ip,但必须是ipv4或ipv6(当前也只有这两个版本）
     case MFP_TCP:
         return is_tcp(flow, wc) && !(flow->nw_frag & FLOW_NW_FRAG_LATER);
     case MFP_UDP:
@@ -394,15 +394,15 @@ mf_are_prereqs_ok(const struct mf_field *mf, const struct flow *flow,
     case MFP_SCTP:
         return is_sctp(flow, wc) && !(flow->nw_frag & FLOW_NW_FRAG_LATER);
     case MFP_ICMPV4:
-        return is_icmpv4(flow, wc);
+        return is_icmpv4(flow, wc);//匹配ipv4再配置icmpv4
     case MFP_ICMPV6:
-        return is_icmpv6(flow, wc);
+        return is_icmpv6(flow, wc);//icmpv6
     case MFP_ND:
-        return is_nd(flow, wc);
+        return is_nd(flow, wc);//先区配icmpv6再匹配通告，还是请求
     case MFP_ND_SOLICIT:
-        return is_nd(flow, wc) && flow->tp_src == htons(ND_NEIGHBOR_SOLICIT);
+        return is_nd(flow, wc) && flow->tp_src == htons(ND_NEIGHBOR_SOLICIT);//领居请求
     case MFP_ND_ADVERT:
-        return is_nd(flow, wc) && flow->tp_src == htons(ND_NEIGHBOR_ADVERT);
+        return is_nd(flow, wc) && flow->tp_src == htons(ND_NEIGHBOR_ADVERT);//邻居通告
     }
 
     OVS_NOT_REACHED();

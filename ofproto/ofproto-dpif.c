@@ -279,7 +279,7 @@ struct ofproto_dpif {
      * process.  */
     struct uuid uuid;
 
-    ATOMIC(ovs_version_t) tables_version;  /* For classifier lookups. */
+    ATOMIC(ovs_version_t) tables_version;  /* For classifier lookups. */ //表版本号
 
     uint64_t dump_seq; /* Last read of udpif_dump_seq(). */
 
@@ -3930,7 +3930,7 @@ rule_dpif_lookup_in_table(struct ofproto_dpif *ofproto, ovs_version_t version,
                           uint8_t table_id, struct flow *flow,
                           struct flow_wildcards *wc)
 {
-    struct classifier *cls = &ofproto->up.tables[table_id].cls;
+    struct classifier *cls = &ofproto->up.tables[table_id].cls;//取出此表对应的分类器
     return rule_dpif_cast(rule_from_cls_rule(classifier_lookup(cls, version,
                                                                flow, wc)));
 }
@@ -3975,6 +3975,7 @@ ofproto_dpif_credit_table_stats(struct ofproto_dpif *ofproto, uint8_t table_id,
  *
  * 'flow' is non-const to allow for temporary modifications during the lookup.
  * Any changes are restored before returning. */
+//从table_id开始查flow表项
 struct rule_dpif *
 rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
                             ovs_version_t version, struct flow *flow,
@@ -3993,17 +3994,18 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
     /* We always unwildcard nw_frag (for IP), so they
      * need not be unwildcarded here. */
     if (flow->nw_frag & FLOW_NW_FRAG_ANY
-        && ofproto->up.frag_handling != OFPUTIL_FRAG_NX_MATCH) {
-        if (ofproto->up.frag_handling == OFPUTIL_FRAG_NORMAL) {
+        && ofproto->up.frag_handling != OFPUTIL_FRAG_NX_MATCH) {//不匹配分片位
+        if (ofproto->up.frag_handling == OFPUTIL_FRAG_NORMAL) {//对分片没有明确说明需要处理
             /* We must pretend that transport ports are unavailable. */
-            flow->tp_src = htons(0);
+            flow->tp_src = htons(0);//由于有分片，故ip向上不能认为是有效的
             flow->tp_dst = htons(0);
         } else {
+        	//还不支持分片重组，所以就一定是丢包了
             /* Must be OFPUTIL_FRAG_DROP (we don't have OFPUTIL_FRAG_REASM).
              * Use the drop_frags_rule (which cannot disappear). */
             rule = ofproto->drop_frags_rule;
             if (stats) {
-                struct oftable *tbl = &ofproto->up.tables[*table_id];
+                struct oftable *tbl = &ofproto->up.tables[*table_id];//选出当前要查找的表
                 unsigned long orig;
 
                 atomic_add_relaxed(&tbl->n_matched, stats->n_packets, &orig);
@@ -4016,7 +4018,7 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
                 entry->table.id = *table_id;
                 entry->table.match = true;
             }
-            return rule;
+            return rule;//直接返回drop分片包规则
         }
     }
 
@@ -4031,12 +4033,13 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
 
     miss_config = OFPUTIL_TABLE_MISS_CONTINUE;
 
+    //遍历表进行查询
     for (next_id = *table_id;
          next_id < ofproto->up.n_tables;
          next_id++, next_id += (next_id == TBL_INTERNAL))
     {
         *table_id = next_id;
-        rule = rule_dpif_lookup_in_table(ofproto, version, next_id, flow, wc);
+        rule = rule_dpif_lookup_in_table(ofproto, version, next_id, flow, wc);//在next_id表中查询
         if (stats) {
             struct oftable *tbl = &ofproto->up.tables[next_id];
             unsigned long orig;
@@ -4052,10 +4055,10 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
             entry->table.id = next_id;
             entry->table.match = (rule != NULL);
         }
-        if (rule) {
+        if (rule) {//查找规则了
             goto out;   /* Match. */
         }
-        if (honor_table_miss) {
+        if (honor_table_miss) {//检查是否需要继续匹配
             miss_config = ofproto_table_get_miss_config(&ofproto->up,
                                                         *table_id);
             if (miss_config == OFPUTIL_TABLE_MISS_CONTINUE) {
@@ -4065,7 +4068,7 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
         break;
     }
     /* Miss. */
-    rule = ofproto->no_packet_in_rule;
+    rule = ofproto->no_packet_in_rule;//没有匹配上时，执行规则
     if (may_packet_in) {
         if (miss_config == OFPUTIL_TABLE_MISS_CONTINUE
             || miss_config == OFPUTIL_TABLE_MISS_CONTROLLER) {

@@ -321,6 +321,7 @@ flowmap_equal(struct flowmap a, struct flowmap b)
     return !memcmp(&a, &b, sizeof a);
 }
 
+//检查fm中对应的idx位是否为1，如果为1返回True,否则返回False
 static inline bool
 flowmap_is_set(const struct flowmap *fm, size_t idx)
 {
@@ -653,6 +654,8 @@ miniflow_values_get__(const uint64_t *values, map_t map, size_t idx)
 
 /* This can be used when it is known that 'u64_idx' is set in
  * the map of 'mf'. */
+//到Idx为至，一共有多少个'1'比特，就将指针在mf的buf向上向头偏移多少个8字节，
+//相当于获取idx指向的buf位置
 static inline const uint64_t *
 miniflow_get__(const struct miniflow *mf, size_t idx)
 {
@@ -762,17 +765,21 @@ minimask_is_catchall(const struct minimask *mask)
 
 /* Returns the uint64_t that would be at byte offset '8 * u64_ofs' if 'flow'
  * were expanded into a "struct flow". */
+//如果u64_ofs指定的bit位被设置了，就返回其对应的数据（uint64_t)，否则返回0
 static inline uint64_t miniflow_get(const struct miniflow *flow,
                                     unsigned int u64_ofs)
 {
+	//如果u64_ofs指定的bit位被设置了，就返回其对应的数据，否则返回0
     return MINIFLOW_IN_MAP(flow, u64_ofs) ? *miniflow_get__(flow, u64_ofs) : 0;
 }
 
+//如果u32_ofs指定的bit位被设置了，就返回其对应的数据（uint32_t)，否则返回0
 static inline uint32_t miniflow_get_u32(const struct miniflow *flow,
                                         unsigned int u32_ofs)
 {
     uint64_t value = miniflow_get(flow, u32_ofs / 2);
 
+    //不同类型的cpu需要不同处理
 #if WORDS_BIGENDIAN
     return (u32_ofs & 1) ? value : value >> 32;
 #else
@@ -780,6 +787,7 @@ static inline uint32_t miniflow_get_u32(const struct miniflow *flow,
 #endif
 }
 
+//如果u32_ofs指定的bit位被设置了，就返回其对应的数据（ovs_be32)，否则返回0
 static inline ovs_be32 miniflow_get_be32(const struct miniflow *flow,
                                          unsigned int be32_ofs)
 {
@@ -797,12 +805,14 @@ miniflow_get_vid(const struct miniflow *flow)
 
 /* Returns the uint32_t that would be at byte offset '4 * u32_ofs' if 'mask'
  * were expanded into a "struct flow_wildcards". */
+//如果u32_ofs指定的bit位被设置了，就返回其对应的数据（uint32_t)，否则返回0
 static inline uint32_t
 minimask_get_u32(const struct minimask *mask, unsigned int u32_ofs)
 {
     return miniflow_get_u32(&mask->masks, u32_ofs);
 }
 
+//如果be32_ofs指定的bit位被设置了，就返回其对应的数据（ovs_be32)，否则返回0
 static inline ovs_be32
 minimask_get_be32(const struct minimask *mask, unsigned int be32_ofs)
 {
@@ -904,7 +914,7 @@ static inline bool is_vlan(const struct flow *flow,
     return (flow->vlan_tci & htons(VLAN_CFI)) != 0;
 }
 
-static inline bool is_ip_any(const struct flow *flow)
+static inline bool is_ip_any(const struct flow *flow)//检查链路层是否为ipv4或者ipv6
 {
     return dl_type_is_ip_any(flow->dl_type);
 }

@@ -171,7 +171,7 @@ static inline void pvector_cursor_lookahead(const struct pvector_cursor *,
 
 static inline struct pvector_cursor
 pvector_cursor_init(const struct pvector *pvec,
-                    size_t n_ahead, size_t obj_size)
+                    size_t n_ahead, size_t obj_size)//针对pvec初始化一个cursor
 {
     const struct pvector_impl *impl;
     struct pvector_cursor cursor;
@@ -184,13 +184,15 @@ pvector_cursor_init(const struct pvector *pvec,
     cursor.vector = impl->vector;
     cursor.entry_idx = -1;
 
-    for (size_t i = 0; i < n_ahead; i++) {
+    for (size_t i = 0; i < n_ahead; i++) {//预取代码
         /* Prefetch the first objects. */
         pvector_cursor_lookahead(&cursor, i, obj_size);
     }
     return cursor;
 }
 
+//返回下一个元素，如果没有下一个元素，或者下一个元素的优先级小于lowest_priority，则返回NULL
+//n_ahead是提前预取多少个元素，obj_size辅助其说明每个元素占多少个字节
 static inline void *pvector_cursor_next(struct pvector_cursor *cursor,
                                         int lowest_priority,
                                         size_t n_ahead, size_t obj_size)
@@ -205,6 +207,7 @@ static inline void *pvector_cursor_next(struct pvector_cursor *cursor,
     return NULL;
 }
 
+//遍历时的，内存预取
 static inline void pvector_cursor_lookahead(const struct pvector_cursor *cursor,
                                             int n, size_t size)
 {
@@ -213,11 +216,13 @@ static inline void pvector_cursor_lookahead(const struct pvector_cursor *cursor,
     }
 }
 
+//返回pvector大小
 static inline size_t pvector_count(const struct pvector *pvec)
 {
     return ovsrcu_get(struct pvector_impl *, &pvec->impl)->size;
 }
 
+//是否为空
 static inline bool pvector_is_empty(const struct pvector *pvec)
 {
     return pvector_count(pvec) == 0;

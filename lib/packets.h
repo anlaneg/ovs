@@ -1028,7 +1028,7 @@ ipv6_multicast_to_ethernet(struct eth_addr *eth, const struct in6_addr *ip6)
     eth->ea[5] = ip6->s6_addr[15];
 }
 
-static inline bool dl_type_is_ip_any(ovs_be16 dl_type)
+static inline bool dl_type_is_ip_any(ovs_be16 dl_type)//必须为ipv4/ipv6两种中的一个
 {
     return dl_type == htons(ETH_TYPE_IP)
         || dl_type == htons(ETH_TYPE_IPV6);

@@ -1935,8 +1935,8 @@ struct mf_field {
      *     - "mpls_tc"    is 1 byte but only 3 bits.
      *     - "mpls_bos"   is 1 byte but only 1 bit.
      */
-    unsigned int n_bytes;       /* Width of the field in bytes. */
-    unsigned int n_bits;        /* Number of significant bits in field. */
+    unsigned int n_bytes;       /* Width of the field in bytes. */ //需要匹配多少字节
+    unsigned int n_bits;        /* Number of significant bits in field. */ //需要匹配多少位数
     bool variable_len;          /* Length is variable, if so width is max. */
 
     /* Properties. */
@@ -1961,6 +1961,7 @@ struct mf_field {
     uint32_t usable_protocols_cidr;    /* Matching a CIDR mask in field. */
     uint32_t usable_protocols_bitwise; /* Matching arbitrary bits in field. */
 
+    //用来指出flow表中的索引（按int）
     int flow_be32ofs;  /* Field's be32 offset in "struct flow", if prefix tree
                         * lookup is supported for the field, or -1. */
 };

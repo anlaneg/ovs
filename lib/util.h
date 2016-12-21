@@ -185,7 +185,7 @@ void ignore(bool x OVS_UNUSED);
 /* Returns the number of trailing 0-bits in 'n'.  Undefined if 'n' == 0. */
 #if __GNUC__ >= 4
 static inline int
-raw_ctz(uint64_t n)
+raw_ctz(uint64_t n)//返回左起第一个非0比特的位数
 {
     /* With GCC 4.7 on 32-bit x86, if a 32-bit integer is passed as 'n', using
      * a plain __builtin_ctzll() here always generates an out-of-line function
@@ -196,7 +196,7 @@ raw_ctz(uint64_t n)
 }
 
 static inline int
-raw_clz64(uint64_t n)
+raw_clz64(uint64_t n)//返回左起第一个1之前0的位数
 {
     return __builtin_clzll(n);
 }
@@ -243,6 +243,7 @@ int raw_clz64(uint64_t n);
 #endif
 
 /* Returns the number of trailing 0-bits in 'n', or 32 if 'n' is 0. */
+//返回右起0的数目
 static inline int
 ctz32(uint32_t n)
 {
@@ -292,7 +293,7 @@ log_2_ceil(uint64_t n)
  * Returns the number of 1-bits in 'x', between 0 and 64 inclusive. */
 #if UINTPTR_MAX == UINT64_MAX
 static inline unsigned int
-count_1bits(uint64_t x)
+count_1bits(uint64_t x)//返回x中比特值为'1'的位的数目
 {
 #if __GNUC__ >= 4 && __POPCNT__
     return __builtin_popcountll(x);

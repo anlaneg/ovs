@@ -1220,6 +1220,7 @@ xlate_lookup(const struct dpif_backer *backer, const struct flow *flow,
     return 0;
 }
 
+//通过ofproto查找对应的xbridge
 static struct xbridge *
 xbridge_lookup(struct xlate_cfg *xcfg, const struct ofproto_dpif *ofproto)
 {
@@ -1233,7 +1234,7 @@ xbridge_lookup(struct xlate_cfg *xcfg, const struct ofproto_dpif *ofproto)
     xbridges = &xcfg->xbridges;
 
     HMAP_FOR_EACH_IN_BUCKET (xbridge, hmap_node, hash_pointer(ofproto, 0),
-                             xbridges) {
+                             xbridges) {//遍历所有xbridges
         if (xbridge->ofproto == ofproto) {
             return xbridge;
         }
@@ -2834,6 +2835,7 @@ build_tunnel_send(struct xlate_ctx *ctx, const struct xport *xport,
     return 0;
 }
 
+//将填充odp_actions
 static void
 xlate_commit_actions(struct xlate_ctx *ctx)
 {
@@ -2927,7 +2929,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         }
     }
 
-    if (xport->peer) {
+    if (xport->peer) {//如果有对端
         const struct xport *peer = xport->peer;
         struct flow old_flow = ctx->xin->flow;
         struct flow_tnl old_flow_tnl_wc = ctx->wc->masks.tunnel;
@@ -3071,7 +3073,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         }
     }
 
-    if (xport->is_tunnel) {
+    if (xport->is_tunnel) {//是tunnel口
         struct in6_addr dst;
          /* Save tunnel metadata so that changes made due to
           * the Logical (tunnel) Port are not visible for any further
@@ -3112,7 +3114,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     }
 
     if (out_port != ODPP_NONE) {
-        xlate_commit_actions(ctx);
+        xlate_commit_actions(ctx);//提交actions
 
         if (xr) {
             struct ovs_action_hash *act_hash;
@@ -3261,6 +3263,7 @@ xlate_table_action(struct xlate_ctx *ctx, ofp_port_t in_port, uint8_t table_id,
 
         ctx->table_id = table_id;
 
+        //从old_table_id到table_id之间的表跳过不查找
         rule = rule_dpif_lookup_from_table(ctx->xbridge->ofproto,
                                            ctx->xin->tables_version,
                                            &ctx->xin->flow, ctx->wc,
@@ -3284,10 +3287,10 @@ xlate_table_action(struct xlate_ctx *ctx, ofp_port_t in_port, uint8_t table_id,
                 entry->rule = rule;
                 rule_dpif_ref(rule);
             }
-            xlate_recursively(ctx, rule, table_id <= old_table_id);
+            xlate_recursively(ctx, rule, table_id <= old_table_id);//递归处理当前查到的action
         }
 
-        ctx->table_id = old_table_id;
+        ctx->table_id = old_table_id;//还原旧的table_id，防止后面还有动作
         return;
     }
 }
@@ -4716,6 +4719,7 @@ recirc_for_mpls(const struct ofpact *a, struct xlate_ctx *ctx)
     ctx_trigger_freeze(ctx);
 }
 
+//遍历转换actions
 static void
 do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
                  struct xlate_ctx *ctx)
@@ -4724,12 +4728,12 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
     struct flow *flow = &ctx->xin->flow;
     const struct ofpact *a;
 
-    if (ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {
+    if (ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {//检查是否需要缓存arp表项
         tnl_neigh_snoop(flow, wc, ctx->xbridge->name);
     }
     /* dl_type already in the mask, not set below. */
 
-    OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
+    OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {//遍历actions集合
         struct ofpact_controller *controller;
         const struct ofpact_metadata *metadata;
         const struct ofpact_set_field *set_field;
@@ -4751,8 +4755,11 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             break;
         }
 
+        //除去ofpact_output其它基本是对ctx中的flow进行变更，等到执行到ofpact_output
+        //时比较base与flow的差异，讲其合并起来即可。但对于goto_table,需要前往指定表继续查询
+        //等它再输出时，再合并即可。
         switch (a->type) {
-        case OFPACT_OUTPUT:
+        case OFPACT_OUTPUT://output操作（output时再做action,其它操作不需要保存）
             xlate_output_action(ctx, ofpact_get_OUTPUT(a)->port,
                                 ofpact_get_OUTPUT(a)->max_len, true);
             break;
@@ -4794,7 +4801,7 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             if (flow->vlan_tci & htons(VLAN_CFI) ||
                 ofpact_get_SET_VLAN_VID(a)->push_vlan_if_needed) {
                 flow->vlan_tci &= ~htons(VLAN_VID_MASK);
-                flow->vlan_tci |= (htons(ofpact_get_SET_VLAN_VID(a)->vlan_vid)
+                flow->vlan_tci |= (htons(ofpact_get_SET_VLAN_VID(a)->vlan_vid)//设置vlan id
                                    | htons(VLAN_CFI));
             }
             break;
@@ -5044,12 +5051,12 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             /* Not implemented yet. */
             break;
 
-        case OFPACT_GOTO_TABLE: {
-            struct ofpact_goto_table *ogt = ofpact_get_GOTO_TABLE(a);
+        case OFPACT_GOTO_TABLE: {//表切换
+            struct ofpact_goto_table *ogt = ofpact_get_GOTO_TABLE(a);//要切到哪个表？
 
             ovs_assert(ctx->table_id < ogt->table_id);
 
-            xlate_table_action(ctx, ctx->xin->flow.in_port.ofp_port,
+            xlate_table_action(ctx, ctx->xin->flow.in_port.ofp_port,//递归调用再匹配，再执行
                                ogt->table_id, true, true);
             break;
         }
@@ -5265,10 +5272,10 @@ xlate_wc_init(struct xlate_ctx *ctx)
     flow_wildcards_init_catchall(ctx->wc);
 
     /* Some fields we consider to always be examined. */
-    WC_MASK_FIELD(ctx->wc, in_port);
-    WC_MASK_FIELD(ctx->wc, dl_type);
+    WC_MASK_FIELD(ctx->wc, in_port);//标记in_port存在
+    WC_MASK_FIELD(ctx->wc, dl_type);//标记链路层类型
     if (is_ip_any(&ctx->xin->flow)) {
-        WC_MASK_FIELD_MASK(ctx->wc, nw_frag, FLOW_NW_FRAG_MASK);
+        WC_MASK_FIELD_MASK(ctx->wc, nw_frag, FLOW_NW_FRAG_MASK);//设置分片处理标记
     }
 
     if (ctx->xbridge->support.odp.recirc) {
@@ -5278,10 +5285,10 @@ xlate_wc_init(struct xlate_ctx *ctx)
     }
 
     if (ctx->xbridge->netflow) {
-        netflow_mask_wc(&ctx->xin->flow, ctx->wc);
+        netflow_mask_wc(&ctx->xin->flow, ctx->wc);//按flow设置mask为严格匹配
     }
 
-    tnl_wc_init(&ctx->xin->flow, ctx->wc);
+    tnl_wc_init(&ctx->xin->flow, ctx->wc);//设置隧道是严格匹配
 }
 
 static void
@@ -5517,7 +5524,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         ctx.rule = rule_dpif_lookup_from_table(
             ctx.xbridge->ofproto, ctx.xin->tables_version, flow, ctx.wc,
             ctx.xin->resubmit_stats, &ctx.table_id,
-            flow->in_port.ofp_port, true, true, ctx.xin->xcache);
+            flow->in_port.ofp_port, true, true, ctx.xin->xcache);//实现规则查询
         if (ctx.xin->resubmit_stats) {
             rule_dpif_credit_stats(ctx.rule, ctx.xin->resubmit_stats);
         }
@@ -5583,12 +5590,12 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
             const struct ofpact *ofpacts;
             size_t ofpacts_len;
 
-            if (xin->ofpacts) {
+            if (xin->ofpacts) {//如果有action
                 ofpacts = xin->ofpacts;
                 ofpacts_len = xin->ofpacts_len;
-            } else if (ctx.rule) {
+            } else if (ctx.rule) {//如果命中了规则
                 const struct rule_actions *actions
-                    = rule_dpif_get_actions(ctx.rule);
+                    = rule_dpif_get_actions(ctx.rule);//取出对应actions
                 ofpacts = actions->ofpacts;
                 ofpacts_len = actions->ofpacts_len;
                 ctx.rule_cookie = rule_dpif_get_flow_cookie(ctx.rule);
@@ -5596,8 +5603,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
                 OVS_NOT_REACHED();
             }
 
-            mirror_ingress_packet(&ctx);
-            do_xlate_actions(ofpacts, ofpacts_len, &ctx);
+            mirror_ingress_packet(&ctx);//mirror处理
+            do_xlate_actions(ofpacts, ofpacts_len, &ctx);//执行action转换（完成在ctx中的动作合并）
             if (ctx.error) {
                 goto exit;
             }

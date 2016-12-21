@@ -30,6 +30,7 @@ struct cls_subtable {
     struct cmap_node cmap_node;    /* Within classifier's 'subtables_map'. */
 
     /* These fields are only used by writers. */
+    //子表中存储的规则的最大优先级
     int max_priority;              /* Max priority of any rule in subtable. */
     unsigned int max_count;        /* Count of max_priority rules. */
 
@@ -40,17 +41,18 @@ struct cls_subtable {
      * following data structures. */
 
     /* These fields are accessed by readers who care about wildcarding. */
-    const uint8_t n_indices;                   /* How many indices to use. */
-    const struct flowmap index_maps[CLS_MAX_INDICES + 1]; /* Stage maps. */
+    const uint8_t n_indices;                   /* How many indices to use. */ //指出index_maps数据的有效长度
+    const struct flowmap index_maps[CLS_MAX_INDICES + 1]; /* Stage maps. */ //将mask分成不同的段，每个段存在一个下标里，下标从0开始，用于计算hash
     unsigned int trie_plen[CLS_MAX_TRIES];  /* Trie prefix length in 'mask'
-                                             * (runtime configurable). */
-    const int ports_mask_len;
+                                             * (runtime configurable). */ //由于有多棵trie树，这个时trie树可匹配的长度
+    const int ports_mask_len;//port 的mask长度
     struct ccmap indices[CLS_MAX_INDICES];  /* Staged lookup indices. */
+    //用来存储port对应的trie树
     rcu_trie_ptr ports_trie;                /* NULL if none. */
 
     /* These fields are accessed by all readers. */
-    struct cmap rules;                      /* Contains 'cls_match'es. */
-    const struct minimask mask;             /* Wildcards for fields. */
+    struct cmap rules;                      /* Contains 'cls_match'es. */ //规则链，对应的是struct cls_match类型
+    const struct minimask mask;             /* Wildcards for fields. */ //子表对应的mask
     /* 'mask' must be the last field. */
 };
 
@@ -96,12 +98,14 @@ get_cls_match(const struct cls_rule *rule)
 /* Must be RCU postponed. */
 void cls_match_free_cb(struct cls_match *);
 
+//设置remove 指定规则时的版本号
 static inline void
 cls_match_set_remove_version(struct cls_match *rule, ovs_version_t version)
 {
-    versions_set_remove_version(&rule->versions, version);
+    versions_set_remove_version(&rule->versions, version);//设置remove_version
 }
 
+//检查rule规则在version版本时，是否有效
 static inline bool
 cls_match_visible_in_version(const struct cls_match *rule,
                              ovs_version_t version)
@@ -109,6 +113,7 @@ cls_match_visible_in_version(const struct cls_match *rule,
     return versions_visible_in_version(&rule->versions, version);
 }
 
+//检查rule规则是否已被标记为删除
 static inline bool
 cls_match_is_eventually_invisible(const struct cls_match *rule)
 {
@@ -193,10 +198,10 @@ cls_match_remove(struct cls_match *prev, struct cls_match *rule)
 
 /* A longest-prefix match tree. */
 struct trie_node {
-    uint32_t prefix;           /* Prefix bits for this node, MSB first. */
-    uint8_t  n_bits;           /* Never zero, except for the root node. */
-    unsigned int n_rules;      /* Number of rules that have this prefix. */
-    rcu_trie_ptr edges[2];     /* Both NULL if leaf. */
+    uint32_t prefix;           /* Prefix bits for this node, MSB first. */ //前缀，高位优先
+    uint8_t  n_bits;           /* Never zero, except for the root node. */ //前缀长度
+    unsigned int n_rules;      /* Number of rules that have this prefix. */ //拥有的规则数
+    rcu_trie_ptr edges[2];     /* Both NULL if leaf. */ //左还是右，叶子节点为空
 };
 
 /* Max bits per node.  Must fit in struct trie_node's 'prefix'.
