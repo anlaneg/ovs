@@ -222,7 +222,7 @@ struct dp_netdev {
      * Any lookup into 'ports' or any access to the dp_netdev_ports found
      * through 'ports' requires taking 'port_mutex'. */
     struct ovs_mutex port_mutex;
-    struct hmap ports;
+    struct hmap ports;//保存创建的port
     struct seq *port_seq;       /* Incremented whenever a port changes. */
 
     /* Protects access to ofproto-dpif-upcall interface during revalidator
@@ -906,7 +906,7 @@ dpif_netdev_enumerate(struct sset *all_dps,
 static bool
 dpif_netdev_class_is_dummy(const struct dpif_class *class)
 {
-    return class != &dpif_netdev_class;
+    return class != &dpif_netdev_class;//如果class不是底层物理口，则它是抽象的口
 }
 
 static const char *
@@ -1218,6 +1218,7 @@ hash_port_no(odp_port_t port_no)
     return hash_int(odp_to_u32(port_no), 0);
 }
 
+//创建port
 static int
 port_create(const char *devname, const char *type,
             odp_port_t port_no, struct dp_netdev_port **portp)
@@ -1324,6 +1325,7 @@ out:
     return error;
 }
 
+//创建指定接口，并进行进入收发包流程
 static int
 do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
             odp_port_t port_no)
@@ -1337,7 +1339,7 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
         return EEXIST;
     }
 
-    error = port_create(devname, type, port_no, &port);
+    error = port_create(devname, type, port_no, &port);//创建接口
     if (error) {
         return error;
     }
@@ -1346,7 +1348,7 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
         int numa_id = netdev_get_numa_id(port->netdev);
 
         ovs_assert(ovs_numa_numa_id_is_valid(numa_id));
-        dp_netdev_set_pmds_on_numa(dp, numa_id);
+        dp_netdev_set_pmds_on_numa(dp, numa_id);//转至进行netdev收发包处理（启线程来做）
     }
 
     dp_netdev_add_port_to_pmds(dp, port);
@@ -2872,13 +2874,13 @@ dp_netdev_process_rxq_port(struct dp_netdev_pmd_thread *pmd,
 
     dp_packet_batch_init(&batch);
     cycles_count_start(pmd);
-    error = netdev_rxq_recv(rxq, &batch);
+    error = netdev_rxq_recv(rxq, &batch);//收包
     cycles_count_end(pmd, PMD_CYCLES_POLLING);
     if (!error) {
         *recirc_depth_get() = 0;
 
         cycles_count_start(pmd);
-        dp_netdev_input(pmd, &batch, port->port_no);
+        dp_netdev_input(pmd, &batch, port->port_no);//报文处理入口
         cycles_count_end(pmd, PMD_CYCLES_PROCESSING);
     } else if (error != EAGAIN && error != EOPNOTSUPP) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
@@ -3129,7 +3131,7 @@ pmd_thread_main(void *f_)
     dpdk_set_lcore_id(pmd->core_id);
     poll_cnt = pmd_load_queues_and_ports(pmd, &poll_list);
 reload:
-    emc_cache_init(&pmd->flow_cache);
+    emc_cache_init(&pmd->flow_cache);//emc cache初始化
 
     /* List port/core affinity */
     for (i = 0; i < poll_cnt; i++) {
@@ -3138,12 +3140,12 @@ reload:
                 netdev_rxq_get_queue_id(poll_list[i].rx));
     }
 
-    for (;;) {
-        for (i = 0; i < poll_cnt; i++) {
+    for (;;) {//主循环，处理报文
+        for (i = 0; i < poll_cnt; i++) {//收包
             dp_netdev_process_rxq_port(pmd, poll_list[i].port, poll_list[i].rx);
         }
 
-        if (lc++ > 1024) {
+        if (lc++ > 1024) {//做些维护
             unsigned int seq;
 
             lc = 0;
@@ -3738,7 +3740,7 @@ dp_netdev_set_pmds_on_numa(struct dp_netdev *dp, int numa_id)
                 dp_netdev_add_port_tx_to_pmd(pmd, port);
             }
 
-            pmd->thread = ovs_thread_create("pmd", pmd_thread_main, pmd);
+            pmd->thread = ovs_thread_create("pmd", pmd_thread_main, pmd);//创建线程执行polling mode
         }
         VLOG_INFO("Created %d pmd threads on numa node %d", can_have, numa_id);
     }
@@ -4222,13 +4224,14 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
     odp_port_t in_port;
 
     n_batches = 0;//填充到多少个了
+    //进行l1查询
     newcnt = emc_processing(pmd, packets, keys, batches, &n_batches,
                             md_is_valid, port_no);
-    if (OVS_UNLIKELY(newcnt)) {//有未命中的
+    if (OVS_UNLIKELY(newcnt)) {//l1未命中的
         packets->count = newcnt;//更改待处理的packet计数
         /* Get ingress port from first packet's metadata. */
         in_port = packets->packets[0]->md.in_port.odp_port;
-        fast_path_processing(pmd, packets, keys, batches, &n_batches, in_port, now);
+        fast_path_processing(pmd, packets, keys, batches, &n_batches, in_port, now);//执行l2,l3查询
     }
 
     /* All the flow batches need to be reset before any call to
@@ -4245,10 +4248,11 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
     }
 
     for (i = 0; i < n_batches; i++) {
-        packet_batch_per_flow_execute(&batches[i], pmd, now);//动作处理
+        packet_batch_per_flow_execute(&batches[i], pmd, now);//统一进行动作处理
     }
 }
 
+//对刚收上来的报进行处理，此时原数据是无效的，传false
 static void
 dp_netdev_input(struct dp_netdev_pmd_thread *pmd,
                 struct dp_packet_batch *packets,
@@ -4257,6 +4261,7 @@ dp_netdev_input(struct dp_netdev_pmd_thread *pmd,
     dp_netdev_input__(pmd, packets, false, port_no);
 }
 
+//处理过程中，报文需要回炉重查，此时元数据是有效的，传true
 static void
 dp_netdev_recirculate(struct dp_netdev_pmd_thread *pmd,
                       struct dp_packet_batch *packets)
@@ -4711,6 +4716,7 @@ dpif_netdev_ct_flush(struct dpif *dpif, const uint16_t *zone)
     return conntrack_flush(&dp->conntrack, zone);
 }
 
+//处理最低层的物理口抽象
 const struct dpif_class dpif_netdev_class = {
     "netdev",
     dpif_netdev_init,

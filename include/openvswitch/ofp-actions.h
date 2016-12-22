@@ -820,11 +820,11 @@ struct ofpact_multipath {
     struct ofpact ofpact;
 
     /* What fields to hash and how. */
-    enum nx_hash_fields fields;
-    uint16_t basis;             /* Universal hash parameter. */
+    enum nx_hash_fields fields;//采用哪种hash算法
+    uint16_t basis;             /* Universal hash parameter. */ //hash的base参数，常用于防攻击
 
     /* Multipath link choice algorithm to apply to hash value. */
-    enum nx_mp_algorithm algorithm;
+    enum nx_mp_algorithm algorithm;//采用哪种算法
     uint16_t max_link;          /* Number of output links, minus 1. */
     uint32_t arg;               /* Algorithm-specific argument. */
 

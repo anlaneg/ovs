@@ -3129,6 +3129,7 @@ netdev_dpdk_vhost_client_reconfigure(struct netdev *netdev)
     NULL,                       /* rxq_drain */               \
 }
 
+//dpdk网络处理
 static const struct netdev_class dpdk_class =
     NETDEV_DPDK_CLASS(
         "dpdk",
@@ -3161,6 +3162,7 @@ static const struct netdev_class dpdk_ring_class =
         netdev_dpdk_reconfigure,
         netdev_dpdk_rxq_recv);
 
+//XXX 实现vm与dpdk之间的对接
 static const struct netdev_class dpdk_vhost_class =
     NETDEV_DPDK_CLASS(
         "dpdkvhostuser",

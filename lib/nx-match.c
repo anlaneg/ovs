@@ -1750,7 +1750,7 @@ nxm_execute_stack_pop(const struct ofpact_stack *pop,
     src_value = nx_stack_pop(stack);
 
     /* Only pop if stack is not empty. Otherwise, give warning. */
-    if (src_value) {
+    if (src_value) {//栈不为空，处理
         union mf_subvalue mask_value;
 
         memset(&mask_value, 0xff, sizeof mask_value);

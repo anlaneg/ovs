@@ -81,7 +81,7 @@ static struct ovs_mutex netdev_class_mutex OVS_ACQ_BEFORE(netdev_mutex)
     = OVS_MUTEX_INITIALIZER;
 
 /* Contains 'struct netdev_registered_class'es. */
-static struct cmap netdev_classes = CMAP_INITIALIZER;
+static struct cmap netdev_classes = CMAP_INITIALIZER;//全局变量，用于串连所有注册的netdev class
 
 struct netdev_registered_class {
     struct cmap_node cmap_node; /* In 'netdev_classes', by class->type. */
@@ -183,6 +183,7 @@ netdev_wait(void)
     }
 }
 
+//给定名称，返回对应的已注册netdev
 static struct netdev_registered_class *
 netdev_lookup_class(const char *type)
 {
@@ -205,7 +206,7 @@ netdev_register_provider(const struct netdev_class *new_class)
     int error;
 
     ovs_mutex_lock(&netdev_class_mutex);
-    if (netdev_lookup_class(new_class->type)) {
+    if (netdev_lookup_class(new_class->type)) {//已存在
         VLOG_WARN("attempted to register duplicate netdev provider: %s",
                    new_class->type);
         error = EEXIST;
@@ -339,7 +340,7 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)
     if (!netdev) {
         struct netdev_registered_class *rc;
 
-        rc = netdev_lookup_class(type && type[0] ? type : "system");
+        rc = netdev_lookup_class(type && type[0] ? type : "system");//如果type未指定，采用system
         if (rc && ovs_refcount_try_ref_rcu(&rc->refcnt)) {
             netdev = rc->class->alloc();
             if (netdev) {

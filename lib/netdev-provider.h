@@ -237,7 +237,7 @@ struct netdev_class {
      *
      * This function may be set to null if a network device class needs no
      * initialization at registration time. */
-    int (*init)(void);
+    int (*init)(void);//注册时做初始化用
 
     /* Performs periodic work needed by netdevs of this class.  May be null if
      * no periodic work is necessary.

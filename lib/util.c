@@ -1191,7 +1191,7 @@ bitwise_copy(const void *src_, unsigned int src_len, unsigned int src_ofs,
     dst += dst_len - (dst_ofs / 8 + 1);
     dst_ofs %= 8;
 
-    if (src_ofs == 0 && dst_ofs == 0) {
+    if (src_ofs == 0 && dst_ofs == 0) {//直接copy字节即可
         unsigned int n_bytes = n_bits / 8;
         if (n_bytes) {
             dst -= n_bytes - 1;

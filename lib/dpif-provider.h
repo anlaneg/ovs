@@ -99,7 +99,7 @@ struct dpif_class {
      *
      * This function may be set to null if a datapath class needs no
      * initialization at registration time. */
-    int (*init)(void);
+    int (*init)(void);//注册时进行初始化
 
     /* Enumerates the names of all known created datapaths (of class
      * 'dpif_class'), if possible, into 'all_dps'.  The caller has already

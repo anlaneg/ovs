@@ -6328,6 +6328,7 @@ ofpact_copy(struct ofpbuf *out, const struct ofpact *a)
 }
 
 /* Copies the last ofpact whose type is 'filter' from 'in' to 'out'. */
+//copy最后一个指定类型的内容到out
 static bool
 ofpacts_copy_last(struct ofpbuf *out, const struct ofpbuf *in,
                   enum ofpact_type filter)
@@ -6399,6 +6400,7 @@ ofpacts_execute_action_set(struct ofpbuf *action_list,
      * If neither OFPACT_GROUP nor OFPACT_OUTPUT is present, then we can drop
      * all the actions because there's no point in modifying a packet that will
      * not be sent anywhere. */
+    //检查是否为一组无用的action,见上面注释
     if (!ofpacts_copy_last(action_list, action_set, OFPACT_GROUP) &&
         !ofpacts_copy_last(action_list, action_set, OFPACT_OUTPUT) &&
         !ofpacts_copy_last(action_list, action_set, OFPACT_RESUBMIT) &&

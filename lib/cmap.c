@@ -121,7 +121,7 @@ COVERAGE_DEFINE(cmap_shrink);
 #define CMAP_ENTRY_SIZE (4 + (UINTPTR_MAX == UINT32_MAX ? 4 : 8))
 
 /* Number of entries per bucket: 7 on 32-bit, 5 on 64-bit. */
-#define CMAP_K ((CACHE_LINE_SIZE - 4) / CMAP_ENTRY_SIZE)
+#define CMAP_K ((CACHE_LINE_SIZE - 4) / CMAP_ENTRY_SIZE) //减4是减去counter
 
 /* Pad to make a bucket a full cache line in size: 4 on 32-bit, 0 on 64-bit. */
 #define CMAP_PADDING ((CACHE_LINE_SIZE - 4) - (CMAP_K * CMAP_ENTRY_SIZE))
@@ -163,15 +163,21 @@ BUILD_ASSERT_DECL(sizeof(struct cmap_bucket) == CACHE_LINE_SIZE);
  * means cmap will have a 40% load factor after shrink. */
 #define CMAP_MIN_LOAD ((uint32_t) (UINT32_MAX * .20))
 
+//每个hash桶是一个cache line,里面可以存放固定格式的数据
+//在存放一个元素时，会计算出两个hash,也就是说，这个元素可能在在两个位置中的存在
+//hash桶的冲突链是采用hash来组装的，但桶是有限个，所以在插入时，会出现桶满的情况
+//此时需要考虑位置移动，由于每个元素有两个位置可能存放，故递归的查到一个可以移动的元素（它两个位置中的一个位置是空的）
+//并将换位置，然后递归回来，完成当前元素的移动。（所以元素的直观上看，插入会比较麻烦）
+//查询，删除比较简单,查询时需要在两个位置检查，删除时，可能需要在hash冲突链上删除元素。
 /* The implementation of a concurrent hash map. */
 struct cmap_impl {
     unsigned int n;             /* Number of in-use elements. */
-    unsigned int max_n;         /* Max elements before enlarging. */
-    unsigned int min_n;         /* Min elements before shrinking. */
-    uint32_t mask;              /* Number of 'buckets', minus one. */
-    uint32_t basis;             /* Basis for rehashing client's hash values. */
-    uint8_t pad[CACHE_LINE_SIZE - 4 * 5]; /* Pad to end of cache line. */
-    struct cmap_bucket buckets[1];
+    unsigned int max_n;         /* Max elements before enlarging. */ //需要扩展的下限
+    unsigned int min_n;         /* Min elements before shrinking. */   //需要缩发的上限
+    uint32_t mask;              /* Number of 'buckets', minus one. */ //桶大小
+    uint32_t basis;             /* Basis for rehashing client's hash values. */ //随机值，用于相同大小时，解决淘汰问题。（让老天给个机会）
+    uint8_t pad[CACHE_LINE_SIZE - 4 * 5]; /* Pad to end of cache line. */ //防止cache冲刷
+    struct cmap_bucket buckets[1];//桶
 };
 BUILD_ASSERT_DECL(sizeof(struct cmap_impl) == CACHE_LINE_SIZE * 2);
 
@@ -229,12 +235,12 @@ cmap_impl_create(uint32_t mask)
 
     /* There are 'mask + 1' buckets but struct cmap_impl has one bucket built
      * in, so we only need to add space for the extra 'mask' buckets. */
-    impl = xzalloc_cacheline(sizeof *impl + mask * sizeof *impl->buckets);
+    impl = xzalloc_cacheline(sizeof *impl + mask * sizeof *impl->buckets);//申请一块内存
     impl->n = 0;
     impl->max_n = calc_max_n(mask);
     impl->min_n = calc_min_n(mask);
     impl->mask = mask;
-    impl->basis = random_uint32();
+    impl->basis = random_uint32();//随机值，那么每个表都不一样
 
     return impl;
 }
@@ -520,7 +526,7 @@ cmap_find_empty_slot_protected(const struct cmap_bucket *b)
 
 static void
 cmap_set_bucket(struct cmap_bucket *b, int i,
-                struct cmap_node *node, uint32_t hash)
+                struct cmap_node *node, uint32_t hash)//设置hash不冲突的
 {
     uint32_t c;
 
@@ -541,7 +547,7 @@ cmap_insert_dup(struct cmap_node *new_node, uint32_t hash,
     int i;
 
     for (i = 0; i < CMAP_K; i++) {
-        if (b->hashes[i] == hash) {
+        if (b->hashes[i] == hash) {//处于同一个冲突链
             struct cmap_node *node = cmap_node_next_protected(&b->nodes[i]);
 
             if (node) {
@@ -558,15 +564,16 @@ cmap_insert_dup(struct cmap_node *new_node, uint32_t hash,
                  * 'new_node', then splice 'node' to the end of that
                  * chain. */
                 p = new_node;
+                //找这个链里的最后一个（p指向它）
                 for (;;) {
                     struct cmap_node *next = cmap_node_next_protected(p);
 
-                    if (!next) {
+                    if (!next) {//如果为空，说明到结尾
                         break;
                     }
                     p = next;
                 }
-                ovsrcu_set_hidden(&p->next, node);
+                ovsrcu_set_hidden(&p->next, node);//把旧的桶头放在链的最后面
             } else {
                 /* The hash value is there from some previous insertion, but
                  * the associated node has been removed.  We're not really
@@ -578,7 +585,7 @@ cmap_insert_dup(struct cmap_node *new_node, uint32_t hash,
              * form of cmap_set_bucket() that doesn't update the counter since
              * we're only touching one field and in a way that doesn't change
              * the bucket's meaning for readers. */
-            ovsrcu_set(&b->nodes[i].next, new_node);
+            ovsrcu_set(&b->nodes[i].next, new_node);//设置桶里的指针
 
             return true;
         }
@@ -595,7 +602,7 @@ cmap_insert_bucket(struct cmap_node *node, uint32_t hash,
     int i;
 
     for (i = 0; i < CMAP_K; i++) {
-        if (!cmap_node_next_protected(&b->nodes[i])) {
+        if (!cmap_node_next_protected(&b->nodes[i])) {//是否为空格子
             cmap_set_bucket(b, i, node, hash);
             return true;
         }
@@ -610,8 +617,8 @@ other_bucket_protected(struct cmap_impl *impl, struct cmap_bucket *b, int slot)
 {
     uint32_t h1 = rehash(impl, b->hashes[slot]);
     uint32_t h2 = other_hash(h1);
-    uint32_t b_idx = b - impl->buckets;
-    uint32_t other_h = (h1 & impl->mask) == b_idx ? h2 : h1;
+    uint32_t b_idx = b - impl->buckets;//第几个桶
+    uint32_t other_h = (h1 & impl->mask) == b_idx ? h2 : h1;//如果h1恰好指向b,取h2值，否则取h1
 
     return &impl->buckets[other_h & impl->mask];
 }
@@ -685,15 +692,16 @@ cmap_insert_bfs(struct cmap_impl *impl, struct cmap_node *new_node,
         int i;
 
         for (i = 0; i < CMAP_K; i++) {
-            struct cmap_bucket *next = other_bucket_protected(impl, this, i);
+            struct cmap_bucket *next = other_bucket_protected(impl, this, i);//尝试着得到this中的第i个没有使用的那个bucket
             int j;
 
-            if (this == next) {
+            if (this == next) {//this,i上一次选择是一样的，继续
                 continue;
             }
 
-            j = cmap_find_empty_slot_protected(next);
-            if (j >= 0) {
+            j = cmap_find_empty_slot_protected(next);//看this,i现在选择next的话，能不能放进去
+            if (j >= 0) {//可以移走
+            	//this上的第i个可以移动到next上的第j个位置
                 /* We've found a path along which we can rearrange the hash
                  * table:  Start at path->start, follow all the slots in
                  * path->slots[], then follow slot 'i', then the bucket you
@@ -739,11 +747,12 @@ cmap_insert_bfs(struct cmap_impl *impl, struct cmap_node *new_node,
             }
 
             if (path->n < MAX_DEPTH && head < MAX_QUEUE) {
-                struct cmap_path *new_path = &queue[head++];
+            	//将备选的放入队列
+                struct cmap_path *new_path = &queue[head++];//取一个空闲空间
 
                 *new_path = *path;
                 new_path->end = next;
-                new_path->slots[new_path->n++] = i;
+                new_path->slots[new_path->n++] = i;//指明这个节点下如果失配，应从哪个i开始
             }
         }
     }
@@ -758,14 +767,15 @@ cmap_insert_bfs(struct cmap_impl *impl, struct cmap_node *new_node,
 static bool
 cmap_try_insert(struct cmap_impl *impl, struct cmap_node *node, uint32_t hash)
 {
+	//重算两个hash,定位到两个桶
     uint32_t h1 = rehash(impl, hash);
     uint32_t h2 = other_hash(h1);
     struct cmap_bucket *b1 = &impl->buckets[h1 & impl->mask];
     struct cmap_bucket *b2 = &impl->buckets[h2 & impl->mask];
 
-    return (OVS_UNLIKELY(cmap_insert_dup(node, hash, b1) ||
+    return (OVS_UNLIKELY(cmap_insert_dup(node, hash, b1) ||//插入与自已hash相同的链里
                          cmap_insert_dup(node, hash, b2)) ||
-            OVS_LIKELY(cmap_insert_bucket(node, hash, b1) ||
+            OVS_LIKELY(cmap_insert_bucket(node, hash, b1) ||//插入到未用的格子里
                        cmap_insert_bucket(node, hash, b2)) ||
             cmap_insert_bfs(impl, node, hash, b1, b2));
 }
@@ -851,7 +861,7 @@ cmap_replace(struct cmap *cmap, struct cmap_node *old_node,
     ovs_assert(ok);
 
     if (!new_node) {
-        impl->n--;
+        impl->n--;//计数减少
         if (OVS_UNLIKELY(impl->n < impl->min_n)) {
             COVERAGE_INC(cmap_shrink);
             impl = cmap_rehash(cmap, impl->mask >> 1);
@@ -890,7 +900,7 @@ cmap_rehash(struct cmap *cmap, uint32_t mask)
     new = cmap_impl_create(mask);
     ovs_assert(old->n < new->max_n);
 
-    while (!cmap_try_rehash(old, new)) {
+    while (!cmap_try_rehash(old, new)) {//尝试着hash,但搞不定，之前全部扔掉，重来个随机值
         memset(new->buckets, 0, (mask + 1) * sizeof *new->buckets);
         new->basis = random_uint32();
     }

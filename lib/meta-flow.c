@@ -1058,7 +1058,7 @@ mf_mask_field_masked(const struct mf_field *mf, const union mf_value *mask,
     for (size_t i = 0; i < mf->n_bytes; i++) {
         mask_value.b[i] |= mask->b[i];
     }
-    mf_set_flow_value(mf, &mask_value, &wc->masks);
+    mf_set_flow_value(mf, &mask_value, &wc->masks);//设置某一字段的值
 }
 
 /* Unwildcard 'wc' member field described by 'mf'.  The caller is
@@ -1126,7 +1126,7 @@ void
 mf_set_flow_value(const struct mf_field *mf,
                   const union mf_value *value, struct flow *flow)
 {
-    switch (mf->id) {
+    switch (mf->id) {//按类型修改flow具体字段的值
     case MFF_DP_HASH:
         flow->dp_hash = ntohl(value->be32);
         break;
@@ -2573,7 +2573,7 @@ mf_read_subfield(const struct mf_subfield *sf, const struct flow *flow,
 {
     union mf_value value;
 
-    mf_get_value(sf->field, flow, &value);
+    mf_get_value(sf->field, flow, &value);//读取指定字段的值
 
     memset(x, 0, sizeof *x);
     bitwise_copy(&value, sf->field->n_bytes, sf->ofs,
