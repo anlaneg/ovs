@@ -339,7 +339,7 @@ out:
 bool
 tnl_process_ecn(struct flow *flow)
 {
-    if (!tnl_port_should_receive(flow)) {
+    if (!tnl_port_should_receive(flow)) {//如果不是tunnel报文，则返回true
         return true;
     }
 

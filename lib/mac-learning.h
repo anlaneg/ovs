@@ -100,6 +100,7 @@ struct mac_learning;
 
 /* A MAC learning table entry.
  * Guarded by owning 'mac_learning''s rwlock. */
+//学习到的fdb表
 struct mac_entry {
     struct hmap_node hmap_node; /* Node in a mac_learning hmap. */
     time_t expires;             /* Expiration time. */
@@ -150,10 +151,10 @@ static inline bool mac_entry_is_grat_arp_locked(const struct mac_entry *mac)
 
 /* MAC learning table. */
 struct mac_learning {
-    struct hmap table;          /* Learning table. */
+    struct hmap table;          /* Learning table. */ //fdb表
     struct ovs_list lrus OVS_GUARDED; /* In-use entries, LRU at front. */
     uint32_t secret;            /* Secret for randomizing hash table. */
-    unsigned long *flood_vlans; /* Bitmap of learning disabled VLANs. */
+    unsigned long *flood_vlans; /* Bitmap of learning disabled VLANs. */ //用于开启是否学习某vlan
     unsigned int idle_time;     /* Max age before deleting an entry. */
     size_t max_entries;         /* Max number of learned MACs. */
     struct ovs_refcount ref_cnt;

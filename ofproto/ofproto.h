@@ -372,21 +372,21 @@ int ofproto_port_set_rstp(struct ofproto *, ofp_port_t ofp_port,
 enum port_vlan_mode {
     /* This port is an access port.  'vlan' is the VLAN ID.  'trunks' is
      * ignored. */
-    PORT_VLAN_ACCESS,
+    PORT_VLAN_ACCESS,//access口
 
     /* This port is a trunk.  'trunks' is the set of trunks. 'vlan' is
      * ignored. */
-    PORT_VLAN_TRUNK,
+    PORT_VLAN_TRUNK,//属于turnk口，负责一组vlan,被trunks保存
 
     /* Untagged incoming packets are part of 'vlan', as are incoming packets
      * tagged with 'vlan'.  Outgoing packets tagged with 'vlan' stay tagged.
      * Other VLANs in 'trunks' are trunked. */
-    PORT_VLAN_NATIVE_TAGGED,
+    PORT_VLAN_NATIVE_TAGGED,//进来时没有tag的为vlan,当然vlan标记的也能进来，但vlan出去的需要加tag
 
     /* Untagged incoming packets are part of 'vlan', as are incoming packets
      * tagged with 'vlan'.  Outgoing packets tagged with 'vlan' are untagged.
      * Other VLANs in 'trunks' are trunked. */
-    PORT_VLAN_NATIVE_UNTAGGED
+    PORT_VLAN_NATIVE_UNTAGGED//与上面不同的是，出去时不需要加tag
 };
 
 /* Configuration of bundles. */

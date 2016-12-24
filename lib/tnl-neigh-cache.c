@@ -159,7 +159,7 @@ tnl_arp_snoop(const struct flow *flow, struct flow_wildcards *wc,
         return EINVAL;
     }
 
-    tnl_arp_set(name, FLOW_WC_GET_AND_MASK_WC(flow, wc, nw_src), flow->arp_sha);
+    tnl_arp_set(name, FLOW_WC_GET_AND_MASK_WC(flow, wc, nw_src), flow->arp_sha);//添加ip地址，mac地址
     return 0;
 }
 
@@ -194,7 +194,7 @@ tnl_neigh_snoop(const struct flow *flow, struct flow_wildcards *wc,
                 const char name[IFNAMSIZ])
 {
     int res;
-    res = tnl_arp_snoop(flow, wc, name);
+    res = tnl_arp_snoop(flow, wc, name);//先尝试arp snooping
     if (res != EINVAL) {
         return res;
     }

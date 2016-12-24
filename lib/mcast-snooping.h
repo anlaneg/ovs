@@ -104,19 +104,19 @@ struct mcast_port_bundle {
 /* Multicast snooping table. */
 struct mcast_snooping {
     /* Snooping/learning table. */
-    struct hmap table;
+    struct hmap table;//snooping表
 
     /* Contains struct mcast_group, least recently used at the front,
      * most recently used at the back. */
-    struct ovs_list group_lru OVS_GUARDED;
+    struct ovs_list group_lru OVS_GUARDED;//加入组播组表（它们在hmap上已存在）
 
     /* Contains struct mcast_mrouter_bundle, least recently used at the
      * front, most recently used at the back. */
-    struct ovs_list mrouter_lru OVS_GUARDED;
+    struct ovs_list mrouter_lru OVS_GUARDED;//串连路由侧端口
 
     /* Contains struct mcast_port_bundle to be flooded with multicast
      * packets in no special order. */
-    struct ovs_list fport_list OVS_GUARDED;
+    struct ovs_list fport_list OVS_GUARDED;//这些口需要flood,不需要参与学习
 
     /* Contains struct mcast_port_bundle to forward Reports in
      * no special order. */

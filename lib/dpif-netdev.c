@@ -4068,8 +4068,9 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet,
      * we'll send the packet up twice. */
     packet_batch_init_packet(&b, packet);
     dp_netdev_execute_actions(pmd, &b, true, &match.flow,
-                              actions->data, actions->size, now);//执行动作
+                              actions->data, actions->size, now);//执行动作（执行的是actions中的动作）
 
+    //如果put_actions存在，则加put_actions,否则使用actions
     add_actions = put_actions->size ? put_actions : actions;
     if (OVS_LIKELY(error != ENOSPC)) {//说明成功执行了（前面对有错误，但错误不是ENOSPC的已处理）
         struct dp_netdev_flow *netdev_flow;
@@ -4559,7 +4560,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         }
         break;
 
-    case OVS_ACTION_ATTR_RECIRC:
+    case OVS_ACTION_ATTR_RECIRC://规则要求跳表
         if (*depth < MAX_RECIRC_DEPTH) {
             struct dp_packet_batch recirc_pkts;
             int i;

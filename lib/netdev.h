@@ -72,7 +72,7 @@ struct sset;
 struct ovs_action_push_tnl;
 
 /* Configuration specific to tunnels. */
-struct netdev_tunnel_config {
+struct netdev_tunnel_config {//tunnel配置结构体
     bool in_key_present;
     bool in_key_flow;
     ovs_be64 in_key;
@@ -81,7 +81,7 @@ struct netdev_tunnel_config {
     bool out_key_flow;
     ovs_be64 out_key;
 
-    ovs_be16 dst_port;
+    ovs_be16 dst_port;//使用的目的地址
 
     bool ip_src_flow;
     bool ip_dst_flow;
@@ -90,14 +90,14 @@ struct netdev_tunnel_config {
 
     uint32_t exts;
 
-    uint8_t ttl;
+    uint8_t ttl;//ttl设置
     bool ttl_inherit;
 
     uint8_t tos;
     bool tos_inherit;
 
     bool csum;
-    bool dont_fragment;
+    bool dont_fragment;//是否分片
 };
 
 void netdev_run(void);

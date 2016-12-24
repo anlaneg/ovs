@@ -46,7 +46,7 @@ struct xlate_out {
 
 struct xlate_in {
     struct ofproto_dpif *ofproto;
-    ovs_version_t        tables_version;   /* Lookup in this version. */
+    ovs_version_t        tables_version;   /* Lookup in this version. */ //要查的表的版本
 
     /* Flow to which the OpenFlow actions apply.  xlate_actions() will modify
      * this flow when actions change header fields. */
@@ -72,10 +72,10 @@ struct xlate_in {
 
     /* The rule initiating translation or NULL. If both 'rule' and 'ofpacts'
      * are NULL, xlate_actions() will do the initial rule lookup itself. */
-    struct rule_dpif *rule;
+    struct rule_dpif *rule;//规则
 
     /* The actions to translate.  If 'rule' is not NULL, these may be NULL. */
-    const struct ofpact *ofpacts;
+    const struct ofpact *ofpacts;//需要转换的规则
     size_t ofpacts_len;
 
     /* Union of the set of TCP flags seen so far in this flow.  (Used only by

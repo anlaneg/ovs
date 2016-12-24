@@ -57,7 +57,7 @@ struct seq_thread {
 
 static struct ovs_mutex seq_mutex = OVS_MUTEX_INITIALIZER;
 
-static uint64_t seq_next OVS_GUARDED_BY(seq_mutex) = 1;
+static uint64_t seq_next OVS_GUARDED_BY(seq_mutex) = 1;//用于产生序列
 
 static pthread_key_t seq_thread_key;
 
@@ -135,7 +135,7 @@ seq_change_protected(struct seq *seq)
 /* Increments 'seq''s sequence number, waking up any threads that are waiting
  * on 'seq'. */
 void
-seq_change(struct seq *seq)
+seq_change(struct seq *seq)//变更seq序列
     OVS_EXCLUDED(seq_mutex)
 {
     ovs_mutex_lock(&seq_mutex);
@@ -149,7 +149,7 @@ seq_change(struct seq *seq)
  * when an object changes, even without an ability to lock the object.  See
  * Usage in seq.h for details. */
 uint64_t
-seq_read_protected(const struct seq *seq)
+seq_read_protected(const struct seq *seq)//返回序列号
     OVS_REQUIRES(seq_mutex)
 {
     return seq->value;

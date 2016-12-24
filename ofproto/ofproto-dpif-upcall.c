@@ -1089,6 +1089,7 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
     struct dpif_flow_stats stats;
     struct xlate_in xin;
 
+    //填充stats
     stats.n_packets = 1;
     stats.n_bytes = dp_packet_size(upcall->packet);
     stats.used = time_msec();
@@ -1100,7 +1101,7 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
                   stats.tcp_flags, upcall->packet, wc, odp_actions);
 
     if (upcall->type == DPIF_UC_MISS) {
-        xin.resubmit_stats = &stats;
+        xin.resubmit_stats = &stats;//设置状态
 
         if (xin.frozen_state) {
             /* We may install a datapath flow only if we get a reference to the
@@ -1119,7 +1120,7 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
          * with pushing its stats eventually. */
     }
 
-    upcall->dump_seq = seq_read(udpif->dump_seq);
+    upcall->dump_seq = seq_read(udpif->dump_seq);//取序列
     upcall->reval_seq = seq_read(udpif->reval_seq);
 
     xlate_actions(&xin, &upcall->xout);//实现action转换
@@ -1133,14 +1134,16 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
 
     upcall->xout_initialized = true;
 
+    //非0情况下，用odp_actions->data填充upcall->put_actions
     if (!upcall->xout.slow) {
         ofpbuf_use_const(&upcall->put_actions,
-                         odp_actions->data, odp_actions->size);
+                         odp_actions->data, odp_actions->size);//使put_actions指向odp_actions->data,即填充put_actions
     } else {
+    	//慢速处理,upcall->xout.slow非0的情况，见slow处理
         /* upcall->put_actions already initialized by upcall_receive(). */
         compose_slow_path(udpif, &upcall->xout, upcall->flow,
                           upcall->flow->in_port.odp_port,
-                          &upcall->put_actions);
+                          &upcall->put_actions);//会设置put_actions
     }
 
     /* This function is also called for slow-pathed flows.  As we are only
@@ -1226,7 +1229,7 @@ upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufi
 
     if (upcall.xout.slow && put_actions) {
         ofpbuf_put(put_actions, upcall.put_actions.data,
-                   upcall.put_actions.size);//将upcall.put_actions.data中的存入
+                   upcall.put_actions.size);//将upcall.put_actions.data中的存入put_actions
     }
 
     if (OVS_UNLIKELY(!megaflow && wc)) {

@@ -276,7 +276,7 @@ mac_learning_set_max_entries(struct mac_learning *ml, size_t max_entries)
 }
 
 static bool
-is_learning_vlan(const struct mac_learning *ml, uint16_t vlan)
+is_learning_vlan(const struct mac_learning *ml, uint16_t vlan)//检查指定vlan是否被学习
 {
     return !ml->flood_vlans || !bitmap_is_set(ml->flood_vlans, vlan);
 }
@@ -286,7 +286,7 @@ is_learning_vlan(const struct mac_learning *ml, uint16_t vlan)
  * 'vlan' is configured on 'ml' to flood all packets. */
 bool
 mac_learning_may_learn(const struct mac_learning *ml,
-                       const struct eth_addr src_mac, uint16_t vlan)
+                       const struct eth_addr src_mac, uint16_t vlan)//检查是否可学习
 {
     return ml && is_learning_vlan(ml, vlan) && !eth_addr_is_multicast(src_mac);
 }
@@ -355,12 +355,12 @@ is_mac_learning_update_needed(const struct mac_learning *ml,
 {
     struct mac_entry *mac;
 
-    if (!mac_learning_may_learn(ml, src, vlan)) {
+    if (!mac_learning_may_learn(ml, src, vlan)) {//如果不能学（比如vlan禁止学，mac是组播等），就不学
         return false;
     }
 
     mac = mac_learning_lookup(ml, src, vlan);
-    if (!mac || mac_entry_age(ml, mac)) {
+    if (!mac || mac_entry_age(ml, mac)) {//没有查到对应的表项，或者已到期
         return true;
     }
 
@@ -375,7 +375,7 @@ is_mac_learning_update_needed(const struct mac_learning *ml,
         }
     }
 
-    return mac_entry_get_port(ml, mac) != in_port /* ofbundle */;
+    return mac_entry_get_port(ml, mac) != in_port /* ofbundle */;//如果与原来的入接口相同，就没有必要再学习
 }
 
 /* Updates MAC learning table 'ml' given that a packet matching 'src' was
@@ -433,6 +433,7 @@ update_learning_table__(struct mac_learning *ml, struct eth_addr src,
  * 'is_bond' is 'true'.
  *
  * Returns 'true' if 'ml' was updated, 'false' otherwise. */
+//更新mac表
 bool
 mac_learning_update(struct mac_learning *ml, struct eth_addr src,
                     int vlan, bool is_gratuitous_arp, bool is_bond,
@@ -443,9 +444,10 @@ mac_learning_update(struct mac_learning *ml, struct eth_addr src,
     bool updated = false;
 
     /* Don't learn the OFPP_NONE port. */
-    if (in_port != NULL) {
+    if (in_port != NULL) {//in_port不能为空
         /* First try the common case: no change to MAC learning table. */
         ovs_rwlock_rdlock(&ml->rwlock);
+        //检查是否有必要学习
         need_update = is_mac_learning_update_needed(ml, src, vlan,
                                                     is_gratuitous_arp, is_bond,
                                                     in_port);
@@ -454,6 +456,7 @@ mac_learning_update(struct mac_learning *ml, struct eth_addr src,
         if (need_update) {
             /* Slow path: MAC learning table might need an update. */
             ovs_rwlock_wrlock(&ml->rwlock);
+            //更新mac表
             updated = update_learning_table__(ml, src, vlan, is_gratuitous_arp,
                                               is_bond, in_port);
             ovs_rwlock_unlock(&ml->rwlock);
@@ -464,15 +467,16 @@ mac_learning_update(struct mac_learning *ml, struct eth_addr src,
 
 /* Looks up MAC 'dst' for VLAN 'vlan' in 'ml' and returns the associated MAC
  * learning entry, if any. */
+//mac表查询
 struct mac_entry *
 mac_learning_lookup(const struct mac_learning *ml,
                     const struct eth_addr dst, uint16_t vlan)
 {
-    if (eth_addr_is_multicast(dst)) {
+    if (eth_addr_is_multicast(dst)) {//组播，广播不学习
         /* No tag because the treatment of multicast destinations never
          * changes. */
         return NULL;
-    } else if (!is_learning_vlan(ml, vlan)) {
+    } else if (!is_learning_vlan(ml, vlan)) {//没有学习这个vlan
         /* We don't tag this property.  The set of learning VLANs changes so
          * rarely that we revalidate every flow when it changes. */
         return NULL;

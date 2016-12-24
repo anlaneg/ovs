@@ -438,6 +438,8 @@ mcast_snooping_add_group4(struct mcast_snooping *ms, ovs_be32 ip4,
     return mcast_snooping_add_group(ms, &addr, vlan, port);
 }
 
+//看这个函数有助于理解igmpv3那个无敌复杂的报文意义，目前我还不完全清楚
+//有空再看。
 int
 mcast_snooping_add_report(struct mcast_snooping *ms,
                           const struct dp_packet *p,
@@ -666,7 +668,7 @@ mcast_snooping_add_mrouter(struct mcast_snooping *ms, uint16_t vlan,
     }
 
     mrouter->expires = time_now() + MCAST_MROUTER_PORT_IDLE_TIME;
-    ovs_list_push_back(&ms->mrouter_lru, &mrouter->mrouter_node);
+    ovs_list_push_back(&ms->mrouter_lru, &mrouter->mrouter_node);//加入
     return ms->need_revalidate;
 }
 

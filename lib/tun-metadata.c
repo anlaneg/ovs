@@ -82,27 +82,27 @@ tun_key_type(uint32_t key)
 /* Returns a newly allocated tun_table.  If 'old_map' is nonnull then the new
  * tun_table is a deep copy of the old one. */
 struct tun_table *
-tun_metadata_alloc(const struct tun_table *old_map)
+tun_metadata_alloc(const struct tun_table *old_map)//创建tunnel元数据表
 {
     struct tun_table *new_map;
 
     new_map = xzalloc(sizeof *new_map);
 
-    if (old_map) {
+    if (old_map) {//如果存在旧表
         struct tun_meta_entry *entry;
 
-        *new_map = *old_map;
-        hmap_init(&new_map->key_hmap);
+        *new_map = *old_map;//copy它的数据
+        hmap_init(&new_map->key_hmap);//丢弃刚才的key_hmap复制
 
-        HMAP_FOR_EACH (entry, node, &old_map->key_hmap) {
+        HMAP_FOR_EACH (entry, node, &old_map->key_hmap) {//遍历旧的key_hmap
             struct tun_meta_entry *new_entry;
             struct tun_metadata_loc_chain *chain;
 
-            new_entry = &new_map->entries[entry - old_map->entries];
-            hmap_insert(&new_map->key_hmap, &new_entry->node, entry->node.hash);
+            new_entry = &new_map->entries[entry - old_map->entries];//相当于实体表
+            hmap_insert(&new_map->key_hmap, &new_entry->node, entry->node.hash);//加入哈希
 
             chain = &new_entry->loc.c;
-            while (chain->next) {
+            while (chain->next) {//copy一份链
                 chain->next = xmemdup(chain->next, sizeof *chain->next);
                 chain = chain->next;
             }

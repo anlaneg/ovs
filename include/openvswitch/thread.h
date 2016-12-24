@@ -125,7 +125,7 @@ bool ovsthread_once_start__(struct ovsthread_once *once)
  * 'once'.  In this case, the call will not return until after
  * ovsthread_once_done() has been called. */
 static inline bool
-ovsthread_once_start(struct ovsthread_once *once)
+ovsthread_once_start(struct ovsthread_once *once)//返回False,如果已执行过
 {
     /* We may be reading 'done' at the same time as the first thread
      * is writing on it, or we can be using a stale copy of it.  The

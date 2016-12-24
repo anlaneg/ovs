@@ -38,7 +38,7 @@ struct netflow_options {
 
 #define NF_OUT_FLOOD OFP_PORT_C(UINT16_MAX)
 #define NF_OUT_MULTI OFP_PORT_C(UINT16_MAX - 1)
-#define NF_OUT_DROP  OFP_PORT_C(UINT16_MAX - 2)
+#define NF_OUT_DROP  OFP_PORT_C(UINT16_MAX - 2) //丢弃
 
 struct netflow *netflow_create(void);
 struct netflow *netflow_ref(const struct netflow *);

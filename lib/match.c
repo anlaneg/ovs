@@ -56,9 +56,9 @@ match_wc_init(struct match *match, const struct flow *flow)
 void
 match_init_catchall(struct match *match)
 {
-    memset(&match->flow, 0, sizeof match->flow);
-    flow_wildcards_init_catchall(&match->wc);
-    memset(&match->tun_md, 0, sizeof match->tun_md);
+    memset(&match->flow, 0, sizeof match->flow);//全清0
+    flow_wildcards_init_catchall(&match->wc);//mask全清0
+    memset(&match->tun_md, 0, sizeof match->tun_md);//隧道全清0
 }
 
 /* For each bit or field wildcarded in 'match', sets the corresponding bit or

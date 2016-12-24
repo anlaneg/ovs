@@ -1212,7 +1212,7 @@ struct ofputil_bucket {
                                  * bucket is live. Only required for fast
                                  * failover groups. */
     uint32_t bucket_id;         /* Bucket Id used to identify bucket*/
-    struct ofpact *ofpacts;     /* Series of "struct ofpact"s. */
+    struct ofpact *ofpacts;     /* Series of "struct ofpact"s. */ //一系统动作
     size_t ofpacts_len;         /* Length of ofpacts, in bytes. */
 
     struct bucket_counter stats;

@@ -86,7 +86,7 @@ bitmap_free(unsigned long *bitmap)
 }
 
 static inline bool
-bitmap_is_set(const unsigned long *bitmap, size_t offset)
+bitmap_is_set(const unsigned long *bitmap, size_t offset)//检查offset位是否被置为1
 {
     return (*bitmap_unit__(bitmap, offset) & bitmap_bit__(offset)) != 0;
 }

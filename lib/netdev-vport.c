@@ -184,7 +184,7 @@ netdev_vport_alloc(void)
 }
 
 int
-netdev_vport_construct(struct netdev *netdev_)
+netdev_vport_construct(struct netdev *netdev_)//构造虚拟接口
 {
     struct netdev_vport *dev = netdev_vport_cast(netdev_);
     const char *type = netdev_get_type(netdev_);
@@ -193,6 +193,7 @@ netdev_vport_construct(struct netdev *netdev_)
     eth_addr_random(&dev->etheraddr);
 
     /* Add a default destination port for tunnel ports if none specified. */
+    //设置这些隧道协议的目的端口
     if (!strcmp(type, "geneve")) {
         dev->tnl_cfg.dst_port = htons(GENEVE_DST_PORT);
     } else if (!strcmp(type, "vxlan")) {
@@ -203,8 +204,8 @@ netdev_vport_construct(struct netdev *netdev_)
         dev->tnl_cfg.dst_port = htons(STT_DST_PORT);
     }
 
-    dev->tnl_cfg.dont_fragment = true;
-    dev->tnl_cfg.ttl = DEFAULT_TTL;
+    dev->tnl_cfg.dont_fragment = true;//不容许分片
+    dev->tnl_cfg.ttl = DEFAULT_TTL;//默认ttl
     return 0;
 }
 
@@ -650,6 +651,7 @@ netdev_vport_patch_peer(const struct netdev *netdev_)
     return peer;
 }
 
+//增加虚设备收包数量，及收包字节数量
 void
 netdev_vport_inc_rx(const struct netdev *netdev,
                     const struct dpif_flow_stats *stats)

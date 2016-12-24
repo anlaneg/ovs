@@ -66,11 +66,11 @@ extern struct ovs_mutex ofproto_mutex;
  *
  * With few exceptions, ofproto implementations may look at these fields but
  * should not modify them. */
-struct ofproto {
-    struct hmap_node hmap_node; /* In global 'all_ofprotos' hmap. */
-    const struct ofproto_class *ofproto_class;
-    char *type;                 /* Datapath type. */
-    char *name;                 /* Datapath name. */
+struct ofproto {//openflow 交换机
+    struct hmap_node hmap_node; /* In global 'all_ofprotos' hmap. */ //持接点，用于挂接在all_ofprotos上
+    const struct ofproto_class *ofproto_class;//交换机类（当前默认为ofproto_dpif_class类型）
+    char *type;                 /* Datapath type. */ //datapath类型，例如system,netdev
+    char *name;                 /* Datapath name. */ //datapath名称
 
     /* Settings. */
     uint64_t fallback_dpid;     /* Datapath ID if no better choice found. */
@@ -95,8 +95,9 @@ struct ofproto {
 
     /* Flow tables. */
     long long int eviction_group_timer; /* For rate limited reheapification. */
-    struct oftable *tables;
-    int n_tables;
+    struct oftable *tables;//指向n个表，
+    int n_tables;//有多少个表
+    //表版本号（只要有一个表发生变化，版本号就发生变化）
     ovs_version_t tables_version;  /* Controls which rules are visible to
                                     * table lookups. */
 
@@ -105,6 +106,7 @@ struct ofproto {
     struct hmap learned_cookies OVS_GUARDED_BY(ofproto_mutex);
 
     /* List of expirable flows, in all flow tables. */
+    //列出会过期的规则
     struct ovs_list expirable OVS_GUARDED_BY(ofproto_mutex);
 
     /* Meter table.
@@ -120,7 +122,7 @@ struct ofproto {
     int min_mtu;                    /* Current MTU of non-internal ports. */
 
     /* Groups. */
-    struct cmap groups;               /* Contains "struct ofgroup"s. */
+    struct cmap groups;               /* Contains "struct ofgroup"s. */ //保存所有组，保存ofgroup结构体
     uint32_t n_groups[4] OVS_GUARDED; /* # of existing groups of each type. */
     struct ofputil_group_features ogf;
 
@@ -204,15 +206,15 @@ enum oftable_flags {
  * Refer to the thread-safety notes on struct rule for more information.*/
 struct oftable {
     enum oftable_flags flags;
-    struct classifier cls;      /* Contains "struct rule"s. */ //分类器（含规则）
-    char *name;                 /* Table name exposed via OpenFlow, or NULL. */
+    struct classifier cls;      /* Contains "struct rule"s. */ //流表对应的分类器（含规则）
+    char *name;                 /* Table name exposed via OpenFlow, or NULL. */ //流表名称，无名称时为NULL
 
     /* Maximum number of flows or UINT_MAX if there is no limit besides any
      * limit imposed by resource limitations. */
-    unsigned int max_flows;
+    unsigned int max_flows;//流表的最大条数
     /* Current number of flows, not counting temporary duplicates nor deferred
      * deletions. */
-    unsigned int n_flows;
+    unsigned int n_flows;//流表中的当前条数
 
     /* These members determine the handling of an attempt to add a flow that
      * would cause the table to have more than 'max_flows' flows.
@@ -265,6 +267,7 @@ struct oftable {
 /* Assigns TABLE to each oftable, in turn, in OFPROTO.
  *
  * All parameters are evaluated multiple times. */
+//遍历ofproto中所有的表
 #define OFPROTO_FOR_EACH_TABLE(TABLE, OFPROTO)              \
     for ((TABLE) = (OFPROTO)->tables;                       \
          (TABLE) < &(OFPROTO)->tables[(OFPROTO)->n_tables]; \
@@ -328,6 +331,7 @@ struct oftable {
  *      'rule->mutex', and safely written only by coding holding ofproto_mutex
  *      AND 'rule->mutex'.  These are marked OVS_GUARDED.
  */
+//规则的状态（未插入，插入，已删除）
 enum OVS_PACKED_ENUM rule_state {
     RULE_INITIALIZED, /* Rule has been initialized, but not inserted to the
                        * ofproto data structures.  Versioning makes sure the
@@ -341,15 +345,16 @@ enum OVS_PACKED_ENUM rule_state {
                        * removed from the classifier as well. */
 };
 
+//流表规则
 struct rule {
     /* Where this rule resides in an OpenFlow switch.
      *
      * These are immutable once the rule is constructed, hence 'const'. */
-    struct ofproto *const ofproto; /* The ofproto that contains this rule. */
+    struct ofproto *const ofproto; /* The ofproto that contains this rule. */ //哪个openvswitch交换机包含了这条规则
     const struct cls_rule cr;      /* In owning ofproto's classifier. */
-    const uint8_t table_id;        /* Index in ofproto's 'tables' array. */
+    const uint8_t table_id;        /* Index in ofproto's 'tables' array. */ //表编号
 
-    enum rule_state state;
+    enum rule_state state;//标记规则的处理状态（未插入，插入，已删除）
 
     /* Protects members marked OVS_GUARDED.
      * Readers only need to hold this mutex.
@@ -393,7 +398,7 @@ struct rule {
 
     /* OpenFlow actions.  See struct rule_actions for more thread-safety
      * notes. */
-    const struct rule_actions * const actions;
+    const struct rule_actions * const actions;//规则的动作
 
     /* In owning meter's 'rules' list.  An empty list if there is no meter. */
     struct ovs_list meter_list_node OVS_GUARDED_BY(ofproto_mutex);
@@ -409,7 +414,7 @@ struct rule {
 
     /* Optimisation for flow expiry.  In ofproto's 'expirable' list if this
      * rule is expirable, otherwise empty. */
-    struct ovs_list expirable OVS_GUARDED_BY(ofproto_mutex);
+    struct ovs_list expirable OVS_GUARDED_BY(ofproto_mutex);//链节点，如果这个链是可过期的，则挂接在ovs交换机的expirable
 
     /* Times.  Last so that they are more likely close to the stats managed
      * by the provider. */
@@ -555,8 +560,9 @@ struct ofgroup {
     const long long int created;      /* Creation time. */
     const long long int modified;     /* Time of last modification. */
 
-    const struct ovs_list buckets;    /* Contains "struct ofputil_bucket"s. */
-    const uint32_t n_buckets;
+    //为什么需要分多个buckets
+    const struct ovs_list buckets;    /* Contains "struct ofputil_bucket"s. */ //组内的一系列动作
+    const uint32_t n_buckets;//桶数目
 
     const struct ofputil_group_props props;
 
@@ -1941,7 +1947,7 @@ enum ofperr ofproto_check_ofpacts(struct ofproto *,
                                   size_t ofpacts_len);
 
 static inline const struct rule_actions *
-rule_get_actions(const struct rule *rule)
+rule_get_actions(const struct rule *rule)//获取规则的动作
 {
     return rule->actions;
 }

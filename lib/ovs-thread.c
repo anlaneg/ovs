@@ -412,7 +412,7 @@ ovs_thread_create(const char *name, void *(*start)(void *), void *arg)
 }
 
 bool
-ovsthread_once_start__(struct ovsthread_once *once)
+ovsthread_once_start__(struct ovsthread_once *once)//检查是否已做过
 {
     ovs_mutex_lock(&once->mutex);
     /* Mutex synchronizes memory, so we get the current value of 'done'. */

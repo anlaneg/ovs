@@ -500,10 +500,10 @@ void dpif_port_poll_wait(const struct dpif *);
 /* Flow table operations. */
 
 struct dpif_flow_stats {
-    uint64_t n_packets;
-    uint64_t n_bytes;
-    long long int used;
-    uint16_t tcp_flags;
+    uint64_t n_packets;//报文数量
+    uint64_t n_bytes;//报文大小
+    long long int used;//使用时的时间
+    uint16_t tcp_flags;//tcp标志位
 };
 
 void dpif_flow_stats_extract(const struct flow *, const struct dp_packet *packet,

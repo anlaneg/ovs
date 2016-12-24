@@ -5924,7 +5924,7 @@ commit_odp_actions(const struct flow *flow, struct flow *base,
     enum slow_path_reason slow1, slow2;
     bool mpls_done = false;
 
-    commit_set_ether_addr_action(flow, base, odp_actions, wc, use_masked);
+    commit_set_ether_addr_action(flow, base, odp_actions, wc, use_masked);//以太头处理
     /* Make packet a non-MPLS packet before committing L3/4 actions,
      * which would otherwise do nothing. */
     if (eth_type_mpls(base->dl_type) && !eth_type_mpls(flow->dl_type)) {//mpls处理

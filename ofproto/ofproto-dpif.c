@@ -271,8 +271,8 @@ struct dpif_backer {
 static struct shash all_dpif_backers = SHASH_INITIALIZER(&all_dpif_backers);
 
 struct ofproto_dpif {
-    struct hmap_node all_ofproto_dpifs_node; /* In 'all_ofproto_dpifs'. */
-    struct ofproto up;
+    struct hmap_node all_ofproto_dpifs_node; /* In 'all_ofproto_dpifs'. */ //用于挂接ofproto
+    struct ofproto up;//哪个交换机
     struct dpif_backer *backer;
 
     /* Unique identifier for this instantiation of this bridge in this running
@@ -283,6 +283,7 @@ struct ofproto_dpif {
 
     uint64_t dump_seq; /* Last read of udpif_dump_seq(). */
 
+    //openflow的特殊规则
     /* Special OpenFlow rules. */
     struct rule_dpif *miss_rule; /* Sends flow table misses to controller. */
     struct rule_dpif *no_packet_in_rule; /* Drops flow table misses. */
@@ -1389,7 +1390,7 @@ construct(struct ofproto *ofproto_)
                 hash_string(ofproto->up.name, 0));
     memset(&ofproto->stats, 0, sizeof ofproto->stats);
 
-    ofproto_init_tables(ofproto_, N_TABLES);
+    ofproto_init_tables(ofproto_, N_TABLES);//默认构造255个表
     error = add_internal_flows(ofproto);
 
     ofproto->up.tables[TBL_INTERNAL].flags = OFTABLE_HIDDEN | OFTABLE_READONLY;
@@ -1405,9 +1406,10 @@ add_internal_miss_flow(struct ofproto_dpif *ofproto, int id,
     int error;
     struct rule *rule;
 
-    match_init_catchall(&match);
-    match_set_reg(&match, 0, id);
+    match_init_catchall(&match);//清空，即改为catch all
+    match_set_reg(&match, 0, id);//设置reg
 
+    //优先级为0，空闲超时为0
     error = ofproto_dpif_add_internal_flow(ofproto, &match, 0, 0, ofpacts,
                                            &rule);
     *rulep = error ? NULL : rule_dpif_cast(rule);
@@ -3834,6 +3836,7 @@ ofproto_dpif_execute_actions(struct ofproto_dpif *ofproto,
                                           packet);
 }
 
+//更新规则对应的统计信息
 static void
 rule_dpif_credit_stats__(struct rule_dpif *rule,
                          const struct dpif_flow_stats *stats,
@@ -3841,18 +3844,18 @@ rule_dpif_credit_stats__(struct rule_dpif *rule,
     OVS_REQUIRES(rule->stats_mutex)
 {
     if (credit_counts) {
-        rule->stats.n_packets += stats->n_packets;
-        rule->stats.n_bytes += stats->n_bytes;
+        rule->stats.n_packets += stats->n_packets;//增加命中的报文数量
+        rule->stats.n_bytes += stats->n_bytes;//增加命中的字节数量
     }
-    rule->stats.used = MAX(rule->stats.used, stats->used);
+    rule->stats.used = MAX(rule->stats.used, stats->used);//更新规则的touch时间
 }
 
 void
 rule_dpif_credit_stats(struct rule_dpif *rule,
-                       const struct dpif_flow_stats *stats)
+                       const struct dpif_flow_stats *stats)//更新规则对应的统计信息
 {
     ovs_mutex_lock(&rule->stats_mutex);
-    if (OVS_UNLIKELY(rule->new_rule)) {
+    if (OVS_UNLIKELY(rule->new_rule)) {//什么情况下new_rule不为NULL ?
         ovs_mutex_lock(&rule->new_rule->stats_mutex);
         rule_dpif_credit_stats__(rule->new_rule, stats, rule->forward_counts);
         ovs_mutex_unlock(&rule->new_rule->stats_mutex);
@@ -3910,7 +3913,7 @@ rule_set_recirc_id(struct rule *rule_, uint32_t id)
 }
 
 ovs_version_t
-ofproto_dpif_get_tables_version(struct ofproto_dpif *ofproto)
+ofproto_dpif_get_tables_version(struct ofproto_dpif *ofproto)//获取ofproto的表版本号
 {
     ovs_version_t version;
 
@@ -4088,6 +4091,7 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
     }
 out:
     /* Restore port numbers, as they may have been modified above. */
+    //还原可以在前面因为分片或处理方便，而修改掉的字段。
     flow->tp_src = old_tp_src;
     flow->tp_dst = old_tp_dst;
     /* Restore the old in port. */
@@ -5809,7 +5813,7 @@ ofproto_dpif_add_internal_flow(struct ofproto_dpif *ofproto,
         .ofpacts_len = ofpacts->size,
     };
 
-    error = ofproto_flow_mod(&ofproto->up, &fm);
+    error = ofproto_flow_mod(&ofproto->up, &fm);//执行ofpfc_add命令，创建规则
     if (error) {
         VLOG_ERR_RL(&rl, "failed to add internal flow (%s)",
                     ofperr_to_string(error));
@@ -5820,7 +5824,7 @@ ofproto_dpif_add_internal_flow(struct ofproto_dpif *ofproto,
     rule = rule_dpif_lookup_in_table(ofproto,
                                      ofproto_dpif_get_tables_version(ofproto),
                                      TBL_INTERNAL, &fm.match.flow,
-                                     &fm.match.wc);
+                                     &fm.match.wc);//查询出当加入的规则
     if (rule) {
         *rulep = &rule->up;
     } else {

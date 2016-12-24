@@ -31,10 +31,10 @@ struct netdev_vport {
     struct ovs_mutex mutex;
 
     struct eth_addr etheraddr;
-    struct netdev_stats stats;
+    struct netdev_stats stats;//虚设备接口统计信息
 
     /* Tunnels. */
-    struct netdev_tunnel_config tnl_cfg;
+    struct netdev_tunnel_config tnl_cfg;//tunnel配置
     char egress_iface[IFNAMSIZ];
     bool carrier_status;
 

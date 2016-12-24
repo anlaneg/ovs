@@ -286,7 +286,7 @@ static void meter_insert_rule(struct rule *);
 static void ofproto_unixctl_init(void);
 
 /* All registered ofproto classes, in probe order. */
-static const struct ofproto_class **ofproto_classes;
+static const struct ofproto_class **ofproto_classes;//记录所有注册的openflow交换机class(当前仅有一个ofproto_dpif_class）
 static size_t n_ofproto_classes;
 static size_t allocated_ofproto_classes;
 
@@ -300,6 +300,7 @@ size_t n_handlers, n_revalidators;
 char *pmd_cpu_mask;
 
 /* Map from datapath name to struct ofproto, for use by unixctl commands. */
+//记录所有的open flow交换机
 static struct hmap all_ofprotos = HMAP_INITIALIZER(&all_ofprotos);
 
 /* Initial mappings of port to OpenFlow number mappings. */
@@ -376,7 +377,7 @@ ofproto_class_find__(const char *type)
 /* Registers a new ofproto class.  After successful registration, new ofprotos
  * of that type can be created using ofproto_create(). */
 int
-ofproto_class_register(const struct ofproto_class *new_class)
+ofproto_class_register(const struct ofproto_class *new_class)//openflow交换机class注册
 {
     size_t i;
 
@@ -386,12 +387,12 @@ ofproto_class_register(const struct ofproto_class *new_class)
         }
     }
 
-    if (n_ofproto_classes >= allocated_ofproto_classes) {
+    if (n_ofproto_classes >= allocated_ofproto_classes) {//需要扩充空间
         ofproto_classes = x2nrealloc(ofproto_classes,
                                      &allocated_ofproto_classes,
                                      sizeof *ofproto_classes);
     }
-    ofproto_classes[n_ofproto_classes++] = new_class;
+    ofproto_classes[n_ofproto_classes++] = new_class;//赋值
     return 0;
 }
 
@@ -462,6 +463,7 @@ ofproto_bump_tables_version(struct ofproto *ofproto)
                                                ofproto->tables_version);
 }
 
+//创建openflow交换机
 int
 ofproto_create(const char *datapath_name, const char *datapath_type,
                struct ofproto **ofprotop)
@@ -475,14 +477,14 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     *ofprotop = NULL;
 
     datapath_type = ofproto_normalize_type(datapath_type);
-    class = ofproto_class_find__(datapath_type);
+    class = ofproto_class_find__(datapath_type);//目前仅可以返回ofproto_dpif_class
     if (!class) {
         VLOG_WARN("could not create datapath %s of unknown type %s",
                   datapath_name, datapath_type);
         return EAFNOSUPPORT;
     }
 
-    ofproto = class->alloc();
+    ofproto = class->alloc();//申请openflow交换机空间
     if (!ofproto) {
         VLOG_ERR("failed to allocate datapath %s of type %s",
                  datapath_name, datapath_type);
@@ -493,10 +495,10 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     ovs_mutex_lock(&ofproto_mutex);
     memset(ofproto, 0, sizeof *ofproto);
     ofproto->ofproto_class = class;
-    ofproto->name = xstrdup(datapath_name);
+    ofproto->name = xstrdup(datapath_name);//设置dataplane名称
     ofproto->type = xstrdup(datapath_type);
     hmap_insert(&all_ofprotos, &ofproto->hmap_node,
-                hash_string(ofproto->name, 0));
+                hash_string(ofproto->name, 0));//将交换机加入到all_ofprotos中
     ofproto->datapath_id = 0;
     ofproto->forward_bpdu = false;
     ofproto->fallback_dpid = pick_fallback_dpid();
@@ -531,7 +533,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     }
     ovsrcu_set(&ofproto->metadata_tab, tun_metadata_alloc(NULL));
 
-    error = ofproto->ofproto_class->construct(ofproto);
+    error = ofproto->ofproto_class->construct(ofproto);//对交换机进行构造
     if (error) {
         VLOG_ERR("failed to open datapath %s: %s",
                  datapath_name, ovs_strerror(error));
@@ -581,7 +583,7 @@ ofproto_init_tables(struct ofproto *ofproto, int n_tables)
     struct oftable *table;
 
     ovs_assert(!ofproto->n_tables);
-    ovs_assert(n_tables >= 1 && n_tables <= 255);
+    ovs_assert(n_tables >= 1 && n_tables <= 255);//表的数量必须在1到255之间
 
     ofproto->n_tables = n_tables;
     ofproto->tables = xmalloc(n_tables * sizeof *ofproto->tables);
@@ -1720,7 +1722,7 @@ ofproto_run(struct ofproto *p)
     if (p->eviction_group_timer < time_msec()) {
         size_t i;
 
-        p->eviction_group_timer = time_msec() + 1000;
+        p->eviction_group_timer = time_msec() + 1000;//下一次时间
 
         for (i = 0; i < p->n_tables; i++) {
             struct oftable *table = &p->tables[i];
@@ -6442,6 +6444,7 @@ handle_meter_request(struct ofconn *ofconn, const struct ofp_header *request,
 }
 
 /* Returned group is RCU protected. */
+//给定group_id查找到对应的ofgroup
 static struct ofgroup *
 ofproto_group_lookup__(const struct ofproto *ofproto, uint32_t group_id,
                        ovs_version_t version)
@@ -6464,7 +6467,7 @@ ofproto_group_lookup__(const struct ofproto *ofproto, uint32_t group_id,
  * Make sure to call ofproto_group_unref() after no longer needing to maintain
  * a reference to the group. */
 struct ofgroup *
-ofproto_group_lookup(const struct ofproto *ofproto, uint32_t group_id,
+ofproto_group_lookup(const struct ofproto *ofproto, uint32_t group_id,//给定group_id查找ofgroup
                      ovs_version_t version, bool take_ref)
 {
     struct ofgroup *group;
@@ -8285,10 +8288,10 @@ eviction_group_add_rule(struct rule *rule)
 
 /* Initializes 'table'. */
 static void
-oftable_init(struct oftable *table)
+oftable_init(struct oftable *table)//流表的初始化
 {
     memset(table, 0, sizeof *table);
-    classifier_init(&table->cls, flow_segment_u64s);
+    classifier_init(&table->cls, flow_segment_u64s);//创建表对应的分类器
     table->max_flows = UINT_MAX;
     table->n_flows = 0;
     hmap_init(&table->eviction_groups_by_id);
@@ -8306,7 +8309,7 @@ oftable_init(struct oftable *table)
  *
  * The caller is responsible for freeing 'table' itself. */
 static void
-oftable_destroy(struct oftable *table)
+oftable_destroy(struct oftable *table)//流表销毁
 {
     ovs_assert(classifier_is_empty(&table->cls));
 
@@ -8326,11 +8329,11 @@ oftable_destroy(struct oftable *table)
  * This only affects the name exposed for a table exposed through the OpenFlow
  * OFPST_TABLE (as printed by "ovs-ofctl dump-tables"). */
 static void
-oftable_set_name(struct oftable *table, const char *name)
+oftable_set_name(struct oftable *table, const char *name)//设置流表的名称
 {
     if (name && name[0]) {
         int len = strnlen(name, OFP_MAX_TABLE_NAME_LEN);
-        if (!table->name || strncmp(name, table->name, len)) {
+        if (!table->name || strncmp(name, table->name, len)) {//无名称或者和原名称不相同
             free(table->name);
             table->name = xmemdup0(name, len);
         }
@@ -8346,6 +8349,7 @@ oftable_set_name(struct oftable *table, const char *name)
  * This function configures the latter policy on 'table', with fairness based
  * on the values of the 'n_fields' fields specified in 'fields'.  (Specifying
  * 'n_fields' as 0 disables fairness.) */
+//表配置，支持淘汰
 static void
 oftable_configure_eviction(struct oftable *table, unsigned int eviction,
                            const struct mf_subfield *fields, size_t n_fields)
@@ -8399,14 +8403,17 @@ oftable_configure_eviction(struct oftable *table, unsigned int eviction,
 /* Inserts 'rule' from the ofproto data structures BEFORE caller has inserted
  * it to the classifier. */
 static void
-ofproto_rule_insert__(struct ofproto *ofproto, struct rule *rule)
+ofproto_rule_insert__(struct ofproto *ofproto, struct rule *rule)//规则插入
     OVS_REQUIRES(ofproto_mutex)
 {
     const struct rule_actions *actions = rule_get_actions(rule);
 
     /* A rule may not be reinserted. */
-    ovs_assert(rule->state == RULE_INITIALIZED);
+    ovs_assert(rule->state == RULE_INITIALIZED);//新的，之前没来过。
 
+    //空间超时或者硬超时存在，则加入交换机的可过期链上，有函数会门负责维护它们
+    //见函数static int
+    //run(struct ofproto *ofproto_)
     if (rule->hard_timeout || rule->idle_timeout) {
         ovs_list_insert(&ofproto->expirable, &rule->expirable);
     }
@@ -8434,7 +8441,7 @@ ofproto_rule_insert__(struct ofproto *ofproto, struct rule *rule)
 /* Removes 'rule' from the ofproto data structures.  Caller may have deferred
  * the removal from the classifier. */
 static void
-ofproto_rule_remove__(struct ofproto *ofproto, struct rule *rule)
+ofproto_rule_remove__(struct ofproto *ofproto, struct rule *rule)//规则移除
     OVS_REQUIRES(ofproto_mutex)
 {
     ovs_assert(rule->state == RULE_INSERTED);
@@ -8479,7 +8486,7 @@ ofproto_rule_remove__(struct ofproto *ofproto, struct rule *rule)
 /* unixctl commands. */
 
 struct ofproto *
-ofproto_lookup(const char *name)
+ofproto_lookup(const char *name)//给定名称获取对应的openflow交换机
 {
     struct ofproto *ofproto;
 

@@ -75,6 +75,7 @@ struct registered_dpif_class {
     const struct dpif_class *dpif_class;
     int refcount;
 };
+//存放已经注册了的dp_if_class,目前来源于base_dpif_classes
 static struct shash dpif_classes = SHASH_INITIALIZER(&dpif_classes);
 static struct sset dpif_blacklist = SSET_INITIALIZER(&dpif_blacklist);
 
@@ -151,7 +152,7 @@ dp_register_provider__(const struct dpif_class *new_class)
         return EEXIST;
     }
 
-    error = new_class->init ? new_class->init() : 0;
+    error = new_class->init ? new_class->init() : 0;//仅对class进行初始化
     if (error) {
         VLOG_WARN("failed to initialize %s datapath class: %s",
                   new_class->type, ovs_strerror(error));
@@ -241,12 +242,12 @@ dp_enumerate_types(struct sset *types)
 {
     struct shash_node *node;
 
-    dp_initialize();
+    dp_initialize();//如果未注册，尝试注册
 
     ovs_mutex_lock(&dpif_mutex);
     SHASH_FOR_EACH(node, &dpif_classes) {
         const struct registered_dpif_class *registered_class = node->data;
-        sset_add(types, registered_class->dpif_class->type);
+        sset_add(types, registered_class->dpif_class->type);//目前有netdev,system两种
     }
     ovs_mutex_unlock(&dpif_mutex);
 }
