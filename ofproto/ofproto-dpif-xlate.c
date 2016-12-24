@@ -4819,7 +4819,7 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
                 ctx_trigger_freeze(ctx);
                 a = ofpact_next(a);
             } else {
-                execute_controller_action(ctx, controller->max_len,//将报文传递给control
+                execute_controller_action(ctx, controller->max_len,//将报文传递
                                           controller->reason,
                                           controller->controller_id,
                                           controller->userdata,
