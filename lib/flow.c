@@ -1840,11 +1840,11 @@ flow_mask_hash_fields(const struct flow *flow, struct flow_wildcards *wc,
                       enum nx_hash_fields fields)
 {
     switch (fields) {
-    case NX_HASH_FIELDS_ETH_SRC:
+    case NX_HASH_FIELDS_ETH_SRC://仅源mac
         memset(&wc->masks.dl_src, 0xff, sizeof wc->masks.dl_src);
         break;
 
-    case NX_HASH_FIELDS_SYMMETRIC_L4:
+    case NX_HASH_FIELDS_SYMMETRIC_L4://src-mac,dst-mac,src-ip,dst-ip,proto,vlan，src-port,dst-port
         memset(&wc->masks.dl_src, 0xff, sizeof wc->masks.dl_src);
         memset(&wc->masks.dl_dst, 0xff, sizeof wc->masks.dl_dst);
         if (flow->dl_type == htons(ETH_TYPE_IP)) {
@@ -1856,18 +1856,18 @@ flow_mask_hash_fields(const struct flow *flow, struct flow_wildcards *wc,
         }
         if (is_ip_any(flow)) {
             memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);
-            flow_unwildcard_tp_ports(flow, wc);
+            flow_unwildcard_tp_ports(flow, wc);//源port,目的port
         }
         wc->masks.vlan_tci |= htons(VLAN_VID_MASK | VLAN_CFI);
         break;
 
-    case NX_HASH_FIELDS_SYMMETRIC_L3L4_UDP:
+    case NX_HASH_FIELDS_SYMMETRIC_L3L4_UDP://src-port,dst-port
         if (is_ip_any(flow) && flow->nw_proto == IPPROTO_UDP) {
             memset(&wc->masks.tp_src, 0xff, sizeof wc->masks.tp_src);
             memset(&wc->masks.tp_dst, 0xff, sizeof wc->masks.tp_dst);
         }
         /* no break */
-    case NX_HASH_FIELDS_SYMMETRIC_L3L4:
+    case NX_HASH_FIELDS_SYMMETRIC_L3L4://src-ip,dst-ip,proto,src-port,dst-port
         if (flow->dl_type == htons(ETH_TYPE_IP)) {
             memset(&wc->masks.nw_src, 0xff, sizeof wc->masks.nw_src);
             memset(&wc->masks.nw_dst, 0xff, sizeof wc->masks.nw_dst);
@@ -1891,6 +1891,7 @@ flow_mask_hash_fields(const struct flow *flow, struct flow_wildcards *wc,
 }
 
 /* Hashes the portions of 'flow' designated by 'fields'. */
+//针对fields计算相应字段的hash
 uint32_t
 flow_hash_fields(const struct flow *flow, enum nx_hash_fields fields,
                  uint16_t basis)

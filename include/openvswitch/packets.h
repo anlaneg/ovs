@@ -26,8 +26,8 @@ struct flow_tnl {
     struct in6_addr ipv6_dst;
     ovs_be32 ip_src;
     struct in6_addr ipv6_src;
-    ovs_be64 tun_id;
-    uint16_t flags;
+    ovs_be64 tun_id;//tunnel id
+    uint16_t flags;//隧道标记位
     uint8_t ip_tos;
     uint8_t ip_ttl;
     ovs_be16 tp_src;

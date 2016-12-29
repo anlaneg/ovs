@@ -43,9 +43,9 @@ VLOG_DEFINE_THIS_MODULE(tunnel);
 
 struct tnl_match {
     ovs_be64 in_key;
-    struct in6_addr ipv6_src;
+    struct in6_addr ipv6_src;//保存ipv4或者ipv6地址（ipv4地址存在末尾
     struct in6_addr ipv6_dst;
-    odp_port_t odp_port;
+    odp_port_t odp_port;//tunnel对应的出接口
     bool in_key_flow;
     bool ip_src_flow;
     bool ip_dst_flow;
@@ -107,7 +107,7 @@ static struct hmap *tnl_match_maps[N_MATCH_TYPES] OVS_GUARDED_BY(rwlock);
 static struct hmap **tnl_match_map(const struct tnl_match *);
 
 static struct hmap ofport_map__ = HMAP_INITIALIZER(&ofport_map__);
-static struct hmap *ofport_map OVS_GUARDED_BY(rwlock) = &ofport_map__;
+static struct hmap *ofport_map OVS_GUARDED_BY(rwlock) = &ofport_map__;//记录tunnel口
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 static struct vlog_rate_limit dbg_rl = VLOG_RATE_LIMIT_INIT(60, 60);
@@ -402,18 +402,18 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
     fat_rwlock_rdlock(&rwlock);
     tnl_port = tnl_find_ofport(ofport);
     out_port = tnl_port ? tnl_port->match.odp_port : ODPP_NONE;
-    if (!tnl_port) {
+    if (!tnl_port) {//没有查找到tunnel口，返回ODPP_NONE
         goto out;
     }
 
-    cfg = netdev_get_tunnel_config(tnl_port->netdev);
+    cfg = netdev_get_tunnel_config(tnl_port->netdev);//获取tunnel口的配置
     ovs_assert(cfg);
 
-    if (!VLOG_DROP_DBG(&dbg_rl)) {
+    if (!VLOG_DROP_DBG(&dbg_rl)) {//调试代码
         pre_flow_str = flow_to_string(flow);
     }
 
-    if (!cfg->ip_src_flow) {
+    if (!cfg->ip_src_flow) {//填充src
         flow->tunnel.ip_src = in6_addr_get_mapped_ipv4(&tnl_port->match.ipv6_src);
         if (!flow->tunnel.ip_src) {
             flow->tunnel.ipv6_src = tnl_port->match.ipv6_src;
@@ -421,7 +421,7 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
             flow->tunnel.ipv6_src = in6addr_any;
         }
     }
-    if (!cfg->ip_dst_flow) {
+    if (!cfg->ip_dst_flow) {//填充dst
         flow->tunnel.ip_dst = in6_addr_get_mapped_ipv4(&tnl_port->match.ipv6_dst);
         if (!flow->tunnel.ip_dst) {
             flow->tunnel.ipv6_dst = tnl_port->match.ipv6_dst;
@@ -429,19 +429,19 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
             flow->tunnel.ipv6_dst = in6addr_any;
         }
     }
-    flow->tunnel.tp_dst = cfg->dst_port;
+    flow->tunnel.tp_dst = cfg->dst_port;//填充目的端口
     if (!cfg->out_key_flow) {
         flow->tunnel.tun_id = cfg->out_key;
     }
 
-    if (cfg->ttl_inherit && is_ip_any(flow)) {
+    if (cfg->ttl_inherit && is_ip_any(flow)) {//ttl处理
         wc->masks.nw_ttl = 0xff;
         flow->tunnel.ip_ttl = flow->nw_ttl;
     } else {
         flow->tunnel.ip_ttl = cfg->ttl;
     }
 
-    if (cfg->tos_inherit && is_ip_any(flow)) {
+    if (cfg->tos_inherit && is_ip_any(flow)) {//tos处理
         wc->masks.nw_tos |= IP_DSCP_MASK;
         flow->tunnel.ip_tos = flow->nw_tos & IP_DSCP_MASK;
     } else {
@@ -449,7 +449,7 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
     }
 
     /* ECN fields are always inherited. */
-    if (is_ip_any(flow)) {
+    if (is_ip_any(flow)) {//enc总是继承
         wc->masks.nw_tos |= IP_ECN_MASK;
 
         if (IP_ECN_is_ce(flow->nw_tos)) {
@@ -459,6 +459,7 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
         }
     }
 
+    //设置标记
     flow->tunnel.flags |= (cfg->dont_fragment ? FLOW_TNL_F_DONT_FRAGMENT : 0)
         | (cfg->csum ? FLOW_TNL_F_CSUM : 0)
         | (cfg->out_key_present ? FLOW_TNL_F_KEY : 0);
@@ -488,6 +489,7 @@ tnl_hash(struct tnl_match *match)
     return hash_words((uint32_t *) match, sizeof *match / sizeof(uint32_t), 0);
 }
 
+//通过ofport查找tnl_port
 static struct tnl_port *
 tnl_find_ofport(const struct ofport_dpif *ofport) OVS_REQ_RDLOCK(rwlock)
 {
@@ -495,7 +497,7 @@ tnl_find_ofport(const struct ofport_dpif *ofport) OVS_REQ_RDLOCK(rwlock)
 
     HMAP_FOR_EACH_IN_BUCKET (tnl_port, ofport_node, hash_pointer(ofport, 0),
                              ofport_map) {
-        if (tnl_port->ofport == ofport) {
+        if (tnl_port->ofport == ofport) {//通过指针找tunnel口
             return tnl_port;
         }
     }

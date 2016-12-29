@@ -78,10 +78,10 @@ struct netdev_tunnel_config {//tunnel配置结构体
     ovs_be64 in_key;
 
     bool out_key_present;
-    bool out_key_flow;
-    ovs_be64 out_key;
+    bool out_key_flow;//为false时，out_key存在
+    ovs_be64 out_key;//tunnel id
 
-    ovs_be16 dst_port;//使用的目的地址
+    ovs_be16 dst_port;//tunnel的目的端口
 
     bool ip_src_flow;
     bool ip_dst_flow;
@@ -90,14 +90,14 @@ struct netdev_tunnel_config {//tunnel配置结构体
 
     uint32_t exts;
 
-    uint8_t ttl;//ttl设置
-    bool ttl_inherit;
+    uint8_t ttl;//ttl设置值
+    bool ttl_inherit;//是否使用原流中的ttl，如果为Fasle,则采用"ttl设置值“
 
-    uint8_t tos;
-    bool tos_inherit;
+    uint8_t tos;//tos设置值
+    bool tos_inherit;//是否使用匹配流中的tos,如果为False,则采用"tos设置值“
 
-    bool csum;
-    bool dont_fragment;//是否分片
+    bool csum;//是否需要计算checksum
+    bool dont_fragment;//是否要打上不容许分片标记
 };
 
 void netdev_run(void);

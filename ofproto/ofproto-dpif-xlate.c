@@ -157,7 +157,7 @@ struct xport {
 
     struct hmap skb_priorities;      /* Map of 'skb_priority_to_dscp's. */
 
-    bool may_enable;                 /* May be enabled in bonds. */
+    bool may_enable;                 /* May be enabled in bonds. */ //用于指明是否在bonds中启用
     bool is_tunnel;                  /* Is a tunnel port. */
 
     struct cfm *cfm;                 /* CFM handle or null. */ //802.1ag协议
@@ -3084,6 +3084,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     flow_pkt_mark = flow->pkt_mark;
     flow_nw_tos = flow->nw_tos;
 
+    //qos处理，我需要将流程串起来，以便理解此段代码的意义
     if (count_skb_priorities(xport)) {
         memset(&wc->masks.skb_priority, 0xff, sizeof wc->masks.skb_priority);
         if (dscp_from_skb_priority(xport, flow->skb_priority, &dscp)) {
@@ -4165,12 +4166,14 @@ xlate_bundle_action(struct xlate_ctx *ctx,
 {
     ofp_port_t port;
 
+    //选择出一个port
     port = bundle_execute(bundle, &ctx->xin->flow, ctx->wc, slave_enabled_cb,
                           CONST_CAST(struct xbridge *, ctx->xbridge));
     if (bundle->dst.field) {
+    	//这段代码没有搞明白意义
         nxm_reg_load(&bundle->dst, ofp_to_u16(port), &ctx->xin->flow, ctx->wc);
     } else {
-        xlate_output_action(ctx, port, 0, false);
+        xlate_output_action(ctx, port, 0, false);//从选出的口扔出去（在选出的口进行转换）
     }
 }
 
@@ -4385,7 +4388,7 @@ xlate_write_actions__(struct xlate_ctx *ctx,
 static void
 xlate_write_actions(struct xlate_ctx *ctx, const struct ofpact_nest *a)
 {
-    xlate_write_actions__(ctx, a->actions, ofpact_nest_get_action_len(a));
+	xlate_write_actions__(ctx, a->actions, ofpact_nest_get_action_len(a));
 }
 
 static void

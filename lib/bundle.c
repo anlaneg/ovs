@@ -51,6 +51,7 @@ execute_ab(const struct ofpact_bundle *bundle,
     return OFPP_NONE;
 }
 
+//按照bundle->fields字段约定的算法，自bundle中选择一个接口返回
 static ofp_port_t
 execute_hrw(const struct ofpact_bundle *bundle,
             const struct flow *flow, struct flow_wildcards *wc,
@@ -60,13 +61,14 @@ execute_hrw(const struct ofpact_bundle *bundle,
     int best, i;
 
     if (bundle->n_slaves > 1) {
-        flow_mask_hash_fields(flow, wc, bundle->fields);
+        flow_mask_hash_fields(flow, wc, bundle->fields);//按要提取的字段，设置wc对应的mask
     }
 
-    flow_hash = flow_hash_fields(flow, bundle->fields, bundle->basis);
+    flow_hash = flow_hash_fields(flow, bundle->fields, bundle->basis);//依据fields计算相应字段的hash
     best = -1;
     best_hash = 0;
 
+    //如果slave_enabled返回True,则取hash值最大的那一个
     for (i = 0; i < bundle->n_slaves; i++) {
         if (slave_enabled(bundle->slaves[i], aux)) {
             uint32_t hash = hash_2words(i, flow_hash);
@@ -78,7 +80,7 @@ execute_hrw(const struct ofpact_bundle *bundle,
         }
     }
 
-    return best >= 0 ? bundle->slaves[best] : OFPP_NONE;
+    return best >= 0 ? bundle->slaves[best] : OFPP_NONE;//返回其对应的信息，或者都没有启用
 }
 
 /* Executes 'bundle' on 'flow'.  Sets fields in 'wc' that were used to
@@ -95,7 +97,7 @@ bundle_execute(const struct ofpact_bundle *bundle,
     case NX_BD_ALG_HRW:
         return execute_hrw(bundle, flow, wc, slave_enabled, aux);
 
-    case NX_BD_ALG_ACTIVE_BACKUP:
+    case NX_BD_ALG_ACTIVE_BACKUP://主备模式，采用slave_enabled函数进行选取，取第一个返回true的
         return execute_ab(bundle, slave_enabled, aux);
 
     default:

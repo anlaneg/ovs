@@ -346,13 +346,13 @@ struct ofpact_bundle {
     enum nx_bd_algorithm algorithm;
 
     /* What fields to hash and how. */
-    enum nx_hash_fields fields;
-    uint16_t basis;             /* Universal hash parameter. */
+    enum nx_hash_fields fields;//采用哪种hash方式
+    uint16_t basis;             /* Universal hash parameter. */ //混淆hash
 
     struct mf_subfield dst;
 
     /* Slaves for output. */
-    unsigned int n_slaves;
+    unsigned int n_slaves;//指出slaves数组的大小
     ofp_port_t slaves[];
 };
 
