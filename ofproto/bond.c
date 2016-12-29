@@ -53,7 +53,7 @@ VLOG_DEFINE_THIS_MODULE(bond);
 
 static struct ovs_rwlock rwlock = OVS_RWLOCK_INITIALIZER;
 static struct hmap all_bonds__ = HMAP_INITIALIZER(&all_bonds__);
-static struct hmap *const all_bonds OVS_GUARDED_BY(rwlock) = &all_bonds__;
+static struct hmap *const all_bonds OVS_GUARDED_BY(rwlock) = &all_bonds__;//所有的bound串起一个链
 
 /* Bit-mask for hashing a flow down to a bucket. */
 #define BOND_MASK 0xff
@@ -239,7 +239,7 @@ bond_create(const struct bond_settings *s, struct ofproto_dpif *ofproto)
     ovs_refcount_init(&bond->ref_cnt);
     hmap_init(&bond->pr_rule_ops);
 
-    bond_reconfigure(bond, s);
+    bond_reconfigure(bond, s);//更改配置
     return bond;
 }
 
@@ -266,7 +266,7 @@ bond_unref(struct bond *bond)
     }
 
     ovs_rwlock_wrlock(&rwlock);
-    hmap_remove(all_bonds, &bond->hmap_node);
+    hmap_remove(all_bonds, &bond->hmap_node);//从all_bonds将自已移除
     ovs_rwlock_unlock(&rwlock);
 
     HMAP_FOR_EACH_POP (slave, hmap_node, &bond->slaves) {
@@ -406,11 +406,11 @@ bond_reconfigure(struct bond *bond, const struct bond_settings *s)
     ovs_rwlock_wrlock(&rwlock);
     if (!bond->name || strcmp(bond->name, s->name)) {
         if (bond->name) {
-            hmap_remove(all_bonds, &bond->hmap_node);
+            hmap_remove(all_bonds, &bond->hmap_node);//在all_bonds中删除bound
             free(bond->name);
         }
-        bond->name = xstrdup(s->name);
-        hmap_insert(all_bonds, &bond->hmap_node, hash_string(bond->name, 0));
+        bond->name = xstrdup(s->name);//设置bond接口名称
+        hmap_insert(all_bonds, &bond->hmap_node, hash_string(bond->name, 0));//插入bond
     }
 
     bond->updelay = s->up_delay;
@@ -462,7 +462,7 @@ bond_reconfigure(struct bond *bond, const struct bond_settings *s)
 }
 
 static struct bond_slave *
-bond_find_slave_by_mac(const struct bond *bond, const struct eth_addr mac)
+bond_find_slave_by_mac(const struct bond *bond, const struct eth_addr mac)//通过mac地址找bond_slave
 {
     struct bond_slave *slave;
 

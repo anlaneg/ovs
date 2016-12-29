@@ -31,6 +31,7 @@
  * Initially it is NULL, and even when it is nonnull, some operations do not
  * ensure that it is null-terminated.  Use ds_cstr() to ensure that memory is
  * allocated for the string and that it is null-terminated. */
+//动态字符串缓存功能，容许对字符串进行修改，扩充
 struct ds {
     char *string;       /* Null-terminated string. */
     size_t length;      /* Bytes used, not including null terminator. */

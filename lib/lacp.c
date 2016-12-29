@@ -134,7 +134,7 @@ struct slave {
 
 static struct ovs_mutex mutex;
 static struct ovs_list all_lacps__ = OVS_LIST_INITIALIZER(&all_lacps__);
-static struct ovs_list *const all_lacps OVS_GUARDED_BY(mutex) = &all_lacps__;
+static struct ovs_list *const all_lacps OVS_GUARDED_BY(mutex) = &all_lacps__;//将所有lacps串连
 
 static void lacp_update_attached(struct lacp *) OVS_REQUIRES(mutex);
 
@@ -205,7 +205,7 @@ void
 lacp_init(void)
 {
     unixctl_command_register("lacp/show", "[port]", 0, 1,
-                             lacp_unixctl_show, NULL);
+                             lacp_unixctl_show, NULL);//定义命令行
 }
 
 static void
@@ -237,7 +237,7 @@ lacp_create(void) OVS_EXCLUDED(mutex)
     ovs_refcount_init(&lacp->ref_cnt);
 
     lacp_lock();
-    ovs_list_push_back(all_lacps, &lacp->node);
+    ovs_list_push_back(all_lacps, &lacp->node);//将lacp串连在all_lacps上
     lacp_unlock();
     return lacp;
 }
@@ -810,7 +810,7 @@ info_tx_equal(struct lacp_info *a, struct lacp_info *b)
 }
 
 static struct lacp *
-lacp_find(const char *name) OVS_REQUIRES(mutex)
+lacp_find(const char *name) OVS_REQUIRES(mutex)//通过名称查找lacp
 {
     struct lacp *lacp;
 
@@ -860,7 +860,7 @@ ds_put_lacp_state(struct ds *ds, uint8_t state)
 }
 
 static void
-lacp_print_details(struct ds *ds, struct lacp *lacp) OVS_REQUIRES(mutex)
+lacp_print_details(struct ds *ds, struct lacp *lacp) OVS_REQUIRES(mutex)//lacp详细显示
 {
     struct shash slave_shash = SHASH_INITIALIZER(&slave_shash);
     const struct shash_node **sorted_slaves = NULL;
@@ -970,12 +970,12 @@ lacp_unixctl_show(struct unixctl_conn *conn, int argc, const char *argv[],
     if (argc > 1) {
         lacp = lacp_find(argv[1]);
         if (!lacp) {
-            unixctl_command_reply_error(conn, "no such lacp object");
+            unixctl_command_reply_error(conn, "no such lacp object");//返回错误信息
             goto out;
         }
         lacp_print_details(&ds, lacp);
     } else {
-        LIST_FOR_EACH (lacp, node, all_lacps) {
+        LIST_FOR_EACH (lacp, node, all_lacps) {//显示所有lacp
             lacp_print_details(&ds, lacp);
         }
     }

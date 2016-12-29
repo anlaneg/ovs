@@ -24,6 +24,7 @@
 extern "C" {
 #endif
 
+//一个简单的string vector
 struct svec {
     char **names;
     size_t n;

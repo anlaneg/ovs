@@ -37,10 +37,10 @@ COVERAGE_DEFINE(unixctl_received);
 COVERAGE_DEFINE(unixctl_replied);
 
 struct unixctl_command {
-    const char *usage;
-    int min_args, max_args;
-    unixctl_cb_func *cb;
-    void *aux;
+    const char *usage;//命令的提示信息
+    int min_args, max_args;//命令的最大最小参数
+    unixctl_cb_func *cb;//命令的回调
+    void *aux;//用户自定义参数
 };
 
 struct unixctl_conn {
@@ -60,7 +60,7 @@ struct unixctl_server {
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
 
-static struct shash commands = SHASH_INITIALIZER(&commands);
+static struct shash commands = SHASH_INITIALIZER(&commands);//保存所有的command
 
 static void
 unixctl_list_commands(struct unixctl_conn *conn, int argc OVS_UNUSED,
@@ -102,6 +102,7 @@ unixctl_version(struct unixctl_conn *conn, int argc OVS_UNUSED,
  * be handled immediately then it can defer the reply until later.  A given
  * connection can only process a single request at a time, so a reply must be
  * made eventually to avoid blocking that connection. */
+//实现命令注册
 void
 unixctl_command_register(const char *name, const char *usage,
                          int min_args, int max_args,
@@ -112,7 +113,7 @@ unixctl_command_register(const char *name, const char *usage,
 
     ovs_assert(!lookup || lookup->cb == cb);
 
-    if (lookup) {
+    if (lookup) {//如果已存在，则不容许变更，直接返回
         return;
     }
 
@@ -122,7 +123,7 @@ unixctl_command_register(const char *name, const char *usage,
     command->max_args = max_args;
     command->cb = cb;
     command->aux = aux;
-    shash_add(&commands, name, command);
+    shash_add(&commands, name, command);//将command加入总hash表
 }
 
 static void
@@ -250,8 +251,10 @@ unixctl_server_create(const char *path, struct unixctl_server **serverp)
         goto exit;
     }
 
+    //注册列出所有command
     unixctl_command_register("list-commands", "", 0, 0, unixctl_list_commands,
                              NULL);
+    //注册显示版本
     unixctl_command_register("version", "", 0, 0, unixctl_version, NULL);
 
     server = xmalloc(sizeof *server);
@@ -285,7 +288,7 @@ process_command(struct unixctl_conn *conn, struct jsonrpc_msg *request)
     }
 
     params = json_array(request->params);
-    command = shash_find_data(&commands, request->method);
+    command = shash_find_data(&commands, request->method);//找出要调用的命令，并进行简单的参数检查
     if (!command) {
         error = xasprintf("\"%s\" is not a valid command", request->method);
     } else if (params->n < command->min_args) {
@@ -298,25 +301,27 @@ process_command(struct unixctl_conn *conn, struct jsonrpc_msg *request)
         struct svec argv = SVEC_EMPTY_INITIALIZER;
         int  i;
 
-        svec_add(&argv, request->method);
+        svec_add(&argv, request->method);//将method加入
         for (i = 0; i < params->n; i++) {
             if (params->elems[i]->type != JSON_STRING) {
                 error = xasprintf("\"%s\" command has non-string argument",
                                   request->method);
                 break;
             }
-            svec_add(&argv, json_string(params->elems[i]));
+            svec_add(&argv, json_string(params->elems[i]));//将参数加入
         }
-        svec_terminate(&argv);
+        svec_terminate(&argv);//通过NULL来标记数组最后一元素
 
         if (!error) {
+        	//回调命令（参数总数，参数数组，用户自定义参数
             command->cb(conn, argv.n, (const char **) argv.names,
                         command->aux);
         }
 
-        svec_destroy(&argv);
+        svec_destroy(&argv);//销毁argv
     }
 
+    //如果都没有调回调，就发生错误，则直接返回错误
     if (error) {
         unixctl_command_reply_error(conn, error);
         free(error);
@@ -324,7 +329,7 @@ process_command(struct unixctl_conn *conn, struct jsonrpc_msg *request)
 }
 
 static int
-run_connection(struct unixctl_conn *conn)
+run_connection(struct unixctl_conn *conn)//自此连接收取并处理消息
 {
     int error, i;
 
