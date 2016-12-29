@@ -41,7 +41,7 @@
 VLOG_DEFINE_THIS_MODULE(bundles);
 
 static struct ofp_bundle *
-ofp_bundle_create(uint32_t id, uint16_t flags, const struct ofp_header *oh)
+ofp_bundle_create(uint32_t id, uint16_t flags, const struct ofp_header *oh)//创建bundle
 {
     struct ofp_bundle *bundle;
 
@@ -62,7 +62,7 @@ ofp_bundle_create(uint32_t id, uint16_t flags, const struct ofp_header *oh)
 }
 
 void
-ofp_bundle_remove__(struct ofconn *ofconn, struct ofp_bundle *bundle)
+ofp_bundle_remove__(struct ofconn *ofconn, struct ofp_bundle *bundle)//先移除bundle上的msg_list再从ofconn移除bundle本身
 {
     struct ofp_bundle_entry *msg;
 
@@ -76,14 +76,14 @@ ofp_bundle_remove__(struct ofconn *ofconn, struct ofp_bundle *bundle)
 
 enum ofperr
 ofp_bundle_open(struct ofconn *ofconn, uint32_t id, uint16_t flags,
-                const struct ofp_header *oh)
+                const struct ofp_header *oh)//指定id创建bundle
 {
     struct ofp_bundle *bundle;
     enum ofperr error;
 
     bundle = ofconn_get_bundle(ofconn, id);
 
-    if (bundle) {
+    if (bundle) {//已存在，报错
         VLOG_INFO("Bundle %x already exists.", id);
         ofp_bundle_remove__(ofconn, bundle);
 
@@ -100,13 +100,13 @@ ofp_bundle_open(struct ofconn *ofconn, uint32_t id, uint16_t flags,
 }
 
 enum ofperr
-ofp_bundle_close(struct ofconn *ofconn, uint32_t id, uint16_t flags)
+ofp_bundle_close(struct ofconn *ofconn, uint32_t id, uint16_t flags)//bundle关闭
 {
     struct ofp_bundle *bundle;
 
     bundle = ofconn_get_bundle(ofconn, id);
 
-    if (!bundle) {
+    if (!bundle) {//不存在
         return OFPERR_OFPBFC_BAD_ID;
     }
 
@@ -115,18 +115,18 @@ ofp_bundle_close(struct ofconn *ofconn, uint32_t id, uint16_t flags)
         return OFPERR_OFPBFC_BUNDLE_CLOSED;
     }
 
-    if (bundle->flags != flags) {
+    if (bundle->flags != flags) {//flags不同就移除，返回错误
         ofp_bundle_remove__(ofconn, bundle);
         return OFPERR_OFPBFC_BAD_FLAGS;
     }
 
     bundle->used = time_msec();
-    bundle->state = BS_CLOSED;
+    bundle->state = BS_CLOSED;//切状态到closed
     return 0;
 }
 
 enum ofperr
-ofp_bundle_discard(struct ofconn *ofconn, uint32_t id)
+ofp_bundle_discard(struct ofconn *ofconn, uint32_t id)//直接删除
 {
     struct ofp_bundle *bundle;
 
@@ -143,13 +143,13 @@ ofp_bundle_discard(struct ofconn *ofconn, uint32_t id)
 enum ofperr
 ofp_bundle_add_message(struct ofconn *ofconn, uint32_t id, uint16_t flags,
                        struct ofp_bundle_entry *bmsg,
-                       const struct ofp_header *oh)
+                       const struct ofp_header *oh)//向指定bundle或者创建指定bundle来存放消息bmsg
 {
     struct ofp_bundle *bundle;
 
     bundle = ofconn_get_bundle(ofconn, id);
 
-    if (!bundle) {
+    if (!bundle) {//如果不存在，则创建
         enum ofperr error;
 
         bundle = ofp_bundle_create(id, flags, oh);
@@ -158,15 +158,15 @@ ofp_bundle_add_message(struct ofconn *ofconn, uint32_t id, uint16_t flags,
             free(bundle);
             return error;
         }
-    } else if (bundle->state == BS_CLOSED) {
+    } else if (bundle->state == BS_CLOSED) {//已关闭，则移除
         ofp_bundle_remove__(ofconn, bundle);
         return OFPERR_OFPBFC_BUNDLE_CLOSED;
-    } else if (flags != bundle->flags) {
+    } else if (flags != bundle->flags) {//flags不相同
         ofp_bundle_remove__(ofconn, bundle);
         return OFPERR_OFPBFC_BAD_FLAGS;
     }
 
     bundle->used = time_msec();
-    ovs_list_push_back(&bundle->msg_list, &bmsg->node);
+    ovs_list_push_back(&bundle->msg_list, &bmsg->node);//将msg加入链
     return 0;
 }

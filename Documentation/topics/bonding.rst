@@ -25,17 +25,20 @@
 Bonding
 =======
 
+Bonding功能及其作用简单介绍
 Bonding allows two or more interfaces (the "slaves") to share network traffic.
 From a high-level point of view, bonded interfaces act like a single port, but
 they have the bandwidth of multiple network devices, e.g. two 1 GB physical
 interfaces act like a single 2 GB interface.  Bonds also increase robustness:
 the bonded port does not go down as long as at least one of its slaves is up.
 
+vswitchd只bond口至少要有两个成员口，否则自动还原为普通接口。
 In vswitchd, a bond always has at least two slaves (and may have more).  If a
 configuration error, etc. would cause a bond to have only one slave, the port
 becomes an ordinary port, not a bonded port, and none of the special features
 of bonded ports described in this section apply.
 
+ovs-vswitchd实现了SLB bonding
 There are many forms of bonding of which ovs-vswitchd implements only a few.
 The most complex bond ovs-vswitchd implements is called "source load balancing"
 or SLB bonding.  SLB bonding divides traffic among the slaves based on the
@@ -53,6 +56,7 @@ multiple VMs are multiplexed over the bond.
 Enabling and Disabling Slaves
 -----------------------------
 
+bond创建时，slave是开启还是关闭，依赖于链路是up/down
 When a bond is created, a slave is initially enabled or disabled based on
 whether carrier is detected on the NIC (see ``iface_create()``).  After that, a
 slave is disabled if its carrier goes down for a period of time longer than the
@@ -69,6 +73,7 @@ cause some data to be "blackholed" for a time.  The exception for a single
 enabled slave does not cause any problem in this regard because when no slaves
 are enabled all output packets are blackholed anyway.
 
+如有slave被禁用，则会切换，切换后会向下发送免费arp报文，触发物理交换机学习
 When a slave becomes disabled, the vswitch immediately chooses a new output
 port for traffic that was destined for that slave (see
 ``bond_enable_slave()``).  It also sends a "gratuitous learning packet",
@@ -83,19 +88,22 @@ disable or configure it in other scenarios.)
 Bond Packet Input
 -----------------
 
+bonding时，物理交换机如果不对应，会导致bonding收到重复报文。
 Bonding accepts unicast packets on any bond slave.  This can occasionally cause
 packet duplication for the first few packets sent to a given MAC, if the
 physical switch attached to the bond is flooding packets to that MAC because it
 has not yet learned the correct slave for that MAC.
 
+bonding只从一个口上收取组播报文，其它组播报文将被丢弃
 Bonding only accepts multicast (and broadcast) packets on a single bond slave
 (the "active slave") at any given time.  Multicast packets received on other
 slaves are dropped.  Otherwise, every multicast packet would be duplicated,
 once for every bond slave, because the physical switch attached to the bond
 will flood those packets.
 
+bonding口会丢弃掉在其它口学习已学习到mac的报文
 Bonding also drops received packets when the vswitch has learned that the
-packet's MAC is on a port other than the bond port itself.  This is because it
+packet's MAC is on a port other than the bond port itselfy.  This is because it
 is likely that the vswitch itself sent the packet out the bond port on a
 different slave and is now receiving the packet back.  This occurs when the
 packet is multicast or the physical switch has not yet learned the MAC and is
@@ -115,6 +123,7 @@ means guaranteed.
 Bond Packet Output
 ------------------
 
+报文出去时，bond会通过src mac,vlan来选择一个接口
 When a packet is sent out a bond port, the bond slave actually used is selected
 based on the packet's source MAC and VLAN tag (see ``choose_output_iface()``).
 In particular, the source MAC and VLAN tag are hashed into one of 256 values,
@@ -123,6 +132,7 @@ and that value is looked up in a hash table (the "bond hash") kept in the
 slave.  If no bond slave has yet been chosen for that hash table entry,
 vswitchd chooses one arbitrarily.
 
+vswitchd的负载控制，没看懂
 Every 10 seconds, vswitchd rebalances the bond slaves (see
 ``bond_rebalance_port()``).  To rebalance, vswitchd examines the statistics for
 the number of bytes transmitted by each slave over approximately the past
@@ -165,6 +175,8 @@ behavior on openvswitch.
 
 Active Backup Bonding
 ~~~~~~~~~~~~~~~~~~~~~
+主备模式
+交换机通过bond口接不同的上游交换机时，唯一模式
 
 Active Backup bonds send all traffic out one "active" slave until that slave
 becomes unavailable.  Since they are significantly less complicated than SLB
@@ -183,13 +195,17 @@ that MAC+VLAN through the same link.
 
 SLB bonding has the following complications:
 
+0. 远端交换机不支持fdb学习时，bonding会收到重复报文，ovs不考虑这个问题
 0. When the remote switch has not learned the MAC for the destination of a
    unicast packet and hence floods the packet to all of the links on the SLB
    bond, Open vSwitch will forward duplicate packets, one per link, to each
    other switch port.
 
    Open vSwitch does not solve this problem.
-
+   
+1.远端交换机从非bond口收到组播报广播报文后，可能会向bond口的所有成员口发送报文，如果不特别处理
+  将出现组播报文重复。ovs通过只容许active slave收取组播，广播来处理此问题
+  
 1. When the remote switch receives a multicast or broadcast packet from a port
    not on the SLB bond, it will forward it to all of the links in the SLB bond.
    This would cause packet duplication if not handled specially.
@@ -198,6 +214,9 @@ SLB bonding has the following complications:
    packets on only the active slave, and dropping multicast and broadcast
    packets on all other slaves.
 
+2。当ovs转发一个组播，广播报文到slb bond的某一个口，远端交换机可能会向slb bond的某它口转发
+   此报文（这可能还包含active slave),ovs通过丢非bond口已学习到此报文mac表的方式来解决此问题
+   
 2. When Open vSwitch forwards a multicast or broadcast packet to a link in the
    SLB bond other than the active slave, the remote switch will forward it to
    all of the other links in the SLB bond, including the active slave.  Without

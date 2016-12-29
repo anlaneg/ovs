@@ -56,13 +56,13 @@ enum OVS_PACKED_ENUM bundle_state {
 
 struct ofp_bundle {
     struct hmap_node  node;      /* In struct ofconn's "bundles" hmap. */
-    long long int     used;      /* Last time bundle was used. */
+    long long int     used;      /* Last time bundle was used. */ //最后一次被使用的时间
     uint32_t          id;
     uint16_t          flags;
     enum bundle_state state;
 
     /* List of 'struct bundle_message's */
-    struct ovs_list   msg_list;
+    struct ovs_list   msg_list;//存放消息
 
     /* OpenFlow header and some of the message contents for error reporting. */
     union {
