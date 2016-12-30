@@ -40,7 +40,7 @@ struct triplet {
  * member).  Returns NULL if the version isn't defined or isn't understood by
  * OVS. */
 static const struct ofperr_domain *
-ofperr_domain_from_version(enum ofp_version version)
+ofperr_domain_from_version(enum ofp_version version)//按不同版本返回不同的domain
 {
     switch (version) {
     case OFP10_VERSION:
@@ -72,7 +72,7 @@ ofperr_domain_get_name(enum ofp_version version)
 
 /* Returns true if 'error' is a valid OFPERR_* value, false otherwise. */
 bool
-ofperr_is_valid(enum ofperr error)
+ofperr_is_valid(enum ofperr error)//是否合法的错误码
 {
     return error >= OFPERR_OFS && error < OFPERR_OFS + OFPERR_N_ERRORS;
 }
@@ -141,7 +141,7 @@ ofperr_get_triplet__(enum ofperr error, const struct ofperr_domain *domain)
 
 static struct ofpbuf *
 ofperr_encode_msg__(enum ofperr error, enum ofp_version ofp_version,
-                    ovs_be32 xid, const void *data, size_t data_len)
+                    ovs_be32 xid, const void *data, size_t data_len)//构造消息
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
     const struct ofperr_domain *domain;
@@ -151,14 +151,14 @@ ofperr_encode_msg__(enum ofperr error, enum ofp_version ofp_version,
 
     /* Get the error domain for 'ofp_version', or fall back to OF1.0. */
     domain = ofperr_domain_from_version(ofp_version);
-    if (!domain) {
+    if (!domain) {//不认识的版本
         VLOG_ERR_RL(&rl, "cannot encode error for unknown OpenFlow "
                     "version 0x%02x", ofp_version);
-        domain = &ofperr_of10;
+        domain = &ofperr_of10;//按1.0处理
     }
 
     /* Make sure 'error' is valid in 'domain', or use a fallback error. */
-    if (!ofperr_is_valid(error)) {
+    if (!ofperr_is_valid(error)) {//错误的“错误码”
         /* 'error' seems likely to be a system errno value. */
         VLOG_ERR_RL(&rl, "invalid OpenFlow error code %d (%s)",
                     error, ovs_strerror(error));
@@ -169,7 +169,7 @@ ofperr_encode_msg__(enum ofperr error, enum ofp_version ofp_version,
         error = OFPERR_NXBRC_UNENCODABLE_ERROR;
     }
 
-    triplet = ofperr_get_triplet__(error, domain);
+    triplet = ofperr_get_triplet__(error, domain);//返回在当前domain中错误码对应的信息
     if (!triplet->vendor) {
         buf = ofpraw_alloc_xid(OFPRAW_OFPT_ERROR, domain->version, xid,
                                sizeof *oem + data_len);
@@ -220,7 +220,7 @@ ofperr_encode_msg__(enum ofperr error, enum ofp_version ofp_version,
  * This function isn't appropriate for encoding OFPET_HELLO_FAILED error
  * messages.  Use ofperr_encode_hello() instead. */
 struct ofpbuf *
-ofperr_encode_reply(enum ofperr error, const struct ofp_header *oh)
+ofperr_encode_reply(enum ofperr error, const struct ofp_header *oh)//依据oh构造不同的错误响应
 {
     uint16_t len = ntohs(oh->length);
 

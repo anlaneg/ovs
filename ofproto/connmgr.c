@@ -1133,13 +1133,13 @@ ofconn_send_replies(const struct ofconn *ofconn, struct ovs_list *replies)
  * first 64 bytes of 'request' are used. */
 void
 ofconn_send_error(const struct ofconn *ofconn,
-                  const struct ofp_header *request, enum ofperr error)
+                  const struct ofp_header *request, enum ofperr error)//发送error给request
 {
     static struct vlog_rate_limit err_rl = VLOG_RATE_LIMIT_INIT(10, 10);
     struct ofpbuf *reply;
 
-    reply = ofperr_encode_reply(error, request);
-    if (!VLOG_DROP_INFO(&err_rl)) {
+    reply = ofperr_encode_reply(error, request);//构造错误响应消息
+    if (!VLOG_DROP_INFO(&err_rl)) {//debug信息
         const char *type_name;
         size_t request_len;
         enum ofpraw raw;
@@ -1154,7 +1154,7 @@ ofconn_send_error(const struct ofconn *ofconn,
                   rconn_get_name(ofconn->rconn), ofperr_to_string(error),
                   type_name);
     }
-    ofconn_send_reply(ofconn, reply);
+    ofconn_send_reply(ofconn, reply);//发送消息
 }
 
 /* Reports that a flow_mod operation of the type specified by 'command' was
@@ -1199,7 +1199,7 @@ bundle_hash(uint32_t id)
 }
 
 struct ofp_bundle *
-ofconn_get_bundle(struct ofconn *ofconn, uint32_t id)
+ofconn_get_bundle(struct ofconn *ofconn, uint32_t id)//通过id查找ofp_bundle
 {
     struct ofp_bundle *bundle;
 
@@ -1213,7 +1213,7 @@ ofconn_get_bundle(struct ofconn *ofconn, uint32_t id)
 }
 
 enum ofperr
-ofconn_insert_bundle(struct ofconn *ofconn, struct ofp_bundle *bundle)
+ofconn_insert_bundle(struct ofconn *ofconn, struct ofp_bundle *bundle)//加入ofp_bundle到bundles链
 {
     hmap_insert(&ofconn->bundles, &bundle->node, bundle_hash(bundle->id));
 
@@ -1221,7 +1221,7 @@ ofconn_insert_bundle(struct ofconn *ofconn, struct ofp_bundle *bundle)
 }
 
 enum ofperr
-ofconn_remove_bundle(struct ofconn *ofconn, struct ofp_bundle *bundle)
+ofconn_remove_bundle(struct ofconn *ofconn, struct ofp_bundle *bundle)//删除ofp_bundle
 {
     hmap_remove(&ofconn->bundles, &bundle->node);
 
@@ -1229,7 +1229,7 @@ ofconn_remove_bundle(struct ofconn *ofconn, struct ofp_bundle *bundle)
 }
 
 static void
-bundle_remove_all(struct ofconn *ofconn)
+bundle_remove_all(struct ofconn *ofconn)//移除ofconn上所有bundles
 {
     struct ofp_bundle *b, *next;
 
@@ -1245,9 +1245,9 @@ bundle_remove_expired(struct ofconn *ofconn, long long int now)
     long long int limit = now - BUNDLE_IDLE_TIMEOUT;
 
     HMAP_FOR_EACH_SAFE (b, next, node, &ofconn->bundles) {
-        if (b->used <= limit) {
-            ofconn_send_error(ofconn, &b->ofp_msg, OFPERR_OFPBFC_TIMEOUT);
-            ofp_bundle_remove__(ofconn, b);
+        if (b->used <= limit) {//used时的时间已过去了BUNDLE_IDLE_TIMEOUT
+            ofconn_send_error(ofconn, &b->ofp_msg, OFPERR_OFPBFC_TIMEOUT);//发送timeout错误
+            ofp_bundle_remove__(ofconn, b);//移除b
         }
     }
 }
