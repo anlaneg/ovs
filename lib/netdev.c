@@ -152,7 +152,7 @@ netdev_initialize(void)
  * If your program opens any netdevs, it must call this function within its
  * main poll loop. */
 void
-netdev_run(void)
+netdev_run(void)//对所有class调用run函数
     OVS_EXCLUDED(netdev_mutex)
 {
     netdev_initialize();
@@ -170,7 +170,7 @@ netdev_run(void)
  * If your program opens any netdevs, it must call this function within its
  * main poll loop. */
 void
-netdev_wait(void)
+netdev_wait(void)//对所有class调用wait函数
     OVS_EXCLUDED(netdev_mutex)
 {
     netdev_initialize();
@@ -199,8 +199,9 @@ netdev_lookup_class(const char *type)
 
 /* Initializes and registers a new netdev provider.  After successful
  * registration, new netdevs of that type can be opened using netdev_open(). */
+//netdev_class有两个来源，一个是本函数提供添加新注册，一个由netdev_initialize提供（属于原生的class)
 int
-netdev_register_provider(const struct netdev_class *new_class)
+netdev_register_provider(const struct netdev_class *new_class)//注册新的netdev_class
     OVS_EXCLUDED(netdev_class_mutex, netdev_mutex)
 {
     int error;
@@ -237,7 +238,7 @@ netdev_register_provider(const struct netdev_class *new_class)
  * period, so the caller must not free or re-register the same netdev_class
  * until that has passed.) */
 int
-netdev_unregister_provider(const char *type)
+netdev_unregister_provider(const char *type)//去除type类型的netdev_class
     OVS_EXCLUDED(netdev_class_mutex, netdev_mutex)
 {
     struct netdev_registered_class *rc;
@@ -270,7 +271,7 @@ netdev_unregister_provider(const char *type)
 /* Clears 'types' and enumerates the types of all currently registered netdev
  * providers into it.  The caller must first initialize the sset. */
 void
-netdev_enumerate_types(struct sset *types)
+netdev_enumerate_types(struct sset *types)//返回当前已注册的所有netdev_class type(已去重）
     OVS_EXCLUDED(netdev_mutex)
 {
     netdev_initialize();
@@ -294,14 +295,14 @@ netdev_is_reserved_name(const char *name)
     netdev_initialize();
 
     struct netdev_registered_class *rc;
-    CMAP_FOR_EACH (rc, cmap_node, &netdev_classes) {
+    CMAP_FOR_EACH (rc, cmap_node, &netdev_classes) {//如果是vport,则检查名称是否相同
         const char *dpif_port = netdev_vport_class_get_dpif_port(rc->class);
         if (dpif_port && !strncmp(name, dpif_port, strlen(dpif_port))) {
             return true;
         }
     }
 
-    if (!strncmp(name, "ovs-", 4)) {
+    if (!strncmp(name, "ovs-", 4)) {//如果ovs开头，则检查type是否为netdev_class支持的type
         struct sset types;
         const char *type;
 
@@ -337,25 +338,25 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)
 
     ovs_mutex_lock(&netdev_mutex);
     netdev = shash_find_data(&netdev_shash, name);
-    if (!netdev) {
+    if (!netdev) {//检查发现netdev不存在
         struct netdev_registered_class *rc;
 
         rc = netdev_lookup_class(type && type[0] ? type : "system");//如果type未指定，采用system
         if (rc && ovs_refcount_try_ref_rcu(&rc->refcnt)) {
             netdev = rc->class->alloc();
-            if (netdev) {
+            if (netdev) {//分配成功
                 memset(netdev, 0, sizeof *netdev);
                 netdev->netdev_class = rc->class;
                 netdev->name = xstrdup(name);
                 netdev->change_seq = 1;
-                netdev->reconfigure_seq = seq_create();
+                netdev->reconfigure_seq = seq_create();//配置变化seq
                 netdev->last_reconfigure_seq =
                     seq_read(netdev->reconfigure_seq);
-                netdev->node = shash_add(&netdev_shash, name, netdev);
+                netdev->node = shash_add(&netdev_shash, name, netdev);//将netdev加入netdev_shash,并返回对应结点
 
                 /* By default enable one tx and rx queue per netdev. */
-                netdev->n_txq = netdev->netdev_class->send ? 1 : 0;
-                netdev->n_rxq = netdev->netdev_class->rxq_alloc ? 1 : 0;
+                netdev->n_txq = netdev->netdev_class->send ? 1 : 0;//有发送函数，队列为1
+                netdev->n_rxq = netdev->netdev_class->rxq_alloc ? 1 : 0;//
 
                 ovs_list_init(&netdev->saved_flags_list);
 

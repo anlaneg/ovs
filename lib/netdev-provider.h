@@ -61,7 +61,7 @@ struct netdev {
      * the configuration changes.  'last_reconfigure_seq' remembers the value
      * of 'reconfigure_seq' when the last reconfiguration happened. */
     struct seq *reconfigure_seq;
-    uint64_t last_reconfigure_seq;
+    uint64_t last_reconfigure_seq;//最后一次配置发生变化时的序列
 
     /* If this is 'true', the user explicitly specified an MTU for this
      * netdev.  Otherwise, Open vSwitch is allowed to override it. */
@@ -70,10 +70,10 @@ struct netdev {
     /* The core netdev code initializes these at netdev construction and only
      * provide read-only access to its client.  Netdev implementations may
      * modify them. */
-    int n_txq;
-    int n_rxq;
+    int n_txq;//收队列数
+    int n_rxq;//发队列数
     int ref_cnt;                        /* Times this devices was opened. */
-    struct shash_node *node;            /* Pointer to element in global map. */
+    struct shash_node *node;            /* Pointer to element in global map. */ //在netdev_shash中保存的结点
     struct ovs_list saved_flags_list; /* Contains "struct netdev_saved_flags". */
 };
 
@@ -121,6 +121,7 @@ struct netdev *netdev_rxq_get_netdev(const struct netdev_rxq *);
  * These functions return 0 if successful or a positive errno value on failure,
  * except where otherwise noted.
  *
+ * 除非特别注明，否则这些函数返回0表示成功，返回负数的errno表示失败
  *
  * Data Structures
  * ===============
@@ -130,7 +131,7 @@ struct netdev *netdev_rxq_get_netdev(const struct netdev_rxq *);
  *   - "struct netdev", which represents a network device.
  *
  *   - "struct netdev_rxq", which represents a handle for capturing packets
- *     received on a network device
+ *     received on a network device 通过netdev_rxq来自网络设备上收取报文
  *
  * Each of these data structures contains all of the implementation-independent
  * generic state for the respective concept, called the "base" state.  None of
@@ -158,29 +159,38 @@ struct netdev *netdev_rxq_get_netdev(const struct netdev_rxq *);
  *
  *   1. The client calls the "alloc" function to obtain raw memory.  If "alloc"
  *      fails, skip all the other steps.
+ *      通过alloc函数来获得未初始化的内存，如果alloc失败，则跳过其它步骤
  *
  *   2. The client initializes all of the data structure's base state.  If this
  *      fails, skip to step 7.
+ *      初始化数据结构到基础态
  *
  *   3. The client calls the "construct" function.  The implementation
  *      initializes derived state.  It may refer to the already-initialized
  *      base state.  If "construct" fails, skip to step 6.
+ *      construct函数初始化结构体到衍生态
  *
  *   4. The data structure is now initialized and in use.
+ *      数据结构体现在可以用了
  *
  *   5. When the data structure is no longer needed, the client calls the
  *      "destruct" function.  The implementation uninitializes derived state.
  *      The base state has not been uninitialized yet, so the implementation
  *      may still refer to it.
+ *      destruct与construct相对应
  *
  *   6. The client uninitializes all of the data structure's base state.
+ *      反初始化数据结构
  *
  *   7. The client calls the "dealloc" to free the raw memory.  The
  *      implementation must not refer to base or derived state in the data
  *      structure, because it has already been uninitialized.
+ *      dealloc与alloc相对应
  *
  * If netdev support multi-queue IO then netdev->construct should set initialize
  * netdev->n_rxq to number of queues.
+ *
+ * 如果netdev支持多队列io,那么netdev->construct需要将n_rxq初始化为队列数
  *
  * Each "alloc" function allocates and returns a new instance of the respective
  * data structure.  The "alloc" function is not given any information about the
@@ -189,11 +199,15 @@ struct netdev *netdev_rxq_get_netdev(const struct netdev_rxq *);
  * for base and derived state.  It may return a null pointer if memory is not
  * available, in which case none of the other functions is called.
  *
+ * alloc的职责就是申请初始内存，如果申请失败，返回NULL
+ *
  * Each "construct" function initializes derived state in its respective data
  * structure.  When "construct" is called, all of the base state has already
  * been initialized, so the "construct" function may refer to it.  The
  * "construct" function is allowed to fail, in which case the client calls the
  * "dealloc" function (but not the "destruct" function).
+ *
+ * construct初始化衍生
  *
  * Each "destruct" function uninitializes and frees derived state in its
  * respective data structure.  When "destruct" is called, the base state has
@@ -237,7 +251,7 @@ struct netdev_class {
      *
      * This function may be set to null if a network device class needs no
      * initialization at registration time. */
-    int (*init)(void);//注册时做初始化用
+    int (*init)(void);//模块注册时做初始化用
 
     /* Performs periodic work needed by netdevs of this class.  May be null if
      * no periodic work is necessary.
@@ -262,7 +276,7 @@ struct netdev_class {
 
     /* Life-cycle functions for a netdev.  See the large comment above on
      * struct netdev_class. */
-    struct netdev *(*alloc)(void);
+    struct netdev *(*alloc)(void);//创建netdev对应的资源时调用
     int (*construct)(struct netdev *);
     void (*destruct)(struct netdev *);
     void (*dealloc)(struct netdev *);

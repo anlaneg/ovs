@@ -117,6 +117,7 @@
 #include <stdint.h>
 #include "util.h"
 
+//提供变化通知机制
 /* For implementation of an object with a sequence number attached. */
 struct seq *seq_create(void);
 void seq_destroy(struct seq *);

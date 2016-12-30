@@ -54,7 +54,7 @@ static int getsockopt_int(int fd, int level, int option, const char *optname,
 /* Sets 'fd' to non-blocking mode.  Returns 0 if successful, otherwise a
  * positive errno value. */
 int
-set_nonblocking(int fd)
+set_nonblocking(int fd)//将fd置为非阻塞
 {
 #ifndef _WIN32
     int flags = fcntl(fd, F_GETFL, 0);
@@ -81,7 +81,7 @@ set_nonblocking(int fd)
 }
 
 void
-xset_nonblocking(int fd)
+xset_nonblocking(int fd)//将指定fd设置为非阻塞
 {
     if (set_nonblocking(fd)) {
         exit(EXIT_FAILURE);

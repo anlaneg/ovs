@@ -25,14 +25,14 @@
 
 /* Initializes 'latch' as initially unset. */
 void
-latch_init(struct latch *latch)
+latch_init(struct latch *latch)//创建管道，并将两端置为非阻塞
 {
     xpipe_nonblocking(latch->fds);
 }
 
 /* Destroys 'latch'. */
 void
-latch_destroy(struct latch *latch)
+latch_destroy(struct latch *latch)//销毁latch
 {
     close(latch->fds[0]);
     close(latch->fds[1]);
@@ -41,11 +41,11 @@ latch_destroy(struct latch *latch)
 /* Resets 'latch' to the unset state.  Returns true if 'latch' was previously
  * set, false otherwise. */
 bool
-latch_poll(struct latch *latch)
+latch_poll(struct latch *latch)//是否有数据
 {
     char buffer[_POSIX_PIPE_BUF];
 
-    return read(latch->fds[0], buffer, sizeof buffer) > 0;
+    return read(latch->fds[0], buffer, sizeof buffer) > 0;//表明读到了数据
 }
 
 /* Sets 'latch'.
@@ -53,7 +53,7 @@ latch_poll(struct latch *latch)
  * Calls are not additive: a single latch_poll() clears out any number of
  * latch_set(). */
 void
-latch_set(struct latch *latch)
+latch_set(struct latch *latch)//写'\0'到对端
 {
     ignore(write(latch->fds[1], "", 1));
 }

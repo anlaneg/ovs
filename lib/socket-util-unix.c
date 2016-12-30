@@ -50,7 +50,7 @@ VLOG_DEFINE_THIS_MODULE(socket_util_unix);
 #define MAX_UN_LEN (sizeof(((struct sockaddr_un *) 0)->sun_path) - 1)
 
 void
-xpipe(int fds[2])
+xpipe(int fds[2])//创建一个管道
 {
     if (pipe(fds)) {
         VLOG_FATAL("failed to create pipe (%s)", ovs_strerror(errno));
@@ -58,7 +58,7 @@ xpipe(int fds[2])
 }
 
 void
-xpipe_nonblocking(int fds[2])
+xpipe_nonblocking(int fds[2])//将管道两端置为非阻塞
 {
     xpipe(fds);
     xset_nonblocking(fds[0]);

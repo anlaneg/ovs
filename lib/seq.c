@@ -38,12 +38,12 @@ struct seq {
 
 /* A thread waiting on a particular seq. */
 struct seq_waiter {
-    struct seq *seq OVS_GUARDED;            /* Seq being waited for. */
-    struct hmap_node hmap_node OVS_GUARDED; /* In 'seq->waiters'. */
-    unsigned int ovsthread_id OVS_GUARDED;  /* Key in 'waiters' hmap. */
+    struct seq *seq OVS_GUARDED;            /* Seq being waited for. */ //从属于哪个seq
+    struct hmap_node hmap_node OVS_GUARDED; /* In 'seq->waiters'. */ //加入到从属的seq对应的waiters哈希表时使用
+    unsigned int ovsthread_id OVS_GUARDED;  /* Key in 'waiters' hmap. */ //从属于哪个线程（ovs对线程的编号）
 
     struct seq_thread *thread OVS_GUARDED;  /* Thread preparing to wait. */
-    struct ovs_list list_node OVS_GUARDED;  /* In 'thread->waiters'. */
+    struct ovs_list list_node OVS_GUARDED;  /* In 'thread->waiters'. */ //waiter本身由链串起来
 
     uint64_t value OVS_GUARDED; /* seq->value we're waiting to change. */
 };
@@ -55,7 +55,7 @@ struct seq_thread {
     bool waiting OVS_GUARDED;        /* True if latch_wait() already called. */
 };
 
-static struct ovs_mutex seq_mutex = OVS_MUTEX_INITIALIZER;
+static struct ovs_mutex seq_mutex = OVS_MUTEX_INITIALIZER;//所有seq共有这一把锁
 
 static uint64_t seq_next OVS_GUARDED_BY(seq_mutex) = 1;//用于产生序列
 
@@ -76,21 +76,21 @@ seq_create(void)
 
     seq_init();
 
-    seq = xmalloc(sizeof *seq);
+    seq = xmalloc(sizeof *seq);//创建一个seq
 
     COVERAGE_INC(seq_change);
 
     ovs_mutex_lock(&seq_mutex);
-    seq->value = seq_next++;
-    hmap_init(&seq->waiters);
+    seq->value = seq_next++;//给seq赋初始值
+    hmap_init(&seq->waiters);//初始化其对应的等待队列
     ovs_mutex_unlock(&seq_mutex);
 
-    return seq;
+    return seq;//返回对应的seq
 }
 
 /* Destroys 'seq', waking up threads that were waiting on it, if any. */
 void
-seq_destroy(struct seq *seq)
+seq_destroy(struct seq *seq)//seq销毁时，需要销毁waiters上对应的元素
      OVS_EXCLUDED(seq_mutex)
 {
     ovs_mutex_lock(&seq_mutex);
@@ -128,7 +128,7 @@ seq_change_protected(struct seq *seq)
 {
     COVERAGE_INC(seq_change);
 
-    seq->value = seq_next++;
+    seq->value = seq_next++;//变更序列，并唤醒waiter
     seq_wake_waiters(seq);
 }
 
@@ -161,7 +161,7 @@ seq_read_protected(const struct seq *seq)//返回序列号
  * when an object changes, even without an ability to lock the object.  See
  * Usage in seq.h for details. */
 uint64_t
-seq_read(const struct seq *seq)
+seq_read(const struct seq *seq)//返回序列对应的值
     OVS_EXCLUDED(seq_mutex)
 {
     uint64_t value;
@@ -182,8 +182,8 @@ seq_wait__(struct seq *seq, uint64_t value, const char *where)
     struct seq_waiter *waiter;
 
     HMAP_FOR_EACH_IN_BUCKET (waiter, hmap_node, hash, &seq->waiters) {
-        if (waiter->ovsthread_id == id) {
-            if (waiter->value != value) {
+        if (waiter->ovsthread_id == id) {//已存在情况
+            if (waiter->value != value) {//立即唤醒
                 /* The current value is different from the value we've already
                  * waited for, */
                 poll_immediate_wake_at(where);
@@ -194,6 +194,7 @@ seq_wait__(struct seq *seq, uint64_t value, const char *where)
         }
     }
 
+    //不存在，则创建
     waiter = xmalloc(sizeof *waiter);
     waiter->seq = seq;
     hmap_insert(&seq->waiters, &waiter->hmap_node, hash);
@@ -229,7 +230,7 @@ seq_wait_at(const struct seq *seq_, uint64_t value, const char *where)
     if (value == seq->value) {
         seq_wait__(seq, value, where);
     } else {
-        poll_immediate_wake_at(where);
+        poll_immediate_wake_at(where);//立即唤醒
     }
     ovs_mutex_unlock(&seq_mutex);
 }
@@ -254,7 +255,7 @@ seq_woke(void)
 }
 
 static void
-seq_init(void)
+seq_init(void)//每线程执行一次
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 
@@ -265,7 +266,7 @@ seq_init(void)
 }
 
 static struct seq_thread *
-seq_thread_get(void)
+seq_thread_get(void)//构造每个线程对应的seq_thread
     OVS_REQUIRES(seq_mutex)
 {
     struct seq_thread *thread = pthread_getspecific(seq_thread_key);
@@ -281,7 +282,7 @@ seq_thread_get(void)
 }
 
 static void
-seq_thread_exit(void *thread_)
+seq_thread_exit(void *thread_)//销毁每个线程自已对应的seq_thread
     OVS_EXCLUDED(seq_mutex)
 {
     struct seq_thread *thread = thread_;
@@ -294,7 +295,7 @@ seq_thread_exit(void *thread_)
 }
 
 static void
-seq_thread_woke(struct seq_thread *thread)
+seq_thread_woke(struct seq_thread *thread)//唤醒waiter
     OVS_REQUIRES(seq_mutex)
 {
     struct seq_waiter *waiter, *next_waiter;
@@ -321,7 +322,7 @@ seq_wake_waiters(struct seq *seq)
 {
     struct seq_waiter *waiter, *next_waiter;
 
-    HMAP_FOR_EACH_SAFE (waiter, next_waiter, hmap_node, &seq->waiters) {
+    HMAP_FOR_EACH_SAFE (waiter, next_waiter, hmap_node, &seq->waiters) {//遍历waiter
         latch_set(&waiter->thread->latch);
         seq_waiter_destroy(waiter);
     }
