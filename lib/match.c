@@ -105,7 +105,7 @@ match_set_conj_id(struct match *match, uint32_t value)
 void
 match_set_reg(struct match *match, unsigned int reg_idx, uint32_t value)
 {
-    match_set_reg_masked(match, reg_idx, value, UINT32_MAX);
+    match_set_reg_masked(match, reg_idx, value, UINT32_MAX);//采用全1mask
 }
 
 void
@@ -113,8 +113,8 @@ match_set_reg_masked(struct match *match, unsigned int reg_idx,
                      uint32_t value, uint32_t mask)
 {
     ovs_assert(reg_idx < FLOW_N_REGS);
-    flow_wildcards_set_reg_mask(&match->wc, reg_idx, mask);
-    match->flow.regs[reg_idx] = value & mask;
+    flow_wildcards_set_reg_mask(&match->wc, reg_idx, mask);//设置mask中reg-idx寄存器对应的mask
+    match->flow.regs[reg_idx] = value & mask;//设置flow
 }
 
 void

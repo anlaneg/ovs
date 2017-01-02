@@ -248,7 +248,7 @@ static inline void eth_addr_mark_random(struct eth_addr *ea)
     ea->ea[0] |= 2;                 /* Private. */
 }
 
-static inline void eth_addr_random(struct eth_addr *ea)
+static inline void eth_addr_random(struct eth_addr *ea)//长成随机mac地址
 {
     random_bytes((uint8_t *)ea, sizeof *ea);
     eth_addr_mark_random(ea);

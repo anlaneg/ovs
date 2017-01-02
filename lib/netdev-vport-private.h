@@ -25,12 +25,12 @@
 #include "ovs-thread.h"
 
 struct netdev_vport {
-    struct netdev up;
+    struct netdev up;//基类
 
     /* Protects all members below. */
     struct ovs_mutex mutex;
 
-    struct eth_addr etheraddr;
+    struct eth_addr etheraddr;//mac地址
     struct netdev_stats stats;//虚设备接口统计信息
 
     /* Tunnels. */
@@ -39,19 +39,19 @@ struct netdev_vport {
     bool carrier_status;
 
     /* Patch Ports. */
-    char *peer;
+    char *peer;//patch port专用成员
 };
 
 int netdev_vport_construct(struct netdev *);
 
 static bool
-is_vport_class(const struct netdev_class *class)
+is_vport_class(const struct netdev_class *class)//vport_class有相同的构造函数
 {
     return class->construct == netdev_vport_construct;
 }
 
 static inline struct netdev_vport *
-netdev_vport_cast(const struct netdev *netdev)
+netdev_vport_cast(const struct netdev *netdev)//检查netdev是否为netdev_vport实例
 {
     ovs_assert(is_vport_class(netdev_get_class(netdev)));
     return CONTAINER_OF(netdev, struct netdev_vport, up);

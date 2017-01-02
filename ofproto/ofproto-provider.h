@@ -85,11 +85,11 @@ struct ofproto {//openflow 交换机
     enum ofputil_frag_handling frag_handling;
 
     /* Datapath. */
-    struct hmap ports;          /* Contains "struct ofport"s. */
-    struct shash port_by_name;
+    struct hmap ports;          /* Contains "struct ofport"s. */ //交换上所有port
+    struct shash port_by_name;//hash表，以name为key的port表
     struct simap ofp_requests;  /* OpenFlow port number requests. */
     uint16_t alloc_port_no;     /* Last allocated OpenFlow port number. */
-    uint16_t max_ports;         /* Max possible OpenFlow port num, plus one. */
+    uint16_t max_ports;         /* Max possible OpenFlow port num, plus one. */ //最大接口数
     struct hmap ofport_usage;   /* Map ofport to last used time. */
     uint64_t change_seq;        /* Change sequence for netdev status. */
 
@@ -142,9 +142,9 @@ struct ofport *ofproto_get_port(const struct ofproto *, ofp_port_t ofp_port);
  *
  * With few exceptions, ofproto implementations may look at these fields but
  * should not modify them. */
-struct ofport {
+struct ofport {//openflow交换机上对应的port
     struct hmap_node hmap_node; /* In struct ofproto's "ports" hmap. */
-    struct ofproto *ofproto;    /* The ofproto that contains this port. */
+    struct ofproto *ofproto;    /* The ofproto that contains this port. */ //属于哪个交换机
     struct netdev *netdev;
     struct ofputil_phy_port pp;
     ofp_port_t ofp_port;        /* OpenFlow port number. */
@@ -607,9 +607,9 @@ DECL_OFPROTO_COLLECTION (struct ofgroup *, group)
  * These functions work primarily with four different kinds of data
  * structures:
  *
- *   - "struct ofproto", which represents an OpenFlow switch.
+ *   - "struct ofproto", which represents an OpenFlow switch. openflow交换机
  *
- *   - "struct ofport", which represents a port within an ofproto.
+ *   - "struct ofport", which represents a port within an ofproto. openflow交换机对应的接口
  *
  *   - "struct rule", which represents an OpenFlow flow within an ofproto.
  *
@@ -825,8 +825,8 @@ struct ofproto_class {
      * The client will destroy the flow tables themselves after ->destruct()
      * returns.
      */
-    struct ofproto *(*alloc)(void);
-    int (*construct)(struct ofproto *ofproto);
+    struct ofproto *(*alloc)(void);//交换机空间申请
+    int (*construct)(struct ofproto *ofproto);//交换机初始化(初始化对应port)
     void (*destruct)(struct ofproto *ofproto);
     void (*dealloc)(struct ofproto *ofproto);
 

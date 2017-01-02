@@ -338,29 +338,29 @@ bridge_init_ofproto(const struct ovsrec_open_vswitch *cfg)
 
     if (cfg) {
         for (i = 0; i < cfg->n_bridges; i++) {
-            const struct ovsrec_bridge *br_cfg = cfg->bridges[i];
+            const struct ovsrec_bridge *br_cfg = cfg->bridges[i];//取出一个交换机的配置
             int j;
 
             for (j = 0; j < br_cfg->n_ports; j++) {
-                struct ovsrec_port *port_cfg = br_cfg->ports[j];
+                struct ovsrec_port *port_cfg = br_cfg->ports[j];//取出某交换机上一个port配置
                 int k;
 
                 for (k = 0; k < port_cfg->n_interfaces; k++) {
-                    struct ovsrec_interface *if_cfg = port_cfg->interfaces[k];
+                    struct ovsrec_interface *if_cfg = port_cfg->interfaces[k];//取出某port上一个if的配置
                     struct iface_hint *iface_hint;
 
                     iface_hint = xmalloc(sizeof *iface_hint);
-                    iface_hint->br_name = br_cfg->name;
-                    iface_hint->br_type = br_cfg->datapath_type;
-                    iface_hint->ofp_port = iface_pick_ofport(if_cfg);
+                    iface_hint->br_name = br_cfg->name;//交换机名称
+                    iface_hint->br_type = br_cfg->datapath_type;//桥类型
+                    iface_hint->ofp_port = iface_pick_ofport(if_cfg);//按口编号
 
-                    shash_add(&iface_hints, if_cfg->name, iface_hint);
+                    shash_add(&iface_hints, if_cfg->name, iface_hint);//加入到集合中
                 }
             }
         }
     }
 
-    ofproto_init(&iface_hints);
+    ofproto_init(&iface_hints);//所有交换机的if信息
 
     shash_destroy_free_data(&iface_hints);
     initialized = true;

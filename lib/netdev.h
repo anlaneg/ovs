@@ -73,20 +73,20 @@ struct ovs_action_push_tnl;
 
 /* Configuration specific to tunnels. */
 struct netdev_tunnel_config {//tunnel配置结构体
-    bool in_key_present;
-    bool in_key_flow;
+    bool in_key_present;//in_key是否有效
+    bool in_key_flow;//是否用流中的key(in)
     ovs_be64 in_key;
 
-    bool out_key_present;
-    bool out_key_flow;//为false时，out_key存在
+    bool out_key_present;//out_key是否有效
+    bool out_key_flow;//是否用流中的key(out)
     ovs_be64 out_key;//tunnel id
 
     ovs_be16 dst_port;//tunnel的目的端口
 
-    bool ip_src_flow;
-    bool ip_dst_flow;
+    bool ip_src_flow;//是否用流中的src地址
+    bool ip_dst_flow;//是否用流中的ip目的地址
     struct in6_addr ipv6_src;
-    struct in6_addr ipv6_dst;
+    struct in6_addr ipv6_dst;//设置的ipv6目的地址
 
     uint32_t exts;
 

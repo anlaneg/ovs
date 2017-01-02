@@ -91,7 +91,7 @@ enum { MAX_FLOWS = 65536 };     /* Maximum number of flows in flow table. */
 static struct ovs_mutex dp_netdev_mutex = OVS_MUTEX_INITIALIZER;
 
 /* Contains all 'struct dp_netdev's. */
-static struct shash dp_netdevs OVS_GUARDED_BY(dp_netdev_mutex)
+static struct shash dp_netdevs OVS_GUARDED_BY(dp_netdev_mutex)//所有由netdev创建的dp
     = SHASH_INITIALIZER(&dp_netdevs);
 
 static struct vlog_rate_limit upcall_rl = VLOG_RATE_LIMIT_INIT(600, 600);
@@ -213,9 +213,9 @@ static bool dpcls_lookup(struct dpcls *cls,
 struct dp_netdev {
     const struct dpif_class *const class;
     const char *const name;
-    struct dpif *dpif;
+    struct dpif *dpif;//指向dpif，而dpif中也有指针指向dp_netdev
     struct ovs_refcount ref_cnt;
-    atomic_flag destroyed;
+    atomic_flag destroyed;//廷后删除?
 
     /* Ports.
      *
@@ -524,8 +524,8 @@ struct dp_netdev_pmd_thread {
 
 /* Interface to netdev-based datapath. */
 struct dpif_netdev {
-    struct dpif dpif;
-    struct dp_netdev *dp;
+    struct dpif dpif;//要返回的结构
+    struct dp_netdev *dp;//基类
     uint64_t last_port_seq;
 };
 
@@ -864,7 +864,7 @@ dpif_netdev_pmd_info(struct unixctl_conn *conn, int argc, const char *argv[],
 }
 
 static int
-dpif_netdev_init(void)
+dpif_netdev_init(void)//command注册
 {
     static enum pmd_info_type show_aux = PMD_INFO_SHOW_STATS,
                               clear_aux = PMD_INFO_CLEAR_STATS,
@@ -975,6 +975,7 @@ choose_port(struct dp_netdev *dp, const char *name)
     return ODPP_NONE;
 }
 
+//datapath netdev基类创建，设置基本信息
 static int
 create_dp_netdev(const char *name, const struct dpif_class *class,
                  struct dp_netdev **dpp)
@@ -984,7 +985,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     int error;
 
     dp = xzalloc(sizeof *dp);
-    shash_add(&dp_netdevs, name, dp);
+    shash_add(&dp_netdevs, name, dp);//将创建的dp加入到dp_netdevs链上，由netdev负责的所有dp均在此链上。
 
     *CONST_CAST(const struct dpif_class **, &dp->class) = class;
     *CONST_CAST(const char **, &dp->name) = xstrdup(name);
@@ -1047,13 +1048,13 @@ dpif_netdev_open(const struct dpif_class *class, const char *name,
     int error;
 
     ovs_mutex_lock(&dp_netdev_mutex);
-    dp = shash_find_data(&dp_netdevs, name);
+    dp = shash_find_data(&dp_netdevs, name);//检查此dev是否已创建
     if (!dp) {
-        error = create ? create_dp_netdev(name, class, &dp) : ENODEV;
+        error = create ? create_dp_netdev(name, class, &dp) : ENODEV;//创建
     } else {
         error = (dp->class != class ? EINVAL
                  : create ? EEXIST
-                 : 0);
+                 : 0);//如果是创建，则返回已创建
     }
     if (!error) {
         *dpifp = create_dpif_netdev(dp);
@@ -1141,7 +1142,7 @@ dpif_netdev_destroy(struct dpif *dpif)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
 
-    if (!atomic_flag_test_and_set(&dp->destroyed)) {
+    if (!atomic_flag_test_and_set(&dp->destroyed)) {//廷后删除？
         if (ovs_refcount_unref_relaxed(&dp->ref_cnt) == 1) {
             /* Can't happen: 'dpif' still owns a reference to 'dp'. */
             OVS_NOT_REACHED();
@@ -1464,6 +1465,7 @@ port_destroy(struct dp_netdev_port *port)
     free(port);
 }
 
+//通过名称查找dp_netdev
 static int
 get_port_by_name(struct dp_netdev *dp,
                  const char *devname, struct dp_netdev_port **portp)
@@ -1559,7 +1561,7 @@ do_del_port(struct dp_netdev *dp, struct dp_netdev_port *port)
 
 static void
 answer_port_query(const struct dp_netdev_port *port,
-                  struct dpif_port *dpif_port)
+                  struct dpif_port *dpif_port)//将port封装为dpif_port(结构体间转换）
 {
     dpif_port->name = xstrdup(netdev_get_name(port->netdev));
     dpif_port->type = xstrdup(port->type);
@@ -1584,6 +1586,7 @@ dpif_netdev_port_query_by_number(const struct dpif *dpif, odp_port_t port_no,
     return error;
 }
 
+//在dpif下查找对应的devname,并返回其对应的dpif-port信息
 static int
 dpif_netdev_port_query_by_name(const struct dpif *dpif, const char *devname,
                                struct dpif_port *dpif_port)
@@ -1707,7 +1710,7 @@ struct dp_netdev_port_state {
 };
 
 static int
-dpif_netdev_port_dump_start(const struct dpif *dpif OVS_UNUSED, void **statep)
+dpif_netdev_port_dump_start(const struct dpif *dpif OVS_UNUSED, void **statep)//dump开始时调用
 {
     *statep = xzalloc(sizeof(struct dp_netdev_port_state));
     return 0;
@@ -1723,7 +1726,7 @@ dpif_netdev_port_dump_next(const struct dpif *dpif, void *state_,
     int retval;
 
     ovs_mutex_lock(&dp->port_mutex);
-    node = hmap_at_position(&dp->ports, &state->position);
+    node = hmap_at_position(&dp->ports, &state->position);//给定桶索引，给定桶内偏移的方式来遍历hash表
     if (node) {
         struct dp_netdev_port *port;
 
@@ -4721,7 +4724,7 @@ dpif_netdev_ct_flush(struct dpif *dpif, const uint16_t *zone)
 const struct dpif_class dpif_netdev_class = {
     "netdev",
     dpif_netdev_init,
-    dpif_netdev_enumerate,
+    dpif_netdev_enumerate,//枚举由此class创建的netdev
     dpif_netdev_port_open_type,
     dpif_netdev_open,
     dpif_netdev_close,
@@ -4735,9 +4738,9 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_port_query_by_number,
     dpif_netdev_port_query_by_name,
     NULL,                       /* port_get_pid */
-    dpif_netdev_port_dump_start,
-    dpif_netdev_port_dump_next,
-    dpif_netdev_port_dump_done,
+    dpif_netdev_port_dump_start,//遍历port开始
+    dpif_netdev_port_dump_next,//获取下一个遍历位置
+    dpif_netdev_port_dump_done,//遍历结束
     dpif_netdev_port_poll,
     dpif_netdev_port_poll_wait,
     dpif_netdev_flow_flush,

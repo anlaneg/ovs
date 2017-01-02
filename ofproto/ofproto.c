@@ -287,7 +287,7 @@ static void ofproto_unixctl_init(void);
 
 /* All registered ofproto classes, in probe order. */
 static const struct ofproto_class **ofproto_classes;//记录所有注册的openflow交换机class(当前仅有一个ofproto_dpif_class）
-static size_t n_ofproto_classes;
+static size_t n_ofproto_classes;//记录ofproto_classes数组的大小
 static size_t allocated_ofproto_classes;
 
 /* Global lock that protects all flow table operations. */
@@ -304,7 +304,7 @@ char *pmd_cpu_mask;
 static struct hmap all_ofprotos = HMAP_INITIALIZER(&all_ofprotos);
 
 /* Initial mappings of port to OpenFlow number mappings. */
-static struct shash init_ofp_ports = SHASH_INITIALIZER(&init_ofp_ports);
+static struct shash init_ofp_ports = SHASH_INITIALIZER(&init_ofp_ports);//所有交换机的所有接口信息
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
@@ -326,19 +326,20 @@ ofproto_init(const struct shash *iface_hints)
     struct shash_node *node;
     size_t i;
 
-    ofproto_class_register(&ofproto_dpif_class);
+    ofproto_class_register(&ofproto_dpif_class);//注册ofproto dpif的class
 
     /* Make a local copy, since we don't own 'iface_hints' elements. */
+    //做一份copy
     SHASH_FOR_EACH(node, iface_hints) {
         const struct iface_hint *orig_hint = node->data;
         struct iface_hint *new_hint = xmalloc(sizeof *new_hint);
-        const char *br_type = ofproto_normalize_type(orig_hint->br_type);
+        const char *br_type = ofproto_normalize_type(orig_hint->br_type);//默认是system类型
 
         new_hint->br_name = xstrdup(orig_hint->br_name);
         new_hint->br_type = xstrdup(br_type);
         new_hint->ofp_port = orig_hint->ofp_port;
 
-        shash_add(&init_ofp_ports, node->name, new_hint);
+        shash_add(&init_ofp_ports, node->name, new_hint);//所有交换机及端口的配置
     }
 
     for (i = 0; i < n_ofproto_classes; i++) {
@@ -352,7 +353,7 @@ ofproto_init(const struct shash *iface_hints)
  * ofproto_normalize_type().  Returns the corresponding ofproto_class
  * structure, or a null pointer if there is none registered for 'type'. */
 static const struct ofproto_class *
-ofproto_class_find__(const char *type)
+ofproto_class_find__(const char *type)//给出type取对应支持此type的ofproto-class
 {
     size_t i;
 
@@ -477,7 +478,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     *ofprotop = NULL;
 
     datapath_type = ofproto_normalize_type(datapath_type);
-    class = ofproto_class_find__(datapath_type);//目前仅可以返回ofproto_dpif_class
+    class = ofproto_class_find__(datapath_type);//目前仅可以返回ofproto_dpif_class（目前仅支持system,netdev)
     if (!class) {
         VLOG_WARN("could not create datapath %s of unknown type %s",
                   datapath_name, datapath_type);
@@ -495,12 +496,12 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     ovs_mutex_lock(&ofproto_mutex);
     memset(ofproto, 0, sizeof *ofproto);
     ofproto->ofproto_class = class;
-    ofproto->name = xstrdup(datapath_name);//设置dataplane名称
-    ofproto->type = xstrdup(datapath_type);
+    ofproto->name = xstrdup(datapath_name);//设置datapath名称
+    ofproto->type = xstrdup(datapath_type);//设置datapath类型
     hmap_insert(&all_ofprotos, &ofproto->hmap_node,
                 hash_string(ofproto->name, 0));//将交换机加入到all_ofprotos中
     ofproto->datapath_id = 0;
-    ofproto->forward_bpdu = false;
+    ofproto->forward_bpdu = false;//默认不转发bpdu
     ofproto->fallback_dpid = pick_fallback_dpid();
     ofproto->mfr_desc = NULL;
     ofproto->hw_desc = NULL;
@@ -533,7 +534,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     }
     ovsrcu_set(&ofproto->metadata_tab, tun_metadata_alloc(NULL));
 
-    error = ofproto->ofproto_class->construct(ofproto);//对交换机进行构造
+    error = ofproto->ofproto_class->construct(ofproto);//对交换机进行构造(初始化下发的port)
     if (error) {
         VLOG_ERR("failed to open datapath %s: %s",
                  datapath_name, ovs_strerror(error));
@@ -547,7 +548,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
 
     /* Check that hidden tables, if any, are at the end. */
     ovs_assert(ofproto->n_tables);
-    for (i = 0; i + 1 < ofproto->n_tables; i++) {
+    for (i = 0; i + 1 < ofproto->n_tables; i++) {//在construct中，我们完成表数量设置
         enum oftable_flags flags = ofproto->tables[i].flags;
         enum oftable_flags next_flags = ofproto->tables[i + 1].flags;
 
@@ -555,7 +556,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     }
 
     ofproto->datapath_id = pick_datapath_id(ofproto);
-    init_ports(ofproto);
+    init_ports(ofproto);//初始化交换机对应的port
 
     /* Initialize meters table. */
     if (ofproto->ofproto_class->meter_get_features) {
@@ -578,7 +579,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
  * function.  See the large comment on 'construct' in struct ofproto_class for
  * details. */
 void
-ofproto_init_tables(struct ofproto *ofproto, int n_tables)
+ofproto_init_tables(struct ofproto *ofproto, int n_tables)//ofproto初始化flow table
 {
     struct oftable *table;
 
@@ -604,7 +605,7 @@ ofproto_init_tables(struct ofproto *ofproto, int n_tables)
  * Reserved ports numbered OFPP_MAX and higher are special and not subject to
  * the 'max_ports' restriction. */
 void
-ofproto_init_max_ports(struct ofproto *ofproto, uint16_t max_ports)
+ofproto_init_max_ports(struct ofproto *ofproto, uint16_t max_ports)//设置最大port数
 {
     ovs_assert(max_ports <= ofp_to_u16(OFPP_MAX));
     ofproto->max_ports = max_ports;
@@ -2322,15 +2323,16 @@ ofport_open(struct ofproto *ofproto,
     }
 
     if (ofproto_port->ofp_port == OFPP_NONE) {
-        if (!strcmp(ofproto->name, ofproto_port->name)) {
+        if (!strcmp(ofproto->name, ofproto_port->name)) {//如果port名称与交换机名称一样，则定义为local接口
             ofproto_port->ofp_port = OFPP_LOCAL;
         } else {
+        	//分配一个编号
             ofproto_port->ofp_port = alloc_ofp_port(ofproto,
                                                     ofproto_port->name);
         }
     }
     pp->port_no = ofproto_port->ofp_port;
-    netdev_get_etheraddr(netdev, &pp->hw_addr);
+    netdev_get_etheraddr(netdev, &pp->hw_addr);//设置其对应的mac地址
     ovs_strlcpy(pp->name, ofproto_port->name, sizeof pp->name);
     netdev_get_flags(netdev, &flags);
     pp->config = flags & NETDEV_UP ? 0 : OFPUTIL_PC_PORT_DOWN;
@@ -2373,31 +2375,31 @@ ofport_install(struct ofproto *p,
     int error;
 
     /* Create ofport. */
-    ofport = p->ofproto_class->port_alloc();
+    ofport = p->ofproto_class->port_alloc();//申请port结构
     if (!ofport) {
         error = ENOMEM;
         goto error;
     }
     ofport->ofproto = p;
-    ofport->netdev = netdev;
+    ofport->netdev = netdev;//port对应的netdev
     ofport->change_seq = netdev_get_change_seq(netdev);
     ofport->pp = *pp;
     ofport->ofp_port = pp->port_no;
-    ofport->created = time_msec();
+    ofport->created = time_msec();//port创建的时间
 
     /* Add port to 'p'. */
     hmap_insert(&p->ports, &ofport->hmap_node,
-                hash_ofp_port(ofport->ofp_port));
+                hash_ofp_port(ofport->ofp_port));//将port加入
     shash_add(&p->port_by_name, netdev_name, ofport);
 
     update_mtu(p, ofport);
 
     /* Let the ofproto_class initialize its private data. */
-    error = p->ofproto_class->port_construct(ofport);
+    error = p->ofproto_class->port_construct(ofport);//调用port的构造函数
     if (error) {
         goto error;
     }
-    connmgr_send_port_status(p->connmgr, NULL, pp, OFPPR_ADD);
+    connmgr_send_port_status(p->connmgr, NULL, pp, OFPPR_ADD);//告知controller,我们新加入了一个port
     return 0;
 
 error:
@@ -2516,7 +2518,7 @@ ofport_destroy(struct ofport *port, bool del)
 }
 
 struct ofport *
-ofproto_get_port(const struct ofproto *ofproto, ofp_port_t ofp_port)
+ofproto_get_port(const struct ofproto *ofproto, ofp_port_t ofp_port)//指定交换机，及端口号获取ofport
 {
     struct ofport *port;
 
@@ -2658,10 +2660,10 @@ init_ports(struct ofproto *p)
     struct ofproto_port ofproto_port;
     struct shash_node *node, *next;
 
-    OFPROTO_PORT_FOR_EACH (&ofproto_port, &dump, p) {
+    OFPROTO_PORT_FOR_EACH (&ofproto_port, &dump, p) {//遍历交换机所有接口
         const char *name = ofproto_port.name;
 
-        if (shash_find(&p->port_by_name, name)) {
+        if (shash_find(&p->port_by_name, name)) {//查找此名称对应的port,且已存
             VLOG_WARN_RL(&rl, "%s: ignoring duplicate device %s in datapath",
                          p->name, name);
         } else {
@@ -2678,7 +2680,7 @@ init_ports(struct ofproto *p)
 
             netdev = ofport_open(p, &ofproto_port, &pp);
             if (netdev) {
-                ofport_install(p, netdev, &pp);
+                ofport_install(p, netdev, &pp);//创建对应port
                 if (ofp_to_u16(ofproto_port.ofp_port) < p->max_ports) {
                     p->alloc_port_no = MAX(p->alloc_port_no,
                                            ofp_to_u16(ofproto_port.ofp_port));
@@ -2690,7 +2692,7 @@ init_ports(struct ofproto *p)
     SHASH_FOR_EACH_SAFE(node, next, &init_ofp_ports) {
         struct iface_hint *iface_hint = node->data;
 
-        if (!strcmp(iface_hint->br_name, p->name)) {
+        if (!strcmp(iface_hint->br_name, p->name)) {//删除与当前交换机有关的port,已创建
             free(iface_hint->br_name);
             free(iface_hint->br_type);
             free(iface_hint);

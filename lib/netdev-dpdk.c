@@ -320,7 +320,7 @@ struct ingress_policer {
 };
 
 struct netdev_dpdk {
-    struct netdev up;
+    struct netdev up;//外部的结构体，供框架用
     int port_id;
     int max_packet_len;
     enum dpdk_dev_type type;
@@ -330,14 +330,14 @@ struct netdev_dpdk {
     struct ovs_mutex mutex OVS_ACQ_AFTER(dpdk_mutex);
 
     struct dpdk_mp *dpdk_mp;
-    int mtu;
-    int socket_id;
+    int mtu;//mtu
+    int socket_id;//表明在哪个numa节点上
     int buf_size;
     struct netdev_stats stats;
     /* Protects stats */
     rte_spinlock_t stats_lock;
 
-    struct eth_addr hwaddr;
+    struct eth_addr hwaddr;//保存mac地址
     enum netdev_flags flags;
 
     struct rte_eth_link link;
@@ -426,7 +426,7 @@ dpdk_buf_size(int mtu)
  *
  * Unlike xmalloc(), this function can return NULL on failure. */
 static void *
-dpdk_rte_mzalloc(size_t sz)
+dpdk_rte_mzalloc(size_t sz)//dpdk对应的malloc
 {
     return rte_zmalloc(OVS_VPORT_DPDK, sz, OVS_CACHE_LINE_SIZE);
 }
@@ -580,7 +580,7 @@ check_link_status(struct netdev_dpdk *dev)
 
     rte_eth_link_get_nowait(dev->port_id, &link);
 
-    if (dev->link.link_status != link.link_status) {
+    if (dev->link.link_status != link.link_status) {//dpdk link发生变化
         netdev_change_seq_changed(&dev->up);
 
         dev->link_reset_cnt++;
@@ -597,7 +597,7 @@ check_link_status(struct netdev_dpdk *dev)
 }
 
 static void *
-dpdk_watchdog(void *dummy OVS_UNUSED)
+dpdk_watchdog(void *dummy OVS_UNUSED)//通知link发生变化
 {
     struct netdev_dpdk *dev;
 
@@ -766,7 +766,7 @@ netdev_dpdk_cast(const struct netdev *netdev)
 }
 
 static struct netdev *
-netdev_dpdk_alloc(void)
+netdev_dpdk_alloc(void)//申请netdev
 {
     struct netdev_dpdk *dev;
 
@@ -954,7 +954,7 @@ netdev_dpdk_construct(struct netdev *netdev)
     int err;
 
     /* Names always start with "dpdk" */
-    err = dpdk_dev_parse_name(netdev->name, "dpdk", &port_no);
+    err = dpdk_dev_parse_name(netdev->name, "dpdk", &port_no);//解析出对应的port_id
     if (err) {
         return err;
     }
@@ -1043,7 +1043,7 @@ out:
 }
 
 static void
-netdev_dpdk_dealloc(struct netdev *netdev)
+netdev_dpdk_dealloc(struct netdev *netdev)//netdev释放netdev
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
 
@@ -1051,7 +1051,7 @@ netdev_dpdk_dealloc(struct netdev *netdev)
 }
 
 static int
-netdev_dpdk_get_config(const struct netdev *netdev, struct smap *args)
+netdev_dpdk_get_config(const struct netdev *netdev, struct smap *args)//填充当前配置
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
 
@@ -1207,7 +1207,7 @@ out:
 }
 
 static struct netdev_rxq *
-netdev_dpdk_rxq_alloc(void)
+netdev_dpdk_rxq_alloc(void)//申请rxq队列
 {
     struct netdev_rxq_dpdk *rx = dpdk_rte_mzalloc(sizeof *rx);
 
@@ -1225,7 +1225,7 @@ netdev_rxq_dpdk_cast(const struct netdev_rxq *rxq)
 }
 
 static int
-netdev_dpdk_rxq_construct(struct netdev_rxq *rxq)
+netdev_dpdk_rxq_construct(struct netdev_rxq *rxq)//设置其对应port
 {
     struct netdev_rxq_dpdk *rx = netdev_rxq_dpdk_cast(rxq);
     struct netdev_dpdk *dev = netdev_dpdk_cast(rxq->netdev);
@@ -1243,7 +1243,7 @@ netdev_dpdk_rxq_destruct(struct netdev_rxq *rxq OVS_UNUSED)
 }
 
 static void
-netdev_dpdk_rxq_dealloc(struct netdev_rxq *rxq)
+netdev_dpdk_rxq_dealloc(struct netdev_rxq *rxq)//释放内存
 {
     struct netdev_rxq_dpdk *rx = netdev_rxq_dpdk_cast(rxq);
 
@@ -1417,7 +1417,7 @@ netdev_dpdk_vhost_rxq_recv(struct netdev_rxq *rxq,
         return EAGAIN;
     }
 
-    nb_rx = rte_vhost_dequeue_burst(netdev_dpdk_get_vid(dev),
+    nb_rx = rte_vhost_dequeue_burst(netdev_dpdk_get_vid(dev),//vhosh报文出队
                                     qid * VIRTIO_QNUM + VIRTIO_TXQ,
                                     dev->dpdk_mp->mp,
                                     (struct rte_mbuf **) batch->packets,
@@ -1569,7 +1569,7 @@ __netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
         unsigned int tx_pkts;
 
         tx_pkts = rte_vhost_enqueue_burst(netdev_dpdk_get_vid(dev),
-                                          vhost_qid, cur_pkts, cnt);
+                                          vhost_qid, cur_pkts, cnt);//将报文入队至vhost队列
         if (OVS_LIKELY(tx_pkts)) {
             /* Packets have been sent.*/
             cnt -= tx_pkts;
@@ -1704,7 +1704,7 @@ netdev_dpdk_send__(struct netdev_dpdk *dev, int qid,
         cnt = netdev_dpdk_qos_run(dev, pkts, cnt);
         dropped = batch->count - cnt;
 
-        dropped += netdev_dpdk_eth_tx_burst(dev, qid, pkts, cnt);
+        dropped += netdev_dpdk_eth_tx_burst(dev, qid, pkts, cnt);//报文发送
 
         if (OVS_UNLIKELY(dropped)) {
             rte_spinlock_lock(&dev->stats_lock);
@@ -1730,7 +1730,7 @@ netdev_dpdk_eth_send(struct netdev *netdev, int qid,
 }
 
 static int
-netdev_dpdk_set_etheraddr(struct netdev *netdev, const struct eth_addr mac)
+netdev_dpdk_set_etheraddr(struct netdev *netdev, const struct eth_addr mac)//设置dpdk对应的mac地址
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
 
@@ -1745,7 +1745,7 @@ netdev_dpdk_set_etheraddr(struct netdev *netdev, const struct eth_addr mac)
 }
 
 static int
-netdev_dpdk_get_etheraddr(const struct netdev *netdev, struct eth_addr *mac)
+netdev_dpdk_get_etheraddr(const struct netdev *netdev, struct eth_addr *mac)//获取mac地址
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
 
@@ -2076,7 +2076,7 @@ netdev_dpdk_set_policing(struct netdev* netdev, uint32_t policer_rate,
 }
 
 static int
-netdev_dpdk_get_ifindex(const struct netdev *netdev)
+netdev_dpdk_get_ifindex(const struct netdev *netdev)//返回port-id
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
     int ifindex;
@@ -2571,7 +2571,7 @@ start_vhost_loop(void *dummy OVS_UNUSED)
 }
 
 static int
-netdev_dpdk_class_init(void)
+netdev_dpdk_class_init(void)//模块载入时处理
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 

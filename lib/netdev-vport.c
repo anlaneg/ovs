@@ -86,7 +86,7 @@ get_netdev_tunnel_config(const struct netdev *netdev)
 }
 
 bool
-netdev_vport_is_patch(const struct netdev *netdev)
+netdev_vport_is_patch(const struct netdev *netdev)//必须为vport里的patch口
 {
     const struct netdev_class *class = netdev_get_class(netdev);
 
@@ -219,14 +219,14 @@ netdev_vport_destruct(struct netdev *netdev_)
 }
 
 static void
-netdev_vport_dealloc(struct netdev *netdev_)
+netdev_vport_dealloc(struct netdev *netdev_)//vport的施放
 {
     struct netdev_vport *netdev = netdev_vport_cast(netdev_);
     free(netdev);
 }
 
 static int
-netdev_vport_set_etheraddr(struct netdev *netdev_, const struct eth_addr mac)
+netdev_vport_set_etheraddr(struct netdev *netdev_, const struct eth_addr mac)//设置vport对应的mac地址
 {
     struct netdev_vport *netdev = netdev_vport_cast(netdev_);
 
@@ -398,7 +398,7 @@ parse_tunnel_ip(const char *value, bool accept_mcast, bool *flow,
 }
 
 static int
-set_tunnel_config(struct netdev *dev_, const struct smap *args)
+set_tunnel_config(struct netdev *dev_, const struct smap *args)//设置tunnel对应的配置
 {
     struct netdev_vport *dev = netdev_vport_cast(dev_);
     const char *name = netdev_get_name(dev_);
@@ -409,10 +409,11 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args)
     struct smap_node *node;
 
     has_csum = strstr(type, "gre") || strstr(type, "geneve") ||
-               strstr(type, "stt") || strstr(type, "vxlan");
+               strstr(type, "stt") || strstr(type, "vxlan");//这几种需要check sum
     memset(&tnl_cfg, 0, sizeof tnl_cfg);
 
     /* Add a default destination port for tunnel ports if none specified. */
+    //设置默认目的port
     if (!strcmp(type, "geneve")) {
         tnl_cfg.dst_port = htons(GENEVE_DST_PORT);
     }
@@ -430,7 +431,7 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args)
     }
 
     needs_dst_port = netdev_vport_needs_dst_port(dev_);
-    tnl_cfg.dont_fragment = true;
+    tnl_cfg.dont_fragment = true;//默认为true
 
     SMAP_FOR_EACH (node, args) {
         if (!strcmp(node->key, "remote_ip")) {
@@ -550,7 +551,7 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args)
 }
 
 static int
-get_tunnel_config(const struct netdev *dev, struct smap *args)
+get_tunnel_config(const struct netdev *dev, struct smap *args)//获取tunnel对应的配置
 {
     struct netdev_vport *netdev = netdev_vport_cast(dev);
     struct netdev_tunnel_config tnl_cfg;
@@ -559,13 +560,13 @@ get_tunnel_config(const struct netdev *dev, struct smap *args)
     tnl_cfg = netdev->tnl_cfg;
     ovs_mutex_unlock(&netdev->mutex);
 
-    if (ipv6_addr_is_set(&tnl_cfg.ipv6_dst)) {
+    if (ipv6_addr_is_set(&tnl_cfg.ipv6_dst)) {//设置了ipv6目的地址
         smap_add_ipv6(args, "remote_ip", &tnl_cfg.ipv6_dst);
-    } else if (tnl_cfg.ip_dst_flow) {
+    } else if (tnl_cfg.ip_dst_flow) {//采用流中的目的地址
         smap_add(args, "remote_ip", "flow");
     }
 
-    if (ipv6_addr_is_set(&tnl_cfg.ipv6_src)) {
+    if (ipv6_addr_is_set(&tnl_cfg.ipv6_src)) {//设置了本端地址
         smap_add_ipv6(args, "local_ip", &tnl_cfg.ipv6_src);
     } else if (tnl_cfg.ip_src_flow) {
         smap_add(args, "local_ip", "flow");
@@ -634,7 +635,7 @@ get_tunnel_config(const struct netdev *dev, struct smap *args)
  *
  * If 'netdev' is not a patch port, returns NULL. */
 char *
-netdev_vport_patch_peer(const struct netdev *netdev_)
+netdev_vport_patch_peer(const struct netdev *netdev_)//如果是patch口，则返回其对端，否则返回NULL
 {
     char *peer = NULL;
 
@@ -668,7 +669,7 @@ netdev_vport_inc_rx(const struct netdev *netdev,
 
 void
 netdev_vport_inc_tx(const struct netdev *netdev,
-                    const struct dpif_flow_stats *stats)
+                    const struct dpif_flow_stats *stats)//增加tx计数
 {
     if (is_vport_class(netdev_get_class(netdev))) {
         struct netdev_vport *dev = netdev_vport_cast(netdev);
@@ -681,7 +682,7 @@ netdev_vport_inc_tx(const struct netdev *netdev,
 }
 
 static int
-get_patch_config(const struct netdev *dev_, struct smap *args)
+get_patch_config(const struct netdev *dev_, struct smap *args)//patch只有peer配置
 {
     struct netdev_vport *dev = netdev_vport_cast(dev_);
 
@@ -695,7 +696,7 @@ get_patch_config(const struct netdev *dev_, struct smap *args)
 }
 
 static int
-set_patch_config(struct netdev *dev_, const struct smap *args)
+set_patch_config(struct netdev *dev_, const struct smap *args)//patch口只容许配置peer
 {
     struct netdev_vport *dev = netdev_vport_cast(dev_);
     const char *name = netdev_get_name(dev_);
@@ -712,7 +713,7 @@ set_patch_config(struct netdev *dev_, const struct smap *args)
         return EINVAL;
     }
 
-    if (!strcmp(name, peer)) {
+    if (!strcmp(name, peer)) {//对端不能是自已
         VLOG_ERR("%s: patch peer must not be self", name);
         return EINVAL;
     }
@@ -729,7 +730,7 @@ set_patch_config(struct netdev *dev_, const struct smap *args)
 }
 
 static int
-get_stats(const struct netdev *netdev, struct netdev_stats *stats)
+get_stats(const struct netdev *netdev, struct netdev_stats *stats)//获取统计信息
 {
     struct netdev_vport *dev = netdev_vport_cast(netdev);
 
@@ -825,7 +826,7 @@ get_stats(const struct netdev *netdev, struct netdev_stats *stats)
                           BUILD_HEADER, PUSH_HEADER, POP_HEADER) }}
 
 void
-netdev_vport_tunnel_register(void)
+netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
 {
     /* The name of the dpif_port should be short enough to accomodate adding
      * a port number to the end if one is necessary. */
@@ -848,7 +849,7 @@ netdev_vport_tunnel_register(void)
         int i;
 
         for (i = 0; i < ARRAY_SIZE(vport_classes); i++) {
-            netdev_register_provider(&vport_classes[i].netdev_class);
+            netdev_register_provider(&vport_classes[i].netdev_class);//注册vport,vport中隧道部分注册
         }
 
         unixctl_command_register("tnl/egress_port_range", "min max", 0, 2,
@@ -859,13 +860,13 @@ netdev_vport_tunnel_register(void)
 }
 
 void
-netdev_vport_patch_register(void)
+netdev_vport_patch_register(void)//vport中patch口注册
 {
     static const struct vport_class patch_class =
         { NULL,
             { "patch", false,
-              VPORT_FUNCTIONS(get_patch_config,
-                              set_patch_config,
+              VPORT_FUNCTIONS(get_patch_config,//获取对端
+                              set_patch_config,//设置对端
                               NULL,
                               NULL, NULL, NULL, NULL) }};
     netdev_register_provider(&patch_class.netdev_class);

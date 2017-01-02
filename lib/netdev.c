@@ -328,7 +328,7 @@ netdev_is_reserved_name(const char *name)
  * Some network devices may need to be configured (with netdev_set_config())
  * before they can be used. */
 int
-netdev_open(const char *name, const char *type, struct netdev **netdevp)
+netdev_open(const char *name, const char *type, struct netdev **netdevp)//创建指定netdev
     OVS_EXCLUDED(netdev_mutex)
 {
     struct netdev *netdev;
@@ -397,7 +397,7 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)
 /* Returns a reference to 'netdev_' for the caller to own. Returns null if
  * 'netdev_' is null. */
 struct netdev *
-netdev_ref(const struct netdev *netdev_)
+netdev_ref(const struct netdev *netdev_)//增加引用计数
     OVS_EXCLUDED(netdev_mutex)
 {
     struct netdev *netdev = CONST_CAST(struct netdev *, netdev_);
@@ -414,7 +414,7 @@ netdev_ref(const struct netdev *netdev_)
 /* Reconfigures the device 'netdev' with 'args'.  'args' may be empty
  * or NULL if none are needed. */
 int
-netdev_set_config(struct netdev *netdev, const struct smap *args, char **errp)
+netdev_set_config(struct netdev *netdev, const struct smap *args, char **errp)//调用set_config设置配置
     OVS_EXCLUDED(netdev_mutex)
 {
     if (netdev->netdev_class->set_config) {
@@ -443,7 +443,7 @@ netdev_set_config(struct netdev *netdev, const struct smap *args, char **errp)
  * The caller owns 'args' and its contents and must eventually free them with
  * smap_destroy(). */
 int
-netdev_get_config(const struct netdev *netdev, struct smap *args)
+netdev_get_config(const struct netdev *netdev, struct smap *args)//通过get_config获取配置
     OVS_EXCLUDED(netdev_mutex)
 {
     int error;
@@ -462,7 +462,7 @@ netdev_get_config(const struct netdev *netdev, struct smap *args)
 }
 
 const struct netdev_tunnel_config *
-netdev_get_tunnel_config(const struct netdev *netdev)
+netdev_get_tunnel_config(const struct netdev *netdev)//通过get_tunnel_config获取隧道口对应的配置
     OVS_EXCLUDED(netdev_mutex)
 {
     if (netdev->netdev_class->get_tunnel_config) {
@@ -475,7 +475,7 @@ netdev_get_tunnel_config(const struct netdev *netdev)
 /* Returns the id of the numa node the 'netdev' is on.  If the function
  * is not implemented, returns NETDEV_NUMA_UNSPEC. */
 int
-netdev_get_numa_id(const struct netdev *netdev)
+netdev_get_numa_id(const struct netdev *netdev)//通过get_numa_id获取netdev在哪个numa节点上
 {
     if (netdev->netdev_class->get_numa_id) {
         return netdev->netdev_class->get_numa_id(netdev);
@@ -485,25 +485,25 @@ netdev_get_numa_id(const struct netdev *netdev)
 }
 
 static void
-netdev_unref(struct netdev *dev)
+netdev_unref(struct netdev *dev)//netdev减少引用计数
     OVS_RELEASES(netdev_mutex)
 {
     ovs_assert(dev->ref_cnt);
-    if (!--dev->ref_cnt) {
+    if (!--dev->ref_cnt) {//如果计用计数减小为0，则调用destruct进行销毁
         const struct netdev_class *class = dev->netdev_class;
         struct netdev_registered_class *rc;
 
         dev->netdev_class->destruct(dev);
 
         if (dev->node) {
-            shash_delete(&netdev_shash, dev->node);
+            shash_delete(&netdev_shash, dev->node);//自全局hash表中移除
         }
         free(dev->name);
         seq_destroy(dev->reconfigure_seq);
-        dev->netdev_class->dealloc(dev);
+        dev->netdev_class->dealloc(dev);//释放内存
         ovs_mutex_unlock(&netdev_mutex);
 
-        rc = netdev_lookup_class(class->type);
+        rc = netdev_lookup_class(class->type);//减少class对应的引用
         ovs_refcount_unref(&rc->refcnt);
     } else {
         ovs_mutex_unlock(&netdev_mutex);
@@ -512,7 +512,7 @@ netdev_unref(struct netdev *dev)
 
 /* Closes and destroys 'netdev'. */
 void
-netdev_close(struct netdev *netdev)
+netdev_close(struct netdev *netdev)//关闭，主要是减少引用计数
     OVS_EXCLUDED(netdev_mutex)
 {
     if (netdev) {
@@ -547,6 +547,7 @@ netdev_remove(struct netdev *netdev)
  * pieces.  'name' and 'type' must be freed by the caller. */
 void
 netdev_parse_name(const char *netdev_name_, char **name, char **type)
+//解析name,type，如果有@,则@会分割两者，如果没有，则type为system,name为netdev_name_
 {
     char *netdev_name = xstrdup(netdev_name_);
     char *separator;
@@ -570,23 +571,23 @@ netdev_parse_name(const char *netdev_name_, char **name, char **type)
  * Some kinds of network devices might not support receiving packets.  This
  * function returns EOPNOTSUPP in that case.*/
 int
-netdev_rxq_open(struct netdev *netdev, struct netdev_rxq **rxp, int id)
+netdev_rxq_open(struct netdev *netdev, struct netdev_rxq **rxp, int id)//构造队列<id>,将构造好的对象采用rxq返回
     OVS_EXCLUDED(netdev_mutex)
 {
     int error;
 
-    if (netdev->netdev_class->rxq_alloc && id < netdev->n_rxq) {
+    if (netdev->netdev_class->rxq_alloc && id < netdev->n_rxq) {//申请收队列空间
         struct netdev_rxq *rx = netdev->netdev_class->rxq_alloc();
         if (rx) {
             rx->netdev = netdev;
             rx->queue_id = id;
-            error = netdev->netdev_class->rxq_construct(rx);
+            error = netdev->netdev_class->rxq_construct(rx);//构造指定收队列
             if (!error) {
                 netdev_ref(netdev);
                 *rxp = rx;
                 return 0;
             }
-            netdev->netdev_class->rxq_dealloc(rx);
+            netdev->netdev_class->rxq_dealloc(rx);//施放收队列
         } else {
             error = ENOMEM;
         }
@@ -600,7 +601,7 @@ netdev_rxq_open(struct netdev *netdev, struct netdev_rxq **rxp, int id)
 
 /* Closes 'rx'. */
 void
-netdev_rxq_close(struct netdev_rxq *rx)
+netdev_rxq_close(struct netdev_rxq *rx)//关闭收队列，释放内存，释放对netdev的引用
     OVS_EXCLUDED(netdev_mutex)
 {
     if (rx) {
@@ -625,7 +626,7 @@ netdev_rxq_close(struct netdev_rxq *rx)
  * Returns EAGAIN immediately if no packet is ready to be received or another
  * positive errno value if an error was encountered. */
 int
-netdev_rxq_recv(struct netdev_rxq *rx, struct dp_packet_batch *batch)
+netdev_rxq_recv(struct netdev_rxq *rx, struct dp_packet_batch *batch)//报文收取
 {
     int retval;
 
@@ -641,14 +642,14 @@ netdev_rxq_recv(struct netdev_rxq *rx, struct dp_packet_batch *batch)
 /* Arranges for poll_block() to wake up when a packet is ready to be received
  * on 'rx'. */
 void
-netdev_rxq_wait(struct netdev_rxq *rx)
+netdev_rxq_wait(struct netdev_rxq *rx)//等待收取到包文
 {
     rx->netdev->netdev_class->rxq_wait(rx);
 }
 
 /* Discards any packets ready to be received on 'rx'. */
 int
-netdev_rxq_drain(struct netdev_rxq *rx)
+netdev_rxq_drain(struct netdev_rxq *rx)//放空rx队列
 {
     return (rx->netdev->netdev_class->rxq_drain
             ? rx->netdev->netdev_class->rxq_drain(rx)
@@ -666,7 +667,7 @@ netdev_rxq_drain(struct netdev_rxq *rx)
  *
  * On error, the tx queue configuration is unchanged */
 int
-netdev_set_tx_multiq(struct netdev *netdev, unsigned int n_txq)
+netdev_set_tx_multiq(struct netdev *netdev, unsigned int n_txq)//配置发队列
 {
     int error;
 
@@ -709,7 +710,7 @@ netdev_set_tx_multiq(struct netdev *netdev, unsigned int n_txq)
  * Some network devices may not implement support for this function.  In such
  * cases this function will always return EOPNOTSUPP. */
 int
-netdev_send(struct netdev *netdev, int qid, struct dp_packet_batch *batch,
+netdev_send(struct netdev *netdev, int qid, struct dp_packet_batch *batch,//报文发送
             bool may_steal, bool concurrent_txq)
 {
     if (!netdev->netdev_class->send) {//没有send函数
@@ -751,7 +752,7 @@ netdev_pop_header(struct netdev *netdev, struct dp_packet_batch *batch)
 }
 
 void
-netdev_init_tnl_build_header_params(struct netdev_tnl_build_header_params *params,
+netdev_init_tnl_build_header_params(struct netdev_tnl_build_header_params *params,//构造params
                                     const struct flow *tnl_flow,
                                     const struct in6_addr *src,
                                     struct eth_addr dmac,
@@ -764,6 +765,7 @@ netdev_init_tnl_build_header_params(struct netdev_tnl_build_header_params *param
     params->is_ipv6 = !IN6_IS_ADDR_V4MAPPED(src);
 }
 
+//依据params来构造tunnel头信息（data为产出）
 int netdev_build_header(const struct netdev *netdev,
                         struct ovs_action_push_tnl *data,
                         const struct netdev_tnl_build_header_params *params)
@@ -814,7 +816,7 @@ netdev_send_wait(struct netdev *netdev, int qid)
 /* Attempts to set 'netdev''s MAC address to 'mac'.  Returns 0 if successful,
  * otherwise a positive errno value. */
 int
-netdev_set_etheraddr(struct netdev *netdev, const struct eth_addr mac)
+netdev_set_etheraddr(struct netdev *netdev, const struct eth_addr mac)//设置接口对应的mac地址
 {
     return netdev->netdev_class->set_etheraddr(netdev, mac);
 }
@@ -823,7 +825,7 @@ netdev_set_etheraddr(struct netdev *netdev, const struct eth_addr mac)
  * the MAC address into 'mac'.  On failure, returns a positive errno value and
  * clears 'mac' to all-zeros. */
 int
-netdev_get_etheraddr(const struct netdev *netdev, struct eth_addr *mac)
+netdev_get_etheraddr(const struct netdev *netdev, struct eth_addr *mac)//获取mac对应的mac地址
 {
     return netdev->netdev_class->get_etheraddr(netdev, mac);
 }
@@ -831,7 +833,7 @@ netdev_get_etheraddr(const struct netdev *netdev, struct eth_addr *mac)
 /* Returns the name of the network device that 'netdev' represents,
  * e.g. "eth0".  The caller must not modify or free the returned string. */
 const char *
-netdev_get_name(const struct netdev *netdev)
+netdev_get_name(const struct netdev *netdev)//获取接口名称
 {
     return netdev->name;
 }
@@ -845,7 +847,7 @@ netdev_get_name(const struct netdev *netdev)
  * On other failure, returns a positive errno value.  On failure, sets '*mtup'
  * to 0. */
 int
-netdev_get_mtu(const struct netdev *netdev, int *mtup)
+netdev_get_mtu(const struct netdev *netdev, int *mtup)//获取接口对应的mtu
 {
     const struct netdev_class *class = netdev->netdev_class;
     int error;
@@ -868,7 +870,7 @@ netdev_get_mtu(const struct netdev *netdev, int *mtup)
  * MTU (as e.g. some tunnels do not).  On other failure, returns a positive
  * errno value. */
 int
-netdev_set_mtu(struct netdev *netdev, int mtu)
+netdev_set_mtu(struct netdev *netdev, int mtu)//设置mtu
 {
     const struct netdev_class *class = netdev->netdev_class;
     int error;
@@ -916,7 +918,7 @@ netdev_mtu_is_user_config(struct netdev *netdev)
  * cases this function will always return -EOPNOTSUPP.
  */
 int
-netdev_get_ifindex(const struct netdev *netdev)
+netdev_get_ifindex(const struct netdev *netdev)//返回接口对应的ifindex
 {
     int (*get_ifindex)(const struct netdev *);
 
@@ -1002,7 +1004,7 @@ netdev_features_to_bps(enum netdev_features features,
 /* Returns true if any of the NETDEV_F_* bits that indicate a full-duplex link
  * are set in 'features', otherwise false. */
 bool
-netdev_features_is_full_duplex(enum netdev_features features)
+netdev_features_is_full_duplex(enum netdev_features features)//是否全双工
 {
     return (features & (NETDEV_F_10MB_FD | NETDEV_F_100MB_FD | NETDEV_F_1GB_FD
                         | NETDEV_F_10GB_FD | NETDEV_F_40GB_FD
@@ -1025,7 +1027,7 @@ netdev_set_advertisements(struct netdev *netdev,
  * 'addr' is INADDR_ANY, 'netdev''s IPv4 address is cleared.  Returns a
  * positive errno value. */
 int
-netdev_set_in4(struct netdev *netdev, struct in_addr addr, struct in_addr mask)
+netdev_set_in4(struct netdev *netdev, struct in_addr addr, struct in_addr mask)//配置ipv4地址为netdev
 {
     return (netdev->netdev_class->set_in4
             ? netdev->netdev_class->set_in4(netdev, addr, mask)
@@ -1714,7 +1716,7 @@ netdev_get_class(const struct netdev *netdev)
  *
  * The caller must free the returned netdev with netdev_close(). */
 struct netdev *
-netdev_from_name(const char *name)
+netdev_from_name(const char *name)//获取netdev
     OVS_EXCLUDED(netdev_mutex)
 {
     struct netdev *netdev;
@@ -1758,7 +1760,7 @@ netdev_get_devices(const struct netdev_class *netdev_class,
  * The caller is responsible for freeing 'vports' and must close
  * each 'netdev-vport' in the list. */
 struct netdev **
-netdev_get_vports(size_t *size)
+netdev_get_vports(size_t *size)//将netdev-shash中的vport全部返回，size指出返回的大小
     OVS_EXCLUDED(netdev_mutex)
 {
     struct netdev **vports;

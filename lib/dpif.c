@@ -126,7 +126,7 @@ dp_initialize(void)
         tnl_neigh_cache_init();
         route_table_init();
 
-        for (i = 0; i < ARRAY_SIZE(base_dpif_classes); i++) {
+        for (i = 0; i < ARRAY_SIZE(base_dpif_classes); i++) {//注册base_dpif_classes中的dpif_class,目前两个system,netdev
             dp_register_provider(base_dpif_classes[i]);
         }
 
@@ -186,7 +186,7 @@ dp_register_provider(const struct dpif_class *new_class)
  * registered and not currently be in use by any dpifs.  After unregistration
  * new datapaths of that type cannot be opened using dpif_open(). */
 static int
-dp_unregister_provider__(const char *type)
+dp_unregister_provider__(const char *type)//dpif解注册
 {
     struct shash_node *node;
     struct registered_dpif_class *registered_class;
@@ -262,7 +262,7 @@ dp_class_unref(struct registered_dpif_class *rc)
 }
 
 static struct registered_dpif_class *
-dp_class_lookup(const char *type)
+dp_class_lookup(const char *type)//通过类型查找对应注册的class,目前有两种system,netdev
 {
     struct registered_dpif_class *rc;
 
@@ -283,7 +283,7 @@ dp_class_lookup(const char *type)
  * Some kinds of datapaths might not be practically enumerable.  This is not
  * considered an error. */
 int
-dp_enumerate_names(const char *type, struct sset *names)
+dp_enumerate_names(const char *type, struct sset *names)//返回此type对应的所有dp的名称
 {
     struct registered_dpif_class *registered_class;
     const struct dpif_class *dpif_class;
@@ -300,7 +300,7 @@ dp_enumerate_names(const char *type, struct sset *names)
 
     dpif_class = registered_class->dpif_class;
     error = (dpif_class->enumerate
-             ? dpif_class->enumerate(names, dpif_class)
+             ? dpif_class->enumerate(names, dpif_class)//枚举由此class创建的所有dp
              : 0);
     if (error) {
         VLOG_WARN("failed to enumerate %s datapaths: %s", dpif_class->type,
@@ -333,7 +333,7 @@ dp_parse_name(const char *datapath_name_, char **name, char **type)
 }
 
 static int
-do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
+do_open(const char *name, const char *type, bool create, struct dpif **dpifp)//创建dpif
 {
     struct dpif *dpif = NULL;
     int error;
@@ -343,7 +343,7 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
 
     type = dpif_normalize_type(type);
     registered_class = dp_class_lookup(type);
-    if (!registered_class) {
+    if (!registered_class) {//如果此type没有注册
         VLOG_WARN("could not create datapath %s of unknown type %s", name,
                   type);
         error = EAFNOSUPPORT;
@@ -351,7 +351,7 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
     }
 
     error = registered_class->dpif_class->open(registered_class->dpif_class,
-                                               name, create, &dpif);
+                                               name, create, &dpif);//创建datapath接口
     if (!error) {
         ovs_assert(dpif->dpif_class == registered_class->dpif_class);
     } else {
@@ -395,8 +395,8 @@ dpif_create_and_open(const char *name, const char *type, struct dpif **dpifp)
 {
     int error;
 
-    error = dpif_create(name, type, dpifp);
-    if (error == EEXIST || error == EBUSY) {
+    error = dpif_create(name, type, dpifp);//创建后端对应的dpifp
+    if (error == EEXIST || error == EBUSY) {//如果已被创建，则败为接受打开结果
         error = dpif_open(name, type, dpifp);
         if (error) {
             VLOG_WARN("datapath %s already exists but cannot be opened: %s",
@@ -600,7 +600,7 @@ dpif_port_destroy(struct dpif_port *dpif_port)
 /* Checks if port named 'devname' exists in 'dpif'.  If so, returns
  * true; otherwise, returns false. */
 bool
-dpif_port_exists(const struct dpif *dpif, const char *devname)
+dpif_port_exists(const struct dpif *dpif, const char *devname)//检查devname是否在datapath interface下存在
 {
     int error = dpif->dpif_class->port_query_by_name(dpif, devname, NULL);
     if (error != 0 && error != ENOENT && error != ENODEV) {

@@ -272,12 +272,12 @@ static struct shash all_dpif_backers = SHASH_INITIALIZER(&all_dpif_backers);
 
 struct ofproto_dpif {
     struct hmap_node all_ofproto_dpifs_node; /* In 'all_ofproto_dpifs'. */ //用于挂接ofproto
-    struct ofproto up;//哪个交换机
-    struct dpif_backer *backer;
+    struct ofproto up;//交换机（基类信息）
+    struct dpif_backer *backer;//datapath接口的后端
 
     /* Unique identifier for this instantiation of this bridge in this running
      * process.  */
-    struct uuid uuid;
+    struct uuid uuid;//唯一标识一个交换机，运行时随机生成
 
     ATOMIC(ovs_version_t) tables_version;  /* For classifier lookups. */ //表版本号
 
@@ -294,8 +294,8 @@ struct ofproto_dpif {
     struct dpif_sflow *sflow;
     struct dpif_ipfix *ipfix;
     struct hmap bundles;        /* Contains "struct ofbundle"s. */
-    struct mac_learning *ml;
-    struct mcast_snooping *ms;
+    struct mac_learning *ml;//mac学习表
+    struct mcast_snooping *ms;//igmp snooping学习表
     bool has_bonded_bundles;
     bool lacp_enabled;
     struct mbridge *mbridge;
@@ -313,7 +313,7 @@ struct ofproto_dpif {
     long long int rstp_last_tick;
 
     /* Ports. */
-    struct sset ports;             /* Set of standard port names. */
+    struct sset ports;             /* Set of standard port names. */ //交换机上已存在的接口名称
     struct sset ghost_ports;       /* Ports with no datapath port. */
     struct sset port_poll_set;     /* Queued names for port_poll() reply. */
     int port_poll_errno;           /* Last errno for port_poll() reply. */
@@ -359,7 +359,7 @@ static void ofproto_trace(struct ofproto_dpif *, struct flow *,
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
 /* Initial mappings of port to bridge mappings. */
-static struct shash init_ofp_ports = SHASH_INITIALIZER(&init_ofp_ports);
+static struct shash init_ofp_ports = SHASH_INITIALIZER(&init_ofp_ports);//dpif做init时，初始化了此类型，记录所有birdge的所有port配置
 
 const struct tun_table *
 ofproto_dpif_get_tun_tab(const struct ofproto_dpif *ofproto)
@@ -397,11 +397,12 @@ ofproto_dpif_send_async_msg(struct ofproto_dpif *ofproto,
 /* Factory functions. */
 
 static void
-init(const struct shash *iface_hints)
+init(const struct shash *iface_hints)//每一份class对应一个初始化，故需要在此class中copy一份
 {
     struct shash_node *node;
 
     /* Make a local copy, since we don't own 'iface_hints' elements. */
+    //做一份copy,将传入的iface-hints保存在init_ofp_ports上
     SHASH_FOR_EACH(node, iface_hints) {
         const struct iface_hint *orig_hint = node->data;
         struct iface_hint *new_hint = xmalloc(sizeof *new_hint);
@@ -418,13 +419,13 @@ init(const struct shash *iface_hints)
 }
 
 static void
-enumerate_types(struct sset *types)
+enumerate_types(struct sset *types)//枚举当前支持的types
 {
     dp_enumerate_types(types);
 }
 
 static int
-enumerate_names(const char *type, struct sset *names)
+enumerate_names(const char *type, struct sset *names)//枚举当前支持的name
 {
     struct ofproto_dpif *ofproto;
 
@@ -799,7 +800,7 @@ type_wait(const char *type)
 static int add_internal_flows(struct ofproto_dpif *);
 
 static struct ofproto *
-alloc(void)
+alloc(void)//交换机空间申请
 {
     struct ofproto_dpif *ofproto = xzalloc(sizeof *ofproto);
     return &ofproto->up;
@@ -858,7 +859,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
     int error;
 
     backer = shash_find_data(&all_dpif_backers, type);
-    if (backer) {
+    if (backer) {//如果找到，则仅增加引用计数
         backer->refcount++;
         *backerp = backer;
         return 0;
@@ -874,13 +875,13 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
         struct dpif *old_dpif;
 
         /* Don't remove our backer if it exists. */
-        if (!strcmp(name, backer_name)) {
+        if (!strcmp(name, backer_name)) {//后端已存在，不处理
             continue;
         }
 
-        if (dpif_open(name, type, &old_dpif)) {
+        if (dpif_open(name, type, &old_dpif)) {//尝试着去打开一个dpif
             VLOG_WARN("couldn't open old datapath %s to remove it", name);
-        } else {
+        } else {//刚刚我们创建了一个，这下好了，需要删除掉，这个处理看起来很怪异。
             dpif_delete(old_dpif);
             dpif_close(old_dpif);
         }
@@ -889,7 +890,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
 
     backer = xmalloc(sizeof *backer);
 
-    error = dpif_create_and_open(backer_name, type, &backer->dpif);
+    error = dpif_create_and_open(backer_name, type, &backer->dpif);//创建及打开后端
     free(backer_name);
     if (error) {
         VLOG_ERR("failed to open datapath of type %s: %s", type,
@@ -906,7 +907,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
     backer->need_revalidate = 0;
     simap_init(&backer->tnl_backers);
     backer->recv_set_enable = !ofproto_get_flow_restore_wait();
-    *backerp = backer;
+    *backerp = backer;//设置创建好的backer
 
     if (backer->recv_set_enable) {
         dpif_flow_flush(backer->dpif);
@@ -931,7 +932,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
         free(garbage);
     }
 
-    shash_add(&all_dpif_backers, type, backer);
+    shash_add(&all_dpif_backers, type, backer);//加入此backer
 
     check_support(backer);
     atomic_count_init(&backer->tnl_count, 0);
@@ -1329,7 +1330,7 @@ check_support(struct dpif_backer *backer)
 }
 
 static int
-construct(struct ofproto *ofproto_)
+construct(struct ofproto *ofproto_)//ofproto构造函数
 {
     struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofproto_);
     struct shash_node *node, *next;
@@ -1338,7 +1339,7 @@ construct(struct ofproto *ofproto_)
     /* Tunnel module can get used right after the udpif threads are running. */
     ofproto_tunnel_init();
 
-    error = open_dpif_backer(ofproto->up.type, &ofproto->backer);
+    error = open_dpif_backer(ofproto->up.type, &ofproto->backer);//创建datapath 接口对应的后端，设置upcall
     if (error) {
         return error;
     }
@@ -1373,27 +1374,27 @@ construct(struct ofproto *ofproto_)
     SHASH_FOR_EACH_SAFE (node, next, &init_ofp_ports) {
         struct iface_hint *iface_hint = node->data;
 
-        if (!strcmp(iface_hint->br_name, ofproto->up.name)) {
+        if (!strcmp(iface_hint->br_name, ofproto->up.name)) {//是我们这个交换机的配置
             /* Check if the datapath already has this port. */
-            if (dpif_port_exists(ofproto->backer->dpif, node->name)) {
+            if (dpif_port_exists(ofproto->backer->dpif, node->name)) {//看这个接口是否在我们这个交换机上已存在
                 sset_add(&ofproto->ports, node->name);
             }
 
             free(iface_hint->br_name);
             free(iface_hint->br_type);
             free(iface_hint);
-            shash_delete(&init_ofp_ports, node);
+            shash_delete(&init_ofp_ports, node);//此节点已被我们初始化了，删除掉
         }
     }
 
     hmap_insert(&all_ofproto_dpifs, &ofproto->all_ofproto_dpifs_node,
-                hash_string(ofproto->up.name, 0));
-    memset(&ofproto->stats, 0, sizeof ofproto->stats);
+                hash_string(ofproto->up.name, 0));//加入all_ofproto_dpifs链
+    memset(&ofproto->stats, 0, sizeof ofproto->stats);//准备统计状态
 
     ofproto_init_tables(ofproto_, N_TABLES);//默认构造255个表
-    error = add_internal_flows(ofproto);
+    error = add_internal_flows(ofproto);//加入内部流
 
-    ofproto->up.tables[TBL_INTERNAL].flags = OFTABLE_HIDDEN | OFTABLE_READONLY;
+    ofproto->up.tables[TBL_INTERNAL].flags = OFTABLE_HIDDEN | OFTABLE_READONLY;//定义hidden,readonly
 
     return error;
 }
@@ -1407,7 +1408,7 @@ add_internal_miss_flow(struct ofproto_dpif *ofproto, int id,
     struct rule *rule;
 
     match_init_catchall(&match);//清空，即改为catch all
-    match_set_reg(&match, 0, id);//设置reg
+    match_set_reg(&match, 0, id);//设置reg-0的值为id
 
     //优先级为0，空闲超时为0
     error = ofproto_dpif_add_internal_flow(ofproto, &match, 0, 0, ofpacts,
@@ -1722,21 +1723,21 @@ set_tables_version(struct ofproto *ofproto_, ovs_version_t version)
 }
 
 static struct ofport *
-port_alloc(void)
+port_alloc(void)//申请ofport空间
 {
     struct ofport_dpif *port = xzalloc(sizeof *port);
     return &port->up;
 }
 
 static void
-port_dealloc(struct ofport *port_)
+port_dealloc(struct ofport *port_)//释放ofport空间
 {
     struct ofport_dpif *port = ofport_dpif_cast(port_);
     free(port);
 }
 
 static int
-port_construct(struct ofport *port_)
+port_construct(struct ofport *port_)//ofport构造
 {
     struct ofport_dpif *port = ofport_dpif_cast(port_);
     struct ofproto_dpif *ofproto = ofproto_dpif_cast(port->up.ofproto);
@@ -5805,7 +5806,7 @@ ofproto_dpif_add_internal_flow(struct ofproto_dpif *ofproto,
         .buffer_id = UINT32_MAX,
         .match = *match,
         .priority = priority,
-        .table_id = TBL_INTERNAL,
+        .table_id = TBL_INTERNAL,//加入到内部表
         .command = OFPFC_ADD,
         .idle_timeout = idle_timeout,
         .flags = OFPUTIL_FF_HIDDEN_FIELDS | OFPUTIL_FF_NO_READONLY,
