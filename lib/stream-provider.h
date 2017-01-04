@@ -129,8 +129,8 @@ struct stream_class {
  *
  * This structure should be treated as opaque by stream implementations. */
 struct pstream {
-    const struct pstream_class *class;
-    char *name;
+    const struct pstream_class *class;//对应的class
+    char *name;//对应的名称
     ovs_be16 bound_port;
 };
 

@@ -32,6 +32,9 @@
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(stream_fd);
+//定义了主动，被动两种，主动可以看起是client fd，被动是server fd
+//client fd可以进行read,write
+//server fd可以进行accept，accept会接入一个新的stream_fd做为client fd和客户端的stream-fd进行read,write
 
 /* Active file descriptor stream. */
 
@@ -39,7 +42,7 @@ struct stream_fd
 {
     struct stream stream;
     int fd;
-    int fd_type;
+    int fd_type;//fd类型，例如AF_INET
 };
 
 static const struct stream_class stream_fd_class;
@@ -77,7 +80,7 @@ stream_fd_cast(struct stream *stream)
 }
 
 static void
-fd_close(struct stream *stream)
+fd_close(struct stream *stream)//关闭fd，并释放结构
 {
     struct stream_fd *s = stream_fd_cast(stream);
     closesocket(s->fd);
@@ -85,7 +88,7 @@ fd_close(struct stream *stream)
 }
 
 static int
-fd_connect(struct stream *stream)
+fd_connect(struct stream *stream)//检查fd是否可写，返回0成功，否则返回errno
 {
     struct stream_fd *s = stream_fd_cast(stream);
     int retval = check_connection_completion(s->fd);
@@ -96,7 +99,7 @@ fd_connect(struct stream *stream)
 }
 
 static ssize_t
-fd_recv(struct stream *stream, void *buffer, size_t n)
+fd_recv(struct stream *stream, void *buffer, size_t n)//收取n字节，填充到buffer中
 {
     struct stream_fd *s = stream_fd_cast(stream);
     ssize_t retval;
@@ -119,7 +122,7 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
 }
 
 static ssize_t
-fd_send(struct stream *stream, const void *buffer, size_t n)
+fd_send(struct stream *stream, const void *buffer, size_t n)//发送buffer中的内容，长度为n
 {
     struct stream_fd *s = stream_fd_cast(stream);
     ssize_t retval;
@@ -163,11 +166,11 @@ fd_wait(struct stream *stream, enum stream_wait_type wait)
 static const struct stream_class stream_fd_class = {
     "fd",                       /* name */
     false,                      /* needs_probes */
-    NULL,                       /* open */
-    fd_close,                   /* close */
+    NULL,                       /* open */ //打开后关联的，故open不需要处理
+    fd_close,                   /* close */ //关闭
     fd_connect,                 /* connect */
-    fd_recv,                    /* recv */
-    fd_send,                    /* send */
+    fd_recv,                    /* recv */ //收取
+    fd_send,                    /* send */ //发送
     NULL,                       /* run */
     NULL,                       /* run_wait */
     fd_wait,                    /* wait */
@@ -178,10 +181,11 @@ static const struct stream_class stream_fd_class = {
 struct fd_pstream
 {
     struct pstream pstream;
-    int fd;
+    int fd;//fd
+    //收到新的fd后执行此回调，创建新的stream
     int (*accept_cb)(int fd, const struct sockaddr_storage *, size_t ss_len,
                      struct stream **);
-    char *unlink_path;
+    char *unlink_path;//绑定的地址
 };
 
 static const struct pstream_class fd_pstream_class;
@@ -223,7 +227,7 @@ new_fd_pstream(const char *name, int fd,
 }
 
 static void
-pfd_close(struct pstream *pstream)
+pfd_close(struct pstream *pstream)//pstream关闭函数
 {
     struct fd_pstream *ps = fd_pstream_cast(pstream);
     closesocket(ps->fd);
@@ -232,7 +236,7 @@ pfd_close(struct pstream *pstream)
 }
 
 static int
-pfd_accept(struct pstream *pstream, struct stream **new_streamp)
+pfd_accept(struct pstream *pstream, struct stream **new_streamp)//接受一个新的stream
 {
     struct fd_pstream *ps = fd_pstream_cast(pstream);
     struct sockaddr_storage ss;
@@ -240,8 +244,8 @@ pfd_accept(struct pstream *pstream, struct stream **new_streamp)
     int new_fd;
     int retval;
 
-    new_fd = accept(ps->fd, (struct sockaddr *) &ss, &ss_len);
-    if (new_fd < 0) {
+    new_fd = accept(ps->fd, (struct sockaddr *) &ss, &ss_len);//尝试着接受一个新的fd
+    if (new_fd < 0) {//accept失败
         retval = sock_errno();
 #ifdef _WIN32
         if (retval == WSAEWOULDBLOCK) {
@@ -254,8 +258,8 @@ pfd_accept(struct pstream *pstream, struct stream **new_streamp)
         return retval;
     }
 
-    retval = set_nonblocking(new_fd);
-    if (retval) {
+    retval = set_nonblocking(new_fd);//将新fd设置为非阻塞
+    if (retval) {//如果设置非阻塞，则关闭fd
         closesocket(new_fd);
         return retval;
     }
@@ -273,7 +277,7 @@ pfd_wait(struct pstream *pstream)
 static const struct pstream_class fd_pstream_class = {
     "pstream",
     false,
-    NULL,
+    NULL,//由于打开时，已监听，故fd类型就不需要了
     pfd_close,
     pfd_accept,
     pfd_wait,

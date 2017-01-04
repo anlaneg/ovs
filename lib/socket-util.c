@@ -89,7 +89,7 @@ xset_nonblocking(int fd)//将指定fd设置为非阻塞
 }
 
 void
-setsockopt_tcp_nodelay(int fd)
+setsockopt_tcp_nodelay(int fd)//设置tcp为不延迟
 {
     int on = 1;
     int retval;
@@ -239,38 +239,38 @@ lookup_hostname(const char *host_name, struct in_addr *addr)
 }
 
 int
-check_connection_completion(int fd)
+check_connection_completion(int fd)//等待可写，如果发生错误，错误号将被返回
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 10);
     struct pollfd pfd;
     int retval;
 
     pfd.fd = fd;
-    pfd.events = POLLOUT;
+    pfd.events = POLLOUT;//检测写事件
 
 #ifndef _WIN32
     do {
-        retval = poll(&pfd, 1, 0);
-    } while (retval < 0 && errno == EINTR);
+        retval = poll(&pfd, 1, 0);//立即返回
+    } while (retval < 0 && errno == EINTR);//失败且被信号中断时，继续此循环
 #else
     retval = WSAPoll(&pfd, 1, 0);
 #endif
-    if (retval == 1) {
-        if (pfd.revents & POLLERR) {
-            ssize_t n = send(fd, "", 1, 0);
-            if (n < 0) {
+    if (retval == 1) {//此fd有事件发生
+        if (pfd.revents & POLLERR) {//此fd发生了错误
+            ssize_t n = send(fd, "", 1, 0);//发送'\0'
+            if (n < 0) {//写失败
                 return sock_errno();
             } else {
                 VLOG_ERR_RL(&rl, "poll return POLLERR but send succeeded");
                 return EPROTO;
             }
         }
-        return 0;
+        return 0;//成功
     } else if (retval < 0) {
         VLOG_ERR_RL(&rl, "poll: %s", sock_strerror(sock_errno()));
         return errno;
     } else {
-        return EAGAIN;
+        return EAGAIN;//重试
     }
 }
 

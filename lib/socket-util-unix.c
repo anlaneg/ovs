@@ -310,7 +310,7 @@ static int bind_unix_socket(int fd, struct sockaddr *sun, socklen_t sun_len)
  * Returns the socket's fd if successful, otherwise a negative errno value. */
 int
 make_unix_socket(int style, bool nonblock,
-                 const char *bind_path, const char *connect_path)
+                 const char *bind_path, const char *connect_path)//创建unix socket（clinet,server类型fd,阻塞或者非阻塞fd)
 {
     int error;
     int fd;
@@ -324,14 +324,14 @@ make_unix_socket(int style, bool nonblock,
      * in connect(), if connect_path != NULL.  (In turn, that's a corner case:
      * it will only happen if style is SOCK_STREAM or SOCK_SEQPACKET, and only
      * if a backlog of un-accepted connections has built up in the kernel.)  */
-    if (nonblock) {
+    if (nonblock) {//处理是否非阻塞
         error = set_nonblocking(fd);
         if (error) {
             goto error;
         }
     }
 
-    if (bind_path) {
+    if (bind_path) {//需要绑定
         char linkname[MAX_UN_LEN + 1];
         struct sockaddr_un un;
         socklen_t un_len;
@@ -341,11 +341,11 @@ make_unix_socket(int style, bool nonblock,
             VLOG_WARN("unlinking \"%s\": %s\n",
                       bind_path, ovs_strerror(errno));
         }
-        fatal_signal_add_file_to_unlink(bind_path);
+        fatal_signal_add_file_to_unlink(bind_path);//指定文件退出时，需要删除
 
         error = make_sockaddr_un(bind_path, &un, &un_len, &dirfd, linkname);
         if (!error) {
-            error = bind_unix_socket(fd, (struct sockaddr *) &un, un_len);
+            error = bind_unix_socket(fd, (struct sockaddr *) &un, un_len);//bind
         }
         free_sockaddr_un(dirfd, linkname);
 
@@ -354,7 +354,7 @@ make_unix_socket(int style, bool nonblock,
         }
     }
 
-    if (connect_path) {
+    if (connect_path) {//需要连接到此地址
         char linkname[MAX_UN_LEN + 1];
         struct sockaddr_un un;
         socklen_t un_len;

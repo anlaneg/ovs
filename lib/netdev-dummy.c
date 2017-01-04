@@ -628,7 +628,7 @@ netdev_dummy_run(const struct netdev_class *netdev_class)
 
     ovs_mutex_lock(&dummy_list_mutex);
     LIST_FOR_EACH (dev, list_node, &dummy_list) {
-        if (netdev_get_class(&dev->up) != netdev_class) {
+        if (netdev_get_class(&dev->up) != netdev_class) {//非netdev_class跳开
             continue;
         }
         ovs_mutex_lock(&dev->mutex);

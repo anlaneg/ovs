@@ -28,8 +28,10 @@ struct stream;
 struct pstream;
 struct sockaddr_storage;
 
+//新建主动stream
 int new_fd_stream(const char *name, int fd, int connect_status,
                   int fd_type, struct stream **streamp);
+//新建被动stream
 int new_fd_pstream(const char *name, int fd,
                    int (*accept_cb)(int fd, const struct sockaddr_storage *ss,
                                     size_t ss_len, struct stream **),

@@ -40,7 +40,7 @@ VLOG_DEFINE_THIS_MODULE(stream_unix);
 /* Active UNIX socket. */
 
 static int
-unix_open(const char *name, char *suffix, struct stream **streamp,
+unix_open(const char *name, char *suffix, struct stream **streamp,//主动unix socket创建
           uint8_t dscp OVS_UNUSED)
 {
     char *connect_path;
@@ -81,20 +81,20 @@ static int punix_accept(int fd, const struct sockaddr_storage *ss,
 
 static int
 punix_open(const char *name OVS_UNUSED, char *suffix,
-           struct pstream **pstreamp, uint8_t dscp OVS_UNUSED)
+           struct pstream **pstreamp, uint8_t dscp OVS_UNUSED)//被动unix socket创建
 {
     char *bind_path;
     int fd, error;
 
     bind_path = abs_file_name(ovs_rundir(), suffix);
-    fd = make_unix_socket(SOCK_STREAM, true, bind_path, NULL);
+    fd = make_unix_socket(SOCK_STREAM, true, bind_path, NULL);//创建server类型的unix socket
     if (fd < 0) {
         VLOG_ERR("%s: binding failed: %s", bind_path, ovs_strerror(errno));
         free(bind_path);
         return errno;
     }
 
-    if (listen(fd, 64) < 0) {
+    if (listen(fd, 64) < 0) {//监听
         error = errno;
         VLOG_ERR("%s: listen: %s", name, ovs_strerror(error));
         close(fd);
@@ -105,6 +105,7 @@ punix_open(const char *name OVS_UNUSED, char *suffix,
     return new_fd_pstream(name, fd, punix_accept, bind_path, pstreamp);
 }
 
+//unix域服务器端创建client fd对应的stream
 static int
 punix_accept(int fd, const struct sockaddr_storage *ss, size_t ss_len,
              struct stream **streamp)
@@ -114,11 +115,11 @@ punix_accept(int fd, const struct sockaddr_storage *ss, size_t ss_len,
     char name[128];
 
     if (name_len > 0) {
-        snprintf(name, sizeof name, "unix:%.*s", name_len, sun->sun_path);
+        snprintf(name, sizeof name, "unix:%.*s", name_len, sun->sun_path);//%.*s
     } else {
         strcpy(name, "unix");
     }
-    return new_fd_stream(name, fd, 0, AF_UNIX, streamp);
+    return new_fd_stream(name, fd, 0, AF_UNIX, streamp);//构造af_unix类型的fd,定义为已连接，name为类型名称
 }
 
 const struct pstream_class punix_pstream_class = {

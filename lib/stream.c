@@ -622,12 +622,12 @@ stream_init(struct stream *stream, const struct stream_class *class,
             int connect_status, const char *name)
 {
     memset(stream, 0, sizeof *stream);
-    stream->class = class;
+    stream->class = class;//class
     stream->state = (connect_status == EAGAIN ? SCS_CONNECTING
                     : !connect_status ? SCS_CONNECTED
-                    : SCS_DISCONNECTED);
-    stream->error = connect_status;
-    stream->name = xstrdup(name);
+                    : SCS_DISCONNECTED);//设置connect状态
+    stream->error = connect_status;//设置错误状态
+    stream->name = xstrdup(name);//设置名称
     ovs_assert(stream->state != SCS_CONNECTING || class->connect);
 }
 
