@@ -1029,6 +1029,7 @@ struct ofproto_class {
      * It doesn't matter whether the new port will be returned by a later call
      * to ->port_poll(); the implementation may do whatever is more
      * convenient. */
+    //将netdev添加到ofproto,做为它的一个port
     int (*port_add)(struct ofproto *ofproto, struct netdev *netdev);
 
     /* Deletes port number 'ofp_port' from the datapath for 'ofproto'.  Returns

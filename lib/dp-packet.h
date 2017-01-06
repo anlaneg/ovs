@@ -68,7 +68,7 @@ struct dp_packet {
                                       or UINT16_MAX. */
     uint32_t cutlen;               /* length in bytes to cut from the end. */
     union {
-        struct pkt_metadata md;
+        struct pkt_metadata md;//剥离隧道时，隧道报文中获取的信息，存放在此
         uint64_t data[DP_PACKET_CONTEXT_SIZE / 8];
     };
 };
@@ -194,7 +194,7 @@ dp_packet_at_assert(const struct dp_packet *b, size_t offset, size_t size)
 
 /* Returns a pointer to byte following the last byte of data in use in 'b'. */
 static inline void *
-dp_packet_tail(const struct dp_packet *b)
+dp_packet_tail(const struct dp_packet *b)//报文报文结尾
 {
     return (char *) dp_packet_data(b) + dp_packet_size(b);
 }
@@ -202,7 +202,7 @@ dp_packet_tail(const struct dp_packet *b)
 /* Returns a pointer to byte following the last byte allocated for use (but
  * not necessarily in use) in 'b'. */
 static inline void *
-dp_packet_end(const struct dp_packet *b)
+dp_packet_end(const struct dp_packet *b)//返回buffer缓冲区结尾（base开始allocated字节可用）
 {
     return (char *) dp_packet_base(b) + dp_packet_get_allocated(b);
 }
@@ -212,7 +212,7 @@ dp_packet_end(const struct dp_packet *b)
  * commonly, the data in a dp_packet is at its beginning, and thus the
  * dp_packet's headroom is 0.) */
 static inline size_t
-dp_packet_headroom(const struct dp_packet *b)
+dp_packet_headroom(const struct dp_packet *b)//从报文数据开始，到缓冲基地址，有多少空间(headroom)
 {
     return (char *) dp_packet_data(b) - (char *) dp_packet_base(b);
 }
@@ -220,7 +220,7 @@ dp_packet_headroom(const struct dp_packet *b)
 /* Returns the number of bytes that may be appended to the tail end of
  * dp_packet 'b' before the dp_packet must be reallocated. */
 static inline size_t
-dp_packet_tailroom(const struct dp_packet *b)
+dp_packet_tailroom(const struct dp_packet *b)//报文尾部未占用的空间
 {
     return (char *) dp_packet_end(b) - (char *) dp_packet_tail(b);
 }
@@ -273,7 +273,7 @@ dp_packet_l2(const struct dp_packet *b)
 /* Resets all layer offsets.  'l3' offset must be set before 'l2' can be
  * retrieved. */
 static inline void
-dp_packet_reset_offsets(struct dp_packet *b)
+dp_packet_reset_offsets(struct dp_packet *b)//将offset置为无效
 {
     b->l2_pad_size = 0;
     b->l2_5_ofs = UINT16_MAX;
@@ -408,13 +408,13 @@ dp_packet_set_base(struct dp_packet *b, void *d)
 }
 
 static inline uint32_t
-dp_packet_size(const struct dp_packet *b)
+dp_packet_size(const struct dp_packet *b)//返回报文长度
 {
     return b->mbuf.pkt_len;
 }
 
 static inline void
-dp_packet_set_size(struct dp_packet *b, uint32_t v)
+dp_packet_set_size(struct dp_packet *b, uint32_t v)//更新报文长度
 {
     /* netdev-dpdk does not currently support segmentation; consequently, for
      * all intents and purposes, 'data_len' (16 bit) and 'pkt_len' (32 bit) may
@@ -436,12 +436,14 @@ __packet_data(const struct dp_packet *b)
     return b->mbuf.data_off;
 }
 
+//设置报文中报文数据在mbuf中的偏移量
 static inline void
 __packet_set_data(struct dp_packet *b, uint16_t v)
 {
     b->mbuf.data_off = v;
 }
 
+//返回mbuf对应的报文数据长度
 static inline uint16_t
 dp_packet_get_allocated(const struct dp_packet *b)
 {
@@ -544,6 +546,7 @@ static inline void
 dp_packet_set_data(struct dp_packet *b, void *data)
 {
     if (data) {
+    	//有数据时，把data要放在现有报文的前面，偏移量需要减少
         __packet_set_data(b, (char *) data - (char *) dp_packet_base(b));
     } else {
         __packet_set_data(b, UINT16_MAX);
@@ -553,9 +556,9 @@ dp_packet_set_data(struct dp_packet *b, void *data)
 static inline void
 dp_packet_reset_packet(struct dp_packet *b, int off)
 {
-    dp_packet_set_size(b, dp_packet_size(b) - off);
-    dp_packet_set_data(b, ((unsigned char *) dp_packet_data(b) + off));
-    dp_packet_reset_offsets(b);
+    dp_packet_set_size(b, dp_packet_size(b) - off);//更新报文长度
+    dp_packet_set_data(b, ((unsigned char *) dp_packet_data(b) + off));//设置数据偏移量
+    dp_packet_reset_offsets(b);//将offset置为无效
 }
 
 /* Returns the RSS hash of the packet 'p'.  Note that the returned value is

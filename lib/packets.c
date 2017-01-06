@@ -1304,7 +1304,7 @@ packet_format_tcp_flags(struct ds *s, uint16_t tcp_flags)
 void
 compose_arp(struct dp_packet *b, uint16_t arp_op,
             const struct eth_addr arp_sha, const struct eth_addr arp_tha,
-            bool broadcast, ovs_be32 arp_spa, ovs_be32 arp_tpa)
+            bool broadcast, ovs_be32 arp_spa, ovs_be32 arp_tpa)//构造arp报文
 {
     compose_arp__(b);
 

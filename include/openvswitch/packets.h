@@ -22,16 +22,16 @@
 
 /* Tunnel information used in flow key and metadata. */
 struct flow_tnl {
-    ovs_be32 ip_dst;
-    struct in6_addr ipv6_dst;
-    ovs_be32 ip_src;
+    ovs_be32 ip_dst;//填充隧道外层使用的目的ipv4地址／解隧道时，保存解出来的dst
+    struct in6_addr ipv6_dst;//填充隧道外层使用的目的ipv6地址（与ip_dst仅一者可用）
+    ovs_be32 ip_src;//解隧道时，保存解出来的src
     struct in6_addr ipv6_src;
-    ovs_be64 tun_id;//tunnel id
-    uint16_t flags;//隧道标记位
-    uint8_t ip_tos;
-    uint8_t ip_ttl;
-    ovs_be16 tp_src;
-    ovs_be16 tp_dst;
+    ovs_be64 tun_id;//解隧道时，填充解出来的tunnel-id
+    uint16_t flags;//隧道标记位（1.是否容许分片标记；2.是否校验checksum;3.是否分析出tunnel-id）
+    uint8_t ip_tos;//填充ip头部tos使用值／解隧道时，保存解出来的tos
+    uint8_t ip_ttl;//填充ip头部ttl／解隧道时，保存解出来的ttl
+    ovs_be16 tp_src;//解隧道时，填充解出来的src-port
+    ovs_be16 tp_dst;//解隧道时，填充解出来的dst-port
     ovs_be16 gbp_id;
     uint8_t  gbp_flags;
     uint8_t  pad1[5];        /* Pad to 64 bits. */

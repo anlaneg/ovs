@@ -57,6 +57,7 @@ static struct vlog_rate_limit err_rl = VLOG_RATE_LIMIT_INIT(60, 5);
 uint16_t tnl_udp_port_min = 32768;
 uint16_t tnl_udp_port_max = 61000;
 
+//从隧道中解出ip层信息，并将其填充进tnl中（src-ip,dst-ip,tos,ttl信息获取)
 void *
 netdev_tnl_ip_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
                   unsigned int *hlen)
@@ -78,24 +79,25 @@ netdev_tnl_ip_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
 
     *hlen = sizeof(struct eth_header);
 
+    //含l3 header后报文的数据总长度
     l3_size = dp_packet_size(packet) -
               ((char *)nh - (char *)dp_packet_data(packet));
 
-    if (IP_VER(ip->ip_ihl_ver) == 4) {
+    if (IP_VER(ip->ip_ihl_ver) == 4) {//是ipv4报文
 
         ovs_be32 ip_src, ip_dst;
 
-        if (csum(ip, IP_IHL(ip->ip_ihl_ver) * 4)) {
+        if (csum(ip, IP_IHL(ip->ip_ihl_ver) * 4)) {//校验iphdr头
             VLOG_WARN_RL(&err_rl, "ip packet has invalid checksum");
             return NULL;
         }
 
-        if (ntohs(ip->ip_tot_len) > l3_size) {
+        if (ntohs(ip->ip_tot_len) > l3_size) {//ip头部信息不正确
             VLOG_WARN_RL(&err_rl, "ip packet is truncated (IP length %d, actual %d)",
                          ntohs(ip->ip_tot_len), l3_size);
             return NULL;
         }
-        if (IP_IHL(ip->ip_ihl_ver) * 4 > sizeof(struct ip_header)) {
+        if (IP_IHL(ip->ip_ihl_ver) * 4 > sizeof(struct ip_header)) {//tunnel不支持ipv4选项，为什么？
             VLOG_WARN_RL(&err_rl, "ip options not supported on tunnel packets "
                          "(%d bytes)", IP_IHL(ip->ip_ihl_ver) * 4);
             return NULL;
@@ -111,7 +113,7 @@ netdev_tnl_ip_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
 
         *hlen += IP_HEADER_LEN;
 
-    } else if (IP_VER(ip->ip_ihl_ver) == 6) {
+    } else if (IP_VER(ip->ip_ihl_ver) == 6) {//ipv6报文
         ovs_be32 tc_flow = get_16aligned_be32(&ip6->ip6_flow);
 
         memcpy(tnl->ipv6_src.s6_addr, ip6->ip6_src.be16, sizeof ip6->ip6_src);
@@ -122,7 +124,7 @@ netdev_tnl_ip_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
 
         *hlen += IPV6_HEADER_LEN;
 
-    } else {
+    } else {//其它类型报文
         VLOG_WARN_RL(&err_rl, "ipv4 packet has invalid version (%d)",
                      IP_VER(ip->ip_ihl_ver));
         return NULL;
@@ -142,31 +144,32 @@ netdev_tnl_ip_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
  * Return pointer to the L4 header added to 'packet'. */
 void *
 netdev_tnl_push_ip_header(struct dp_packet *packet,
-               const void *header, int size, int *ip_tot_size)
+               const void *header, int size, int *ip_tot_size)//返回的ip_tot_size是不计算ipv4头长度的
 {
     struct eth_header *eth;
     struct ip_header *ip;
     struct ovs_16aligned_ip6_hdr *ip6;
 
     eth = dp_packet_push_uninit(packet, size);
-    *ip_tot_size = dp_packet_size(packet) - sizeof (struct eth_header);
+    *ip_tot_size = dp_packet_size(packet) - sizeof (struct eth_header);//计算ip totoal size
 
-    memcpy(eth, header, size);
+    memcpy(eth, header, size);//将header放入
 
-    if (netdev_tnl_is_header_ipv6(header)) {
+    if (netdev_tnl_is_header_ipv6(header)) {//放入的header是否为ipv6协议
         ip6 = netdev_tnl_ipv6_hdr(eth);
-        *ip_tot_size -= IPV6_HEADER_LEN;
+        *ip_tot_size -= IPV6_HEADER_LEN;//ipv6需要支除头长度
         ip6->ip6_plen = htons(*ip_tot_size);
         return ip6 + 1;
     } else {
         ip = netdev_tnl_ip_hdr(eth);
-        ip->ip_tot_len = htons(*ip_tot_size);
-        ip->ip_csum = recalc_csum16(ip->ip_csum, 0, ip->ip_tot_len);
+        ip->ip_tot_len = htons(*ip_tot_size);//填充ip total length
+        ip->ip_csum = recalc_csum16(ip->ip_csum, 0, ip->ip_tot_len);//计算check sum
         *ip_tot_size -= IP_HEADER_LEN;
         return ip + 1;
     }
 }
 
+//udp隧道信息解出来metadata
 static void *
 udp_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
                    unsigned int *hlen)
@@ -202,6 +205,9 @@ udp_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
 }
 
 
+//给定报文，为这些报文封闭vxlan头
+//由于data数据类型中已填充好了必要的模板头，故（1）将模板直接copy进mbuf（2）填充ipv total length
+//(3) 计算ipv4 checksum (4)随机填充一个src port (5)填充udp总长度 (6)计算udp checksum
 void
 netdev_tnl_push_udp_header(struct dp_packet *packet,
                            const struct ovs_action_push_tnl *data)
@@ -213,9 +219,9 @@ netdev_tnl_push_udp_header(struct dp_packet *packet,
 
     /* set udp src port */
     udp->udp_src = netdev_tnl_get_src_port(packet);
-    udp->udp_len = htons(ip_tot_size);
+    udp->udp_len = htons(ip_tot_size);//填充udp长度（不含ipv4头）
 
-    if (udp->udp_csum) {
+    if (udp->udp_csum) {//计算udp的checksum
         uint32_t csum;
         if (netdev_tnl_is_header_ipv6(dp_packet_data(packet))) {
             csum = packet_csum_pseudoheader6(netdev_tnl_ipv6_hdr(dp_packet_data(packet)));
@@ -232,6 +238,7 @@ netdev_tnl_push_udp_header(struct dp_packet *packet,
     }
 }
 
+//构造以太头（填充dmac,smac,协议
 static void *
 eth_build_header(struct ovs_action_push_tnl *data,
                  const struct netdev_tnl_build_header_params *params)
@@ -249,6 +256,7 @@ eth_build_header(struct ovs_action_push_tnl *data,
     return eth + 1;
 }
 
+//构造隧道ip，以太网头
 void *
 netdev_tnl_ip_build_header(struct ovs_action_push_tnl *data,
                            const struct netdev_tnl_build_header_params *params,
@@ -257,16 +265,16 @@ netdev_tnl_ip_build_header(struct ovs_action_push_tnl *data,
     void *l3;
 
     l3 = eth_build_header(data, params);
-    if (!params->is_ipv6) {
+    if (!params->is_ipv6) {//构造ipv4头
         ovs_be32 ip_src = in6_addr_get_mapped_ipv4(params->s_ip);
         struct ip_header *ip;
 
         ip = (struct ip_header *) l3;
 
-        ip->ip_ihl_ver = IP_IHL_VER(5, 4);
+        ip->ip_ihl_ver = IP_IHL_VER(5, 4);//写死的ipv4头长度（不含扩展）
         ip->ip_tos = params->flow->tunnel.ip_tos;
         ip->ip_ttl = params->flow->tunnel.ip_ttl;
-        ip->ip_proto = next_proto;
+        ip->ip_proto = next_proto;//预填充上层协议
         put_16aligned_be32(&ip->ip_src, ip_src);
         put_16aligned_be32(&ip->ip_dst, params->flow->tunnel.ip_dst);
 
@@ -274,11 +282,11 @@ netdev_tnl_ip_build_header(struct ovs_action_push_tnl *data,
                           htons(IP_DF) : 0;
 
         /* Checksum has already been zeroed by eth_build_header. */
-        ip->ip_csum = csum(ip, sizeof *ip);
+        ip->ip_csum = csum(ip, sizeof *ip);//填充ip头部checksum
 
         data->header_len += IP_HEADER_LEN;
         return ip + 1;
-    } else {
+    } else {//ipv6头部填充
         struct ovs_16aligned_ip6_hdr *ip6;
 
         ip6 = (struct ovs_16aligned_ip6_hdr *) l3;
@@ -295,6 +303,7 @@ netdev_tnl_ip_build_header(struct ovs_action_push_tnl *data,
     }
 }
 
+//构造udp头，ip头，ethhdr头（udp头的src-port未填充）
 static void *
 udp_build_header(struct netdev_tunnel_config *tnl_cfg,
                  struct ovs_action_push_tnl *data,
@@ -471,6 +480,7 @@ netdev_gre_build_header(const struct netdev *netdev,
     return 0;
 }
 
+//vxlan隧道头剥离（填充必要的md字段）
 struct dp_packet *
 netdev_vxlan_pop_header(struct dp_packet *packet)
 {
@@ -480,17 +490,17 @@ netdev_vxlan_pop_header(struct dp_packet *packet)
     unsigned int hlen;
 
     pkt_metadata_init_tnl(md);
-    if (VXLAN_HLEN > dp_packet_l4_size(packet)) {
+    if (VXLAN_HLEN > dp_packet_l4_size(packet)) {//报文长度要大于udphdr+vxlanhdr
         goto err;
     }
 
-    vxh = udp_extract_tnl_md(packet, tnl, &hlen);
+    vxh = udp_extract_tnl_md(packet, tnl, &hlen);//解udp
     if (!vxh) {
         goto err;
     }
 
     if (get_16aligned_be32(&vxh->vx_flags) != htonl(VXLAN_FLAGS) ||
-       (get_16aligned_be32(&vxh->vx_vni) & htonl(0xff))) {
+       (get_16aligned_be32(&vxh->vx_vni) & htonl(0xff))) {//检查flag及预留字段
         VLOG_WARN_RL(&err_rl, "invalid vxlan flags=%#x vni=%#x\n",
                      ntohl(get_16aligned_be32(&vxh->vx_flags)),
                      ntohl(get_16aligned_be32(&vxh->vx_vni)));
@@ -507,6 +517,7 @@ err:
     return NULL;
 }
 
+//构造vxlan头
 int
 netdev_vxlan_build_header(const struct netdev *netdev,
                           struct ovs_action_push_tnl *data,
@@ -522,6 +533,7 @@ netdev_vxlan_build_header(const struct netdev *netdev,
 
     vxh = udp_build_header(tnl_cfg, data, params);
 
+    //填充vxlan头
     put_16aligned_be32(&vxh->vx_flags, htonl(VXLAN_FLAGS));
     put_16aligned_be32(&vxh->vx_vni, htonl(ntohll(params->flow->tunnel.tun_id) << 8));
 

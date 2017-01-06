@@ -91,7 +91,7 @@ struct xbridge {
     struct ofproto_dpif *ofproto; /* Key in global 'xbridges' map. */ //每个桥只有一个ofproto
 
     struct ovs_list xbundles;     /* Owned xbundles. */
-    struct hmap xports;           /* Indexed by ofp_port. */ //所有接口
+    struct hmap xports;           /* Indexed by ofp_port. */ //此交换机的所有接口
 
     char *name;                   /* Name used in log messages. */
     struct dpif *dpif;            /* Datapath interface. */
@@ -140,6 +140,7 @@ struct xport {
     struct hmap_node ofp_node;       /* Node in parent xbridge 'xports' map. */ //用于挂接在xbridge的xport链上
     ofp_port_t ofp_port;             /* Key in parent xbridge 'xports' map. */
 
+    //接口编号(datapath中的接口编号）
     odp_port_t odp_port;             /* Datapath port number or ODPP_NONE. */
 
     struct ovs_list bundle_node;     /* In parent xbundle (if it exists). */ //用于将多个从属于某个bundle的链成一个链
@@ -158,7 +159,7 @@ struct xport {
     struct hmap skb_priorities;      /* Map of 'skb_priority_to_dscp's. */
 
     bool may_enable;                 /* May be enabled in bonds. */ //用于指明是否在bonds中启用
-    bool is_tunnel;                  /* Is a tunnel port. */
+    bool is_tunnel;                  /* Is a tunnel port. */ //指明是tunnel口
 
     struct cfm *cfm;                 /* CFM handle or null. */ //802.1ag协议
     struct bfd *bfd;                 /* BFD handle or null. */ //双向转发侦测
@@ -2683,6 +2684,8 @@ process_special(struct xlate_ctx *ctx, const struct xport *xport)
     }
 }
 
+//查找oflow->tunnel内的ip_dst地址对应的网关（为直连路由时，采用dst),
+//确定发送时需要采用的源ip(src参数）,以及对应的接口(out_port参数）
 static int
 tnl_route_lookup_flow(const struct flow *oflow,
                       struct in6_addr *ip, struct in6_addr *src,
@@ -2700,20 +2703,20 @@ tnl_route_lookup_flow(const struct flow *oflow,
     }
 
     if (ipv6_addr_is_set(&gw) &&
-        (!IN6_IS_ADDR_V4MAPPED(&gw) || in6_addr_get_mapped_ipv4(&gw))) {
+        (!IN6_IS_ADDR_V4MAPPED(&gw) || in6_addr_get_mapped_ipv4(&gw))) {//网关路由
         *ip = gw;
     } else {
-        *ip = dst;
+        *ip = dst;//直连路由
     }
 
     xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     ovs_assert(xcfg);
 
     HMAP_FOR_EACH (xbridge, hmap_node, &xcfg->xbridges) {
-        if (!strncmp(xbridge->name, out_dev, IFNAMSIZ)) {
+        if (!strncmp(xbridge->name, out_dev, IFNAMSIZ)) {//找到桥
             struct xport *port;
 
-            HMAP_FOR_EACH (port, ofp_node, &xbridge->xports) {
+            HMAP_FOR_EACH (port, ofp_node, &xbridge->xports) {//在桥上找这个与桥名称相同的接口
                 if (!strncmp(netdev_get_name(port->netdev), out_dev, IFNAMSIZ)) {
                     *out_port = port;
                     return 0;
@@ -2773,6 +2776,7 @@ tnl_send_arp_request(struct xlate_ctx *ctx, const struct xport *out_dev,
     dp_packet_uninit(&packet);
 }
 
+//构造tunnel send的action
 static int
 build_tunnel_send(struct xlate_ctx *ctx, const struct xport *xport,
                   const struct flow *flow, odp_port_t tunnel_odp_port)
@@ -2795,12 +2799,13 @@ build_tunnel_send(struct xlate_ctx *ctx, const struct xport *xport,
         return err;
     }
 
+    //需要将流发送给d_ip6,发送时隧道源ip为s_ip6,出接口为out_dev
     xlate_report(ctx, "tunneling to %s via %s",
                  ipv6_string_mapped(buf_dip6, &d_ip6),
                  netdev_get_name(out_dev->netdev));
 
     /* Use mac addr of bridge port of the peer. */
-    err = netdev_get_etheraddr(out_dev->netdev, &smac);
+    err = netdev_get_etheraddr(out_dev->netdev, &smac);//设备源mac地址
     if (err) {
         xlate_report(ctx, "tunnel output device lacks Ethernet address");
         return err;
@@ -2811,17 +2816,17 @@ build_tunnel_send(struct xlate_ctx *ctx, const struct xport *xport,
         s_ip = in6_addr_get_mapped_ipv4(&s_ip6);
     }
 
-    err = tnl_neigh_lookup(out_dev->xbridge->name, &d_ip6, &dmac);
-    if (err) {
+    err = tnl_neigh_lookup(out_dev->xbridge->name, &d_ip6, &dmac);//查d_ip6的目的mac,我们需要发送给它
+    if (err) {//没有查找到
         xlate_report(ctx, "neighbor cache miss for %s on bridge %s, "
                      "sending %s request",
                      buf_dip6, out_dev->xbridge->name, d_ip ? "ARP" : "ND");
-        if (d_ip) {
+        if (d_ip) {//发送arp请求
             tnl_send_arp_request(ctx, out_dev, smac, s_ip, d_ip);
-        } else {
+        } else {//发送nd请求
             tnl_send_nd_request(ctx, out_dev, smac, &s_ip6, &d_ip6);
         }
-        return err;
+        return err;//返回失败，此报文将被丢掉（但它触发了arp请求）
     }
 
     if (ctx->xin->xcache) {
@@ -2838,14 +2843,14 @@ build_tunnel_send(struct xlate_ctx *ctx, const struct xport *xport,
                  ETH_ADDR_ARGS(smac), ipv6_string_mapped(buf_sip6, &s_ip6),
                  ETH_ADDR_ARGS(dmac), buf_dip6);
 
-    netdev_init_tnl_build_header_params(&tnl_params, flow, &s_ip6, dmac, smac);
-    err = tnl_port_build_header(xport->ofport, &tnl_push_data, &tnl_params);
+    netdev_init_tnl_build_header_params(&tnl_params, flow, &s_ip6, dmac, smac);//填充tnl_params
+    err = tnl_port_build_header(xport->ofport, &tnl_push_data, &tnl_params);//采用tnl_params走tunnel口（xport)创建tnl_push_data
     if (err) {
         return err;
     }
-    tnl_push_data.tnl_port = odp_to_u32(tunnel_odp_port);
+    tnl_push_data.tnl_port = odp_to_u32(tunnel_odp_port);//这个应与xport->ofport相同，需要查看上层调用（上层保证了这一点)
     tnl_push_data.out_port = odp_to_u32(out_dev->odp_port);
-    odp_put_tnl_push_action(ctx->odp_actions, &tnl_push_data);
+    odp_put_tnl_push_action(ctx->odp_actions, &tnl_push_data);//设置push_tnl动作及其参数
     return 0;
 }
 
@@ -3102,7 +3107,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
           * matches, while explicit set actions on tunnel metadata are.
           */
         flow_tnl = flow->tunnel;
-        odp_port = tnl_port_send(xport->ofport, flow, ctx->wc);
+        odp_port = tnl_port_send(xport->ofport, flow, ctx->wc);//填充flow,返回tunnel指定的输出口
         if (odp_port == ODPP_NONE) {
             xlate_report(ctx, "Tunneling decided against output");
             goto out; /* restore flow_nw_tos */
@@ -3112,7 +3117,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
             xlate_report(ctx, "Not tunneling to our own address");
             goto out; /* restore flow_nw_tos */
         }
-        if (ctx->xin->resubmit_stats) {
+        if (ctx->xin->resubmit_stats) {//增加xport对应计数
             netdev_vport_inc_tx(xport->netdev, ctx->xin->resubmit_stats);
         }
         if (ctx->xin->xcache) {
@@ -3121,11 +3126,12 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
             entry = xlate_cache_add_entry(ctx->xin->xcache, XC_NETDEV);
             entry->dev.tx = netdev_ref(xport->netdev);
         }
-        out_port = odp_port;
+        out_port = odp_port;//从这个口输出
         if (ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {
             xlate_report(ctx, "output to native tunnel");
-            tnl_push_pop_send = true;
+            tnl_push_pop_send = true;//本地进行tunnel处理
         } else {
+        	//kernel进行tunnel处理
             xlate_report(ctx, "output to kernel tunnel");
             commit_odp_tunnel_action(flow, &ctx->base_flow, ctx->odp_actions);
             flow->tunnel = flow_tnl; /* Restore tunnel metadata */
@@ -3140,7 +3146,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     if (out_port != ODPP_NONE) {
         xlate_commit_actions(ctx);//提交合并后的actions到ctx中
 
-        if (xr) {//增加动作
+        if (xr) {
             struct ovs_action_hash *act_hash;
 
             /* Hash action. */
@@ -3156,7 +3162,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         } else {
         	//普通的输出
             if (tnl_push_pop_send) {
-                build_tunnel_send(ctx, xport, flow, odp_port);//构造tunnel要发送的处理
+                build_tunnel_send(ctx, xport, flow, odp_port);//构造 tunnel发送处理
                 flow->tunnel = flow_tnl; /* Restore tunnel metadata */
             } else {
                 odp_port_t odp_tnl_port = ODPP_NONE;
@@ -3166,10 +3172,10 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
                 if (ofp_port == OFPP_LOCAL &&
                     ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {
 
-                    odp_tnl_port = tnl_port_map_lookup(flow, wc);
+                    odp_tnl_port = tnl_port_map_lookup(flow, wc);//查找此流是否对应某tunnel口
                 }
 
-                if (odp_tnl_port != ODPP_NONE) {
+                if (odp_tnl_port != ODPP_NONE) {//找到了此流对应的tunnel口，添加隧道移除动作
                     nl_msg_put_odp_port(ctx->odp_actions,
                                         OVS_ACTION_ATTR_TUNNEL_POP,//添加隧道口移除动作
                                         odp_tnl_port);

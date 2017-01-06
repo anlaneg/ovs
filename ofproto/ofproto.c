@@ -495,7 +495,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     /* Initialize. */
     ovs_mutex_lock(&ofproto_mutex);
     memset(ofproto, 0, sizeof *ofproto);
-    ofproto->ofproto_class = class;
+    ofproto->ofproto_class = class;//设置对应的class
     ofproto->name = xstrdup(datapath_name);//设置datapath名称
     ofproto->type = xstrdup(datapath_type);//设置datapath类型
     hmap_insert(&all_ofprotos, &ofproto->hmap_node,

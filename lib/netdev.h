@@ -73,7 +73,7 @@ struct ovs_action_push_tnl;
 
 /* Configuration specific to tunnels. */
 struct netdev_tunnel_config {//tunnel配置结构体
-    bool in_key_present;//in_key是否有效
+    bool in_key_present;//in_key是否有效(是否配置了in_key或key)
     bool in_key_flow;//是否用流中的key(in)
     ovs_be64 in_key;
 
@@ -86,7 +86,7 @@ struct netdev_tunnel_config {//tunnel配置结构体
     bool ip_src_flow;//是否用流中的src地址
     bool ip_dst_flow;//是否用流中的ip目的地址
     struct in6_addr ipv6_src;
-    struct in6_addr ipv6_dst;//设置的ipv6目的地址
+    struct in6_addr ipv6_dst;//设置的ipv6目的地址（ipv4地址也在其中）
 
     uint32_t exts;
 
@@ -156,11 +156,11 @@ void netdev_send_wait(struct netdev *, int qid);
 /* native tunnel APIs */
 /* Structure to pass parameters required to build a tunnel header. */
 struct netdev_tnl_build_header_params {
-    const struct flow *flow;
-    const struct in6_addr *s_ip;
-    struct eth_addr dmac;
-    struct eth_addr smac;
-    bool is_ipv6;
+    const struct flow *flow;//tunnel对应的流解析出来的信息
+    const struct in6_addr *s_ip;//填充时隧道外层使用的源ip地址
+    struct eth_addr dmac;//填充时以太网目的mac
+    struct eth_addr smac;//填充时以太网源mac
+    bool is_ipv6;//是否使用ipv6协议(填充以太网头部时使用）
 };
 
 void

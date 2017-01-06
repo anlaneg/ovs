@@ -74,6 +74,7 @@ struct netdev {
     int n_rxq;//发队列数
     int ref_cnt;                        /* Times this devices was opened. */
     struct shash_node *node;            /* Pointer to element in global map. */ //在netdev_shash中保存的结点
+    //保存netdev的flags发生变化的序列，以及变化后的值。（实际就是个增量串）
     struct ovs_list saved_flags_list; /* Contains "struct netdev_saved_flags". */
 };
 
@@ -292,6 +293,7 @@ struct netdev_class {
      *
      * If this netdev class does not support configuration, this may be a null
      * pointer. */
+    //也负责tunnel的配置设置
     int (*set_config)(struct netdev *netdev, const struct smap *args);
 
     /* Returns the tunnel configuration of 'netdev'.  If 'netdev' is
@@ -303,6 +305,7 @@ struct netdev_class {
 
     /* Build Tunnel header.  Ethernet and ip header parameters are passed to
      * tunnel implementation to build entire outer header for given flow. */
+    //构造一个尽可以通用的tunnel头，将其存放在data中
     int (*build_header)(const struct netdev *, struct ovs_action_push_tnl *data,
                         const struct netdev_tnl_build_header_params *params);
 
@@ -310,6 +313,7 @@ struct netdev_class {
      * flow.  Push header is called for packet to build header specific to
      * a packet on actual transmit.  It uses partial header build by
      * build_header() which is passed as data. */
+    //精确化data中的tunnel头，并将其存入packet中
     void (*push_header)(struct dp_packet *packet,
                         const struct ovs_action_push_tnl *data);
 
@@ -317,6 +321,7 @@ struct netdev_class {
      * for further processing.
      * Returns NULL in case of error or tunnel implementation queued packet for further
      * processing. */
+    //剥离掉tunnel头，并将剥离时获取到的信息存入packet对应的tunnel-metadata中
     struct dp_packet * (*pop_header)(struct dp_packet *packet);
 
     /* Returns the id of the numa node the 'netdev' is on.  If there is no
@@ -726,6 +731,7 @@ struct netdev_class {
      *
      * This function may be invoked from a signal handler.  Therefore, it
      * should not do anything that is not signal-safe (such as logging). */
+    //打开on指定的flag,关闭掉off指定的flag,返回旧的flags
     int (*update_flags)(struct netdev *netdev, enum netdev_flags off,
                         enum netdev_flags on, enum netdev_flags *old_flags);
 
@@ -747,10 +753,10 @@ struct netdev_class {
 
     /* Life-cycle functions for a netdev_rxq.  See the large comment above on
      * struct netdev_class. */
-    struct netdev_rxq *(*rxq_alloc)(void);
-    int (*rxq_construct)(struct netdev_rxq *);
-    void (*rxq_destruct)(struct netdev_rxq *);
-    void (*rxq_dealloc)(struct netdev_rxq *);
+    struct netdev_rxq *(*rxq_alloc)(void);//队列的内存申请
+    int (*rxq_construct)(struct netdev_rxq *);//队列的构造函数
+    void (*rxq_destruct)(struct netdev_rxq *);//队列的析构函数
+    void (*rxq_dealloc)(struct netdev_rxq *);//队列内存释放
 
     /* Attempts to receive a batch of packets from 'rx'.  In 'batch', the
      * caller supplies 'packets' as the pointer to the beginning of an array

@@ -45,6 +45,7 @@ odp_port_t tnl_port_send(const struct ofport_dpif *, struct flow *,
                          struct flow_wildcards *wc);
 
 /* Returns true if 'flow' should be submitted to tnl_port_receive(). */
+//如果flow中的tunnel设置了目的ip地址，则为tunnel报文
 static inline bool
 tnl_port_should_receive(const struct flow *flow)
 {

@@ -80,7 +80,7 @@ vport_class_cast(const struct netdev_class *class)
 }
 
 static const struct netdev_tunnel_config *
-get_netdev_tunnel_config(const struct netdev *netdev)
+get_netdev_tunnel_config(const struct netdev *netdev)//获取tunnel配置
 {
     return &netdev_vport_cast(netdev)->tnl_cfg;
 }
@@ -102,11 +102,12 @@ netdev_vport_is_layer3(const struct netdev *dev)
 }
 
 static bool
-netdev_vport_needs_dst_port(const struct netdev *dev)
+netdev_vport_needs_dst_port(const struct netdev *dev)//是否需要配置目的port
 {
     const struct netdev_class *class = netdev_get_class(dev);
     const char *type = netdev_get_type(dev);
 
+    //以下类型需要配置目的地址
     return (class->get_config == get_tunnel_config &&
             (!strcmp("geneve", type) || !strcmp("vxlan", type) ||
              !strcmp("lisp", type) || !strcmp("stt", type)) );
@@ -119,17 +120,17 @@ netdev_vport_class_get_dpif_port(const struct netdev_class *class)
 }
 
 const char *
-netdev_vport_get_dpif_port(const struct netdev *netdev,
+netdev_vport_get_dpif_port(const struct netdev *netdev,//返回dpif_port名称
                            char namebuf[], size_t bufsize)
 {
     const struct netdev_class *class = netdev_get_class(netdev);
     const char *dpif_port = netdev_vport_class_get_dpif_port(class);
 
-    if (!dpif_port) {
+    if (!dpif_port) {//没有dpif_port，返回设备名称
         return netdev_get_name(netdev);
     }
 
-    if (netdev_vport_needs_dst_port(netdev)) {
+    if (netdev_vport_needs_dst_port(netdev)) {//需要配置目的端口
         const struct netdev_vport *vport = netdev_vport_cast(netdev);
 
         /*
@@ -141,9 +142,9 @@ netdev_vport_get_dpif_port(const struct netdev *netdev,
         ovs_assert(strlen(dpif_port) + 6 < IFNAMSIZ);
         snprintf(namebuf, bufsize, "%s_%d", dpif_port,
                  ntohs(vport->tnl_cfg.dst_port));
-        return namebuf;
+        return namebuf;//$dpif_port_$dst_port
     } else {
-        return dpif_port;
+        return dpif_port;//无目的端口的
     }
 }
 
@@ -151,20 +152,20 @@ netdev_vport_get_dpif_port(const struct netdev *netdev,
  * netdev_vport_route_changed() should be called to update
  * the corresponding tunnel interface status. */
 static void
-netdev_vport_route_changed(void)
+netdev_vport_route_changed(void)//检查vport路由是否发生变化
 {
     struct netdev **vports;
     size_t i, n_vports;
 
-    vports = netdev_get_vports(&n_vports);
+    vports = netdev_get_vports(&n_vports);//返回所有vport
     for (i = 0; i < n_vports; i++) {
         struct netdev *netdev_ = vports[i];
         struct netdev_vport *netdev = netdev_vport_cast(netdev_);
 
         ovs_mutex_lock(&netdev->mutex);
         /* Finds all tunnel vports. */
-        if (ipv6_addr_is_set(&netdev->tnl_cfg.ipv6_dst)) {
-            if (tunnel_check_status_change__(netdev)) {
+        if (ipv6_addr_is_set(&netdev->tnl_cfg.ipv6_dst)) {//目的地址已设置
+            if (tunnel_check_status_change__(netdev)) {//是否发生变化
                 netdev_change_seq_changed(netdev_);
             }
         }
@@ -177,20 +178,20 @@ netdev_vport_route_changed(void)
 }
 
 static struct netdev *
-netdev_vport_alloc(void)
+netdev_vport_alloc(void)//netdev内存申请
 {
     struct netdev_vport *netdev = xzalloc(sizeof *netdev);
     return &netdev->up;
 }
 
 int
-netdev_vport_construct(struct netdev *netdev_)//构造虚拟接口
+netdev_vport_construct(struct netdev *netdev_)//构造vport,针对隧道口进行了基本配置
 {
     struct netdev_vport *dev = netdev_vport_cast(netdev_);
     const char *type = netdev_get_type(netdev_);
 
     ovs_mutex_init(&dev->mutex);
-    eth_addr_random(&dev->etheraddr);
+    eth_addr_random(&dev->etheraddr);//生成随机mac地址
 
     /* Add a default destination port for tunnel ports if none specified. */
     //设置这些隧道协议的目的端口
@@ -210,7 +211,7 @@ netdev_vport_construct(struct netdev *netdev_)//构造虚拟接口
 }
 
 static void
-netdev_vport_destruct(struct netdev *netdev_)
+netdev_vport_destruct(struct netdev *netdev_)//netdev占用内存释放
 {
     struct netdev_vport *netdev = netdev_vport_cast(netdev_);
 
@@ -239,7 +240,7 @@ netdev_vport_set_etheraddr(struct netdev *netdev_, const struct eth_addr mac)//�
 }
 
 static int
-netdev_vport_get_etheraddr(const struct netdev *netdev_, struct eth_addr *mac)
+netdev_vport_get_etheraddr(const struct netdev *netdev_, struct eth_addr *mac)//返回vport对应的mac地址
 {
     struct netdev_vport *netdev = netdev_vport_cast(netdev_);
 
@@ -266,14 +267,14 @@ tunnel_check_status_change__(struct netdev_vport *netdev)
     if (ovs_router_lookup(route, iface, NULL, &gw)) {
         struct netdev *egress_netdev;
 
-        if (!netdev_open(iface, NULL, &egress_netdev)) {
+        if (!netdev_open(iface, NULL, &egress_netdev)) {//打开出口设备成功
             status = netdev_get_carrier(egress_netdev);
             netdev_close(egress_netdev);
         }
     }
 
     if (strcmp(netdev->egress_iface, iface)
-        || netdev->carrier_status != status) {
+        || netdev->carrier_status != status) {//egress_iface,carrier_status是否发生了变化
         ovs_strlcpy(netdev->egress_iface, iface, IFNAMSIZ);
         netdev->carrier_status = status;
 
@@ -284,11 +285,11 @@ tunnel_check_status_change__(struct netdev_vport *netdev)
 }
 
 static int
-tunnel_get_status(const struct netdev *netdev_, struct smap *smap)
+tunnel_get_status(const struct netdev *netdev_, struct smap *smap)//获取状态
 {
     struct netdev_vport *netdev = netdev_vport_cast(netdev_);
 
-    if (netdev->egress_iface[0]) {
+    if (netdev->egress_iface[0]) {//tunnel出接口
         smap_add(smap, "tunnel_egress_iface", netdev->egress_iface);
 
         smap_add(smap, "tunnel_egress_iface_carrier",
@@ -304,11 +305,11 @@ netdev_vport_update_flags(struct netdev *netdev OVS_UNUSED,
                           enum netdev_flags on OVS_UNUSED,
                           enum netdev_flags *old_flagsp)
 {
-    if (off & (NETDEV_UP | NETDEV_PROMISC)) {
+    if (off & (NETDEV_UP | NETDEV_PROMISC)) {//不支持对netdev_up,netdev_promisc进行操作
         return EOPNOTSUPP;
     }
 
-    *old_flagsp = NETDEV_UP | NETDEV_PROMISC;
+    *old_flagsp = NETDEV_UP | NETDEV_PROMISC;//up,混杂
     return 0;
 }
 
@@ -339,6 +340,9 @@ netdev_vport_wait(const struct netdev_class *netdev_class OVS_UNUSED)
 
 /* Code specific to tunnel types. */
 
+//解析args参数中的name,如果存在key或者$name，则present为True,
+//如果name的value为'flow'则flow为True且返回0
+//如果name的value不为'flow',则返回value对应的整数
 static ovs_be64
 parse_key(const struct smap *args, const char *name,
           bool *present, bool *flow)
@@ -358,7 +362,7 @@ parse_key(const struct smap *args, const char *name,
 
     *present = true;
 
-    if (!strcmp(s, "flow")) {
+    if (!strcmp(s, "flow")) {//如果key为flow
         *flow = true;
         return 0;
     } else {
@@ -366,6 +370,8 @@ parse_key(const struct smap *args, const char *name,
     }
 }
 
+//如果value 为'flow'则采用flow中的地址，协议将为0
+//如果value为ipv6地址，则协议为ipv6,flow为false,ipv6填充对应地址
 static int
 parse_tunnel_ip(const char *value, bool accept_mcast, bool *flow,
                 struct in6_addr *ipv6, uint16_t *protocol)
@@ -430,12 +436,13 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args)//设置tunnel对
         tnl_cfg.dst_port = htons(STT_DST_PORT);
     }
 
-    needs_dst_port = netdev_vport_needs_dst_port(dev_);
+    needs_dst_port = netdev_vport_needs_dst_port(dev_);//是否需要配置目的地址
     tnl_cfg.dont_fragment = true;//默认为true
 
     SMAP_FOR_EACH (node, args) {
-        if (!strcmp(node->key, "remote_ip")) {
+        if (!strcmp(node->key, "remote_ip")) {//远端ip处理
             int err;
+            //目的地址不容许为组播地址
             err = parse_tunnel_ip(node->value, false, &tnl_cfg.ip_dst_flow,
                                   &tnl_cfg.ipv6_dst, &dst_proto);
             switch (err) {
@@ -447,8 +454,9 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args)//设置tunnel对
                           name, node->value);
                 return EINVAL;
             }
-        } else if (!strcmp(node->key, "local_ip")) {
+        } else if (!strcmp(node->key, "local_ip")) {//本端地址配置
             int err;
+            //本端地址容许组播地址
             err = parse_tunnel_ip(node->value, true, &tnl_cfg.ip_src_flow,
                                   &tnl_cfg.ipv6_src, &src_proto);
             switch (err) {
@@ -475,13 +483,13 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args)//设置tunnel对
             } else {
                 tnl_cfg.ttl = atoi(node->value);
             }
-        } else if (!strcmp(node->key, "dst_port") && needs_dst_port) {
+        } else if (!strcmp(node->key, "dst_port") && needs_dst_port) {//接受用户配置的目的地址
             tnl_cfg.dst_port = htons(atoi(node->value));
         } else if (!strcmp(node->key, "csum") && has_csum) {
             if (!strcmp(node->value, "true")) {
                 tnl_cfg.csum = true;
             }
-        } else if (!strcmp(node->key, "df_default")) {
+        } else if (!strcmp(node->key, "df_default")) {//分片配置
             if (!strcmp(node->value, "false")) {
                 tnl_cfg.dont_fragment = false;
             }
@@ -512,17 +520,17 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args)//设置tunnel对
         }
     }
 
-    if (!ipv6_addr_is_set(&tnl_cfg.ipv6_dst) && !tnl_cfg.ip_dst_flow) {
+    if (!ipv6_addr_is_set(&tnl_cfg.ipv6_dst) && !tnl_cfg.ip_dst_flow) {//两个都不配，报错
         VLOG_ERR("%s: %s type requires valid 'remote_ip' argument",
                  name, type);
         return EINVAL;
     }
-    if (tnl_cfg.ip_src_flow && !tnl_cfg.ip_dst_flow) {
+    if (tnl_cfg.ip_src_flow && !tnl_cfg.ip_dst_flow) {//两个都不配，报错
         VLOG_ERR("%s: %s type requires 'remote_ip=flow' with 'local_ip=flow'",
                  name, type);
         return EINVAL;
     }
-    if (src_proto && dst_proto && src_proto != dst_proto) {
+    if (src_proto && dst_proto && src_proto != dst_proto) {//源和目的地址的协议不相等，报错
         VLOG_ERR("%s: 'remote_ip' and 'local_ip' has to be of the same address family",
                  name);
         return EINVAL;
@@ -540,8 +548,8 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args)//设置tunnel对
                                &tnl_cfg.out_key_flow);
 
     ovs_mutex_lock(&dev->mutex);
-    if (memcmp(&dev->tnl_cfg, &tnl_cfg, sizeof tnl_cfg)) {
-        dev->tnl_cfg = tnl_cfg;
+    if (memcmp(&dev->tnl_cfg, &tnl_cfg, sizeof tnl_cfg)) {//如果配置发生了变化
+        dev->tnl_cfg = tnl_cfg;//设置变换后的配置
         tunnel_check_status_change__(dev);
         netdev_change_seq_changed(dev_);
     }
@@ -681,6 +689,7 @@ netdev_vport_inc_tx(const struct netdev *netdev,
     }
 }
 
+//patch口配置获取
 static int
 get_patch_config(const struct netdev *dev_, struct smap *args)//patch只有peer配置
 {
@@ -695,6 +704,7 @@ get_patch_config(const struct netdev *dev_, struct smap *args)//patch只有peer�
     return 0;
 }
 
+//patch口配置设置
 static int
 set_patch_config(struct netdev *dev_, const struct smap *args)//patch口只容许配置peer
 {
@@ -859,6 +869,7 @@ netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
     }
 }
 
+//从它只支持配置对端，设置对端来可以看出patch口就是用来接两个交换机的，它是一条虚电线
 void
 netdev_vport_patch_register(void)//vport中patch口注册
 {

@@ -99,6 +99,7 @@ main(int argc, char *argv[])
 
     exiting = false;
     while (!exiting) {
+    	//run代码段
         memory_run();
         if (memory_should_report()) {
             struct simap usage;
@@ -112,6 +113,7 @@ main(int argc, char *argv[])
         unixctl_server_run(unixctl);
         netdev_run();
 
+        //wait代友一段
         memory_wait();
         bridge_wait();
         unixctl_server_wait(unixctl);

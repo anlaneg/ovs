@@ -88,7 +88,7 @@ struct dpif_ipfix_port {
     struct hmap_node hmap_node; /* In struct dpif_ipfix's "tunnel_ports" hmap. */
     struct ofport *ofport;      /* To retrieve port stats. */
     odp_port_t odp_port;
-    enum dpif_ipfix_tunnel_type tunnel_type;
+    enum dpif_ipfix_tunnel_type tunnel_type;//隧道类型
     uint8_t tunnel_key_length;
 };
 
@@ -635,7 +635,7 @@ dpif_ipfix_add_tunnel_port(struct dpif_ipfix *di, struct ofport *ofport,
 
     ovs_mutex_lock(&mutex);
     dip = dpif_ipfix_find_port(di, odp_port);
-    if (dip) {
+    if (dip) {//如果有，删除掉
         dpif_ipfix_del_port(di, dip);
     }
 

@@ -87,7 +87,7 @@ extern uint16_t tnl_udp_port_min;
 extern uint16_t tnl_udp_port_max;
 
 static inline ovs_be16
-netdev_tnl_get_src_port(struct dp_packet *packet)
+netdev_tnl_get_src_port(struct dp_packet *packet)//随机一个src-port
 {
     uint32_t hash;
 

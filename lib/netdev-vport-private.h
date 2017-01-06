@@ -35,7 +35,7 @@ struct netdev_vport {
 
     /* Tunnels. */
     struct netdev_tunnel_config tnl_cfg;//tunnel配置
-    char egress_iface[IFNAMSIZ];
+    char egress_iface[IFNAMSIZ];//tunnel口对应的出接口？
     bool carrier_status;
 
     /* Patch Ports. */

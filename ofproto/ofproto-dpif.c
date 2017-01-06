@@ -264,7 +264,7 @@ struct dpif_backer {
 
     /* Datapath feature support. */
     struct dpif_backer_support support;
-    struct atomic_count tnl_count;
+    struct atomic_count tnl_count;//后端tnl口的数量？
 };
 
 /* All existing ofproto_backer instances, indexed by ofproto->up.type. */
@@ -960,7 +960,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
 }
 
 bool
-ovs_native_tunneling_is_on(struct ofproto_dpif *ofproto)
+ovs_native_tunneling_is_on(struct ofproto_dpif *ofproto)//检查本地tunnel是否开启
 {
     return ofproto_use_tnl_push_pop && ofproto->backer->support.tnl_push_pop &&
            atomic_count_get(&ofproto->backer->tnl_count);
@@ -1764,7 +1764,7 @@ port_construct(struct ofport *port_)//ofport构造
     port->carrier_seq = netdev_get_carrier_resets(netdev);
     port->is_layer3 = netdev_vport_is_layer3(netdev);
 
-    if (netdev_vport_is_patch(netdev)) {
+    if (netdev_vport_is_patch(netdev)) {//patch口处理
         /* By bailing out here, we don't submit the port to the sFlow module
          * to be considered for counter polling export.  This is correct
          * because the patch port represents an interface that sFlow considers
@@ -1784,7 +1784,7 @@ port_construct(struct ofport *port_)//ofport构造
 
     port->odp_port = dpif_port.port_no;
 
-    if (netdev_get_tunnel_config(netdev)) {
+    if (netdev_get_tunnel_config(netdev)) {//此netdev有tunnel配置，则其需要创建tunnel口
         atomic_count_inc(&ofproto->backer->tnl_count);
         error = tnl_port_add(port, port->up.netdev, port->odp_port,
                              ovs_native_tunneling_is_on(ofproto), dp_port_name);
@@ -1794,11 +1794,12 @@ port_construct(struct ofport *port_)//ofport构造
             return error;
         }
 
-        port->is_tunnel = true;
+        port->is_tunnel = true;//呵呵，标记为tunnel口，鼓掌！
         if (ofproto->ipfix) {
+        	//将tunnel口加入ofproto->ipfix表
            dpif_ipfix_add_tunnel_port(ofproto->ipfix, port_, port->odp_port);
         }
-    } else {
+    } else {//非tunnel口
         /* Sanity-check that a mapping doesn't already exist.  This
          * shouldn't happen for non-tunnel ports. */
         if (odp_port_to_ofp_port(ofproto, port->odp_port) != OFPP_NONE) {

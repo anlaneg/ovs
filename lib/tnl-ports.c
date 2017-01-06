@@ -35,19 +35,19 @@
 #include "util.h"
 
 static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
-static struct classifier cls;   /* Tunnel ports. */
+static struct classifier cls;   /* Tunnel ports. */ //tunnel-port对应的分类器
 
 struct ip_device {
     struct netdev *dev;
     struct eth_addr mac;
-    struct in6_addr *addr;
-    int n_addr;
+    struct in6_addr *addr;//ip地址数组
+    int n_addr;//指出有多少个ip地址
     uint64_t change_seq;
     struct ovs_list node;
     char dev_name[IFNAMSIZ];
 };
 
-static struct ovs_list addr_list;
+static struct ovs_list addr_list;//记录所有有ip地址的设备（类型ip_device）
 
 struct tnl_port {
     odp_port_t port;
@@ -57,7 +57,7 @@ struct tnl_port {
     struct ovs_list node;
 };
 
-static struct ovs_list port_list;
+static struct ovs_list port_list;//指明哪个接口，哪些协议层port已分配出去（串起的为tnl_port结构）
 
 struct tnl_port_in {
     struct cls_rule cr;
@@ -81,11 +81,12 @@ tnl_port_free(struct tnl_port_in *p)
     free(p);
 }
 
+//设置flow的dst-mac,dst-ip,nw-proto,dst-port,dl-type
 static void
 tnl_port_init_flow(struct flow *flow, struct eth_addr mac,
                    struct in6_addr *addr, uint8_t nw_proto, ovs_be16 tp_port)
 {
-    memset(flow, 0, sizeof *flow);
+    memset(flow, 0, sizeof *flow);//清空flow
 
     flow->dl_dst = mac;
     if (IN6_IS_ADDR_V4MAPPED(addr)) {
@@ -100,6 +101,7 @@ tnl_port_init_flow(struct flow *flow, struct eth_addr mac,
     flow->tp_dst = tp_port;
 }
 
+//注册此设备可能会发送出隧道，故注册规则等报文来时解隧道用
 static void
 map_insert(odp_port_t port, struct eth_addr mac, struct in6_addr *addr,
            uint8_t nw_proto, ovs_be16 tp_port, const char dev_name[])
@@ -112,15 +114,16 @@ map_insert(odp_port_t port, struct eth_addr mac, struct in6_addr *addr,
     tnl_port_init_flow(&match.flow, mac, addr, nw_proto, tp_port);
 
     do {
-        cr = classifier_lookup(&cls, OVS_VERSION_MAX, &match.flow, NULL);
+        cr = classifier_lookup(&cls, OVS_VERSION_MAX, &match.flow, NULL);//查mac对应的规则
         p = tnl_port_cast(cr);
         /* Try again if the rule was released before we get the reference. */
-    } while (p && !ovs_refcount_try_ref_rcu(&p->ref_cnt));
+    } while (p && !ovs_refcount_try_ref_rcu(&p->ref_cnt));//防止引用前被释放
 
-    if (!p) {
+    if (!p) {//如果无规则
         p = xzalloc(sizeof *p);
         p->portno = port;
 
+        //设置match对应的mask
         match.wc.masks.dl_type = OVS_BE16_MAX;
         match.wc.masks.nw_proto = 0xff;
          /* XXX: No fragments support. */
@@ -139,10 +142,12 @@ map_insert(odp_port_t port, struct eth_addr mac, struct in6_addr *addr,
         match.wc.masks.vlan_tci = OVS_BE16_MAX;
         memset(&match.wc.masks.dl_dst, 0xff, sizeof (struct eth_addr));
 
+        //初始化规则
         cls_rule_init(&p->cr, &match, 0); /* Priority == 0. */
         ovs_refcount_init(&p->ref_cnt);
         ovs_strlcpy(p->dev_name, dev_name, sizeof p->dev_name);
 
+        //加入cls,保证通过规则可以找到此tunnel口，完成隧道解码
         classifier_insert(&cls, &p->cr, OVS_VERSION_MIN, NULL, 0);
     }
 }
@@ -151,16 +156,17 @@ static void
 map_insert_ipdev__(struct ip_device *ip_dev, char dev_name[],
                    odp_port_t port, uint8_t nw_proto, ovs_be16 tp_port)
 {
-    if (ip_dev->n_addr) {
+    if (ip_dev->n_addr) {//有ip地址
         int i;
 
-        for (i = 0; i < ip_dev->n_addr; i++) {
+        for (i = 0; i < ip_dev->n_addr; i++) {//针对每一个ip地址
             map_insert(port, ip_dev->mac, &ip_dev->addr[i],
                        nw_proto, tp_port, dev_name);
         }
     }
 }
 
+//隧道对应的运输层协议
 static uint8_t
 tnl_type_to_nw_proto(const char type[])
 {
@@ -179,6 +185,7 @@ tnl_type_to_nw_proto(const char type[])
     return 0;
 }
 
+//向port　map中插入此port信息
 void
 tnl_port_map_insert(odp_port_t port, ovs_be16 tp_port,
                     const char dev_name[], const char type[])
@@ -187,14 +194,14 @@ tnl_port_map_insert(odp_port_t port, ovs_be16 tp_port,
     struct ip_device *ip_dev;
     uint8_t nw_proto;
 
-    nw_proto = tnl_type_to_nw_proto(type);
+    nw_proto = tnl_type_to_nw_proto(type);//隧道对应的协议
     if (!nw_proto) {
         return;
     }
 
     ovs_mutex_lock(&mutex);
     LIST_FOR_EACH(p, node, &port_list) {
-        if (tp_port == p->tp_port && p->nw_proto == nw_proto) {
+        if (tp_port == p->tp_port && p->nw_proto == nw_proto) {//已找到
              goto out;
         }
     }
@@ -204,8 +211,9 @@ tnl_port_map_insert(odp_port_t port, ovs_be16 tp_port,
     p->tp_port = tp_port;
     p->nw_proto = nw_proto;
     ovs_strlcpy(p->dev_name, dev_name, sizeof p->dev_name);
-    ovs_list_insert(&port_list, &p->node);
+    ovs_list_insert(&port_list, &p->node);//指明此端口占用了某协议此指定端口
 
+    //此设备可能发出隧道报文
     LIST_FOR_EACH(ip_dev, node, &addr_list) {
         map_insert_ipdev__(ip_dev, p->dev_name, p->port, p->nw_proto, p->tp_port);
     }
@@ -251,6 +259,7 @@ ipdev_map_delete(struct ip_device *ip_dev, ovs_be16 tp_port, uint8_t nw_proto)
     }
 }
 
+//删除port占用，删除隧道解码规则匹配
 void
 tnl_port_map_delete(ovs_be16 tp_port, const char type[])
 {
@@ -284,6 +293,7 @@ out:
 
 /* 'flow' is non-const to allow for temporary modifications during the lookup.
  * Any changes are restored before returning. */
+//用来解决：此flow对应的是哪个tunnel口来处理其剥离动作
 odp_port_t
 tnl_port_map_lookup(struct flow *flow, struct flow_wildcards *wc)
 {

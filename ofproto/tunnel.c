@@ -41,12 +41,13 @@
 
 VLOG_DEFINE_THIS_MODULE(tunnel);
 
+//match这些数据来源于tunnel口的配置
 struct tnl_match {
     ovs_be64 in_key;
-    struct in6_addr ipv6_src;//保存ipv4或者ipv6地址（ipv4地址存在末尾
+    struct in6_addr ipv6_src;//保存ipv4或者ipv6地址（ipv4地址存在末尾)
     struct in6_addr ipv6_dst;
-    odp_port_t odp_port;//tunnel对应的出接口
-    bool in_key_flow;
+    odp_port_t odp_port;//tunnel对应datapath的接口编号
+    bool in_key_flow;//见后面的注释（谁把这个结构提前，却不将注释提前 :-P)
     bool ip_src_flow;
     bool ip_dst_flow;
 };
@@ -57,9 +58,9 @@ struct tnl_port {
 
     const struct ofport_dpif *ofport;
     uint64_t change_seq;
-    struct netdev *netdev;
+    struct netdev *netdev;//tunnel口对应的netdev
 
-    struct tnl_match match;
+    struct tnl_match match;//用于通过流查找哪个隧道口可以配置
 };
 
 static struct fat_rwlock rwlock;
@@ -94,20 +95,23 @@ static struct fat_rwlock rwlock;
 
 /* The three possibilities (see above) for vport ip_src matches. */
 enum ip_src_type {
-    IP_SRC_CFG,             /* ip_src must equal configured address. */
-    IP_SRC_ANY,             /* Any ip_src is acceptable. */
-    IP_SRC_FLOW             /* ip_src is handled in flow table. */
+    IP_SRC_CFG,             /* ip_src must equal configured address. */　//src需要用配置的值
+    IP_SRC_ANY,             /* Any ip_src is acceptable. */ //任意的src都是可接受的
+    IP_SRC_FLOW             /* ip_src is handled in flow table. */ //src受flow表控制
 };
 
 /* Each hmap contains "struct tnl_port"s.
  * The index is a combination of how each of the fields listed under "Tunnel
  * matches" above matches, see the final paragraph for ordering. */
 //记录了所有tunnel的匹配信息的map
+//tunnel_match_maps是个细分的一组hash表，enum ip_src_type一共有３种
+//src是bool一共有２种，而dst是bool一共有２种，故此hash表一共有１２张表
+//ofport_map是通过ofp_port来找tunnel,但是我们在不知道ofp_port时如何找tunnel呢？tnl_match_maps提供通过flow来查找tunnel
 static struct hmap *tnl_match_maps[N_MATCH_TYPES] OVS_GUARDED_BY(rwlock);
 static struct hmap **tnl_match_map(const struct tnl_match *);
 
 static struct hmap ofport_map__ = HMAP_INITIALIZER(&ofport_map__);
-static struct hmap *ofport_map OVS_GUARDED_BY(rwlock) = &ofport_map__;//记录tunnel口
+static struct hmap *ofport_map OVS_GUARDED_BY(rwlock) = &ofport_map__;//记录所有的tunnel口(按ofp_port进行索引）
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 static struct vlog_rate_limit dbg_rl = VLOG_RATE_LIMIT_INIT(60, 60);
@@ -138,6 +142,7 @@ ofproto_tunnel_init(void)
     }
 }
 
+//隧道口添加
 static bool
 tnl_port_add__(const struct ofport_dpif *ofport, const struct netdev *netdev,
                odp_port_t odp_port, bool warn, bool native_tnl, const char name[])
@@ -148,9 +153,10 @@ tnl_port_add__(const struct ofport_dpif *ofport, const struct netdev *netdev,
     struct tnl_port *tnl_port;
     struct hmap **map;
 
-    cfg = netdev_get_tunnel_config(netdev);
+    cfg = netdev_get_tunnel_config(netdev);//取出tunnel配置
     ovs_assert(cfg);
 
+    //填充tnl_port
     tnl_port = xzalloc(sizeof *tnl_port);
     tnl_port->ofport = ofport;
     tnl_port->netdev = netdev_ref(netdev);
@@ -166,7 +172,7 @@ tnl_port_add__(const struct ofport_dpif *ofport, const struct netdev *netdev,
 
     map = tnl_match_map(&tnl_port->match);
     existing_port = tnl_find_exact(&tnl_port->match, *map);
-    if (existing_port) {
+    if (existing_port) {//这种隧道口已存在
         if (warn) {
             struct ds ds = DS_EMPTY_INITIALIZER;
             tnl_match_fmt(&tnl_port->match, &ds);
@@ -180,13 +186,13 @@ tnl_port_add__(const struct ofport_dpif *ofport, const struct netdev *netdev,
         return false;
     }
 
-    hmap_insert(ofport_map, &tnl_port->ofport_node, hash_pointer(ofport, 0));
+    hmap_insert(ofport_map, &tnl_port->ofport_node, hash_pointer(ofport, 0));//加入到ofport_map
 
-    if (!*map) {
+    if (!*map) {//廷迟创建map对应的hash
         *map = xmalloc(sizeof **map);
         hmap_init(*map);
     }
-    hmap_insert(*map, &tnl_port->match_node, tnl_hash(&tnl_port->match));
+    hmap_insert(*map, &tnl_port->match_node, tnl_hash(&tnl_port->match));//加入到map,方便以后查找
     tnl_port_mod_log(tnl_port, "adding");
 
     if (native_tnl) {
@@ -204,6 +210,7 @@ tnl_port_add__(const struct ofport_dpif *ofport, const struct netdev *netdev,
  * tunnel.
  *
  * Returns 0 if successful, otherwise a positive errno value. */
+//添加隧道口
 int
 tnl_port_add(const struct ofport_dpif *ofport, const struct netdev *netdev,
              odp_port_t odp_port, bool native_tnl, const char name[]) OVS_EXCLUDED(rwlock)
@@ -221,6 +228,7 @@ tnl_port_add(const struct ofport_dpif *ofport, const struct netdev *netdev,
  * in its netdev_tunnel_config.  If it does, returns true. Otherwise, returns
  * false.  'ofport' and 'odp_port' should be the same as would be passed to
  * tnl_port_add(). */
+//一个批次的配置来，执行这个批次的配置，如果不存在添加，如果存在，删除掉，然后再加入新的。
 bool
 tnl_port_reconfigure(const struct ofport_dpif *ofport,
                      const struct netdev *netdev, odp_port_t odp_port,
@@ -232,11 +240,11 @@ tnl_port_reconfigure(const struct ofport_dpif *ofport,
 
     fat_rwlock_wrlock(&rwlock);
     tnl_port = tnl_find_ofport(ofport);
-    if (!tnl_port) {
+    if (!tnl_port) {//不存在，添加
         changed = tnl_port_add__(ofport, netdev, odp_port, false, native_tnl, name);
     } else if (tnl_port->netdev != netdev
                || tnl_port->match.odp_port != odp_port
-               || tnl_port->change_seq != netdev_get_change_seq(tnl_port->netdev)) {
+               || tnl_port->change_seq != netdev_get_change_seq(tnl_port->netdev)) {//已存在，且变更了，删除掉再添加
         VLOG_DBG("reconfiguring %s", tnl_port_get_name(tnl_port));
         tnl_port_del__(ofport);
         tnl_port_add__(ofport, netdev, odp_port, true, native_tnl, name);
@@ -246,6 +254,7 @@ tnl_port_reconfigure(const struct ofport_dpif *ofport,
     return changed;
 }
 
+//释放tunnel-port
 static void
 tnl_port_del__(const struct ofport_dpif *ofport) OVS_REQ_WRLOCK(rwlock)
 {
@@ -256,7 +265,7 @@ tnl_port_del__(const struct ofport_dpif *ofport) OVS_REQ_WRLOCK(rwlock)
     }
 
     tnl_port = tnl_find_ofport(ofport);
-    if (tnl_port) {
+    if (tnl_port) {//找到了此tunl-port
         const struct netdev_tunnel_config *cfg =
             netdev_get_tunnel_config(tnl_port->netdev);
         struct hmap **map;
@@ -264,19 +273,20 @@ tnl_port_del__(const struct ofport_dpif *ofport) OVS_REQ_WRLOCK(rwlock)
         tnl_port_map_delete(cfg->dst_port, netdev_get_type(tnl_port->netdev));
         tnl_port_mod_log(tnl_port, "removing");
         map = tnl_match_map(&tnl_port->match);
-        hmap_remove(*map, &tnl_port->match_node);
-        if (hmap_is_empty(*map)) {
+        hmap_remove(*map, &tnl_port->match_node);//删除match信息
+        if (hmap_is_empty(*map)) {//顺手在方便的时候，把map也释放掉
             hmap_destroy(*map);
             free(*map);
             *map = NULL;
         }
-        hmap_remove(ofport_map, &tnl_port->ofport_node);
-        netdev_close(tnl_port->netdev);
+        hmap_remove(ofport_map, &tnl_port->ofport_node);//自ofport_map中将此映射信息删除掉
+        netdev_close(tnl_port->netdev);//不再引用netdev
         free(tnl_port);
     }
 }
 
 /* Removes 'ofport' from the module. */
+//删除tunnel口
 void
 tnl_port_del(const struct ofport_dpif *ofport) OVS_EXCLUDED(rwlock)
 {
@@ -291,7 +301,7 @@ tnl_port_del(const struct ofport_dpif *ofport) OVS_EXCLUDED(rwlock)
  *
  * Callers should verify that 'flow' needs to be received by calling
  * tnl_port_should_receive() before this function. */
-//查找flow对应的tunnel口，如果无对应的，返回NULL
+//通过flow查找对应的tunnel口，如果无对应的，返回NULL
 const struct ofport_dpif *
 tnl_port_receive(const struct flow *flow) OVS_EXCLUDED(rwlock)
 {
@@ -357,6 +367,7 @@ tnl_process_ecn(struct flow *flow)
     return true;
 }
 
+//tunnel统配符初始化（tunnel-id,src-ip,dst-ip,tos,ttl,
 void
 tnl_wc_init(struct flow *flow, struct flow_wildcards *wc)
 {
@@ -390,6 +401,8 @@ tnl_wc_init(struct flow *flow, struct flow_wildcards *wc)
  * 'tnl_port', updates 'flow''s tunnel headers and returns the actual datapath
  * port that the output should happen on.  May return ODPP_NONE if the output
  * shouldn't occur. */
+//通过ofport查找对应的tunnel口，设置flow中tunnel的src-ip,dst-ip,dst-port,tunnel-id,ttl,tos,
+//flags
 odp_port_t
 tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
               struct flow_wildcards *wc) OVS_EXCLUDED(rwlock)
@@ -413,7 +426,7 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
         pre_flow_str = flow_to_string(flow);
     }
 
-    if (!cfg->ip_src_flow) {//填充src
+    if (!cfg->ip_src_flow) {//填充src-ip
         flow->tunnel.ip_src = in6_addr_get_mapped_ipv4(&tnl_port->match.ipv6_src);
         if (!flow->tunnel.ip_src) {
             flow->tunnel.ipv6_src = tnl_port->match.ipv6_src;
@@ -421,7 +434,7 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
             flow->tunnel.ipv6_src = in6addr_any;
         }
     }
-    if (!cfg->ip_dst_flow) {//填充dst
+    if (!cfg->ip_dst_flow) {//填充dst-ip
         flow->tunnel.ip_dst = in6_addr_get_mapped_ipv4(&tnl_port->match.ipv6_dst);
         if (!flow->tunnel.ip_dst) {
             flow->tunnel.ipv6_dst = tnl_port->match.ipv6_dst;
@@ -431,7 +444,7 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
     }
     flow->tunnel.tp_dst = cfg->dst_port;//填充目的端口
     if (!cfg->out_key_flow) {
-        flow->tunnel.tun_id = cfg->out_key;
+        flow->tunnel.tun_id = cfg->out_key;//填充tunnel-id
     }
 
     if (cfg->ttl_inherit && is_ip_any(flow)) {//ttl处理
@@ -504,7 +517,7 @@ tnl_find_ofport(const struct ofport_dpif *ofport) OVS_REQ_RDLOCK(rwlock)
     return NULL;
 }
 
-//检查match是否与map中port配置有匹配的，有就返回对应port,没有就返回NULL
+//在hash表map中比对match,如果match相等，则返回对应的tnl_port
 static struct tnl_port *
 tnl_find_exact(struct tnl_match *match, struct hmap *map)
     OVS_REQ_RDLOCK(rwlock)
@@ -523,9 +536,9 @@ tnl_find_exact(struct tnl_match *match, struct hmap *map)
 
 /* Returns the tnl_port that is the best match for the tunnel data in 'flow',
  * or NULL if no tnl_port matches 'flow'. */
-//针对flow配置tunnel port（这几个循环次数目前暂不明白意义）
+//查找flow对应的tunl_port（依据流确定所属的隧道口），用于解决，我们刚刚封装了隧道，报文重新进入，知道是那个隧道发送的
 static struct tnl_port *
-tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)
+tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)//通过流来找tunnel口
 {
     enum ip_src_type ip_src;
     int in_key_flow;
@@ -533,6 +546,8 @@ tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)
     int i;
 
     i = 0;
+    //这一组循环的目的就是为了很完全遍历tnl_match_maps
+    //针对flow查找所有hash表，查找能配置的tnl_port
     for (in_key_flow = 0; in_key_flow < 2; in_key_flow++) {
         for (ip_dst_flow = 0; ip_dst_flow < 2; ip_dst_flow++) {
             for (ip_src = 0; ip_src < 3; ip_src++) {//为什么是３，看IP_SRC_CFG枚举
@@ -577,6 +592,7 @@ tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)
 
 /* Returns a pointer to the 'tnl_match_maps' element corresponding to 'm''s
  * matching criteria. */
+//确定按m的配置它应对应到那张match_map的表
 static struct hmap **
 tnl_match_map(const struct tnl_match *m)
 {
@@ -677,12 +693,14 @@ tnl_port_fmt(const struct tnl_port *tnl_port) OVS_REQ_RDLOCK(rwlock)
     return ds_steal_cstr(&ds);
 }
 
+//tunnel口名称
 static const char *
 tnl_port_get_name(const struct tnl_port *tnl_port) OVS_REQ_RDLOCK(rwlock)
 {
     return netdev_get_name(tnl_port->netdev);
 }
 
+//促使tunnel口采用params构造隧道口相关的报文模板
 int
 tnl_port_build_header(const struct ofport_dpif *ofport,
                       struct ovs_action_push_tnl *data,

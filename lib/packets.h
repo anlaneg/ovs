@@ -116,6 +116,7 @@ pkt_metadata_init_tnl(struct pkt_metadata *md)
      * are before this and as long as they are empty, the options won't
      * be looked at. */
     memset(md, 0, offsetof(struct pkt_metadata, tunnel.metadata.opts));
+    //清空md结构中的前半部分内容(tunnel.metadata.opts后的内容不清空（含））
 }
 
 //将结构清０，主要是设置入接口
@@ -126,10 +127,11 @@ pkt_metadata_init(struct pkt_metadata *md, odp_port_t port)
      * we can just zero out ip_dst and the rest of the data will never be
      * looked at. */
     memset(md, 0, offsetof(struct pkt_metadata, in_port));
+    //清空md结构体中前半部分内容（tunnel.in_port后的内容不清空（含））
     md->tunnel.ip_dst = 0;
-    md->tunnel.ipv6_dst = in6addr_any;
+    md->tunnel.ipv6_dst = in6addr_any;//清空dst-ip
 
-    md->in_port.odp_port = port;
+    md->in_port.odp_port = port;//设置报文入接口
 }
 
 /* This function prefetches the cachelines touched by pkt_metadata_init()
@@ -966,6 +968,8 @@ in6_addr_set_mapped_ipv4(struct in6_addr *ip6, ovs_be32 ip4)
     *ip6 = in6_addr_mapped_ipv4(ip4);
 }
 
+//ipv4地址存入ipv6地址中时，保持前两个32位为0，第3个32位为oxffff,第4个32位保存ipv4地址
+//故此函数检查这种特征后提取ipv4地址（保存见in6_addr_mapped_ipv4)
 static inline ovs_be32
 in6_addr_get_mapped_ipv4(const struct in6_addr *addr)
 {

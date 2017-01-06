@@ -47,14 +47,14 @@
 #include "util.h"
 
 static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
-static struct classifier cls;
+static struct classifier cls;//router表对应的cls
 
 struct ovs_router_entry {
     struct cls_rule cr;
-    char output_bridge[IFNAMSIZ];
-    struct in6_addr gw;
+    char output_bridge[IFNAMSIZ];//从哪个桥发出
+    struct in6_addr gw;//网关
     struct in6_addr nw_addr;
-    struct in6_addr src_addr;
+    struct in6_addr src_addr;//采用哪个源ip
     uint8_t plen;
     uint8_t priority;
 };
@@ -87,6 +87,7 @@ ovs_router_lookup_fallback(const struct in6_addr *ip6_dst, char output_bridge[],
     return true;
 }
 
+//查路由表（全局的），检查到ip6_dst的网关是gw,用哪个源ip发出
 bool
 ovs_router_lookup(const struct in6_addr *ip6_dst, char output_bridge[],
                   struct in6_addr *src, struct in6_addr *gw)
@@ -94,7 +95,7 @@ ovs_router_lookup(const struct in6_addr *ip6_dst, char output_bridge[],
     const struct cls_rule *cr;
     struct flow flow = {.ipv6_dst = *ip6_dst};
 
-    cr = classifier_lookup(&cls, OVS_VERSION_MAX, &flow, NULL);
+    cr = classifier_lookup(&cls, OVS_VERSION_MAX, &flow, NULL);//查路由表
     if (cr) {
         struct ovs_router_entry *p = ovs_router_entry_cast(cr);
 

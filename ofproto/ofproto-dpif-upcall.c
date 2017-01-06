@@ -195,7 +195,7 @@ enum reval_result {
 };
 
 struct upcall {
-    struct ofproto_dpif *ofproto;  /* Parent ofproto. */
+    struct ofproto_dpif *ofproto;  /* Parent ofproto. */ //对应的交换机操作句柄
     const struct recirc_id_node *recirc; /* Recirculation context. */
     bool have_recirc_ref;                /* Reference held on recirc ctx? */
 

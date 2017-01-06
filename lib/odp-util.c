@@ -1546,7 +1546,7 @@ find_end:
 
 static int
 parse_odp_action(const char *s, const struct simap *port_names,
-                 struct ofpbuf *actions)
+                 struct ofpbuf *actions)//通过字符串解析action
 {
     {
         uint32_t port;
@@ -5331,7 +5331,7 @@ odp_put_userspace_action(uint32_t pid,
 
 void
 odp_put_tunnel_action(const struct flow_tnl *tunnel,
-                      struct ofpbuf *odp_actions)
+                      struct ofpbuf *odp_actions)//指定对报文属性进行设置
 {
     size_t offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_SET);
     tun_key_to_attr(odp_actions, tunnel, tunnel, NULL);
@@ -5340,7 +5340,7 @@ odp_put_tunnel_action(const struct flow_tnl *tunnel,
 
 void
 odp_put_tnl_push_action(struct ofpbuf *odp_actions,
-                        struct ovs_action_push_tnl *data)
+                        struct ovs_action_push_tnl *data)//添加push tunnel动作及其所需参数
 {
     int size = offsetof(struct ovs_action_push_tnl, header);
 
@@ -5395,7 +5395,7 @@ commit_odp_tunnel_action(const struct flow *flow, struct flow *base,
     /* A valid IPV4_TUNNEL must have non-zero ip_dst; a valid IPv6 tunnel
      * must have non-zero ipv6_dst. */
     if (flow_tnl_dst_is_set(&flow->tunnel)) {
-        if (!memcmp(&base->tunnel, &flow->tunnel, sizeof base->tunnel)) {
+        if (!memcmp(&base->tunnel, &flow->tunnel, sizeof base->tunnel)) {//如果tunnel无变化，则不需要操作，返回
             return;
         }
         memcpy(&base->tunnel, &flow->tunnel, sizeof base->tunnel);

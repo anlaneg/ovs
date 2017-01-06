@@ -122,7 +122,7 @@ struct bridge {
     const struct ovsrec_bridge *cfg;
 
     /* OpenFlow switch processing. */
-    struct ofproto *ofproto;    /* OpenFlow switch. */
+    struct ofproto *ofproto;    /* OpenFlow switch. */ //对应的of交换机
 
     /* Bridge ports. */
     struct hmap ports;          /* "struct port"s indexed by name. */
@@ -625,7 +625,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      *
      *     - Add ports that are missing. */
     HMAP_FOR_EACH_SAFE (br, next, node, &all_bridges) {
-        if (!br->ofproto) {
+        if (!br->ofproto) {//没有创建对应的ofproto
             int error;
 
             error = ofproto_create(br->name, br->type, &br->ofproto);
@@ -747,7 +747,7 @@ iface_set_netdev_mtu(const struct ovsrec_interface *iface_cfg,
 {
     if (iface_cfg->n_mtu_request == 1) {
         /* The user explicitly asked for this MTU. */
-        netdev_mtu_user_config(netdev, true);
+        netdev_mtu_user_config(netdev, true);//锁定此mtu
         /* Try to set the MTU to the requested value. */
         return netdev_set_mtu(netdev, *iface_cfg->mtu_request);
     }
@@ -1727,6 +1727,7 @@ iface_set_netdev_config(const struct ovsrec_interface *iface_cfg,
  * If successful, returns 0 and stores the network device in '*netdevp'.  On
  * failure, returns a positive errno value and stores NULL in '*netdevp'. */
 static int
+//创建interface,并返回其关联的netdev
 iface_do_create(const struct bridge *br,
                 const struct ovsrec_interface *iface_cfg,
                 ofp_port_t *ofp_portp, struct netdev **netdevp,
@@ -1745,19 +1746,19 @@ iface_do_create(const struct bridge *br,
 
     type = ofproto_port_open_type(br->cfg->datapath_type,
                                   iface_get_type(iface_cfg, br->cfg));
-    error = netdev_open(iface_cfg->name, type, &netdev);
+    error = netdev_open(iface_cfg->name, type, &netdev);//创建对应的设备
     if (error) {
         VLOG_WARN_BUF(errp, "could not open network device %s (%s)",
                       iface_cfg->name, ovs_strerror(error));
         goto error;
     }
 
-    error = iface_set_netdev_config(iface_cfg, netdev, errp);
+    error = iface_set_netdev_config(iface_cfg, netdev, errp);//配置此设备
     if (error) {
         goto error;
     }
 
-    iface_set_netdev_mtu(iface_cfg, netdev);
+    iface_set_netdev_mtu(iface_cfg, netdev);//配置mtu
 
     *ofp_portp = iface_pick_ofport(iface_cfg);
     error = ofproto_port_add(br->ofproto, netdev, ofp_portp);
@@ -2956,7 +2957,7 @@ bridge_run(void)
 
         idl_seqno = ovsdb_idl_get_seqno(idl);
         txn = ovsdb_idl_txn_create(idl);
-        bridge_reconfigure(cfg ? cfg : &null_cfg);
+        bridge_reconfigure(cfg ? cfg : &null_cfg);//bridge配置
 
         if (cfg) {
             ovsrec_open_vswitch_set_cur_cfg(cfg, cfg->next_cfg);

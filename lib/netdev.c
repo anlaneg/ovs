@@ -65,22 +65,24 @@ COVERAGE_DEFINE(netdev_get_stats);
 struct netdev_saved_flags {
     struct netdev *netdev;
     struct ovs_list node;           /* In struct netdev's saved_flags_list. */
-    enum netdev_flags saved_flags;
-    enum netdev_flags saved_values;
+    enum netdev_flags saved_flags;//那些flag发生了变化
+    enum netdev_flags saved_values;//变化后的flag取值
 };
 
 /* Protects 'netdev_shash' and the mutable members of struct netdev. */
-static struct ovs_mutex netdev_mutex = OVS_MUTEX_INITIALIZER;
+static struct ovs_mutex netdev_mutex = OVS_MUTEX_INITIALIZER;//保护netdev_shash
 
 /* All created network devices. */
-static struct shash netdev_shash OVS_GUARDED_BY(netdev_mutex)
+static struct shash netdev_shash OVS_GUARDED_BY(netdev_mutex)//用于挂接系统创建的所有netdev
     = SHASH_INITIALIZER(&netdev_shash);
 
 /* Mutual exclusion of */
-static struct ovs_mutex netdev_class_mutex OVS_ACQ_BEFORE(netdev_mutex)
+static struct ovs_mutex netdev_class_mutex OVS_ACQ_BEFORE(netdev_mutex)//保护netdev_classes
     = OVS_MUTEX_INITIALIZER;
 
 /* Contains 'struct netdev_registered_class'es. */
+//例如‘system','patch','tap','internal',‘vxlan'等tunnel类型，‘dpdk','dpdkr'等
+//'dummy','dummy-internal','dummy-pmd'等
 static struct cmap netdev_classes = CMAP_INITIALIZER;//全局变量，用于串连所有注册的netdev class
 
 struct netdev_registered_class {
@@ -100,39 +102,40 @@ static void restore_all_flags(void *aux OVS_UNUSED);
 void update_device_args(struct netdev *, const struct shash *args);
 
 int
-netdev_n_txq(const struct netdev *netdev)
+netdev_n_txq(const struct netdev *netdev)//netdev的转发队列数
 {
     return netdev->n_txq;
 }
 
 int
-netdev_n_rxq(const struct netdev *netdev)
+netdev_n_rxq(const struct netdev *netdev)//netdev的请求队列数
 {
     return netdev->n_rxq;
 }
 
 bool
-netdev_is_pmd(const struct netdev *netdev)
+netdev_is_pmd(const struct netdev *netdev)//检查此netdev是否为可轮询设备
 {
     return netdev->netdev_class->is_pmd;
 }
 
 static void
-netdev_initialize(void)
+netdev_initialize(void) //netdev初始化（初始化入口)
     OVS_EXCLUDED(netdev_mutex)
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 
     if (ovsthread_once_start(&once)) {
+    	//注册信号发生时，或进程退出时执行restore_all_flags回调
         fatal_signal_add_hook(restore_all_flags, NULL, NULL, true);
 
-        netdev_vport_patch_register();
+        netdev_vport_patch_register();//patch类型vport注册
 
 #ifdef __linux__
-        netdev_register_provider(&netdev_linux_class);
-        netdev_register_provider(&netdev_internal_class);
-        netdev_register_provider(&netdev_tap_class);
-        netdev_vport_tunnel_register();
+        netdev_register_provider(&netdev_linux_class);//system类型注册
+        netdev_register_provider(&netdev_internal_class);//internal类型注册
+        netdev_register_provider(&netdev_tap_class);//tap类型注册
+        netdev_vport_tunnel_register();//所有tunnel类型vport注册
 #endif
 #if defined(__FreeBSD__) || defined(__NetBSD__)
         netdev_register_provider(&netdev_tap_class);
@@ -152,7 +155,7 @@ netdev_initialize(void)
  * If your program opens any netdevs, it must call this function within its
  * main poll loop. */
 void
-netdev_run(void)//对所有class调用run函数
+netdev_run(void)//对所有class调用run函数（做周期性工作）＊＊＊run入口
     OVS_EXCLUDED(netdev_mutex)
 {
     netdev_initialize();
@@ -170,7 +173,7 @@ netdev_run(void)//对所有class调用run函数
  * If your program opens any netdevs, it must call this function within its
  * main poll loop. */
 void
-netdev_wait(void)//对所有class调用wait函数
+netdev_wait(void)//对所有class调用wait函数＊＊＊wait入口
     OVS_EXCLUDED(netdev_mutex)
 {
     netdev_initialize();
@@ -214,6 +217,7 @@ netdev_register_provider(const struct netdev_class *new_class)//注册新的netd
     } else {
         error = new_class->init ? new_class->init() : 0;
         if (!error) {
+        	//新建rc，并将其加入到netdev_classes中
             struct netdev_registered_class *rc;
 
             rc = xmalloc(sizeof *rc);
@@ -238,7 +242,7 @@ netdev_register_provider(const struct netdev_class *new_class)//注册新的netd
  * period, so the caller must not free or re-register the same netdev_class
  * until that has passed.) */
 int
-netdev_unregister_provider(const char *type)//去除type类型的netdev_class
+netdev_unregister_provider(const char *type)//去除type类型的netdev_class注册
     OVS_EXCLUDED(netdev_class_mutex, netdev_mutex)
 {
     struct netdev_registered_class *rc;
@@ -288,6 +292,7 @@ netdev_enumerate_types(struct sset *types)//返回当前已注册的所有netdev
  * does not define it) or the datapath internal port name (e.g. ovs-system).
  *
  * Returns true if there is a name conflict, false otherwise. */
+//名称不能与vport名称相同，名称如果以ovs-开头，则不能为netdev_class中已知type
 bool
 netdev_is_reserved_name(const char *name)
     OVS_EXCLUDED(netdev_mutex)
@@ -296,13 +301,15 @@ netdev_is_reserved_name(const char *name)
 
     struct netdev_registered_class *rc;
     CMAP_FOR_EACH (rc, cmap_node, &netdev_classes) {//如果是vport,则检查名称是否相同
-        const char *dpif_port = netdev_vport_class_get_dpif_port(rc->class);
+        const char *dpif_port = netdev_vport_class_get_dpif_port(rc->class);//检查是否和隧道名称相同
         if (dpif_port && !strncmp(name, dpif_port, strlen(dpif_port))) {
             return true;
         }
     }
 
-    if (!strncmp(name, "ovs-", 4)) {//如果ovs开头，则检查type是否为netdev_class支持的type
+    if (!strncmp(name, "ovs-", 4)) {
+    	//如果ovs开头，则检查type是否为netdev_class支持的type
+    	//与backer就相同了
         struct sset types;
         const char *type;
 
@@ -328,7 +335,7 @@ netdev_is_reserved_name(const char *name)
  * Some network devices may need to be configured (with netdev_set_config())
  * before they can be used. */
 int
-netdev_open(const char *name, const char *type, struct netdev **netdevp)//创建指定netdev
+netdev_open(const char *name, const char *type, struct netdev **netdevp)//创建指定netdev（细分为交由type对应的class去创建）
     OVS_EXCLUDED(netdev_mutex)
 {
     struct netdev *netdev;
@@ -363,7 +370,7 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)//创建
                 error = rc->class->construct(netdev);
                 if (!error) {
                     netdev_change_seq_changed(netdev);
-                } else {
+                } else {//处理失败的话，就释放空间
                     ovs_refcount_unref(&rc->refcnt);
                     seq_destroy(netdev->reconfigure_seq);
                     free(netdev->name);
@@ -414,7 +421,8 @@ netdev_ref(const struct netdev *netdev_)//增加引用计数
 /* Reconfigures the device 'netdev' with 'args'.  'args' may be empty
  * or NULL if none are needed. */
 int
-netdev_set_config(struct netdev *netdev, const struct smap *args, char **errp)//调用set_config设置配置
+//配置此dev（包括tunnel配置）
+netdev_set_config(struct netdev *netdev, const struct smap *args, char **errp)//调用set_config设置配置（netdev自已底层处理）
     OVS_EXCLUDED(netdev_mutex)
 {
     if (netdev->netdev_class->set_config) {
@@ -530,12 +538,12 @@ netdev_close(struct netdev *netdev)//关闭，主要是减少引用计数
  * netdevs during user configuration changes. Otherwise, netdev_close should be
  * used to close netdevs. */
 void
-netdev_remove(struct netdev *netdev)
+netdev_remove(struct netdev *netdev)//移除netdev
 {
     if (netdev) {
         ovs_mutex_lock(&netdev_mutex);
         if (netdev->node) {
-            shash_delete(&netdev_shash, netdev->node);
+            shash_delete(&netdev_shash, netdev->node);//netdev自全局hash中移除
             netdev->node = NULL;
             netdev_change_seq_changed(netdev);
         }
@@ -546,7 +554,7 @@ netdev_remove(struct netdev *netdev)
 /* Parses 'netdev_name_', which is of the form [type@]name into its component
  * pieces.  'name' and 'type' must be freed by the caller. */
 void
-netdev_parse_name(const char *netdev_name_, char **name, char **type)
+netdev_parse_name(const char *netdev_name_, char **name, char **type)//从netdev名称中解释type及名称
 //解析name,type，如果有@,则@会分割两者，如果没有，则type为system,name为netdev_name_
 {
     char *netdev_name = xstrdup(netdev_name_);
@@ -626,7 +634,7 @@ netdev_rxq_close(struct netdev_rxq *rx)//关闭收队列，释放内存，释放
  * Returns EAGAIN immediately if no packet is ready to be received or another
  * positive errno value if an error was encountered. */
 int
-netdev_rxq_recv(struct netdev_rxq *rx, struct dp_packet_batch *batch)//报文收取
+netdev_rxq_recv(struct netdev_rxq *rx, struct dp_packet_batch *batch)//自队列里进行报文收取
 {
     int retval;
 
@@ -751,6 +759,7 @@ netdev_pop_header(struct netdev *netdev, struct dp_packet_batch *batch)
     batch->count = n_cnt;
 }
 
+//初始化tunnel头部对应参数
 void
 netdev_init_tnl_build_header_params(struct netdev_tnl_build_header_params *params,//构造params
                                     const struct flow *tnl_flow,
@@ -776,7 +785,7 @@ int netdev_build_header(const struct netdev *netdev,
     return EOPNOTSUPP;
 }
 
-//调用netdev来push_header(隧道口的加入，与各隧道方式有关）
+//采用data中的隧道头模板来封装隧道头到batch中的报文
 int
 netdev_push_header(const struct netdev *netdev,
                    struct dp_packet_batch *batch,
@@ -789,7 +798,7 @@ netdev_push_header(const struct netdev *netdev,
     }
 
     for (i = 0; i < batch->count; i++) {
-        netdev->netdev_class->push_header(batch->packets[i], data);
+        netdev->netdev_class->push_header(batch->packets[i], data);//封装隧道头到报文中
         pkt_metadata_init(&batch->packets[i]->md, u32_to_odp(data->out_port));//改入接口
     }
 
@@ -806,7 +815,7 @@ netdev_push_header(const struct netdev *netdev,
  * and can be ignored if the implementation does not support multiple
  * queues. */
 void
-netdev_send_wait(struct netdev *netdev, int qid)
+netdev_send_wait(struct netdev *netdev, int qid)//等待队列有足够的空间可以完成发送
 {
     if (netdev->netdev_class->send_wait) {
         netdev->netdev_class->send_wait(netdev, qid);
@@ -888,7 +897,7 @@ netdev_set_mtu(struct netdev *netdev, int mtu)//设置mtu
  * should not override it.  If 'user_config' is false, we may adjust
  * 'netdev''s MTU (e.g., if 'netdev' is internal). */
 void
-netdev_mtu_user_config(struct netdev *netdev, bool user_config)
+netdev_mtu_user_config(struct netdev *netdev, bool user_config)//用户是否锁定此mtu配置
 {
     if (netdev->mtu_user_config != user_config) {
         netdev_change_seq_changed(netdev);
@@ -900,7 +909,7 @@ netdev_mtu_user_config(struct netdev *netdev, bool user_config)
  * Otherwise, returns 'false', in which case we are allowed to adjust the
  * device MTU. */
 bool
-netdev_mtu_is_user_config(struct netdev *netdev)
+netdev_mtu_is_user_config(struct netdev *netdev)//如果用户明确指定mtu值返回true
 {
     return netdev->mtu_user_config;
 }
@@ -936,7 +945,7 @@ netdev_get_ifindex(const struct netdev *netdev)//返回接口对应的ifindex
  * Some network devices may not implement support for this function.  In such
  * cases this function will always return EOPNOTSUPP. */
 int
-netdev_get_features(const struct netdev *netdev,
+netdev_get_features(const struct netdev *netdev,//返回功能信息
                     enum netdev_features *current,
                     enum netdev_features *advertised,
                     enum netdev_features *supported,
@@ -950,6 +959,7 @@ netdev_get_features(const struct netdev *netdev,
     enum netdev_features dummy[4];
     int error;
 
+    //如果用户没有为这些个返回值，传递空间，则在这一层，我们自个准备这些空间
     if (!current) {
         current = &dummy[0];
     }
@@ -966,7 +976,7 @@ netdev_get_features(const struct netdev *netdev,
     get_features = netdev->netdev_class->get_features;
     error = get_features
                     ? get_features(netdev, current, advertised, supported,
-                                   peer)
+                                   peer)//返回功能信息
                     : EOPNOTSUPP;
     if (error) {
         *current = *advertised = *supported = *peer = 0;
@@ -978,7 +988,7 @@ netdev_get_features(const struct netdev *netdev,
  * bits in 'features', in bits per second.  If no bits that indicate a speed
  * are set in 'features', returns 'default_bps'. */
 uint64_t
-netdev_features_to_bps(enum netdev_features features,
+netdev_features_to_bps(enum netdev_features features,//返回速率
                        uint64_t default_bps)
 {
     enum {
@@ -1014,7 +1024,7 @@ netdev_features_is_full_duplex(enum netdev_features features)//是否全双工
 /* Set the features advertised by 'netdev' to 'advertise'.  Returns 0 if
  * successful, otherwise a positive errno value. */
 int
-netdev_set_advertisements(struct netdev *netdev,
+netdev_set_advertisements(struct netdev *netdev,//设置功能
                           enum netdev_features advertise)
 {
     return (netdev->netdev_class->set_advertisements
@@ -1038,7 +1048,7 @@ netdev_set_in4(struct netdev *netdev, struct in_addr addr, struct in_addr mask)/
  * in4.  Returns 0 if successful, otherwise a positive errno value.
  */
 int
-netdev_get_in4_by_name(const char *device_name, struct in_addr *in4)
+netdev_get_in4_by_name(const char *device_name, struct in_addr *in4)//通过接口名称获取接口上的ipv4地址
 {
     struct in6_addr *mask, *addr6;
     int err, n_in6, i;
@@ -1049,18 +1059,18 @@ netdev_get_in4_by_name(const char *device_name, struct in_addr *in4)
         return err;
     }
 
-    err = netdev_get_addr_list(dev, &addr6, &mask, &n_in6);
+    err = netdev_get_addr_list(dev, &addr6, &mask, &n_in6);//获取接口上的ip地址
     if (err) {
         goto out;
     }
 
     for (i = 0; i < n_in6; i++) {
         if (IN6_IS_ADDR_V4MAPPED(&addr6[i])) {
-            in4->s_addr = in6_addr_get_mapped_ipv4(&addr6[i]);
+            in4->s_addr = in6_addr_get_mapped_ipv4(&addr6[i]);//返回第一个
             goto out;
         }
     }
-    err = -ENOENT;
+    err = -ENOENT;//没有
 out:
     free(addr6);
     free(mask);
@@ -1072,7 +1082,7 @@ out:
 /* Adds 'router' as a default IP gateway for the TCP/IP stack that corresponds
  * to 'netdev'. */
 int
-netdev_add_router(struct netdev *netdev, struct in_addr router)
+netdev_add_router(struct netdev *netdev, struct in_addr router)//添加router做为默认网关
 {
     COVERAGE_INC(netdev_add_router);
     return (netdev->netdev_class->add_router
@@ -1087,6 +1097,7 @@ netdev_add_router(struct netdev *netdev, struct in_addr router)
  * a directly connected network) in '*next_hop' and a copy of the name of the
  * device to reach 'host' in '*netdev_name', and returns 0.  The caller is
  * responsible for freeing '*netdev_name' (by calling free()). */
+//返回host对应的下一跳及其对应的出接口
 int
 netdev_get_next_hop(const struct netdev *netdev,
                     const struct in_addr *host, struct in_addr *next_hop,
@@ -1109,7 +1120,7 @@ netdev_get_next_hop(const struct netdev *netdev,
  * information may be used to populate the status column of the Interface table
  * as defined in ovs-vswitchd.conf.db(5). */
 int
-netdev_get_status(const struct netdev *netdev, struct smap *smap)
+netdev_get_status(const struct netdev *netdev, struct smap *smap)//返回netdev对应的状态信息
 {
     return (netdev->netdev_class->get_status
             ? netdev->netdev_class->get_status(netdev, smap)
@@ -1131,7 +1142,7 @@ netdev_get_status(const struct netdev *netdev, struct smap *smap)
  * 'addr' may be null, in which case the address itself is not reported. */
 int
 netdev_get_addr_list(const struct netdev *netdev, struct in6_addr **addr,
-                     struct in6_addr **mask, int *n_addr)
+                     struct in6_addr **mask, int *n_addr)//返回接口上所有ip地址
 {
     int error;
 
@@ -1149,8 +1160,8 @@ netdev_get_addr_list(const struct netdev *netdev, struct in6_addr **addr,
 /* On 'netdev', turns off the flags in 'off' and then turns on the flags in
  * 'on'.  Returns 0 if successful, otherwise a positive errno value. */
 static int
-do_update_flags(struct netdev *netdev, enum netdev_flags off,
-                enum netdev_flags on, enum netdev_flags *old_flagsp,
+do_update_flags(struct netdev *netdev, enum netdev_flags off,//off指要关闭的flag,on表示要打开的flag,old_flagsp为返回旧的flag
+                enum netdev_flags on, enum netdev_flags *old_flagsp,//sfp用于表示本次发生变化的flags,及它们变化后的值
                 struct netdev_saved_flags **sfp)
     OVS_EXCLUDED(netdev_mutex)
 {
@@ -1165,16 +1176,16 @@ do_update_flags(struct netdev *netdev, enum netdev_flags off,
                      off || on ? "set" : "get", netdev_get_name(netdev),
                      ovs_strerror(error));
         old_flags = 0;
-    } else if ((off || on) && sfp) {
-        enum netdev_flags new_flags = (old_flags & ~off) | on;
-        enum netdev_flags changed_flags = old_flags ^ new_flags;
-        if (changed_flags) {
+    } else if ((off || on) && sfp) {//off,on有对应值，且sfp不为空
+        enum netdev_flags new_flags = (old_flags & ~off) | on;//新的flags
+        enum netdev_flags changed_flags = old_flags ^ new_flags;//哪些flags发生了变化
+        if (changed_flags) {//如果flags发生了变化
             ovs_mutex_lock(&netdev_mutex);
             *sfp = sf = xmalloc(sizeof *sf);
             sf->netdev = netdev;
-            ovs_list_push_front(&netdev->saved_flags_list, &sf->node);
-            sf->saved_flags = changed_flags;
-            sf->saved_values = changed_flags & new_flags;
+            ovs_list_push_front(&netdev->saved_flags_list, &sf->node);//挂在netdev变更flags链上
+            sf->saved_flags = changed_flags;//那些发生了变化
+            sf->saved_values = changed_flags & new_flags;//记录变化后的值
 
             netdev->ref_cnt++;
             ovs_mutex_unlock(&netdev_mutex);
@@ -1195,7 +1206,7 @@ do_update_flags(struct netdev *netdev, enum netdev_flags off,
  * Returns 0 if successful, otherwise a positive errno value.  On failure,
  * stores 0 into '*flagsp'. */
 int
-netdev_get_flags(const struct netdev *netdev_, enum netdev_flags *flagsp)
+netdev_get_flags(const struct netdev *netdev_, enum netdev_flags *flagsp)//获取netdev对应的flags
 {
     struct netdev *netdev = CONST_CAST(struct netdev *, netdev_);
     return do_update_flags(netdev, 0, 0, flagsp, NULL);
@@ -1204,7 +1215,7 @@ netdev_get_flags(const struct netdev *netdev_, enum netdev_flags *flagsp)
 /* Sets the flags for 'netdev' to 'flags'.
  * Returns 0 if successful, otherwise a positive errno value. */
 int
-netdev_set_flags(struct netdev *netdev, enum netdev_flags flags,
+netdev_set_flags(struct netdev *netdev, enum netdev_flags flags,//设置netdev对应的flags（默认其它关闭）
                  struct netdev_saved_flags **sfp)
 {
     return do_update_flags(netdev, -1, flags, NULL, sfp);
@@ -1222,7 +1233,7 @@ netdev_set_flags(struct netdev *netdev, enum netdev_flags flags,
  *    - On failure, returns a positive errno value.  If 'sfp' is nonnull, sets
  *      '*sfp' to NULL. */
 int
-netdev_turn_flags_on(struct netdev *netdev, enum netdev_flags flags,
+netdev_turn_flags_on(struct netdev *netdev, enum netdev_flags flags,//打开对应的flags
                      struct netdev_saved_flags **sfp)
 {
     return do_update_flags(netdev, 0, flags, NULL, sfp);
@@ -1231,7 +1242,7 @@ netdev_turn_flags_on(struct netdev *netdev, enum netdev_flags flags,
 /* Turns off the specified 'flags' on 'netdev'.  See netdev_turn_flags_on() for
  * details of the interface. */
 int
-netdev_turn_flags_off(struct netdev *netdev, enum netdev_flags flags,
+netdev_turn_flags_off(struct netdev *netdev, enum netdev_flags flags,//关闭对应的flags
                       struct netdev_saved_flags **sfp)
 {
     return do_update_flags(netdev, flags, 0, NULL, sfp);
@@ -1240,7 +1251,7 @@ netdev_turn_flags_off(struct netdev *netdev, enum netdev_flags flags,
 /* Restores the flags that were saved in 'sf', and destroys 'sf'.
  * Does nothing if 'sf' is NULL. */
 void
-netdev_restore_flags(struct netdev_saved_flags *sf)
+netdev_restore_flags(struct netdev_saved_flags *sf)//还原之前的flags
     OVS_EXCLUDED(netdev_mutex)
 {
     if (sf) {
@@ -1248,8 +1259,8 @@ netdev_restore_flags(struct netdev_saved_flags *sf)
         enum netdev_flags old_flags;
 
         netdev->netdev_class->update_flags(netdev,
-                                           sf->saved_flags & sf->saved_values,
-                                           sf->saved_flags & ~sf->saved_values,
+                                           sf->saved_flags & sf->saved_values,//原来打开的，现在关闭
+                                           sf->saved_flags & ~sf->saved_values,//原来关闭的，现在打开
                                            &old_flags);
 
         ovs_mutex_lock(&netdev_mutex);
@@ -1265,7 +1276,7 @@ netdev_restore_flags(struct netdev_saved_flags *sf)
  * ENXIO indicates that there is no ARP table entry for 'ip' on 'netdev'. */
 int
 netdev_arp_lookup(const struct netdev *netdev,
-                  ovs_be32 ip, struct eth_addr *mac)
+                  ovs_be32 ip, struct eth_addr *mac)//获取ip对应的mac地址
 {
     int error = (netdev->netdev_class->arp_lookup
                  ? netdev->netdev_class->arp_lookup(netdev, ip, mac)
@@ -1278,7 +1289,7 @@ netdev_arp_lookup(const struct netdev *netdev,
 
 /* Returns true if carrier is active (link light is on) on 'netdev'. */
 bool
-netdev_get_carrier(const struct netdev *netdev)
+netdev_get_carrier(const struct netdev *netdev)//返回link状态
 {
     int error;
     enum netdev_flags flags;
@@ -1330,7 +1341,7 @@ netdev_set_miimon_interval(struct netdev *netdev, long long int interval)
 
 /* Retrieves current device stats for 'netdev'. */
 int
-netdev_get_stats(const struct netdev *netdev, struct netdev_stats *stats)
+netdev_get_stats(const struct netdev *netdev, struct netdev_stats *stats)//返回netdev统计信息
 {
     int error;
 
@@ -1700,14 +1711,14 @@ netdev_dump_queue_stats(const struct netdev *netdev,
  *
  * The caller must not free the returned value. */
 const char *
-netdev_get_type(const struct netdev *netdev)
+netdev_get_type(const struct netdev *netdev)//获取netdev对应类型
 {
     return netdev->netdev_class->type;
 }
 
 /* Returns the class associated with 'netdev'. */
 const struct netdev_class *
-netdev_get_class(const struct netdev *netdev)
+netdev_get_class(const struct netdev *netdev)//获取netdev对应class
 {
     return netdev->netdev_class;
 }
@@ -1716,7 +1727,7 @@ netdev_get_class(const struct netdev *netdev)
  *
  * The caller must free the returned netdev with netdev_close(). */
 struct netdev *
-netdev_from_name(const char *name)//获取netdev
+netdev_from_name(const char *name)//通过名称获取对应netdev
     OVS_EXCLUDED(netdev_mutex)
 {
     struct netdev *netdev;
@@ -1736,7 +1747,7 @@ netdev_from_name(const char *name)//获取netdev
  * The caller is responsible for initializing and destroying 'device_list' and
  * must close each device on the list. */
 void
-netdev_get_devices(const struct netdev_class *netdev_class,
+netdev_get_devices(const struct netdev_class *netdev_class,//返回所有netdev设备
                    struct shash *device_list)
     OVS_EXCLUDED(netdev_mutex)
 {
@@ -1760,7 +1771,7 @@ netdev_get_devices(const struct netdev_class *netdev_class,
  * The caller is responsible for freeing 'vports' and must close
  * each 'netdev-vport' in the list. */
 struct netdev **
-netdev_get_vports(size_t *size)//将netdev-shash中的vport全部返回，size指出返回的大小
+netdev_get_vports(size_t *size)//返回所有netdev设备中的vport类型的netdev
     OVS_EXCLUDED(netdev_mutex)
 {
     struct netdev **vports;
@@ -1790,7 +1801,7 @@ netdev_get_vports(size_t *size)//将netdev-shash中的vport全部返回，size�
 }
 
 const char *
-netdev_get_type_from_name(const char *name)
+netdev_get_type_from_name(const char *name)//返回指定名称dev的类型
 {
     struct netdev *dev = netdev_from_name(name);
     const char *type = dev ? netdev_get_type(dev) : NULL;
@@ -1799,41 +1810,43 @@ netdev_get_type_from_name(const char *name)
 }
 
 struct netdev *
-netdev_rxq_get_netdev(const struct netdev_rxq *rx)
+netdev_rxq_get_netdev(const struct netdev_rxq *rx)//通过收队列获取netdev
 {
     ovs_assert(rx->netdev->ref_cnt > 0);
     return rx->netdev;
 }
 
 const char *
-netdev_rxq_get_name(const struct netdev_rxq *rx)
+netdev_rxq_get_name(const struct netdev_rxq *rx)//通过收队列获取netdev名称
 {
     return netdev_get_name(netdev_rxq_get_netdev(rx));
 }
 
 int
-netdev_rxq_get_queue_id(const struct netdev_rxq *rx)
+netdev_rxq_get_queue_id(const struct netdev_rxq *rx)//通过收队列获取queue id
 {
     return rx->queue_id;
 }
 
 static void
-restore_all_flags(void *aux OVS_UNUSED)
+restore_all_flags(void *aux OVS_UNUSED)//还原整个运行期变更了的所有netdev的flags
 {
     struct shash_node *node;
 
-    SHASH_FOR_EACH (node, &netdev_shash) {
+    SHASH_FOR_EACH (node, &netdev_shash) {//遍历所有netdev
         struct netdev *netdev = node->data;
         const struct netdev_saved_flags *sf;
         enum netdev_flags saved_values;
         enum netdev_flags saved_flags;
 
         saved_values = saved_flags = 0;
+        //统计之前，我们打开了哪些，关闭了哪些
         LIST_FOR_EACH (sf, node, &netdev->saved_flags_list) {
             saved_flags |= sf->saved_flags;
             saved_values &= ~sf->saved_flags;
             saved_values |= sf->saved_flags & sf->saved_values;
         }
+        //如果有变化，则将后来我们打开的关闭掉，关闭掉的打开。
         if (saved_flags) {
             enum netdev_flags old_flags;
 
@@ -1846,7 +1859,7 @@ restore_all_flags(void *aux OVS_UNUSED)
 }
 
 uint64_t
-netdev_get_change_seq(const struct netdev *netdev)
+netdev_get_change_seq(const struct netdev *netdev)//获取seq
 {
     return netdev->change_seq;
 }
@@ -1858,7 +1871,7 @@ static struct ifaddrs *if_addr_list;
 static struct ovs_mutex if_addr_list_lock = OVS_MUTEX_INITIALIZER;
 
 void
-netdev_get_addrs_list_flush(void)
+netdev_get_addrs_list_flush(void)//释放addr_list
 {
     ovs_mutex_lock(&if_addr_list_lock);
     if (if_addr_list) {
@@ -1869,7 +1882,7 @@ netdev_get_addrs_list_flush(void)
 }
 
 int
-netdev_get_addrs(const char dev[], struct in6_addr **paddr,
+netdev_get_addrs(const char dev[], struct in6_addr **paddr,//获取所有接口上ip地址及掩码（n_in表示有多少个）
                  struct in6_addr **pmask, int *n_in)
 {
     struct in6_addr *addr_array, *mask_array;
@@ -1946,7 +1959,7 @@ netdev_get_addrs(const char dev[], struct in6_addr **paddr,
 #endif
 
 void
-netdev_wait_reconf_required(struct netdev *netdev)
+netdev_wait_reconf_required(struct netdev *netdev)//创建等待句柄
 {
     seq_wait(netdev->reconfigure_seq, netdev->last_reconfigure_seq);
 }
@@ -1969,7 +1982,7 @@ netdev_is_reconf_required(struct netdev *netdev)
  * When this function is called, no call to netdev_rxq_recv() or netdev_send()
  * must be issued. */
 int
-netdev_reconfigure(struct netdev *netdev)
+netdev_reconfigure(struct netdev *netdev)//执行netdev的重新配置
 {
     const struct netdev_class *class = netdev->netdev_class;
 

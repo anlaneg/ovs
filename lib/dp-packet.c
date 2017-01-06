@@ -235,7 +235,7 @@ dp_packet_resize__(struct dp_packet *b, size_t new_headroom, size_t new_tailroom
 
     switch (b->source) {
     case DPBUF_DPDK:
-        OVS_NOT_REACHED();
+        OVS_NOT_REACHED();//dpdk不能进入此函数，进入即报错(dpdk在基头部预存了64字节）
 
     case DPBUF_MALLOC:
         if (new_headroom == dp_packet_headroom(b)) {
@@ -284,9 +284,9 @@ dp_packet_prealloc_tailroom(struct dp_packet *b, size_t size)
  * reallocating and copying its data if necessary.  Its tailroom, if any, is
  * preserved. */
 void
-dp_packet_prealloc_headroom(struct dp_packet *b, size_t size)
+dp_packet_prealloc_headroom(struct dp_packet *b, size_t size)//在报文头部空出size字节（即保证headroom>=size)
 {
-    if (size > dp_packet_headroom(b)) {
+    if (size > dp_packet_headroom(b)) {//要求的size比headroom大
         dp_packet_resize__(b, MAX(size, 64), dp_packet_tailroom(b));
     }
 }
@@ -397,12 +397,12 @@ dp_packet_reserve_with_tailroom(struct dp_packet *b, size_t headroom,
  * data if necessary.  Returns a pointer to the first byte of the data's
  * location in the dp_packet.  The new data is left uninitialized. */
 void *
-dp_packet_push_uninit(struct dp_packet *b, size_t size)
+dp_packet_push_uninit(struct dp_packet *b, size_t size)//在packet头部先空出size大小
 {
     dp_packet_prealloc_headroom(b, size);
-    dp_packet_set_data(b, (char*)dp_packet_data(b) - size);
-    dp_packet_set_size(b, dp_packet_size(b) + size);
-    return dp_packet_data(b);
+    dp_packet_set_data(b, (char*)dp_packet_data(b) - size);//调速data偏移量
+    dp_packet_set_size(b, dp_packet_size(b) + size);//增大报文数据大小
+    return dp_packet_data(b);//返回新的数据起始位置
 }
 
 /* Prefixes 'size' zeroed bytes to the head end of 'b', reallocating and

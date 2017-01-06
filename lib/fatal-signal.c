@@ -40,6 +40,9 @@
 
 VLOG_DEFINE_THIS_MODULE(fatal_signal);
 
+//此文件就是一个信号处理方式，将关注的信号转变成fd通知，然后在收到fd通知后
+//可以调用hook,比如exit时删除文件啊，这类操作
+
 /* Signals to catch. */
 #ifndef _WIN32
 static const int fatal_signals[] = { SIGTERM, SIGINT, SIGHUP, SIGALRM };
@@ -49,17 +52,17 @@ static const int fatal_signals[] = { SIGTERM };
 
 /* Hooks to call upon catching a signal */
 struct hook {
-    void (*hook_cb)(void *aux);
-    void (*cancel_cb)(void *aux);
+    void (*hook_cb)(void *aux);//信号发生时的回调
+    void (*cancel_cb)(void *aux);//信号取消时的回调
     void *aux;
-    bool run_at_exit;
+    bool run_at_exit;//是否在退出时调用
 };
 #define MAX_HOOKS 32
 static struct hook hooks[MAX_HOOKS];
 static size_t n_hooks;
 
-static int signal_fds[2];
-static volatile sig_atomic_t stored_sig_nr = SIG_ATOMIC_MAX;
+static int signal_fds[2];//信号管道
+static volatile sig_atomic_t stored_sig_nr = SIG_ATOMIC_MAX;//存储收到的信号
 
 #ifdef _WIN32
 static HANDLE wevent;
@@ -77,7 +80,7 @@ static BOOL WINAPI ConsoleHandlerRoutine(DWORD dwCtrlType);
  * initialize it.  However, in a multithreaded program, the module must be
  * initialized while the process is still single-threaded. */
 void
-fatal_signal_init(void)
+fatal_signal_init(void)//信号初始化，将信号触发变更为fd通知
 {
     static bool inited = false;
 
@@ -106,9 +109,9 @@ fatal_signal_init(void)
 #ifndef _WIN32
             struct sigaction old_sa;
 
-            xsigaction(sig_nr, NULL, &old_sa);
+            xsigaction(sig_nr, NULL, &old_sa);//取此信号对应的处理函数
             if (old_sa.sa_handler == SIG_DFL
-                && signal(sig_nr, fatal_signal_handler) == SIG_ERR) {
+                && signal(sig_nr, fatal_signal_handler) == SIG_ERR) {//如果未注册处理句柄，注册处理函数为fatal_signal_handler
                 VLOG_FATAL("signal failed (%s)", ovs_strerror(errno));
             }
 #else
@@ -117,7 +120,7 @@ fatal_signal_init(void)
             }
 #endif
         }
-        atexit(fatal_signal_atexit_handler);
+        atexit(fatal_signal_atexit_handler);//注册进程退出时，执行函数fatal_signal_atexit_handler
     }
 }
 
@@ -136,6 +139,7 @@ fatal_signal_init(void)
  * to notify that the hook has been canceled.  This allows the hook to free
  * memory, etc. */
 void
+//添加相应的hook
 fatal_signal_add_hook(void (*hook_cb)(void *aux), void (*cancel_cb)(void *aux),
                       void *aux, bool run_at_exit)
 {
@@ -161,10 +165,10 @@ fatal_signal_add_hook(void (*hook_cb)(void *aux), void (*cancel_cb)(void *aux),
  * before or after this file, because this file will only set up a signal
  * handler in the case where the signal has its default handling.)  */
 void
-fatal_signal_handler(int sig_nr)
+fatal_signal_handler(int sig_nr)//信号处理
 {
 #ifndef _WIN32
-    ignore(write(signal_fds[1], "", 1));
+    ignore(write(signal_fds[1], "", 1));//向管道中发消息，表明已收到信号
 #else
     SetEvent(wevent);
 #endif
@@ -201,13 +205,13 @@ fatal_signal_run(void)
 #else
         VLOG_WARN("terminating with signal %d", (int)sig_nr);
 #endif
-        call_hooks(sig_nr);
+        call_hooks(sig_nr);//针对此信号调回调
         fflush(stderr);
 
         /* Re-raise the signal with the default handling so that the program
          * termination status reflects that we were killed by this signal */
-        signal(sig_nr, SIG_DFL);
-        raise(sig_nr);
+        signal(sig_nr, SIG_DFL);//将此信号变更为默认处理形式
+        raise(sig_nr);//再调用一次（程序将在此处挂掉）
 
         ovs_mutex_unlock(&mutex);
         OVS_NOT_REACHED();
@@ -215,7 +219,7 @@ fatal_signal_run(void)
 }
 
 void
-fatal_signal_wait(void)
+fatal_signal_wait(void)//创建相应的等待句柄
 {
     fatal_signal_init();
 #ifdef _WIN32
@@ -226,7 +230,7 @@ fatal_signal_wait(void)
 }
 
 void
-fatal_ignore_sigpipe(void)
+fatal_ignore_sigpipe(void)//忽略pipe信号
 {
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
@@ -234,12 +238,13 @@ fatal_ignore_sigpipe(void)
 }
 
 void
-fatal_signal_atexit_handler(void)
+fatal_signal_atexit_handler(void)//进程退出时执行
 {
     call_hooks(0);
 }
 
 static void
+//调用回调，如果sig_nr不为0，则调用所有hooks的hook_cb，如果为0，则仅调用exit时可调用的回调
 call_hooks(int sig_nr)
 {
     static volatile sig_atomic_t recurse = 0;
@@ -267,11 +272,11 @@ BOOL WINAPI ConsoleHandlerRoutine(DWORD dwCtrlType)
 #endif
 
 /* Files to delete on exit. */
-static struct sset files = SSET_INITIALIZER(&files);
+static struct sset files = SSET_INITIALIZER(&files);//记录在exit时，需要删除的文件
 
 /* Has a hook function been registered with fatal_signal_add_hook() (and not
  * cleared by fatal_signal_fork())? */
-static bool added_hook;
+static bool added_hook;//hook是否已添加
 
 static void unlink_files(void *aux);
 static void cancel_files(void *aux);
@@ -280,14 +285,14 @@ static void do_unlink_files(void);
 /* Registers 'file' to be unlinked when the program terminates via exit() or a
  * fatal signal. */
 void
-fatal_signal_add_file_to_unlink(const char *file)
+fatal_signal_add_file_to_unlink(const char *file)//注册此文件在信号发生时的处理
 {
     fatal_signal_init();
 
     ovs_mutex_lock(&mutex);
     if (!added_hook) {
         added_hook = true;
-        fatal_signal_add_hook(unlink_files, cancel_files, NULL, true);
+        fatal_signal_add_hook(unlink_files, cancel_files, NULL, true);//如果发生fork,files中内容需要清空
     }
 
     sset_add(&files, file);
@@ -297,7 +302,7 @@ fatal_signal_add_file_to_unlink(const char *file)
 /* Unregisters 'file' from being unlinked when the program terminates via
  * exit() or a fatal signal. */
 void
-fatal_signal_remove_file_to_unlink(const char *file)
+fatal_signal_remove_file_to_unlink(const char *file)//移除此文件在信号发生时的处理（注：不移除回调）
 {
     fatal_signal_init();
 
@@ -309,7 +314,7 @@ fatal_signal_remove_file_to_unlink(const char *file)
 /* Like fatal_signal_remove_file_to_unlink(), but also unlinks 'file'.
  * Returns 0 if successful, otherwise a positive errno value. */
 int
-fatal_signal_unlink_file_now(const char *file)
+fatal_signal_unlink_file_now(const char *file)//直接移除文件，而不必等待到信号发生时触发
 {
     int error;
 
@@ -330,20 +335,20 @@ fatal_signal_unlink_file_now(const char *file)
 }
 
 static void
-unlink_files(void *aux OVS_UNUSED)
+unlink_files(void *aux OVS_UNUSED)//信号发生时的回调，处理删除文件操作
 {
     do_unlink_files();
 }
 
 static void
-cancel_files(void *aux OVS_UNUSED)
+cancel_files(void *aux OVS_UNUSED)//信号取消时的回调，请空files集合
 {
     sset_clear(&files);
     added_hook = false;
 }
 
 static void
-do_unlink_files(void)
+do_unlink_files(void)//删除files集合中的文件
 {
     const char *file;
 
@@ -361,13 +366,13 @@ do_unlink_files(void)
  * this function.  New hooks registered after calling this function will take
  * effect normally. */
 void
-fatal_signal_fork(void)
+fatal_signal_fork(void)//清空信号处理回调，如果期间收到信号，触发信号
 {
     size_t i;
 
     assert_single_threaded();
 
-    for (i = 0; i < n_hooks; i++) {
+    for (i = 0; i < n_hooks; i++) {//清除掉所有注册的回调
         struct hook *h = &hooks[i];
         if (h->cancel_cb) {
             h->cancel_cb(h->aux);
@@ -386,7 +391,7 @@ fatal_signal_fork(void)
 /* Blocks all fatal signals and returns previous signal mask into
  * 'prev_mask'. */
 void
-fatal_signal_block(sigset_t *prev_mask)
+fatal_signal_block(sigset_t *prev_mask)//指定线程阻塞信号处理
 {
     int i;
     sigset_t block_mask;

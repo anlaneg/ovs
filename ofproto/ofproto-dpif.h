@@ -85,7 +85,7 @@ struct dpif_backer_support {
     bool masked_set_action;
 
     /* True if the datapath supports tnl_push and pop actions. */
-    bool tnl_push_pop;
+    bool tnl_push_pop;//后端是否支持tunl的push,pop
 
     /* True if the datapath supports OVS_FLOW_ATTR_UFID. */
     bool ufid;

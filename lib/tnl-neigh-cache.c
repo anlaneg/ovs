@@ -56,7 +56,7 @@ struct tnl_neigh_entry {
     char br_name[IFNAMSIZ];
 };
 
-static struct cmap table = CMAP_INITIALIZER;//邻居表缓存
+static struct cmap table = CMAP_INITIALIZER;//邻居表缓存（所有桥使用此表）
 static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
 
 static uint32_t
@@ -65,6 +65,7 @@ tnl_neigh_hash(const struct in6_addr *ip)
     return hash_bytes(ip->s6_addr, 16, 0);
 }
 
+//查找指定桥的邻居表项
 static struct tnl_neigh_entry *
 tnl_neigh_lookup__(const char br_name[IFNAMSIZ], const struct in6_addr *dst)
 {

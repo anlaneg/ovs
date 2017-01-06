@@ -108,7 +108,7 @@ struct flow {
                                                              (with padding). */
     /* L3 (64-bit aligned) */
     ovs_be32 nw_src;            /* IPv4 source address or ARP SPA. */
-    ovs_be32 nw_dst;            /* IPv4 destination address or ARP TPA. */
+    ovs_be32 nw_dst;            /* IPv4 destination address or ARP TPA. */ //网络层目的地址
     struct in6_addr ipv6_src;   /* IPv6 source address. */
     struct in6_addr ipv6_dst;   /* IPv6 destination address. */
     ovs_be32 ipv6_label;        /* IPv6 flow label. */
@@ -124,7 +124,7 @@ struct flow {
 
     /* L4 (64-bit aligned) */
     ovs_be16 tp_src;            /* TCP/UDP/SCTP source port/ICMP type. */
-    ovs_be16 tp_dst;            /* TCP/UDP/SCTP destination port/ICMP code. */
+    ovs_be16 tp_dst;            /* TCP/UDP/SCTP destination port/ICMP code. */ //运输层目的地址
     ovs_be32 igmp_group_ip4;    /* IGMP group IPv4 address.
                                  * Keep last for BUILD_ASSERT_DECL below. */
 };

@@ -510,7 +510,7 @@ struct dp_netdev_pmd_thread {
      * 'tx_ports'. The instance for cpu core NON_PMD_CORE_ID can be accessed
      * by multiple threads, and thusly need to be protected by 'non_pmd_mutex'.
      * Every other instance will only be accessed by its own pmd thread. */
-    struct hmap port_cache;//port信息表（查不到就丢包了）
+    struct hmap port_cache;//port信息表（查不到就丢包了），通过此表查找netdev
 
     /* Only a pmd thread can write on its own 'cycles' and 'stats'.
      * The main thread keeps 'stats_zero' and 'cycles_zero' as base
@@ -4375,7 +4375,7 @@ pmd_tx_port_cache_lookup(const struct dp_netdev_pmd_thread *pmd,
     return tx_port_lookup(&pmd->port_cache, port_no);
 }
 
-//为隧道报文加头
+//batch中规定的这组报文，统一封装隧道（attr中保存了隧道模板信息及出接口）
 static int
 push_tnl_action(const struct dp_netdev_pmd_thread *pmd,
                 const struct nlattr *attr,
@@ -4387,12 +4387,12 @@ push_tnl_action(const struct dp_netdev_pmd_thread *pmd,
 
     data = nl_attr_get(attr);
 
-    tun_port = pmd_tx_port_cache_lookup(pmd, u32_to_odp(data->tnl_port));
-    if (!tun_port) {
+    tun_port = pmd_tx_port_cache_lookup(pmd, u32_to_odp(data->tnl_port));//搞清楚从那个netdev发送隧道报文
+    if (!tun_port) {//隧道接口已被删除
         err = -EINVAL;
         goto error;
     }
-    err = netdev_push_header(tun_port->port->netdev, batch, data);
+    err = netdev_push_header(tun_port->port->netdev, batch, data);//交netdev去封装隧道
     if (!err) {
         return 0;
     }
@@ -4473,10 +4473,10 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
 
             dp_packet_batch_apply_cutlen(packets_);
 
-            err = push_tnl_action(pmd, a, packets_);
+            err = push_tnl_action(pmd, a, packets_);//执行push　tunnel动作
             if (!err) {
                 (*depth)++;
-                dp_netdev_recirculate(pmd, packets_);//相当于组装好了隧道报文重走流程（重解析）
+                dp_netdev_recirculate(pmd, packets_);//隧道封装好了，重走报文解析流程，进行新的外层匹配
                 (*depth)--;
             }
             return;
