@@ -574,7 +574,7 @@ inet_parse_passive(const char *target_, int default_port,
  * If 'kernel_print_port' is true and the port is dynamically assigned by
  * the kernel, print the chosen port. */
 int
-inet_open_passive(int style, const char *target, int default_port,
+inet_open_passive(int style, const char *target, int default_port,//创建tcp-server
                   struct sockaddr_storage *ssp, uint8_t dscp,
                   bool kernel_print_port)
 {

@@ -28,22 +28,22 @@
  *
  * There is no strong reason why dummy devices shouldn't always be enabled. */
 void
-dummy_enable(const char *arg)
+dummy_enable(const char *arg)//开始dummy
 {
     enum dummy_level level;
 
-    if (!arg || !arg[0]) {
+    if (!arg || !arg[0]) {//如果未提供参数
         level = DUMMY_OVERRIDE_NONE;
-    } else if (!strcmp(arg, "system")) {
+    } else if (!strcmp(arg, "system")) {//提供参数system
         level = DUMMY_OVERRIDE_SYSTEM;
-    } else if (!strcmp(arg, "override")) {
+    } else if (!strcmp(arg, "override")) {//提供参数'override'
         level = DUMMY_OVERRIDE_ALL;
     } else {
         ovs_fatal(0, "%s: unknown dummy level", arg);
     }
 
-    netdev_dummy_register(level);
-    dpif_dummy_register(level);
+    netdev_dummy_register(level);//注册netdev dummy
+    dpif_dummy_register(level);//注册dpif dummy
     timeval_dummy_register();
     ofpact_dummy_enable();
 }

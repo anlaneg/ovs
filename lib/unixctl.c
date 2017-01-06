@@ -54,8 +54,8 @@ struct unixctl_conn {
 
 /* Server for control connection. */
 struct unixctl_server {
-    struct pstream *listener;
-    struct ovs_list conns;
+    struct pstream *listener;//监听unixctl-server
+    struct ovs_list conns;//接入的所有远程连接（struct unixctl_conn）
 };
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
@@ -245,7 +245,7 @@ unixctl_server_create(const char *path, struct unixctl_server **serverp)
 #endif
     }
 
-    error = pstream_open(punix_path, &listener, 0);
+    error = pstream_open(punix_path, &listener, 0);//创建对应的pstream
     if (error) {
         ovs_error(error, "could not initialize control socket %s", punix_path);
         goto exit;
@@ -374,7 +374,7 @@ kill_connection(struct unixctl_conn *conn)
 }
 
 void
-unixctl_server_run(struct unixctl_server *server)
+unixctl_server_run(struct unixctl_server *server)//unixctl-server处理
 {
     struct unixctl_conn *conn, *next;
     int i;
@@ -383,7 +383,7 @@ unixctl_server_run(struct unixctl_server *server)
         return;
     }
 
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < 10; i++) {//尝试着接入几个unixctl
         struct stream *stream;
         int error;
 
@@ -401,7 +401,7 @@ unixctl_server_run(struct unixctl_server *server)
         }
     }
 
-    LIST_FOR_EACH_SAFE (conn, next, node, &server->conns) {
+    LIST_FOR_EACH_SAFE (conn, next, node, &server->conns) {//处理unixctl消息
         int error = run_connection(conn);
         if (error && error != EAGAIN) {
             kill_connection(conn);

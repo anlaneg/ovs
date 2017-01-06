@@ -57,11 +57,11 @@ VLOG_DEFINE_THIS_MODULE(daemon_unix);
 #endif
 
 /* --detach: Should we run in the background? */
-bool detach;                    /* Was --detach specified? */
+bool detach;                    /* Was --detach specified? */ //是否被配置成demon
 static bool detached;           /* Have we already detached? */
 
 /* --pidfile: Name of pidfile (null if none). */
-char *pidfile;
+char *pidfile;//需要创建的pid进程名称，可由命令行定制
 
 /* Device and inode of pidfile, so we can avoid reopening it. */
 static dev_t pidfile_dev;
@@ -69,10 +69,10 @@ static ino_t pidfile_ino;
 
 /* --overwrite-pidfile: Create pidfile even if one already exists and is
    locked? */
-static bool overwrite_pidfile;
+static bool overwrite_pidfile;//是否重写pidfile
 
 /* --no-chdir: Should we chdir to "/"? */
-static bool chdir_ = true;
+static bool chdir_ = true;//是否需要切换到'/',可由命令行进行变更
 
 /* File descriptor used by daemonize_start() and daemonize_complete(). */
 static int daemonize_fd = -1;
@@ -434,7 +434,7 @@ monitor_daemon(pid_t daemon_pid)
  * daemon_complete()) or that it failed to start up (by exiting with a nonzero
  * exit code). */
 void
-daemonize_start(bool access_datapath)
+daemonize_start(bool access_datapath)//完成demon
 {
     assert_single_threaded();
     daemonize_fd = -1;
@@ -444,7 +444,7 @@ daemonize_start(bool access_datapath)
         switch_user = false;
     }
 
-    if (detach) {
+    if (detach) {//要做成demon
         pid_t pid;
 
         if (fork_and_wait_for_startup(&daemonize_fd, &pid)) {
@@ -527,7 +527,7 @@ daemonize_post_detach(void)
 }
 
 void
-daemon_usage(void)
+daemon_usage(void)//deamon模式，根路径切换，pid文件位置,是否替换pidfile
 {
     printf(
         "\nDaemon options:\n"

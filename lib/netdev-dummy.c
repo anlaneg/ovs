@@ -1717,16 +1717,16 @@ netdev_dummy_ip6addr(struct unixctl_conn *conn, int argc OVS_UNUSED,
 
 
 static void
-netdev_dummy_override(const char *type)
+netdev_dummy_override(const char *type)//override这种类型
 {
-    if (!netdev_unregister_provider(type)) {
+    if (!netdev_unregister_provider(type)) {//如果已成功去除掉此类型
         struct netdev_class *class;
         int error;
 
         class = xmemdup(&dummy_class, sizeof dummy_class);
-        class->type = xstrdup(type);
-        error = netdev_register_provider(class);
-        if (error) {
+        class->type = xstrdup(type);//用type替代dummy_class中的'dummy'
+        error = netdev_register_provider(class);//完成对此类型的替换
+        if (error) {//出错
             VLOG_ERR("%s: failed to register netdev provider (%s)",
                      type, ovs_strerror(error));
             free(CONST_CAST(char *, class->type));
@@ -1754,24 +1754,25 @@ netdev_dummy_register(enum dummy_level level)
                              "[netdev] ip6addr", 2, 2,
                              netdev_dummy_ip6addr, NULL);
 
-    if (level == DUMMY_OVERRIDE_ALL) {
+    if (level == DUMMY_OVERRIDE_ALL) {//替换当前已注册的所有类型
         struct sset types;
         const char *type;
 
         sset_init(&types);
         netdev_enumerate_types(&types);
-        SSET_FOR_EACH (type, &types) {
-            if (strcmp(type, "patch")) {
+        SSET_FOR_EACH (type, &types) {//针对当前已支持的所有类型
+            if (strcmp(type, "patch")) {//如果非patch口
                 netdev_dummy_override(type);
             }
         }
         sset_destroy(&types);
-    } else if (level == DUMMY_OVERRIDE_SYSTEM) {
+    } else if (level == DUMMY_OVERRIDE_SYSTEM) {//仅替换system类型
         netdev_dummy_override("system");
     }
+    //启用dummy,但不强制取消其它的
     netdev_register_provider(&dummy_class);
     netdev_register_provider(&dummy_internal_class);
     netdev_register_provider(&dummy_pmd_class);
 
-    netdev_vport_tunnel_register();
+    netdev_vport_tunnel_register();//加入vxlan类型
 }

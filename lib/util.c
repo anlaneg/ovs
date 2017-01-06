@@ -43,14 +43,14 @@ VLOG_DEFINE_THIS_MODULE(util);
 COVERAGE_DEFINE(util_xalloc);
 
 /* argv[0] without directory names. */
-char *program_name;
+char *program_name;//保存进程名称
 
 /* Name for the currently running thread or process, for log messages, process
  * listings, and debuggers. */
 DEFINE_PER_THREAD_MALLOCED_DATA(char *, subprogram_name);
 
 /* --version option output. */
-static char *program_version;
+static char *program_version;//进程版本号
 
 /* Buffer used by ovs_strerror() and ovs_format_message(). */
 DEFINE_STATIC_PER_THREAD_DATA(struct { char s[128]; },
@@ -474,6 +474,7 @@ ovs_strerror(int error)
  * the Open vSwitch libraries.
  *
  */
+//设置进程名称及版本号
 void
 ovs_set_program_name(const char *argv0, const char *version)
 {
@@ -488,7 +489,7 @@ ovs_set_program_name(const char *argv0, const char *version)
     _splitpath_s(argv0, NULL, 0, NULL, 0, basename, max_len, NULL, 0);
 #else
     const char *slash = strrchr(argv0, '/');
-    basename = xstrdup(slash ? slash + 1 : argv0);
+    basename = xstrdup(slash ? slash + 1 : argv0);//取进程名
 #endif
 
     assert_single_threaded();
@@ -502,7 +503,7 @@ ovs_set_program_name(const char *argv0, const char *version)
     program_name = basename;
 
     free(program_version);
-    if (!strcmp(version, VERSION)) {
+    if (!strcmp(version, VERSION)) {//如果相等
         program_version = xasprintf("%s (Open vSwitch) "VERSION"\n",
                                     program_name);
     } else {

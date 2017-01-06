@@ -392,7 +392,7 @@ if_notifier_changed(struct if_notifier *notifier OVS_UNUSED)
  * from an OVSDB server accessed over 'remote', which should be a string in a
  * form acceptable to ovsdb_idl_create(). */
 void
-bridge_init(const char *remote)
+bridge_init(const char *remote)//用database路径初始化桥
 {
     /* Create connection to database. */
     idl = ovsdb_idl_create(remote, &ovsrec_idl_class, true, true);

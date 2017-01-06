@@ -53,7 +53,7 @@ VLOG_DEFINE_THIS_MODULE(vswitchd);
 
 /* --mlockall: If set, locks all process memory into physical RAM, preventing
  * the kernel from paging any of its memory to disk. */
-static bool want_mlockall;
+static bool want_mlockall;//防止内存被换出
 
 static unixctl_cb_func ovs_vswitchd_exit;
 
@@ -64,21 +64,21 @@ int
 main(int argc, char *argv[])
 {
     char *unixctl_path = NULL;
-    struct unixctl_server *unixctl;
+    struct unixctl_server *unixctl;//unixctl服务器
     char *remote;
     bool exiting;
     int retval;
 
-    set_program_name(argv[0]);
+    set_program_name(argv[0]);//设置进程名称，进程版本号
 
-    ovs_cmdl_proctitle_init(argc, argv);
-    service_start(&argc, &argv);
-    remote = parse_options(argc, argv, &unixctl_path);
+    ovs_cmdl_proctitle_init(argc, argv);//非linux机器不做作何处理
+    service_start(&argc, &argv);//linux机器不做作何处理
+    remote = parse_options(argc, argv, &unixctl_path);//解析命令行
     fatal_ignore_sigpipe();
 
     daemonize_start(true);
 
-    if (want_mlockall) {
+    if (want_mlockall) {//锁内存处理
 #ifdef HAVE_MLOCKALL
         if (mlockall(MCL_CURRENT | MCL_FUTURE)) {
             VLOG_ERR("mlockall failed: %s", ovs_strerror(errno));
@@ -92,7 +92,7 @@ main(int argc, char *argv[])
     if (retval) {
         exit(EXIT_FAILURE);
     }
-    unixctl_command_register("exit", "", 0, 0, ovs_vswitchd_exit, &exiting);
+    unixctl_command_register("exit", "", 0, 0, ovs_vswitchd_exit, &exiting);//注册退出命令
 
     bridge_init(remote);
     free(remote);
@@ -113,7 +113,7 @@ main(int argc, char *argv[])
         unixctl_server_run(unixctl);
         netdev_run();
 
-        //wait代友一段
+        //wait代码段
         memory_wait();
         bridge_wait();
         unixctl_server_wait(unixctl);
@@ -135,6 +135,7 @@ main(int argc, char *argv[])
 
 static char *
 parse_options(int argc, char *argv[], char **unixctl_pathp)
+//解析命令行，设置相关全局配置，返回database路径
 {
     enum {
         OPT_PEER_CA_CERT = UCHAR_MAX + 1,
@@ -159,7 +160,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         STREAM_SSL_LONG_OPTIONS,
         {"peer-ca-cert", required_argument, NULL, OPT_PEER_CA_CERT},
         {"bootstrap-ca-cert", required_argument, NULL, OPT_BOOTSTRAP_CA_CERT},
-        {"enable-dummy", optional_argument, NULL, OPT_ENABLE_DUMMY},
+        {"enable-dummy", optional_argument, NULL, OPT_ENABLE_DUMMY},//是否需要开启dummy
         {"disable-system", no_argument, NULL, OPT_DISABLE_SYSTEM},
         {"dpdk", optional_argument, NULL, OPT_DPDK},
         {"dummy-numa", required_argument, NULL, OPT_DUMMY_NUMA},
@@ -171,7 +172,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         int c;
 
         c = getopt_long(argc, argv, short_options, long_options, NULL);
-        if (c == -1) {
+        if (c == -1) {//最后一个
             break;
         }
 
@@ -188,12 +189,12 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
             break;
 
         case OPT_UNIXCTL:
-            *unixctl_pathp = optarg;
+            *unixctl_pathp = optarg;//overwrite unixctl路径
             break;
 
-        VLOG_OPTION_HANDLERS
-        DAEMON_OPTION_HANDLERS
-        STREAM_SSL_OPTION_HANDLERS
+        VLOG_OPTION_HANDLERS //log选项处理
+        DAEMON_OPTION_HANDLERS //demon相关处理
+        STREAM_SSL_OPTION_HANDLERS //ssl选项处理
 
         case OPT_PEER_CA_CERT:
             stream_ssl_set_peer_ca_cert_file(optarg);
@@ -204,7 +205,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
             break;
 
         case OPT_ENABLE_DUMMY:
-            dummy_enable(optarg);
+            dummy_enable(optarg);//dummy处理,从实现来看，仅用于测试
             break;
 
         case OPT_DISABLE_SYSTEM:
@@ -214,7 +215,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         case '?':
             exit(EXIT_FAILURE);
 
-        case OPT_DPDK:
+        case OPT_DPDK://不再支持直接配置dpdk
             ovs_fatal(0, "Using --dpdk to configure DPDK is not supported.");
             break;
 
@@ -231,11 +232,11 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
     argc -= optind;
     argv += optind;
 
-    switch (argc) {
-    case 0:
+    switch (argc) {//检查是否给出database
+    case 0://没有给出
         return xasprintf("unix:%s/db.sock", ovs_rundir());
 
-    case 1:
+    case 1://给出了
         return xstrdup(argv[0]);
 
     default:
@@ -245,20 +246,20 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
 }
 
 static void
-usage(void)
+usage(void)//用法信息
 {
     printf("%s: Open vSwitch daemon\n"
            "usage: %s [OPTIONS] [DATABASE]\n"
            "where DATABASE is a socket on which ovsdb-server is listening\n"
            "      (default: \"unix:%s/db.sock\").\n",
-           program_name, program_name, ovs_rundir());
-    stream_usage("DATABASE", true, false, true);
-    daemon_usage();
-    vlog_usage();
+           program_name, program_name, ovs_rundir());//显示总述 ovswitch [option] [database]
+    stream_usage("DATABASE", true, false, true);//database主动方式
+    daemon_usage();//demon相关的提示
+    vlog_usage();//log相关的用法
     printf("\nDPDK options:\n"
            "Configuration of DPDK via command-line is removed from this\n"
            "version of Open vSwitch. DPDK is configured through ovsdb.\n"
-          );
+          );//dpdk配置提示（通过ovs进行非透明配置）
     printf("\nOther options:\n"
            "  --unixctl=SOCKET          override default control socket name\n"
            "  -h, --help                display this help message\n"
@@ -268,7 +269,7 @@ usage(void)
 
 static void
 ovs_vswitchd_exit(struct unixctl_conn *conn, int argc OVS_UNUSED,
-                  const char *argv[] OVS_UNUSED, void *exiting_)
+                  const char *argv[] OVS_UNUSED, void *exiting_)//vswitchd退出处理
 {
     bool *exiting = exiting_;
     *exiting = true;
