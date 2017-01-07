@@ -130,7 +130,7 @@ shash_add(struct shash *sh, const char *name, const void *data)
 }
 
 bool
-shash_add_once(struct shash *sh, const char *name, const void *data)
+shash_add_once(struct shash *sh, const char *name, const void *data)//保容许有一个name,如果已存在，则不容许插入
 {
     if (!shash_find(sh, name)) {
         shash_add(sh, name, data);

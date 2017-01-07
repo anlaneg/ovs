@@ -210,7 +210,7 @@ static bool dpcls_lookup(struct dpcls *cls,
  *    port_mutex
  *    non_pmd_mutex
  */
-struct dp_netdev {
+struct dp_netdev {//datapath对应的netdev
     const struct dpif_class *const class;
     const char *const name;
     struct dpif *dpif;//指向dpif，而dpif中也有指针指向dp_netdev
@@ -288,7 +288,7 @@ struct dp_netdev_rxq {
 
 /* A port in a netdev-based datapath. */
 struct dp_netdev_port {
-    odp_port_t port_no;
+    odp_port_t port_no;//port编号
     struct netdev *netdev;
     struct hmap_node node;      /* Node in dp_netdev's 'ports'. */
     struct netdev_saved_flags *sf;
@@ -906,7 +906,7 @@ dpif_netdev_enumerate(struct sset *all_dps,
 static bool
 dpif_netdev_class_is_dummy(const struct dpif_class *class)
 {
-    return class != &dpif_netdev_class;//如果class不是底层物理口，则它是抽象的口
+    return class != &dpif_netdev_class;
 }
 
 static const char *
@@ -935,8 +935,9 @@ create_dpif_netdev(struct dp_netdev *dp)
 
 /* Choose an unused, non-zero port number and return it on success.
  * Return ODPP_NONE on failure. */
+//port-id号分配
 static odp_port_t
-choose_port(struct dp_netdev *dp, const char *name)
+choose_port(struct dp_netdev *dp, const char *name)//为port分配一个id号
     OVS_REQUIRES(dp->port_mutex)
 {
     uint32_t port_no;
@@ -966,6 +967,7 @@ choose_port(struct dp_netdev *dp, const char *name)
         }
     }
 
+    //找一个未用到的port-number
     for (port_no = 1; port_no <= UINT16_MAX; port_no++) {
         if (!dp_netdev_lookup_port(dp, u32_to_odp(port_no))) {
             return u32_to_odp(port_no);
@@ -1290,7 +1292,7 @@ port_create(const char *devname, const char *type,
     ovs_mutex_init(&port->txq_used_mutex);
     port->dynamic_txqs = dynamic_txqs;
 
-    for (i = 0; i < port->n_rxq; i++) {
+    for (i = 0; i < port->n_rxq; i++) {//创建必要的收发队列
         error = netdev_rxq_open(netdev, &port->rxqs[i].rxq, i);
         if (error) {
             VLOG_ERR("%s: cannot receive packets on this network device (%s)",
@@ -1301,7 +1303,7 @@ port_create(const char *devname, const char *type,
         n_open_rxqs++;
     }
 
-    error = netdev_turn_flags_on(netdev, NETDEV_PROMISC, &sf);
+    error = netdev_turn_flags_on(netdev, NETDEV_PROMISC, &sf);//打开混杂模式
     if (error) {
         goto out_rxq_close;
     }
@@ -1326,7 +1328,7 @@ out:
     return error;
 }
 
-//创建指定接口，并进行进入收发包流程
+//创建指定类型的port,指定port_no为port编号，devname为port名称
 static int
 do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
             odp_port_t port_no)
@@ -1336,11 +1338,11 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
     int error;
 
     /* Reject devices already in 'dp'. */
-    if (!get_port_by_name(dp, devname, &port)) {
+    if (!get_port_by_name(dp, devname, &port)) {//确保port在datapath中不存在
         return EEXIST;
     }
 
-    error = port_create(devname, type, port_no, &port);//创建接口
+    error = port_create(devname, type, port_no, &port);//创建接口（及其队列，配置dev）
     if (error) {
         return error;
     }
@@ -1372,7 +1374,7 @@ dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
 
     ovs_mutex_lock(&dp->port_mutex);
     dpif_port = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
-    if (*port_nop != ODPP_NONE) {
+    if (*port_nop != ODPP_NONE) {//已存在
         port_no = *port_nop;
         error = dp_netdev_lookup_port(dp, *port_nop) ? EBUSY : 0;
     } else {
@@ -1417,7 +1419,7 @@ is_valid_port_number(odp_port_t port_no)
 }
 
 static struct dp_netdev_port *
-dp_netdev_lookup_port(const struct dp_netdev *dp, odp_port_t port_no)
+dp_netdev_lookup_port(const struct dp_netdev *dp, odp_port_t port_no)//通过port_no在dp_netdev中找对应port
     OVS_REQUIRES(dp->port_mutex)
 {
     struct dp_netdev_port *port;
@@ -3132,7 +3134,7 @@ pmd_thread_main(void *f_)
     ovsthread_setspecific(pmd->dp->per_pmd_key, pmd);
     ovs_numa_thread_setaffinity_core(pmd->core_id);
     dpdk_set_lcore_id(pmd->core_id);
-    poll_cnt = pmd_load_queues_and_ports(pmd, &poll_list);
+    poll_cnt = pmd_load_queues_and_ports(pmd, &poll_list);//线程创建后已加入我们需要负责哪些port
 reload:
     emc_cache_init(&pmd->flow_cache);//emc cache初始化
 
@@ -3145,7 +3147,7 @@ reload:
 
     for (;;) {//主循环，处理报文
         for (i = 0; i < poll_cnt; i++) {//收包
-            dp_netdev_process_rxq_port(pmd, poll_list[i].port, poll_list[i].rx);
+            dp_netdev_process_rxq_port(pmd, poll_list[i].port, poll_list[i].rx);//此port的收发包处理
         }
 
         if (lc++ > 1024) {//做些维护
@@ -3592,7 +3594,7 @@ dp_netdev_add_rxq_to_pmd(struct dp_netdev_pmd_thread *pmd,
     poll->port = port;
     poll->rx = rx;
 
-    ovs_list_push_back(&pmd->poll_list, &poll->node);
+    ovs_list_push_back(&pmd->poll_list, &poll->node);//将这个队列加入到pmd
     pmd->poll_cnt++;
 }
 
@@ -3600,7 +3602,7 @@ dp_netdev_add_rxq_to_pmd(struct dp_netdev_pmd_thread *pmd,
  * changes to take effect. */
 static void
 dp_netdev_add_port_tx_to_pmd(struct dp_netdev_pmd_thread *pmd,
-                             struct dp_netdev_port *port)
+                             struct dp_netdev_port *port)//将此port加入到pmd的转发port
 {
     struct tx_port *tx = xzalloc(sizeof *tx);
 
@@ -3618,7 +3620,7 @@ dp_netdev_add_port_tx_to_pmd(struct dp_netdev_pmd_thread *pmd,
 static void
 dp_netdev_add_port_rx_to_pmds(struct dp_netdev *dp,
                               struct dp_netdev_port *port,
-                              struct hmapx *to_reload, bool pinned)
+                              struct hmapx *to_reload, bool pinned)//将port加入到对应的pmd
 {
     int numa_id = netdev_get_numa_id(port->netdev);
     struct dp_netdev_pmd_thread *pmd;
@@ -3633,7 +3635,7 @@ dp_netdev_add_port_rx_to_pmds(struct dp_netdev *dp,
             if (port->rxqs[i].core_id == -1) {
                 continue;
             }
-            pmd = dp_netdev_get_pmd(dp, port->rxqs[i].core_id);
+            pmd = dp_netdev_get_pmd(dp, port->rxqs[i].core_id);//获取到core对应的pmd
             if (!pmd) {
                 VLOG_WARN("There is no PMD thread on core %d. "
                           "Queue %d on port \'%s\' will not be polled.",
@@ -3656,7 +3658,7 @@ dp_netdev_add_port_rx_to_pmds(struct dp_netdev *dp,
         }
 
         ovs_mutex_lock(&pmd->port_mutex);
-        dp_netdev_add_rxq_to_pmd(pmd, port, port->rxqs[i].rxq);
+        dp_netdev_add_rxq_to_pmd(pmd, port, port->rxqs[i].rxq);//将此port的某一队列加入到pmd
         ovs_mutex_unlock(&pmd->port_mutex);
 
         hmapx_add(to_reload, pmd);
@@ -3672,10 +3674,10 @@ dp_netdev_add_port_to_pmds__(struct dp_netdev *dp, struct dp_netdev_port *port,
 {
     struct dp_netdev_pmd_thread *pmd;
 
-    dp_netdev_add_port_rx_to_pmds(dp, port, to_reload, false);
+    dp_netdev_add_port_rx_to_pmds(dp, port, to_reload, false);//将此port加入到pmd的rx-port中
 
     CMAP_FOR_EACH (pmd, node, &dp->poll_threads) {
-        dp_netdev_add_port_tx_to_pmd(pmd, port);
+        dp_netdev_add_port_tx_to_pmd(pmd, port);//所有线程均可发送此port
         hmapx_add(to_reload, pmd);
     }
 }
@@ -4720,7 +4722,6 @@ dpif_netdev_ct_flush(struct dpif *dpif, const uint16_t *zone)
     return conntrack_flush(&dp->conntrack, zone);
 }
 
-//处理最低层的物理口抽象
 const struct dpif_class dpif_netdev_class = {
     "netdev",
     dpif_netdev_init,
@@ -4732,7 +4733,7 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_run,
     dpif_netdev_wait,
     dpif_netdev_get_stats,
-    dpif_netdev_port_add,
+    dpif_netdev_port_add,//netdev类的port添加
     dpif_netdev_port_del,
     dpif_netdev_port_set_config,
     dpif_netdev_port_query_by_number,

@@ -1335,7 +1335,7 @@ ofproto_port_get_lacp_stats(const struct ofport *port, struct lacp_slave_stats *
  * port. */
 int
 ofproto_bundle_register(struct ofproto *ofproto, void *aux,
-                        const struct ofproto_bundle_settings *s)
+                        const struct ofproto_bundle_settings *s)//设置bundle口成员
 {
     return (ofproto->ofproto_class->bundle_set
             ? ofproto->ofproto_class->bundle_set(ofproto, aux, s)
@@ -1347,7 +1347,7 @@ ofproto_bundle_register(struct ofproto *ofproto, void *aux,
 int
 ofproto_bundle_unregister(struct ofproto *ofproto, void *aux)
 {
-    return ofproto_bundle_register(ofproto, aux, NULL);
+    return ofproto_bundle_register(ofproto, aux, NULL);//销毁bundle口
 }
 
 
@@ -1957,12 +1957,13 @@ ofproto_port_dump_done(struct ofproto_port_dump *dump)
  *
  * Returns either 'type' itself or a string literal, which must not be
  * freed. */
+//依据datapath类型来返回对应的port_type(如上面注释举例说说的 userspace datapath时，internal被返回为tap
 const char *
 ofproto_port_open_type(const char *datapath_type, const char *port_type)
 {
     const struct ofproto_class *class;
 
-    datapath_type = ofproto_normalize_type(datapath_type);
+    datapath_type = ofproto_normalize_type(datapath_type);//datapath类型规则化
     class = ofproto_class_find__(datapath_type);
     if (!class) {
         return port_type;

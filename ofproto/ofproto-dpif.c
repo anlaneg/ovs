@@ -135,7 +135,7 @@ struct ofbundle {
     char *name;                 /* Identifier for log messages. */
 
     /* Configuration. */
-    struct ovs_list ports;      /* Contains "struct ofport"s. */
+    struct ovs_list ports;      /* Contains "struct ofport"s. */ //bundle中所有的port
     enum port_vlan_mode vlan_mode; /* VLAN mode */
     int vlan;                   /* -1=trunk port, else a 12-bit VLAN ID. */
     unsigned long *trunks;      /* Bitmap of trunked VLANs, if 'vlan' == -1.
@@ -293,7 +293,7 @@ struct ofproto_dpif {
     struct netflow *netflow;
     struct dpif_sflow *sflow;
     struct dpif_ipfix *ipfix;
-    struct hmap bundles;        /* Contains "struct ofbundle"s. */
+    struct hmap bundles;        /* Contains "struct ofbundle"s. */ //所有bundle口
     struct mac_learning *ml;//mac学习表
     struct mcast_snooping *ms;//igmp snooping学习表
     bool has_bonded_bundles;
@@ -314,7 +314,7 @@ struct ofproto_dpif {
 
     /* Ports. */
     struct sset ports;             /* Set of standard port names. */ //交换机上已存在的接口名称
-    struct sset ghost_ports;       /* Ports with no datapath port. */
+    struct sset ghost_ports;       /* Ports with no datapath port. */ //逻辑上有，但交换机上不实际存在接口
     struct sset port_poll_set;     /* Queued names for port_poll() reply. */
     int port_poll_errno;           /* Last errno for port_poll() reply. */
     uint64_t change_seq;           /* Connectivity status changes. */
@@ -2708,7 +2708,7 @@ set_queues(struct ofport *ofport_, const struct ofproto_port_queue *qdscp,
  * avoids a MAC_ENTRY_IDLE_TIME delay before the migrated VM can communicate
  * with the host from which it migrated. */
 static void
-bundle_flush_macs(struct ofbundle *bundle, bool all_ofprotos)
+bundle_flush_macs(struct ofbundle *bundle, bool all_ofprotos)//强制过期bundle口对应的mac地址
 {
     struct ofproto_dpif *ofproto = bundle->ofproto;
     struct mac_learning *ml = ofproto->ml;
@@ -2717,7 +2717,7 @@ bundle_flush_macs(struct ofbundle *bundle, bool all_ofprotos)
     ofproto->backer->need_revalidate = REV_RECONFIGURE;
     ovs_rwlock_wrlock(&ml->rwlock);
     LIST_FOR_EACH_SAFE (mac, next_mac, lru_node, &ml->lrus) {
-        if (mac_entry_get_port(ml, mac) == bundle) {
+        if (mac_entry_get_port(ml, mac) == bundle) {//这个反向查找太扯了
             if (all_ofprotos) {
                 struct ofproto_dpif *o;
 
@@ -2760,6 +2760,7 @@ bundle_move(struct ofbundle *old, struct ofbundle *new)
     ovs_rwlock_unlock(&ml->rwlock);
 }
 
+//通过aux查找bundle
 static struct ofbundle *
 bundle_lookup(const struct ofproto_dpif *ofproto, void *aux)
 {
@@ -2792,7 +2793,7 @@ bundle_update(struct ofbundle *bundle)
 }
 
 static void
-bundle_del_port(struct ofport_dpif *port)
+bundle_del_port(struct ofport_dpif *port)//bundle删除一个成员口
 {
     struct ofbundle *bundle = port->bundle;
 
@@ -2846,7 +2847,7 @@ bundle_add_port(struct ofbundle *bundle, ofp_port_t ofp_port,
 }
 
 static void
-bundle_destroy(struct ofbundle *bundle)
+bundle_destroy(struct ofbundle *bundle)//bundle口销毁
 {
     struct ofproto_dpif *ofproto;
     struct ofport_dpif *port, *next_port;
@@ -2875,6 +2876,7 @@ bundle_destroy(struct ofbundle *bundle)
     free(bundle);
 }
 
+//bundle口成员添加
 static int
 bundle_set(struct ofproto *ofproto_, void *aux,
            const struct ofproto_bundle_settings *s)
@@ -2888,7 +2890,7 @@ bundle_set(struct ofproto *ofproto_, void *aux,
     size_t i;
     bool ok;
 
-    if (!s) {
+    if (!s) {//如果s为空，则销毁此bundle
         bundle_destroy(bundle_lookup(ofproto, aux));
         return 0;
     }
@@ -2897,12 +2899,12 @@ bundle_set(struct ofproto *ofproto_, void *aux,
     ovs_assert((s->lacp != NULL) == (s->lacp_slaves != NULL));
 
     bundle = bundle_lookup(ofproto, aux);
-    if (!bundle) {
+    if (!bundle) {//bundle还没有创建
         bundle = xmalloc(sizeof *bundle);
 
         bundle->ofproto = ofproto;
         hmap_insert(&ofproto->bundles, &bundle->hmap_node,
-                    hash_pointer(aux, 0));
+                    hash_pointer(aux, 0));//串在bundles链上
         bundle->aux = aux;
         bundle->name = NULL;
 
@@ -2939,7 +2941,7 @@ bundle_set(struct ofproto *ofproto_, void *aux,
 
     /* Update set of ports. */
     ok = true;
-    for (i = 0; i < s->n_slaves; i++) {
+    for (i = 0; i < s->n_slaves; i++) {//更新成员
         if (!bundle_add_port(bundle, s->slaves[i],
                              s->lacp ? &s->lacp_slaves[i] : NULL)) {
             ok = false;
@@ -3065,16 +3067,16 @@ bundle_set(struct ofproto *ofproto_, void *aux,
 }
 
 static void
-bundle_remove(struct ofport *port_)
+bundle_remove(struct ofport *port_)//自channel口中移除一个成员口
 {
     struct ofport_dpif *port = ofport_dpif_cast(port_);
     struct ofbundle *bundle = port->bundle;
 
     if (bundle) {
         bundle_del_port(port);
-        if (ovs_list_is_empty(&bundle->ports)) {
+        if (ovs_list_is_empty(&bundle->ports)) {//一个成员也没有了
             bundle_destroy(bundle);
-        } else if (ovs_list_is_short(&bundle->ports)) {
+        } else if (ovs_list_is_short(&bundle->ports)) {//保有一个成员了
             bond_unref(bundle->bond);
             bundle->bond = NULL;
         }
@@ -3492,7 +3494,7 @@ port_add(struct ofproto *ofproto_, struct netdev *netdev)
     char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
     const char *dp_port_name;
 
-    if (netdev_vport_is_patch(netdev)) {
+    if (netdev_vport_is_patch(netdev)) {//如果是path口，加入ghost_ports即可
         sset_add(&ofproto->ghost_ports, netdev_get_name(netdev));
         return 0;
     }
@@ -3502,11 +3504,11 @@ port_add(struct ofproto *ofproto_, struct netdev *netdev)
         odp_port_t port_no = ODPP_NONE;
         int error;
 
-        error = dpif_port_add(ofproto->backer->dpif, netdev, &port_no);
+        error = dpif_port_add(ofproto->backer->dpif, netdev, &port_no);//不存在，则创建并加和入
         if (error) {
             return error;
         }
-        if (netdev_get_tunnel_config(netdev)) {
+        if (netdev_get_tunnel_config(netdev)) {//tunnel口
             simap_put(&ofproto->backer->tnl_backers,
                       dp_port_name, odp_to_u32(port_no));
         }

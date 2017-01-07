@@ -135,7 +135,7 @@ dp_initialize(void)
 }
 
 static int
-dp_register_provider__(const struct dpif_class *new_class)
+dp_register_provider__(const struct dpif_class *new_class)//dpif_class注册
 {
     struct registered_dpif_class *registered_class;
     int error;
@@ -471,7 +471,7 @@ dpif_type(const struct dpif *dpif)
  * Normalized type string can be compared with strcmp().  Unnormalized type
  * string might be the same even if they have different spellings. */
 const char *
-dpif_normalize_type(const char *type)
+dpif_normalize_type(const char *type)//datapath类型，如果没有指出默认为system
 {
     return type && type[0] ? type : "system";
 }
@@ -542,7 +542,7 @@ dpif_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
         port_no = *port_nop;
     }
 
-    error = dpif->dpif_class->port_add(dpif, netdev, &port_no);
+    error = dpif->dpif_class->port_add(dpif, netdev, &port_no);//为datapath创建此port
     if (!error) {
         VLOG_DBG_RL(&dpmsg_rl, "%s: added %s as port %"PRIu32,
                     dpif_name(dpif), netdev_name, port_no);

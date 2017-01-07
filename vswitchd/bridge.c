@@ -83,14 +83,14 @@ struct iface {
     struct hmap_node ofp_port_node; /* In struct bridge's "ifaces" hmap. */
     struct port *port;          /* Containing port. */
     char *name;                 /* Host network device name. */
-    struct netdev *netdev;      /* Network device. */
+    struct netdev *netdev;      /* Network device. */ //对应的netdev
     ofp_port_t ofp_port;        /* OpenFlow port number. */
     uint64_t change_seq;
 
     /* These members are valid only within bridge_reconfigure(). */
     const char *type;           /* Usually same as cfg->type. */
-    const char *netdev_type;    /* type that should be used for netdev_open. */
-    const struct ovsrec_interface *cfg;
+    const char *netdev_type;    /* type that should be used for netdev_open. */ //对应的netdev-type
+    const struct ovsrec_interface *cfg;//接口配置
 };
 
 struct mirror {
@@ -119,15 +119,15 @@ struct bridge {
     char *type;                 /* Datapath type. */
     struct eth_addr ea;         /* Bridge Ethernet Address. */
     struct eth_addr default_ea; /* Default MAC. */
-    const struct ovsrec_bridge *cfg;
+    const struct ovsrec_bridge *cfg;//桥的配置（可能还未生效）
 
     /* OpenFlow switch processing. */
     struct ofproto *ofproto;    /* OpenFlow switch. */ //对应的of交换机
 
     /* Bridge ports. */
     struct hmap ports;          /* "struct port"s indexed by name. */
-    struct hmap ifaces;         /* "struct iface"s indexed by ofp_port. */
-    struct hmap iface_by_name;  /* "struct iface"s indexed by name. */
+    struct hmap ifaces;         /* "struct iface"s indexed by ofp_port. */ //br的所有iface
+    struct hmap iface_by_name;  /* "struct iface"s indexed by name. */ //通过名称查找iface
 
     /* Port mirroring. */
     struct hmap mirrors;        /* "struct mirror" indexed by UUID. */
@@ -136,7 +136,7 @@ struct bridge {
     struct hmap mappings;       /* "struct" indexed by UUID */
 
     /* Used during reconfiguration. */
-    struct shash wanted_ports;
+    struct shash wanted_ports;//需要创建的port
 
     /* Synthetic local port if necessary. */
     struct ovsrec_port synth_local_port;
@@ -579,6 +579,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
 
     COVERAGE_INC(bridge_reconfigure);
 
+    //设置全局变量，如果未提供配置，则使用默认值
     ofproto_set_flow_limit(smap_get_int(&ovs_cfg->other_config, "flow-limit",
                                         OFPROTO_FLOW_LIMIT_DEFAULT));
     ofproto_set_max_idle(smap_get_int(&ovs_cfg->other_config, "max-idle",
@@ -641,7 +642,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
         }
     }
     HMAP_FOR_EACH (br, node, &all_bridges) {
-        bridge_add_ports(br, &br->wanted_ports);
+        bridge_add_ports(br, &br->wanted_ports);//为br创建需要的port
         shash_destroy(&br->wanted_ports);
     }
 
@@ -741,6 +742,7 @@ add_ofp_port(ofp_port_t port, ofp_port_t *ports, size_t *n, size_t *allocated)
 
 /* Configures the MTU of 'netdev' based on the "mtu_request" column
  * in 'iface_cfg'. */
+//设置mtu
 static int
 iface_set_netdev_mtu(const struct ovsrec_interface *iface_cfg,
                      struct netdev *netdev)
@@ -890,6 +892,7 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
     sset_destroy(&ofproto_ports);
 }
 
+//批量创建接口
 static void
 bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
                    bool with_requested_port)
@@ -905,7 +908,7 @@ bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
             ofp_port_t requested_ofp_port;
 
             requested_ofp_port = iface_get_requested_ofp_port(iface_cfg);
-            if ((requested_ofp_port != OFPP_NONE) == with_requested_port) {
+            if ((requested_ofp_port != OFPP_NONE) == with_requested_port) {//是否要求请求的port
                 struct iface *iface = iface_lookup(br, iface_cfg->name);
 
                 if (!iface) {
@@ -917,15 +920,15 @@ bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
 }
 
 static void
-bridge_add_ports(struct bridge *br, const struct shash *wanted_ports)
+bridge_add_ports(struct bridge *br, const struct shash *wanted_ports)//按期待创建port
 {
     /* First add interfaces that request a particular port number. */
-    bridge_add_ports__(br, wanted_ports, true);
+    bridge_add_ports__(br, wanted_ports, true);//对指定id的port先创建
 
     /* Then add interfaces that want automatic port number assignment.
      * We add these afterward to avoid accidentally taking a specifically
      * requested port number. */
-    bridge_add_ports__(br, wanted_ports, false);
+    bridge_add_ports__(br, wanted_ports, false);//再创建可任意id的port
 }
 
 static void
@@ -1672,12 +1675,13 @@ add_del_bridges(const struct ovsrec_open_vswitch *cfg)
     size_t i;
 
     /* Collect new bridges' names and types. */
+    //收集有效的桥配置
     shash_init(&new_br);
-    for (i = 0; i < cfg->n_bridges; i++) {
+    for (i = 0; i < cfg->n_bridges; i++) {//遍历所有的桥
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
         const struct ovsrec_bridge *br_cfg = cfg->bridges[i];
 
-        if (strchr(br_cfg->name, '/') || strchr(br_cfg->name, '\\')) {
+        if (strchr(br_cfg->name, '/') || strchr(br_cfg->name, '\\')) {//不容许包含'/','\\'的桥名称
             /* Prevent remote ovsdb-server users from accessing arbitrary
              * directories, e.g. consider a bridge named "../../../etc/".
              *
@@ -1685,7 +1689,7 @@ add_del_bridges(const struct ovsrec_open_vswitch *cfg)
              * loss elsewhere. */
             VLOG_WARN_RL(&rl, "ignoring bridge with invalid name \"%s\"",
                          br_cfg->name);
-        } else if (!shash_add_once(&new_br, br_cfg->name, br_cfg)) {
+        } else if (!shash_add_once(&new_br, br_cfg->name, br_cfg)) {//桥已存在，说明用户配置某个桥两次，忽略
             VLOG_WARN_RL(&rl, "bridge %s specified twice", br_cfg->name);
         }
     }
@@ -1693,6 +1697,7 @@ add_del_bridges(const struct ovsrec_open_vswitch *cfg)
     /* Get rid of deleted bridges or those whose types have changed.
      * Update 'cfg' of bridges that still exist. */
     HMAP_FOR_EACH_SAFE (br, next, node, &all_bridges) {
+    	//获取br对应的配置，如果br不再存在，或者br的datapath_type发生变化，则br桥需要销毁
         br->cfg = shash_find_data(&new_br, br->name);
         if (!br->cfg || strcmp(br->type, ofproto_normalize_type(
                                    br->cfg->datapath_type))) {
@@ -1701,7 +1706,7 @@ add_del_bridges(const struct ovsrec_open_vswitch *cfg)
     }
 
     /* Add new bridges. */
-    SHASH_FOR_EACH(node, &new_br) {
+    SHASH_FOR_EACH(node, &new_br) {//创建之前不存在的桥
         const struct ovsrec_bridge *br_cfg = node->data;
         struct bridge *br = bridge_lookup(br_cfg->name);
         if (!br) {
@@ -1727,7 +1732,7 @@ iface_set_netdev_config(const struct ovsrec_interface *iface_cfg,
  * If successful, returns 0 and stores the network device in '*netdevp'.  On
  * failure, returns a positive errno value and stores NULL in '*netdevp'. */
 static int
-//创建interface,并返回其关联的netdev
+//创建interface,并返回其关联的netdev(iface_cfg是其对应的配置，
 iface_do_create(const struct bridge *br,
                 const struct ovsrec_interface *iface_cfg,
                 ofp_port_t *ofp_portp, struct netdev **netdevp,
@@ -1737,13 +1742,14 @@ iface_do_create(const struct bridge *br,
     int error;
     const char *type;
 
-    if (netdev_is_reserved_name(iface_cfg->name)) {
+    if (netdev_is_reserved_name(iface_cfg->name)) {//检查要创建的接口名称是否已预留
         VLOG_WARN("could not create interface %s, name is reserved",
                   iface_cfg->name);
         error = EINVAL;
         goto error;
     }
 
+    //由datapath决定要创建的netdev类型
     type = ofproto_port_open_type(br->cfg->datapath_type,
                                   iface_get_type(iface_cfg, br->cfg));
     error = netdev_open(iface_cfg->name, type, &netdev);//创建对应的设备
@@ -1760,7 +1766,7 @@ iface_do_create(const struct bridge *br,
 
     iface_set_netdev_mtu(iface_cfg, netdev);//配置mtu
 
-    *ofp_portp = iface_pick_ofport(iface_cfg);
+    *ofp_portp = iface_pick_ofport(iface_cfg);//ofp_portp是来源于配置
     error = ofproto_port_add(br->ofproto, netdev, ofp_portp);
     if (error) {
         goto error;
@@ -1796,7 +1802,7 @@ iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg,
     int error;
 
     /* Do the bits that can fail up front. */
-    ovs_assert(!iface_lookup(br, iface_cfg->name));
+    ovs_assert(!iface_lookup(br, iface_cfg->name));//此bridge上一定没有这个接口
     error = iface_do_create(br, iface_cfg, &ofp_port, &netdev, &errp);
     if (error) {
         iface_clear_db_record(iface_cfg, errp);
@@ -1821,7 +1827,7 @@ iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg,
     iface->netdev = netdev;
     iface->type = iface_get_type(iface_cfg, br->cfg);
     iface->netdev_type = ofproto_port_open_type(br->cfg->datapath_type,
-                                                iface->type);
+                                                iface->type);//规则iface对应的netdev_type
     iface->cfg = iface_cfg;
     hmap_insert(&br->ifaces, &iface->ofp_port_node,
                 hash_ofp_port(ofp_port));
@@ -3192,7 +3198,7 @@ qos_unixctl_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
 
 /* Bridge reconfiguration functions. */
 static void
-bridge_create(const struct ovsrec_bridge *br_cfg)
+bridge_create(const struct ovsrec_bridge *br_cfg)//桥的创建
 {
     struct bridge *br;
 
@@ -3218,7 +3224,7 @@ bridge_create(const struct ovsrec_bridge *br_cfg)
 }
 
 static void
-bridge_destroy(struct bridge *br, bool del)
+bridge_destroy(struct bridge *br, bool del)//桥的销毁
 {
     if (br) {
         struct mirror *mirror, *next_mirror;
@@ -3245,7 +3251,7 @@ bridge_destroy(struct bridge *br, bool del)
 }
 
 static struct bridge *
-bridge_lookup(const char *name)
+bridge_lookup(const char *name)//通过名称查找对应的桥
 {
     struct bridge *br;
 
@@ -4046,14 +4052,14 @@ port_destroy(struct port *port)
         struct iface *iface, *next;
 
         if (br->ofproto) {
-            ofproto_bundle_unregister(br->ofproto, port);
+            ofproto_bundle_unregister(br->ofproto, port);//尝试port是否为channel口，如果是直接销毁
         }
 
-        LIST_FOR_EACH_SAFE (iface, next, port_elem, &port->ifaces) {
+        LIST_FOR_EACH_SAFE (iface, next, port_elem, &port->ifaces) {//销毁ifaces
             iface_destroy__(iface);
         }
 
-        hmap_remove(&br->ports, &port->hmap_node);
+        hmap_remove(&br->ports, &port->hmap_node);//仅ports链中移除
         free(port->name);
         free(port);
     }
@@ -4249,6 +4255,7 @@ port_is_synthetic(const struct port *port)
 
 /* Interface functions. */
 
+//要么iface类型明确指出为'internal',要么iface名称与桥名称相同（默认为internal)
 static bool
 iface_is_internal(const struct ovsrec_interface *iface,
                   const struct ovsrec_bridge *br)
@@ -4268,17 +4275,17 @@ iface_get_type(const struct ovsrec_interface *iface,
     /* The local port always has type "internal".  Other ports take
      * their type from the database and default to "system" if none is
      * specified. */
-    if (iface_is_internal(iface, br)) {
+    if (iface_is_internal(iface, br)) {//如果是'internal'
         type = "internal";
     } else {
-        type = iface->type[0] ? iface->type : "system";
+        type = iface->type[0] ? iface->type : "system";//不给出type时默认为system
     }
 
     return type;
 }
 
 static void
-iface_destroy__(struct iface *iface)
+iface_destroy__(struct iface *iface)//iface销毁
 {
     if (iface) {
         struct port *port = iface->port;
@@ -4289,15 +4296,15 @@ iface_destroy__(struct iface *iface)
         }
 
         if (iface->ofp_port != OFPP_NONE) {
-            hmap_remove(&br->ifaces, &iface->ofp_port_node);
+            hmap_remove(&br->ifaces, &iface->ofp_port_node);//iface移除
         }
 
         ovs_list_remove(&iface->port_elem);
-        hmap_remove(&br->iface_by_name, &iface->name_node);
+        hmap_remove(&br->iface_by_name, &iface->name_node);//自链中移除
 
         /* The user is changing configuration here, so netdev_remove needs to be
          * used as opposed to netdev_close */
-        netdev_remove(iface->netdev);
+        netdev_remove(iface->netdev);//移除iface对应的netdev
 
         free(iface->name);
         free(iface);
@@ -4317,6 +4324,7 @@ iface_destroy(struct iface *iface)
     }
 }
 
+//通过名称查找iface
 static struct iface *
 iface_lookup(const struct bridge *br, const char *name)
 {
@@ -4332,6 +4340,7 @@ iface_lookup(const struct bridge *br, const char *name)
     return NULL;
 }
 
+//通过名称在所有交换机里查找此接口
 static struct iface *
 iface_find(const char *name)
 {
@@ -4593,13 +4602,13 @@ iface_validate_ofport__(size_t n, int64_t *ofport)
 }
 
 static ofp_port_t
-iface_get_requested_ofp_port(const struct ovsrec_interface *cfg)
+iface_get_requested_ofp_port(const struct ovsrec_interface *cfg)//返回ofport_request或者OFPP_NONE
 {
     return iface_validate_ofport__(cfg->n_ofport_request, cfg->ofport_request);
 }
 
 static ofp_port_t
-iface_pick_ofport(const struct ovsrec_interface *cfg)
+iface_pick_ofport(const struct ovsrec_interface *cfg)//返回ofport_request或者cfg->ofport或者OFPP_NONE
 {
     ofp_port_t requested_ofport = iface_get_requested_ofp_port(cfg);
     return (requested_ofport != OFPP_NONE

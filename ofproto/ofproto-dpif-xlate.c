@@ -474,7 +474,7 @@ struct skb_priority_to_dscp {
  * does not block handler and revalidator threads. */
 struct xlate_cfg {
     struct hmap xbridges;//记录xbridge类型（所有的桥）
-    struct hmap xbundles;//记录ofbundle类型
+    struct hmap xbundles;//记录ofbundle类型（所有的bundle)
     struct hmap xports;//记录xport类型（所有的port)
 };
 static OVSRCU_TYPE(struct xlate_cfg *) xcfgp = OVSRCU_INITIALIZER(NULL);//全局变量指向xlate_cfg
