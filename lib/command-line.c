@@ -30,7 +30,7 @@ VLOG_DEFINE_THIS_MODULE(command_line);
  * passed to getopt() with the corresponding short options.  The caller is
  * responsible for freeing the string. */
 char *
-ovs_cmdl_long_options_to_short_options(const struct option options[])
+ovs_cmdl_long_options_to_short_options(const struct option options[])//长选项变更为短选项
 {
     char short_options[UCHAR_MAX * 3 + 1];
     char *p = short_options;
@@ -38,10 +38,10 @@ ovs_cmdl_long_options_to_short_options(const struct option options[])
     for (; options->name; options++) {
         const struct option *o = options;
         if (o->flag == NULL && o->val > 0 && o->val <= UCHAR_MAX) {
-            *p++ = o->val;
-            if (o->has_arg == required_argument) {
+            *p++ = o->val;//参数值
+            if (o->has_arg == required_argument) {//需要参数
                 *p++ = ':';
-            } else if (o->has_arg == optional_argument) {
+            } else if (o->has_arg == optional_argument) {//可选参数
                 *p++ = ':';
                 *p++ = ':';
             }

@@ -124,18 +124,18 @@ stream_usage(const char *name, bool active, bool passive,
 
     printf("\n");
     if (active) {
-        printf("Active %s connection methods:\n", name);
+        printf("Active %s connection methods:\n", name);//主动连接
         printf("  tcp:IP:PORT             "
-               "PORT at remote IP\n");
+               "PORT at remote IP\n");//tcp模式
 #ifdef HAVE_OPENSSL
         printf("  ssl:IP:PORT             "
-               "SSL PORT at remote IP\n");
+               "SSL PORT at remote IP\n");//ssl模式
 #endif
         printf("  unix:FILE               "
-               "Unix domain socket named FILE\n");
+               "Unix domain socket named FILE\n");//unix模式
     }
 
-    if (passive) {
+    if (passive) {//被动连接
         printf("Passive %s connection methods:\n", name);
         printf("  ptcp:PORT[:IP]          "
                "listen to TCP PORT on IP\n");

@@ -339,7 +339,7 @@ ovsthread_wrapper(void *aux_)
     free(subprogram_name);
     ovsrcu_quiesce_end();
 
-    return aux.start(aux.arg);
+    return aux.start(aux.arg);//执行线程函数
 }
 
 static void
@@ -388,7 +388,7 @@ ovs_thread_create(const char *name, void *(*start)(void *), void *arg)
         ovsthread_once_done(&once);
     }
 
-    multithreaded = true;
+    multithreaded = true;//标明进入多线程环境
     aux = xmalloc(sizeof *aux);
     aux->start = start;
     aux->arg = arg;
@@ -450,7 +450,7 @@ single_threaded(void)
 void
 assert_single_threaded_at(const char *where)
 {
-    if (multithreaded) {
+    if (multithreaded) {//如果已创建其它线程，则断言失败
         VLOG_FATAL("%s: attempted operation not allowed when multithreaded",
                    where);
     }

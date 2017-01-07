@@ -4856,14 +4856,14 @@ dpif_dummy_register(enum dummy_level level)
         sset_init(&types);
         dp_enumerate_types(&types);
         SSET_FOR_EACH (type, &types) {
-            dpif_dummy_override(type);
+            dpif_dummy_override(type);//强制使用netdev
         }
         sset_destroy(&types);
     } else if (level == DUMMY_OVERRIDE_SYSTEM) {
-        dpif_dummy_override("system");
+        dpif_dummy_override("system");//替换system为netdev回调
     }
 
-    dpif_dummy_register__("dummy");
+    dpif_dummy_register__("dummy");//创建dummy为netdev回调
 
     unixctl_command_register("dpif-dummy/change-port-number",
                              "dp port new-number",
