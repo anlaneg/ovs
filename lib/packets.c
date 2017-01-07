@@ -851,7 +851,7 @@ eth_compose(struct dp_packet *b, const struct eth_addr eth_dst,
     return data;
 }
 
-static void
+void
 packet_set_ipv4_addr(struct dp_packet *packet,
                      ovs_16aligned_be32 *addr, ovs_be32 new_addr)
 {
@@ -962,7 +962,8 @@ packet_rh_present(struct dp_packet *packet, uint8_t *nexthdr)
 
 static void
 packet_update_csum128(struct dp_packet *packet, uint8_t proto,
-                     ovs_16aligned_be32 addr[4], const ovs_be32 new_addr[4])
+                      ovs_16aligned_be32 addr[4],
+                      const struct in6_addr *new_addr)
 {
     size_t l4_size = dp_packet_l4_size(packet);
 
@@ -989,7 +990,8 @@ packet_update_csum128(struct dp_packet *packet, uint8_t proto,
 
 static void
 packet_set_ipv6_addr(struct dp_packet *packet, uint8_t proto,
-                     ovs_16aligned_be32 addr[4], const ovs_be32 new_addr[4],
+                     ovs_16aligned_be32 addr[4],
+                     const struct in6_addr *new_addr,
                      bool recalculate_csum)
 {
     if (recalculate_csum) {
@@ -1054,8 +1056,8 @@ packet_set_ipv4(struct dp_packet *packet, ovs_be32 src, ovs_be32 dst,
  * appropriate. 'packet' must contain a valid IPv6 packet with correctly
  * populated l[34] offsets. */
 void
-packet_set_ipv6(struct dp_packet *packet, const ovs_be32 src[4],
-                const ovs_be32 dst[4], uint8_t key_tc, ovs_be32 key_fl,
+packet_set_ipv6(struct dp_packet *packet, const struct in6_addr *src,
+                const struct in6_addr *dst, uint8_t key_tc, ovs_be32 key_fl,
                 uint8_t key_hl)
 {
     struct ovs_16aligned_ip6_hdr *nh = dp_packet_l3(packet);
@@ -1160,7 +1162,7 @@ packet_set_icmp(struct dp_packet *packet, uint8_t type, uint8_t code)
 }
 
 void
-packet_set_nd(struct dp_packet *packet, const ovs_be32 target[4],
+packet_set_nd(struct dp_packet *packet, const struct in6_addr *target,
               const struct eth_addr sll, const struct eth_addr tll)
 {
     struct ovs_nd_msg *ns;
@@ -1176,9 +1178,8 @@ packet_set_nd(struct dp_packet *packet, const ovs_be32 target[4],
     bytes_remain -= sizeof(*ns);
 
     if (memcmp(&ns->target, target, sizeof(ovs_be32[4]))) {
-        packet_set_ipv6_addr(packet, IPPROTO_ICMPV6,
-                             ns->target.be32,
-                             target, true);
+        packet_set_ipv6_addr(packet, IPPROTO_ICMPV6, ns->target.be32, target,
+                             true);
     }
 
     while (bytes_remain >= ND_OPT_LEN && nd_opt->nd_opt_len != 0) {
@@ -1354,19 +1355,13 @@ compose_ipv6(struct dp_packet *packet, uint8_t proto,
     struct ip6_hdr *nh;
     void *data;
 
-    /* Copy 'src' and 'dst' to temporary buffers to prevent misaligned
-     * accesses. */
-    ovs_be32 sbuf[4], dbuf[4];
-    memcpy(sbuf, src, sizeof sbuf);
-    memcpy(dbuf, dst, sizeof dbuf);
-
     nh = dp_packet_l3(packet);
     nh->ip6_vfc = 0x60;
     nh->ip6_nxt = proto;
     nh->ip6_plen = htons(size);
     data = dp_packet_put_zeros(packet, size);
     dp_packet_set_l4(packet, data);
-    packet_set_ipv6(packet, sbuf, dbuf, key_tc, key_fl, key_hl);
+    packet_set_ipv6(packet, src, dst, key_tc, key_fl, key_hl);
     return data;
 }
 
@@ -1396,10 +1391,7 @@ compose_nd_ns(struct dp_packet *b, const struct eth_addr eth_src,
     nd_opt->nd_opt_type = ND_OPT_SOURCE_LINKADDR;
     nd_opt->nd_opt_len = 1;
 
-    /* Copy target address to temp buffer to prevent misaligned access. */
-    ovs_be32 tbuf[4];
-    memcpy(tbuf, ipv6_dst->s6_addr, sizeof tbuf);
-    packet_set_nd(b, tbuf, eth_src, eth_addr_zero);
+    packet_set_nd(b, ipv6_dst, eth_src, eth_addr_zero);
 
     ns->icmph.icmp6_cksum = 0;
     icmp_csum = packet_csum_pseudoheader6(dp_packet_l3(b));
@@ -1430,10 +1422,7 @@ compose_nd_na(struct dp_packet *b,
     nd_opt->nd_opt_type = ND_OPT_TARGET_LINKADDR;
     nd_opt->nd_opt_len = 1;
 
-    /* Copy target address to temp buffer to prevent misaligned access. */
-    ovs_be32 tbuf[4];
-    memcpy(tbuf, ipv6_src->s6_addr, sizeof tbuf);
-    packet_set_nd(b, tbuf, eth_addr_zero, eth_src);
+    packet_set_nd(b, ipv6_src, eth_addr_zero, eth_src);
 
     na->icmph.icmp6_cksum = 0;
     icmp_csum = packet_csum_pseudoheader6(dp_packet_l3(b));
@@ -1461,20 +1450,32 @@ packet_csum_pseudoheader6(const struct ovs_16aligned_ip6_hdr *ip6)
 {
     uint32_t partial = 0;
 
-    partial = csum_add32(partial, get_16aligned_be32(&(ip6->ip6_src.be32[0])));
-    partial = csum_add32(partial, get_16aligned_be32(&(ip6->ip6_src.be32[1])));
-    partial = csum_add32(partial, get_16aligned_be32(&(ip6->ip6_src.be32[2])));
-    partial = csum_add32(partial, get_16aligned_be32(&(ip6->ip6_src.be32[3])));
-
-    partial = csum_add32(partial, get_16aligned_be32(&(ip6->ip6_dst.be32[0])));
-    partial = csum_add32(partial, get_16aligned_be32(&(ip6->ip6_dst.be32[1])));
-    partial = csum_add32(partial, get_16aligned_be32(&(ip6->ip6_dst.be32[2])));
-    partial = csum_add32(partial, get_16aligned_be32(&(ip6->ip6_dst.be32[3])));
-
+    partial = csum_continue(partial, &ip6->ip6_src, sizeof ip6->ip6_src);
+    partial = csum_continue(partial, &ip6->ip6_dst, sizeof ip6->ip6_dst);
     partial = csum_add16(partial, htons(ip6->ip6_nxt));
     partial = csum_add16(partial, ip6->ip6_plen);
 
     return partial;
+}
+
+/* Calculate the IPv6 upper layer checksum according to RFC2460. We pass the
+   ip6_nxt and ip6_plen values, so it will also work if extension headers
+   are present. */
+uint16_t
+packet_csum_upperlayer6(const struct ovs_16aligned_ip6_hdr *ip6,
+                        const void *data, uint8_t l4_protocol,
+                        uint16_t l4_size)
+{
+    uint32_t partial = 0;
+
+    partial = csum_continue(partial, &ip6->ip6_src, sizeof ip6->ip6_src);
+    partial = csum_continue(partial, &ip6->ip6_dst, sizeof ip6->ip6_dst);
+    partial = csum_add16(partial, htons(l4_protocol));
+    partial = csum_add16(partial, htons(l4_size));
+
+    partial = csum_continue(partial, data, l4_size);
+
+    return csum_finish(partial);
 }
 #endif
 

@@ -30,6 +30,7 @@
 #include "cfm.h"
 #include "connmgr.h"
 #include "coverage.h"
+#include "csum.h"
 #include "dp-packet.h"
 #include "dpif.h"
 #include "in-band.h"
@@ -1249,7 +1250,7 @@ xbridge_lookup_by_uuid(struct xlate_cfg *xcfg, const struct uuid *uuid)
     struct xbridge *xbridge;
 
     HMAP_FOR_EACH (xbridge, hmap_node, &xcfg->xbridges) {
-        if (uuid_equals(ofproto_dpif_get_uuid(xbridge->ofproto), uuid)) {
+        if (uuid_equals(&xbridge->ofproto->uuid, uuid)) {
             return xbridge;
         }
     }
@@ -1490,10 +1491,7 @@ group_first_live_bucket(const struct xlate_ctx *ctx,
                         const struct group_dpif *group, int depth)
 {
     struct ofputil_bucket *bucket;
-    const struct ovs_list *buckets;
-
-    buckets = group_dpif_get_buckets(group, NULL);
-    LIST_FOR_EACH (bucket, list_node, buckets) {
+    LIST_FOR_EACH (bucket, list_node, &group->up.buckets) {
         if (bucket_is_alive(ctx, bucket, depth)) {
             return bucket;
         }
@@ -1511,10 +1509,7 @@ group_best_live_bucket(const struct xlate_ctx *ctx,
     uint32_t best_score = 0;
 
     struct ofputil_bucket *bucket;
-    const struct ovs_list *buckets;
-
-    buckets = group_dpif_get_buckets(group, NULL);
-    LIST_FOR_EACH (bucket, list_node, buckets) {
+    LIST_FOR_EACH (bucket, list_node, &group->up.buckets) {
         if (bucket_is_alive(ctx, bucket, 0)) {
             uint32_t score =
                 (hash_int(bucket->bucket_id, basis) & 0xffff) * bucket->weight;
@@ -2032,8 +2027,19 @@ update_mcast_snooping_table4__(const struct xbridge *xbridge,
     OVS_REQ_WRLOCK(ms->rwlock)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(60, 30);
+    const struct igmp_header *igmp;
     int count;
+    size_t offset;
     ovs_be32 ip4 = flow->igmp_group_ip4;
+
+    offset = (char *) dp_packet_l4(packet) - (char *) dp_packet_data(packet);
+    igmp = dp_packet_at(packet, offset, IGMP_HEADER_LEN);
+    if (!igmp || csum(igmp, dp_packet_l4_size(packet)) != 0) {
+        VLOG_DBG_RL(&rl, "bridge %s: multicast snooping received bad IGMP "
+                    "checksum on port %s in VLAN %d",
+                    xbridge->name, in_xbundle->name, vlan);
+        return;
+    }
 
     switch (ntohs(flow->tp_src)) {
     case IGMP_HOST_MEMBERSHIP_REPORT:
@@ -2080,7 +2086,22 @@ update_mcast_snooping_table6__(const struct xbridge *xbridge,
     OVS_REQ_WRLOCK(ms->rwlock)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(60, 30);
+    const struct mld_header *mld;
     int count;
+    size_t offset;
+
+    offset = (char *) dp_packet_l4(packet) - (char *) dp_packet_data(packet);
+    mld = dp_packet_at(packet, offset, MLD_HEADER_LEN);
+
+    if (!mld ||
+        packet_csum_upperlayer6(dp_packet_l3(packet),
+                                mld, IPPROTO_ICMPV6,
+                                dp_packet_l4_size(packet)) != 0) {
+        VLOG_DBG_RL(&rl, "bridge %s: multicast snooping received bad MLD "
+                    "checksum on port %s in VLAN %d",
+                    xbridge->name, in_xbundle->name, vlan);
+        return;
+    }
 
     switch (ntohs(flow->tp_src)) {
     case MLD_QUERY:
@@ -2497,13 +2518,22 @@ compose_sample_action(struct xlate_ctx *ctx,
                       const odp_port_t tunnel_out_port,
                       bool include_actions)
 {
-    size_t sample_offset = nl_msg_start_nested(ctx->odp_actions,
-                                               OVS_ACTION_ATTR_SAMPLE);
+    if (probability == 0) {
+        /* No need to generate sampling or the inner action. */
+        return 0;
+    }
 
-    nl_msg_put_u32(ctx->odp_actions, OVS_SAMPLE_ATTR_PROBABILITY, probability);
-
-    size_t actions_offset = nl_msg_start_nested(ctx->odp_actions,
-                                                OVS_SAMPLE_ATTR_ACTIONS);
+    /* No need to generate sample action for 100% sampling rate. */
+    bool is_sample = probability < UINT32_MAX;
+    size_t sample_offset, actions_offset;
+    if (is_sample) {
+        sample_offset = nl_msg_start_nested(ctx->odp_actions,
+                                            OVS_ACTION_ATTR_SAMPLE);
+        nl_msg_put_u32(ctx->odp_actions, OVS_SAMPLE_ATTR_PROBABILITY,
+                       probability);
+        actions_offset = nl_msg_start_nested(ctx->odp_actions,
+                                             OVS_SAMPLE_ATTR_ACTIONS);
+    }
 
     odp_port_t odp_port = ofp_port_to_odp_port(
         ctx->xbridge, ctx->xin->flow.in_port.ofp_port);
@@ -2514,8 +2544,10 @@ compose_sample_action(struct xlate_ctx *ctx,
                                                  include_actions,
                                                  ctx->odp_actions);
 
-    nl_msg_end_nested(ctx->odp_actions, actions_offset);
-    nl_msg_end_nested(ctx->odp_actions, sample_offset);
+    if (is_sample) {
+        nl_msg_end_nested(ctx->odp_actions, actions_offset);
+        nl_msg_end_nested(ctx->odp_actions, sample_offset);
+    }
 
     return cookie_offset;
 }
@@ -2968,7 +3000,8 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         flow->in_port.ofp_port = peer->ofp_port;//变更流的入接口为对端口
         flow->metadata = htonll(0);
         memset(&flow->tunnel, 0, sizeof flow->tunnel);
-        flow->tunnel.metadata.tab = ofproto_dpif_get_tun_tab(peer->xbridge->ofproto);
+        flow->tunnel.metadata.tab = ofproto_get_tun_tab(
+            &peer->xbridge->ofproto->up);
         ctx->wc->masks.tunnel.metadata.tab = flow->tunnel.metadata.tab;
         memset(flow->regs, 0, sizeof flow->regs);
         flow->actset_output = OFPP_UNSET;
@@ -3247,8 +3280,8 @@ xlate_recursively(struct xlate_ctx *ctx, struct rule_dpif *rule, bool deepens)
     ctx->indentation++;
     ctx->depth += deepens;
     ctx->rule = rule;
-    ctx->rule_cookie = rule_dpif_get_flow_cookie(rule);
-    actions = rule_dpif_get_actions(rule);
+    ctx->rule_cookie = rule->up.flow_cookie;
+    actions = rule_get_actions(&rule->up);
     do_xlate_actions(actions->ofpacts, actions->ofpacts_len, ctx);
     ctx->rule_cookie = old_cookie;
     ctx->rule = old_rule;
@@ -3316,7 +3349,7 @@ xlate_table_action(struct xlate_ctx *ctx, ofp_port_t in_port, uint8_t table_id,
 
                 entry = xlate_cache_add_entry(ctx->xin->xcache, XC_RULE);
                 entry->rule = rule;
-                rule_dpif_ref(rule);
+                ofproto_rule_ref(&rule->up);
             }
             xlate_recursively(ctx, rule, table_id <= old_table_id);//递归处理当前查到的action
         }
@@ -3398,10 +3431,7 @@ static void
 xlate_all_group(struct xlate_ctx *ctx, struct group_dpif *group)
 {
     struct ofputil_bucket *bucket;
-    const struct ovs_list *buckets;
-
-    buckets = group_dpif_get_buckets(group, NULL);
-    LIST_FOR_EACH (bucket, list_node, buckets) {
+    LIST_FOR_EACH (bucket, list_node, &group->up.buckets) {
         xlate_group_bucket(ctx, bucket);//完成转换
     }
     xlate_group_stats(ctx, group, NULL);
@@ -3417,7 +3447,7 @@ xlate_ff_group(struct xlate_ctx *ctx, struct group_dpif *group)
         xlate_group_bucket(ctx, bucket);
         xlate_group_stats(ctx, group, bucket);
     } else if (ctx->xin->xcache) {
-        group_dpif_unref(group);
+        ofproto_group_unref(&group->up);
     }
 }
 
@@ -3435,23 +3465,18 @@ xlate_default_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
         xlate_group_bucket(ctx, bucket);
         xlate_group_stats(ctx, group, bucket);
     } else if (ctx->xin->xcache) {
-        group_dpif_unref(group);
+        ofproto_group_unref(&group->up);
     }
 }
 
 static void
 xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
 {
-    const struct field_array *fields;
-    struct ofputil_bucket *bucket;
-    const uint8_t *mask_values;
-    uint32_t basis;
+    const struct field_array *fields = &group->up.props.fields;
+    const uint8_t *mask_values = fields->values;
+    uint32_t basis = hash_uint64(group->up.props.selection_method_param);
+
     size_t i;
-
-    fields = group_dpif_get_fields(group);
-    mask_values = fields->values;
-    basis = hash_uint64(group_dpif_get_selection_method_param(group));
-
     BITMAP_FOR_EACH_1 (i, MFF_N_IDS, fields->used.bm) {
         const struct mf_field *mf = mf_from_id(i);
 
@@ -3481,12 +3506,12 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
         mf_mask_field_masked(mf, &mask, ctx->wc);
     }
 
-    bucket = group_best_live_bucket(ctx, group, basis);
+    struct ofputil_bucket *bucket = group_best_live_bucket(ctx, group, basis);
     if (bucket) {
         xlate_group_bucket(ctx, bucket);
         xlate_group_stats(ctx, group, bucket);
     } else if (ctx->xin->xcache) {
-        group_dpif_unref(group);
+        ofproto_group_unref(&group->up);
     }
 }
 
@@ -3500,13 +3525,11 @@ xlate_dp_hash_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
      * compare to zero can be used to decide if the dp_hash value is valid
      * without masking the dp_hash field. */
     if (!ctx->xin->flow.dp_hash) {
-        uint64_t param = group_dpif_get_selection_method_param(group);
+        uint64_t param = group->up.props.selection_method_param;
 
         ctx_trigger_recirculate_with_hash(ctx, param >> 32, (uint32_t)param);
     } else {
-        uint32_t n_buckets;
-
-        group_dpif_get_buckets(group, &n_buckets);
+        uint32_t n_buckets = group->up.n_buckets;
         if (n_buckets) {
             /* Minimal mask to cover the number of buckets. */
             uint32_t mask = (1 << log_2_ceil(n_buckets)) - 1;
@@ -3527,7 +3550,7 @@ xlate_dp_hash_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
 static void
 xlate_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
 {
-    const char *selection_method = group_dpif_get_selection_method(group);
+    const char *selection_method = group->up.props.selection_method;
 
     /* Select groups may access flow keys beyond L2 in order to
      * select a bucket. Recirculate as appropriate to make this possible.
@@ -3554,7 +3577,7 @@ xlate_group_action__(struct xlate_ctx *ctx, struct group_dpif *group)
     bool was_in_group = ctx->in_group;
     ctx->in_group = true;
 
-    switch (group_dpif_get_type(group)) {
+    switch (group->up.type) {
     case OFPGT11_ALL:
     case OFPGT11_INDIRECT:
         xlate_all_group(ctx, group);//新针对flow做一次分支转换（相当于将这个包做个快照，改完，处理了，再回退回来）
@@ -3674,7 +3697,7 @@ execute_controller_action(struct xlate_ctx *ctx, int len,
      * explicit table miss.  OpenFlow before 1.3 doesn't have that concept so
      * it will get translated back to OFPR_ACTION for those versions. */
     if (reason == OFPR_ACTION
-        && ctx->rule && rule_dpif_is_table_miss(ctx->rule)) {
+        && ctx->rule && rule_is_table_miss(&ctx->rule->up)) {
         reason = OFPR_EXPLICIT_MISS;
     }
 
@@ -3740,7 +3763,7 @@ emit_continuation(struct xlate_ctx *ctx, const struct frozen_state *state)
                     .packet_len = dp_packet_size(ctx->xin->packet),
                     .reason = ctx->pause->reason,
                 },
-                .bridge = *ofproto_dpif_get_uuid(ctx->xbridge->ofproto),
+                .bridge = ctx->xbridge->ofproto->uuid,
                 .stack = xmemdup(state->stack,
                                  state->n_stack * sizeof *state->stack),
                 .n_stack = state->n_stack,
@@ -3777,7 +3800,7 @@ finish_freezing__(struct xlate_ctx *ctx, uint8_t table)
 
     struct frozen_state state = {
         .table_id = table,
-        .ofproto_uuid = *ofproto_dpif_get_uuid(ctx->xbridge->ofproto),
+        .ofproto_uuid = ctx->xbridge->ofproto->uuid,
         .stack = ctx->stack.data,
         .n_stack = ctx->stack.size / sizeof(union mf_subvalue),
         .mirrors = ctx->mirrors,
@@ -4228,7 +4251,7 @@ xlate_fin_timeout__(struct rule_dpif *rule, uint16_t tcp_flags,
                     uint16_t idle_timeout, uint16_t hard_timeout)
 {
     if (tcp_flags & (TCP_FIN | TCP_RST)) {
-        rule_dpif_reduce_timeouts(rule, idle_timeout, hard_timeout);
+        ofproto_rule_reduce_timeouts(&rule->up, idle_timeout, hard_timeout);
     }
 }
 
@@ -4339,6 +4362,21 @@ xlate_sample_action(struct xlate_ctx *ctx,
     };
     compose_sample_action(ctx, probability, &cookie, sizeof cookie.flow_sample,
                           tunnel_out_port, false);
+}
+
+static void
+compose_clone_action(struct xlate_ctx *ctx, const struct ofpact_nest *oc)
+{
+    bool old_conntracked = ctx->conntracked;
+    struct flow old_flow = ctx->xin->flow;
+
+    do_xlate_actions(oc->actions, ofpact_nest_get_action_len(oc), ctx);
+
+    ctx->xin->flow = old_flow;
+
+    /* The clone's conntrack execution should have no effect on the original
+     * packet. */
+    ctx->conntracked = old_conntracked;
 }
 
 static bool
@@ -4499,6 +4537,7 @@ freeze_unroll_actions(const struct ofpact *a, const struct ofpact *end,
         case OFPACT_WRITE_ACTIONS:
         case OFPACT_METER:
         case OFPACT_SAMPLE:
+        case OFPACT_CLONE:
         case OFPACT_DEBUG_RECIRC:
         case OFPACT_CT:
         case OFPACT_NAT:
@@ -4554,10 +4593,16 @@ static void
 put_ct_helper(struct ofpbuf *odp_actions, struct ofpact_conntrack *ofc)
 {
     if (ofc->alg) {
-        if (ofc->alg == IPPORT_FTP) {
+        switch(ofc->alg) {
+        case IPPORT_FTP:
             nl_msg_put_string(odp_actions, OVS_CT_ATTR_HELPER, "ftp");
-        } else {
+            break;
+        case IPPORT_TFTP:
+            nl_msg_put_string(odp_actions, OVS_CT_ATTR_HELPER, "tftp");
+            break;
+        default:
             VLOG_WARN("Cannot serialize ct_helper %d\n", ofc->alg);
+            break;
         }
     }
 }
@@ -4747,6 +4792,7 @@ recirc_for_mpls(const struct ofpact *a, struct xlate_ctx *ctx)
     case OFPACT_NOTE:
     case OFPACT_EXIT:
     case OFPACT_SAMPLE:
+    case OFPACT_CLONE:
     case OFPACT_UNROLL_XLATE:
     case OFPACT_CT:
     case OFPACT_NAT:
@@ -5109,6 +5155,10 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
 
         case OFPACT_SAMPLE:
             xlate_sample_action(ctx, ofpact_get_SAMPLE(a));
+            break;
+
+        case OFPACT_CLONE:
+            compose_clone_action(ctx, ofpact_get_CLONE(a));
             break;
 
         case OFPACT_CT:
@@ -5478,8 +5528,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         }
 
         /* Set the bridge for post-recirculation processing if needed. */
-        if (!uuid_equals(ofproto_dpif_get_uuid(ctx.xbridge->ofproto),
-                         &state->ofproto_uuid)) {
+        if (!uuid_equals(&ctx.xbridge->ofproto->uuid, &state->ofproto_uuid)) {
             struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
             const struct xbridge *new_bridge
                 = xbridge_lookup_by_uuid(xcfg, &state->ofproto_uuid);
@@ -5549,7 +5598,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
     /* Tunnel metadata in udpif format must be normalized before translation. */
     if (flow->tunnel.flags & FLOW_TNL_F_UDPIF) {
-        const struct tun_table *tun_tab = ofproto_dpif_get_tun_tab(xin->ofproto);
+        const struct tun_table *tun_tab = ofproto_get_tun_tab(
+            &ctx.xbridge->ofproto->up);
         int err;
 
         err = tun_metadata_from_geneve_udpif(tun_tab, &xin->upcall_flow->tunnel,
@@ -5564,7 +5614,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         /* If the original flow did not come in on a tunnel, then it won't have
          * FLOW_TNL_F_UDPIF set. However, we still need to have a metadata
          * table in case we generate tunnel actions. */
-        flow->tunnel.metadata.tab = ofproto_dpif_get_tun_tab(xin->ofproto);//将此交换机对应的tun_tab赋给tab
+        flow->tunnel.metadata.tab = ofproto_get_tun_tab(
+            &ctx.xbridge->ofproto->up);
     }
     ctx.wc->masks.tunnel.metadata.tab = flow->tunnel.metadata.tab;
 
@@ -5581,7 +5632,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
             entry = xlate_cache_add_entry(ctx.xin->xcache, XC_RULE);
             entry->rule = ctx.rule;
-            rule_dpif_ref(ctx.rule);
+            ofproto_rule_ref(&ctx.rule->up);
         }
 
         if (OVS_UNLIKELY(ctx.xin->resubmit_hook)) {
@@ -5643,10 +5694,10 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
                 ofpacts_len = xin->ofpacts_len;
             } else if (ctx.rule) {//否则，如果命中了规则
                 const struct rule_actions *actions
-                    = rule_dpif_get_actions(ctx.rule);//取出对应actions
+                    = rule_get_actions(&ctx.rule->up);//取出对应actions
                 ofpacts = actions->ofpacts;
                 ofpacts_len = actions->ofpacts_len;
-                ctx.rule_cookie = rule_dpif_get_flow_cookie(ctx.rule);
+                ctx.rule_cookie = ctx.rule->up.flow_cookie;
             } else {
                 OVS_NOT_REACHED();
             }

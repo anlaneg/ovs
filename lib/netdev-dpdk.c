@@ -319,6 +319,10 @@ struct ingress_policer {
     rte_spinlock_t policer_lock;
 };
 
+enum dpdk_hw_ol_features {
+    NETDEV_RX_CHECKSUM_OFFLOAD = 1 << 0,
+};
+
 struct netdev_dpdk {
     struct netdev up;//外部的结构体，供框架用
     int port_id;
@@ -352,6 +356,9 @@ struct netdev_dpdk {
     /* Identifier used to distinguish vhost devices from each other. */
     char vhost_id[PATH_MAX];
 
+    /* Device arguments for dpdk ports */
+    char *devargs;
+
     /* In dpdk_list. */
     struct ovs_list list_node OVS_GUARDED_BY(dpdk_mutex);
 
@@ -384,6 +391,10 @@ struct netdev_dpdk {
 
     /* DPDK-ETH Flow control */
     struct rte_eth_fc_conf fc_conf;
+
+    /* DPDK-ETH hardware offload features,
+     * from the enum set 'dpdk_hw_ol_features' */
+    uint32_t hw_ol_features;
 };
 
 struct netdev_rxq_dpdk {
@@ -633,6 +644,8 @@ dpdk_eth_dev_queue_setup(struct netdev_dpdk *dev, int n_rxq, int n_txq)
         conf.rxmode.jumbo_frame = 0;
         conf.rxmode.max_rx_pkt_len = 0;
     }
+    conf.rxmode.hw_ip_checksum = (dev->hw_ol_features &
+                                  NETDEV_RX_CHECKSUM_OFFLOAD) != 0;
     /* A device may report more queues than it makes available (this has
      * been observed for Intel xl710, which reserves some of them for
      * SRIOV):  rte_eth_*_queue_setup will fail if a queue is not
@@ -690,6 +703,29 @@ dpdk_eth_dev_queue_setup(struct netdev_dpdk *dev, int n_rxq, int n_txq)
     }
 
     return diag;
+}
+
+static void
+dpdk_eth_checksum_offload_configure(struct netdev_dpdk *dev)
+    OVS_REQUIRES(dev->mutex)
+{
+    struct rte_eth_dev_info info;
+    bool rx_csum_ol_flag = false;
+    uint32_t rx_chksm_offload_capa = DEV_RX_OFFLOAD_UDP_CKSUM |
+                                     DEV_RX_OFFLOAD_TCP_CKSUM |
+                                     DEV_RX_OFFLOAD_IPV4_CKSUM;
+    rte_eth_dev_info_get(dev->port_id, &info);
+    rx_csum_ol_flag = (dev->hw_ol_features & NETDEV_RX_CHECKSUM_OFFLOAD) != 0;
+
+    if (rx_csum_ol_flag &&
+        (info.rx_offload_capa & rx_chksm_offload_capa) !=
+         rx_chksm_offload_capa) {
+        VLOG_WARN_ONCE("Rx checksum offload is not supported on device %d",
+                   dev->port_id);
+        dev->hw_ol_features &= ~NETDEV_RX_CHECKSUM_OFFLOAD;
+        return;
+    }
+    netdev_request_reconfigure(&dev->up);
 }
 
 static void
@@ -813,7 +849,7 @@ netdev_dpdk_init(struct netdev *netdev, unsigned int port_no,
     /* If the 'sid' is negative, it means that the kernel fails
      * to obtain the pci numa info.  In that situation, always
      * use 'SOCKET0'. */
-    if (type == DPDK_DEV_ETH) {
+    if (type == DPDK_DEV_ETH && rte_eth_dev_is_valid_port(dev->port_id)) {
         sid = rte_eth_dev_socket_id(port_no);
     } else {
         sid = rte_lcore_to_socket_id(rte_get_master_lcore());
@@ -851,10 +887,15 @@ netdev_dpdk_init(struct netdev *netdev, unsigned int port_no,
 
     /* Initialize the flow control to NULL */
     memset(&dev->fc_conf, 0, sizeof dev->fc_conf);
+
+    /* Initilize the hardware offload flags to 0 */
+    dev->hw_ol_features = 0;
     if (type == DPDK_DEV_ETH) {
-        err = dpdk_eth_dev_init(dev);
-        if (err) {
-            goto unlock;
+        if (rte_eth_dev_is_valid_port(dev->port_id)) {
+            err = dpdk_eth_dev_init(dev);
+            if (err) {
+                goto unlock;
+            }
         }
         dev->tx_q = netdev_dpdk_alloc_txq(netdev->n_txq);
     } else {
@@ -950,17 +991,10 @@ netdev_dpdk_vhost_client_construct(struct netdev *netdev)
 static int
 netdev_dpdk_construct(struct netdev *netdev)
 {
-    unsigned int port_no;
     int err;
 
-    /* Names always start with "dpdk" */
-    err = dpdk_dev_parse_name(netdev->name, "dpdk", &port_no);//解析出对应的port_id
-    if (err) {
-        return err;
-    }
-
     ovs_mutex_lock(&dpdk_mutex);
-    err = netdev_dpdk_init(netdev, port_no, DPDK_DEV_ETH);
+    err = netdev_dpdk_init(netdev, -1, DPDK_DEV_ETH);
     ovs_mutex_unlock(&dpdk_mutex);
     return err;
 }
@@ -974,6 +1008,7 @@ netdev_dpdk_destruct(struct netdev *netdev)
     ovs_mutex_lock(&dev->mutex);
 
     rte_eth_dev_stop(dev->port_id);
+    free(dev->devargs);
     free(ovsrcu_get_protected(struct ingress_policer *,
                               &dev->ingress_policer));
 
@@ -1072,10 +1107,50 @@ netdev_dpdk_get_config(const struct netdev *netdev, struct smap *args)//填充�
                         dev->requested_txq_size);
         smap_add_format(args, "configured_txq_descriptors", "%d",
                         dev->txq_size);
+        if (dev->hw_ol_features & NETDEV_RX_CHECKSUM_OFFLOAD) {
+            smap_add(args, "rx_csum_offload", "true");
+        }
     }
     ovs_mutex_unlock(&dev->mutex);
 
     return 0;
+}
+
+static struct netdev_dpdk *
+netdev_dpdk_lookup_by_port_id(int port_id)
+    OVS_REQUIRES(dpdk_mutex)
+{
+    struct netdev_dpdk *dev;
+
+    LIST_FOR_EACH (dev, list_node, &dpdk_list) {
+        if (dev->port_id == port_id) {
+            return dev;
+        }
+    }
+
+    return NULL;
+}
+
+static int
+netdev_dpdk_process_devargs(const char *devargs)
+{
+    uint8_t new_port_id = UINT8_MAX;
+
+    if (!rte_eth_dev_count()
+            || rte_eth_dev_get_port_by_name(devargs, &new_port_id)
+            || !rte_eth_dev_is_valid_port(new_port_id)) {
+        /* Device not found in DPDK, attempt to attach it */
+        if (!rte_eth_dev_attach(devargs, &new_port_id)) {
+            /* Attach successful */
+            VLOG_INFO("Device '%s' attached to DPDK", devargs);
+        } else {
+            /* Attach unsuccessful */
+            VLOG_INFO("Error attaching device '%s' to DPDK", devargs);
+            return -1;
+        }
+    }
+
+    return new_port_id;
 }
 
 static void
@@ -1118,7 +1193,12 @@ netdev_dpdk_set_config(struct netdev *netdev, const struct smap *args)
         {RTE_FC_NONE,     RTE_FC_TX_PAUSE},
         {RTE_FC_RX_PAUSE, RTE_FC_FULL    }
     };
+    bool rx_chksm_ofld;
+    bool temp_flag;
+    const char *new_devargs;
+    int err = 0;
 
+    ovs_mutex_lock(&dpdk_mutex);
     ovs_mutex_lock(&dev->mutex);
 
     dpdk_set_rxq_config(dev, args);
@@ -1129,6 +1209,53 @@ netdev_dpdk_set_config(struct netdev *netdev, const struct smap *args)
     dpdk_process_queue_size(netdev, args, "n_txq_desc",
                             NIC_PORT_DEFAULT_TXQ_SIZE,
                             &dev->requested_txq_size);
+
+    new_devargs = smap_get(args, "dpdk-devargs");
+
+    if (dev->devargs && strcmp(new_devargs, dev->devargs)) {
+        /* The user requested a new device.  If we return error, the caller
+         * will delete this netdev and try to recreate it. */
+        err = EAGAIN;
+        goto out;
+    }
+
+    /* dpdk-devargs is required for device configuration */
+    if (new_devargs && new_devargs[0]) {
+        /* Don't process dpdk-devargs if value is unchanged and port id
+         * is valid */
+        if (!(dev->devargs && !strcmp(dev->devargs, new_devargs)
+               && rte_eth_dev_is_valid_port(dev->port_id))) {
+            int new_port_id = netdev_dpdk_process_devargs(new_devargs);
+            if (!rte_eth_dev_is_valid_port(new_port_id)) {
+                err = EINVAL;
+            } else if (new_port_id == dev->port_id) {
+                /* Already configured, do not reconfigure again */
+                err = 0;
+            } else {
+                struct netdev_dpdk *dup_dev;
+                dup_dev = netdev_dpdk_lookup_by_port_id(new_port_id);
+                if (dup_dev) {
+                    VLOG_WARN("'%s' is trying to use device '%s' which is "
+                              "already in use by '%s'.",
+                              netdev_get_name(netdev), new_devargs,
+                              netdev_get_name(&dup_dev->up));
+                    err = EADDRINUSE;
+                } else {
+                    dev->devargs = xstrdup(new_devargs);
+                    dev->port_id = new_port_id;
+                    netdev_request_reconfigure(&dev->up);
+                    err = 0;
+                }
+            }
+        }
+    } else {
+        /* dpdk-devargs unspecified - can't configure device */
+        err = EINVAL;
+    }
+
+    if (err) {
+        goto out;
+    }
 
     rx_fc_en = smap_get_bool(args, "rx-flow-ctrl", false);
     tx_fc_en = smap_get_bool(args, "tx-flow-ctrl", false);
@@ -1141,9 +1268,21 @@ netdev_dpdk_set_config(struct netdev *netdev, const struct smap *args)
         dpdk_eth_flow_ctrl_setup(dev);
     }
 
-    ovs_mutex_unlock(&dev->mutex);
+    /* Rx checksum offload configuration */
+    /* By default the Rx checksum offload is ON */
+    rx_chksm_ofld = smap_get_bool(args, "rx-checksum-offload", true);
+    temp_flag = (dev->hw_ol_features & NETDEV_RX_CHECKSUM_OFFLOAD)
+                        != 0;
+    if (temp_flag != rx_chksm_ofld) {
+        dev->hw_ol_features ^= NETDEV_RX_CHECKSUM_OFFLOAD;
+        dpdk_eth_checksum_offload_configure(dev);
+    }
 
-    return 0;
+out:
+    ovs_mutex_unlock(&dev->mutex);
+    ovs_mutex_unlock(&dpdk_mutex);
+
+    return err;
 }
 
 static int
@@ -2307,6 +2446,53 @@ netdev_dpdk_set_admin_state(struct unixctl_conn *conn, int argc,
     unixctl_command_reply(conn, "OK");
 }
 
+static void
+netdev_dpdk_detach(struct unixctl_conn *conn, int argc OVS_UNUSED,
+                   const char *argv[], void *aux OVS_UNUSED)
+{
+    int ret;
+    char *response;
+    uint8_t port_id;
+    char devname[RTE_ETH_NAME_MAX_LEN];
+    struct netdev_dpdk *dev;
+
+    ovs_mutex_lock(&dpdk_mutex);
+
+    if (!rte_eth_dev_count() || rte_eth_dev_get_port_by_name(argv[1],
+                                                             &port_id)) {
+        response = xasprintf("Device '%s' not found in DPDK", argv[1]);
+        goto error;
+    }
+
+    dev = netdev_dpdk_lookup_by_port_id(port_id);
+    if (dev) {
+        response = xasprintf("Device '%s' is being used by interface '%s'. "
+                             "Remove it before detaching",
+                             argv[1], netdev_get_name(&dev->up));
+        goto error;
+    }
+
+    rte_eth_dev_close(port_id);
+
+    ret = rte_eth_dev_detach(port_id, devname);
+    if (ret < 0) {
+        response = xasprintf("Device '%s' can not be detached", argv[1]);
+        goto error;
+    }
+
+    response = xasprintf("Device '%s' has been detached", argv[1]);
+
+    ovs_mutex_unlock(&dpdk_mutex);
+    unixctl_command_reply(conn, response);
+    free(response);
+    return;
+
+error:
+    ovs_mutex_unlock(&dpdk_mutex);
+    unixctl_command_reply_error(conn, response);
+    free(response);
+}
+
 /*
  * Set virtqueue flags so that we do not receive interrupts.
  */
@@ -2582,6 +2768,9 @@ netdev_dpdk_class_init(void)//模块载入时处理
         unixctl_command_register("netdev-dpdk/set-admin-state",
                                  "[netdev] up|down", 1, 2,
                                  netdev_dpdk_set_admin_state, NULL);
+        unixctl_command_register("netdev-dpdk/detach",
+                                 "pci address of device", 1, 1,
+                                 netdev_dpdk_detach, NULL);
 
         ovsthread_once_done(&once);
     }
@@ -2616,12 +2805,12 @@ static int
 dpdk_ring_create(const char dev_name[], unsigned int port_no,
                  unsigned int *eth_port_id)
 {
-    struct dpdk_ring *ivshmem;
+    struct dpdk_ring *ring_pair;
     char *ring_name;
-    int err;
+    int port_id;
 
-    ivshmem = dpdk_rte_mzalloc(sizeof *ivshmem);
-    if (!ivshmem) {
+    ring_pair = dpdk_rte_mzalloc(sizeof *ring_pair);
+    if (!ring_pair) {
         return ENOMEM;
     }
 
@@ -2629,38 +2818,39 @@ dpdk_ring_create(const char dev_name[], unsigned int port_no,
     ring_name = xasprintf("%s_tx", dev_name);
 
     /* Create single producer tx ring, netdev does explicit locking. */
-    ivshmem->cring_tx = rte_ring_create(ring_name, DPDK_RING_SIZE, SOCKET0,
+    ring_pair->cring_tx = rte_ring_create(ring_name, DPDK_RING_SIZE, SOCKET0,
                                         RING_F_SP_ENQ);
     free(ring_name);
-    if (ivshmem->cring_tx == NULL) {
-        rte_free(ivshmem);
+    if (ring_pair->cring_tx == NULL) {
+        rte_free(ring_pair);
         return ENOMEM;
     }
 
     ring_name = xasprintf("%s_rx", dev_name);
 
     /* Create single consumer rx ring, netdev does explicit locking. */
-    ivshmem->cring_rx = rte_ring_create(ring_name, DPDK_RING_SIZE, SOCKET0,
+    ring_pair->cring_rx = rte_ring_create(ring_name, DPDK_RING_SIZE, SOCKET0,
                                         RING_F_SC_DEQ);
     free(ring_name);
-    if (ivshmem->cring_rx == NULL) {
-        rte_free(ivshmem);
+    if (ring_pair->cring_rx == NULL) {
+        rte_free(ring_pair);
         return ENOMEM;
     }
 
-    err = rte_eth_from_rings(dev_name, &ivshmem->cring_rx, 1,
-                             &ivshmem->cring_tx, 1, SOCKET0);
+    port_id = rte_eth_from_rings(dev_name, &ring_pair->cring_rx, 1,
+                                 &ring_pair->cring_tx, 1, SOCKET0);
 
-    if (err < 0) {
-        rte_free(ivshmem);
+    if (port_id < 0) {
+        rte_free(ring_pair);
         return ENODEV;
     }
 
-    ivshmem->user_port_id = port_no;
-    ivshmem->eth_port_id = rte_eth_dev_count() - 1;
-    ovs_list_push_back(&dpdk_ring_list, &ivshmem->list_node);
+    ring_pair->user_port_id = port_no;
+    ring_pair->eth_port_id = port_id;
+    *eth_port_id = port_id;
 
-    *eth_port_id = ivshmem->eth_port_id;
+    ovs_list_push_back(&dpdk_ring_list, &ring_pair->list_node);
+
     return 0;
 }
 
@@ -2668,7 +2858,7 @@ static int
 dpdk_ring_open(const char dev_name[], unsigned int *eth_port_id)
     OVS_REQUIRES(dpdk_mutex)
 {
-    struct dpdk_ring *ivshmem;
+    struct dpdk_ring *ring_pair;
     unsigned int port_no;
     int err = 0;
 
@@ -2679,11 +2869,11 @@ dpdk_ring_open(const char dev_name[], unsigned int *eth_port_id)
     }
 
     /* Look through our list to find the device */
-    LIST_FOR_EACH (ivshmem, list_node, &dpdk_ring_list) {
-         if (ivshmem->user_port_id == port_no) {
+    LIST_FOR_EACH (ring_pair, list_node, &dpdk_ring_list) {
+         if (ring_pair->user_port_id == port_no) {
             VLOG_INFO("Found dpdk ring device %s:", dev_name);
             /* Really all that is needed */
-            *eth_port_id = ivshmem->eth_port_id;
+            *eth_port_id = ring_pair->eth_port_id;
             return 0;
          }
     }

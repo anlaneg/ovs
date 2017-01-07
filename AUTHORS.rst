@@ -39,6 +39,7 @@ Alexei Starovoitov              ast@plumgrid.com
 Alexey I. Froloff               raorn@raorn.name
 Alex Wang                       ee07b291@gmail.com
 Alfredo Finelli                 alf@computationes.de
+Alin Balutoiu                   abalutoiu@cloudbasesolutions.com
 Alin Serdean                    aserdean@cloudbasesolutions.com
 Ambika Arora                    ambika.arora@tcs.com
 Amit Bose                       bose@noironetworks.com
@@ -108,6 +109,7 @@ Dustin Lundquist                dustin@null-ptr.net
 Ed Maste                        emaste@freebsd.org
 Ed Swierk                       eswierk@skyportsystems.com
 Edouard Bourguignon             madko@linuxed.net
+Eelco Chaudron                  echaudro@redhat.com
 Esteban Rodriguez Betancourt    estebarb@hpe.com
 Aymerich Edward                 edward.aymerich@hpe.com
 Edward Tomasz Napierała         trasz@freebsd.org
@@ -188,6 +190,7 @@ Luca Giraudo                    lgiraudo@nicira.com
 Lucian Petrut                   lpetrut@cloudbasesolutions.com
 Luigi Rizzo                     rizzo@iet.unipi.it
 Luis E. P.                      l31g@hotmail.com
+Lukasz Rzasik                   lukasz.rzasik@gmail.com
 Madhu Challa                    challa@noironetworks.com
 Mario Cabrera                   mario.cabrera@hpe.com
 Mark D. Gray                    mark.d.gray@intel.com
@@ -282,6 +285,7 @@ Thomas Lacroix                  thomas.lacroix@citrix.com
 Timo Puha                       timox.puha@intel.com
 Todd Deshane                    deshantm@gmail.com
 Tom Everman                     teverman@google.com
+Torgny Lindberg                 torgny.lindberg@ericsson.com
 Tsvi Slonim                     tsvi@toroki.com
 Tuan Nguyen                     tuan.nguyen@veriksystems.com
 Tyler Coumbes                   coumbes@gmail.com
@@ -308,6 +312,8 @@ nickcooper-zhangtonghao         nickcooper-zhangtonghao@opencloud.tech
 wisd0me                         ak47izatool@gmail.com
 xushengping                     shengping.xu@huawei.com
 yinpeijun                       yinpeijun@huawei.com
+zangchuanqiang                  zangchuanqiang@huawei.com
+zhaojingjing                    zhao.jingjing1@zte.com.cn
 =============================== ===============================================
 
 The following additional people are mentioned in commit logs as having

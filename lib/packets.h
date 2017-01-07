@@ -843,6 +843,8 @@ struct icmp6_header {
 BUILD_ASSERT_DECL(ICMP6_HEADER_LEN == sizeof(struct icmp6_header));
 
 uint32_t packet_csum_pseudoheader6(const struct ovs_16aligned_ip6_hdr *);
+uint16_t packet_csum_upperlayer6(const struct ovs_16aligned_ip6_hdr *,
+                                 const void *, uint8_t, uint16_t);
 
 /* Neighbor Discovery option field.
  * ND options are always a multiple of 8 bytes in size. */
@@ -1098,14 +1100,16 @@ void *snap_compose(struct dp_packet *, const struct eth_addr eth_dst,
                    unsigned int oui, uint16_t snap_type, size_t size);
 void packet_set_ipv4(struct dp_packet *, ovs_be32 src, ovs_be32 dst, uint8_t tos,
                      uint8_t ttl);
-void packet_set_ipv6(struct dp_packet *, const ovs_be32 src[4],
-                     const ovs_be32 dst[4], uint8_t tc,
+void packet_set_ipv4_addr(struct dp_packet *packet, ovs_16aligned_be32 *addr,
+                          ovs_be32 new_addr);
+void packet_set_ipv6(struct dp_packet *, const struct in6_addr *src,
+                     const struct in6_addr *dst, uint8_t tc,
                      ovs_be32 fl, uint8_t hlmit);
 void packet_set_tcp_port(struct dp_packet *, ovs_be16 src, ovs_be16 dst);
 void packet_set_udp_port(struct dp_packet *, ovs_be16 src, ovs_be16 dst);
 void packet_set_sctp_port(struct dp_packet *, ovs_be16 src, ovs_be16 dst);
 void packet_set_icmp(struct dp_packet *, uint8_t type, uint8_t code);
-void packet_set_nd(struct dp_packet *, const ovs_be32 target[4],
+void packet_set_nd(struct dp_packet *, const struct in6_addr *target,
                    const struct eth_addr sll, const struct eth_addr tll);
 
 void packet_format_tcp_flags(struct ds *, uint16_t);

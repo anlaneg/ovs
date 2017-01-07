@@ -44,6 +44,25 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
 struct ofp_action_header;
 
+/* Header for Open vSwitch and ONF vendor extension actions.
+ *
+ * This is the entire header for a few Open vSwitch vendor extension actions,
+ * the ones that either have no arguments or for which variable-length
+ * arguments follow the header.
+ *
+ * This cannot be used as an entirely generic vendor extension action header,
+ * because OpenFlow does not specify the location or size of the action
+ * subtype; it just happens that ONF extensions and Nicira extensions share
+ * this format. */
+struct ext_action_header {
+    ovs_be16 type;                  /* OFPAT_VENDOR. */
+    ovs_be16 len;                   /* At least 16. */
+    ovs_be32 vendor;                /* NX_VENDOR_ID or ONF_VENDOR_ID. */
+    ovs_be16 subtype;               /* See enum ofp_raw_action_type. */
+    uint8_t pad[6];
+};
+OFP_ASSERT(sizeof(struct ext_action_header) == 16);
+
 /* Raw identifiers for OpenFlow actions.
  *
  * Decoding and encoding OpenFlow actions across multiple versions is difficult
@@ -216,7 +235,7 @@ enum ofp_raw_action_type {
      * [In OpenFlow 1.5, set_field is a superset of reg_load functionality, so
      * we drop reg_load.] */
     NXAST_RAW_REG_LOAD,
-    /* NX1.0-1.4(33): struct nx_action_reg_load2, ...
+    /* NX1.0-1.4(33): struct ext_action_header, ...
      *
      * [In OpenFlow 1.5, set_field is a superset of reg_load2 functionality, so
      * we drop reg_load2.] */
@@ -275,7 +294,7 @@ enum ofp_raw_action_type {
 
     /* NX1.0+(20): struct nx_action_controller. */
     NXAST_RAW_CONTROLLER,
-    /* NX1.0+(37): struct nx_action_controller2, ... */
+    /* NX1.0+(37): struct ext_action_header, ... */
     NXAST_RAW_CONTROLLER2,
 
     /* NX1.0+(22): struct nx_action_write_metadata. */
@@ -305,6 +324,9 @@ enum ofp_raw_action_type {
 
     /* NX1.0+(39): struct nx_action_output_trunc. */
     NXAST_RAW_OUTPUT_TRUNC,
+
+    /* NX1.0+(42): struct ext_action_header, ... */
+    NXAST_RAW_CLONE,
 
 /* ## ------------------ ## */
 /* ## Debugging actions. ## */
@@ -434,6 +456,9 @@ ofpact_next_flattened(const struct ofpact *ofpact)
     case OFPACT_GOTO_TABLE:
     case OFPACT_NAT:
         return ofpact_next(ofpact);
+
+    case OFPACT_CLONE:
+        return ofpact_get_CLONE(ofpact)->actions;
 
     case OFPACT_CT:
         return ofpact_get_CT(ofpact)->actions;
@@ -584,25 +609,30 @@ static char * OVS_WARN_UNUSED_RESULT
 parse_OUTPUT(const char *arg, struct ofpbuf *ofpacts,
              enum ofputil_protocol *usable_protocols OVS_UNUSED)
 {
-    if (strchr(arg, '[')) {
-        struct ofpact_output_reg *output_reg;
-
-        output_reg = ofpact_put_OUTPUT_REG(ofpacts);
-        output_reg->max_len = UINT16_MAX;
-        return mf_parse_subfield(&output_reg->src, arg);
-    } else if (strstr(arg, "port") && strstr(arg, "max_len")) {
+    if (strstr(arg, "port") && strstr(arg, "max_len")) {
         struct ofpact_output_trunc *output_trunc;
 
         output_trunc = ofpact_put_OUTPUT_TRUNC(ofpacts);
         return parse_truncate_subfield(output_trunc, arg);
     } else {
-        struct ofpact_output *output;
+        struct mf_subfield src;
+        char *error = mf_parse_subfield(&src, arg);
+        if (!error) {
+            struct ofpact_output_reg *output_reg;
 
-        output = ofpact_put_OUTPUT(ofpacts);
-        if (!ofputil_port_from_string(arg, &output->port)) {
-            return xasprintf("%s: output to unknown port", arg);
+            output_reg = ofpact_put_OUTPUT_REG(ofpacts);
+            output_reg->max_len = UINT16_MAX;
+            output_reg->src = src;
+        } else {
+            free(error);
+            struct ofpact_output *output;
+
+            output = ofpact_put_OUTPUT(ofpacts);
+            if (!ofputil_port_from_string(arg, &output->port)) {
+                return xasprintf("%s: output to unknown port", arg);
+            }
+            output->max_len = output->port == OFPP_CONTROLLER ? UINT16_MAX : 0;
         }
-        output->max_len = output->port == OFPP_CONTROLLER ? UINT16_MAX : 0;
         return NULL;
     }
 }
@@ -689,18 +719,8 @@ enum nx_action_controller2_prop_type {
     NXAC2PT_PAUSE,              /* Flag to pause pipeline to resume later. */
 };
 
-/* Action structure for NXAST_CONTROLLER2.
- *
- * This replacement for NXAST_CONTROLLER makes it extensible via properties. */
-struct nx_action_controller2 {
-    ovs_be16 type;                  /* OFPAT_VENDOR. */
-    ovs_be16 len;                   /* Length is 16 or more. */
-    ovs_be32 vendor;                /* NX_VENDOR_ID. */
-    ovs_be16 subtype;               /* NXAST_CONTROLLER2. */
-    uint8_t zeros[6];               /* Must be zero. */
-    /* Followed by NXAC2PT_* properties. */
-};
-OFP_ASSERT(sizeof(struct nx_action_controller2) == 16);
+/* The action structure for NXAST_CONTROLLER2 is "struct ext_action_header",
+ * followed by NXAC2PT_* properties. */
 
 static enum ofperr
 decode_NXAST_RAW_CONTROLLER(const struct nx_action_controller *nac,
@@ -720,11 +740,11 @@ decode_NXAST_RAW_CONTROLLER(const struct nx_action_controller *nac,
 }
 
 static enum ofperr
-decode_NXAST_RAW_CONTROLLER2(const struct nx_action_controller2 *nac2,
+decode_NXAST_RAW_CONTROLLER2(const struct ext_action_header *eah,
                              enum ofp_version ofp_version OVS_UNUSED,
                              struct ofpbuf *out)
 {
-    if (!is_all_zeros(nac2->zeros, sizeof nac2->zeros)) {
+    if (!is_all_zeros(eah->pad, sizeof eah->pad)) {
         return OFPERR_NXBRC_MUST_BE_ZERO;
     }
 
@@ -735,8 +755,8 @@ decode_NXAST_RAW_CONTROLLER2(const struct nx_action_controller2 *nac2,
     oc->reason = OFPR_ACTION;
 
     struct ofpbuf properties;
-    ofpbuf_use_const(&properties, nac2, ntohs(nac2->len));
-    ofpbuf_pull(&properties, sizeof *nac2);
+    ofpbuf_use_const(&properties, eah, ntohs(eah->len));
+    ofpbuf_pull(&properties, sizeof *eah);
 
     while (properties.size > 0) {
         struct ofpbuf payload;
@@ -2360,28 +2380,7 @@ parse_REG_MOVE(const char *arg, struct ofpbuf *ofpacts,
                enum ofputil_protocol *usable_protocols OVS_UNUSED)
 {
     struct ofpact_reg_move *move = ofpact_put_REG_MOVE(ofpacts);
-    const char *full_arg = arg;
-    char *error;
-
-    error = mf_parse_subfield__(&move->src, &arg);
-    if (error) {
-        return error;
-    }
-    if (strncmp(arg, "->", 2)) {
-        return xasprintf("%s: missing `->' following source", full_arg);
-    }
-    arg += 2;
-    error = mf_parse_subfield(&move->dst, arg);
-    if (error) {
-        return error;
-    }
-
-    if (move->src.n_bits != move->dst.n_bits) {
-        return xasprintf("%s: source field is %d bits wide but destination is "
-                         "%d bits wide", full_arg,
-                         move->src.n_bits, move->dst.n_bits);
-    }
-    return NULL;
+    return nxm_parse_reg_move(move, arg);
 }
 
 static void
@@ -2441,25 +2440,13 @@ struct nx_action_reg_load {
 };
 OFP_ASSERT(sizeof(struct nx_action_reg_load) == 24);
 
-/* Action structure for NXAST_REG_LOAD2.
+/* The NXAST_REG_LOAD2 action structure is "struct ext_action_header",
+ * followed by:
  *
- * Compared to OFPAT_SET_FIELD, we can use this to set whole or partial fields
- * in any OpenFlow version.  Compared to NXAST_REG_LOAD, we can use this to set
- * OXM experimenter fields. */
-struct nx_action_reg_load2 {
-    ovs_be16 type;                  /* OFPAT_VENDOR. */
-    ovs_be16 len;                   /* At least 16. */
-    ovs_be32 vendor;                /* NX_VENDOR_ID. */
-    ovs_be16 subtype;               /* NXAST_SET_FIELD. */
-
-    /* Followed by:
-     * - An NXM/OXM header, value, and optionally a mask.
-     * - Enough 0-bytes to pad out to a multiple of 64 bits.
-     *
-     * The "pad" member is the beginning of the above. */
-    uint8_t pad[6];
-};
-OFP_ASSERT(sizeof(struct nx_action_reg_load2) == 16);
+ * - An NXM/OXM header, value, and optionally a mask.
+ * - Enough 0-bytes to pad out to a multiple of 64 bits.
+ *
+ * The "pad" member is the beginning of the above. */
 
 static enum ofperr
 decode_ofpat_set_field(const struct ofp12_action_set_field *oasf,
@@ -2568,12 +2555,12 @@ decode_NXAST_RAW_REG_LOAD(const struct nx_action_reg_load *narl,
 }
 
 static enum ofperr
-decode_NXAST_RAW_REG_LOAD2(const struct nx_action_reg_load2 *narl,
+decode_NXAST_RAW_REG_LOAD2(const struct ext_action_header *eah,
                            enum ofp_version ofp_version OVS_UNUSED,
                            struct ofpbuf *out)
 {
-    struct ofpbuf b = ofpbuf_const_initializer(narl, ntohs(narl->len));
-    ofpbuf_pull(&b, OBJECT_OFFSETOF(narl, pad));
+    struct ofpbuf b = ofpbuf_const_initializer(eah, ntohs(eah->len));
+    ofpbuf_pull(&b, OBJECT_OFFSETOF(eah, pad));
 
     union mf_value value, mask;
     const struct mf_field *field;
@@ -2657,11 +2644,11 @@ set_field_to_nxast(const struct ofpact_set_field *sf, struct ofpbuf *openflow)
      * NXAST_REG_LOAD, which is backward compatible. */
     if (sf->ofpact.raw == NXAST_RAW_REG_LOAD2
         || !mf_nxm_header(sf->field->id) || sf->field->variable_len) {
-        struct nx_action_reg_load2 *narl OVS_UNUSED;
+        struct ext_action_header *eah OVS_UNUSED;
         size_t start_ofs = openflow->size;
 
-        narl = put_NXAST_REG_LOAD2(openflow);
-        openflow->size = openflow->size - sizeof narl->pad;
+        eah = put_NXAST_REG_LOAD2(openflow);
+        openflow->size = openflow->size - sizeof eah->pad;
         nx_put_entry(openflow, sf->field->id, 0, sf->value,
                      ofpact_set_field_mask(sf));
         pad_ofpat(openflow, start_ofs);
@@ -4801,6 +4788,78 @@ format_UNROLL_XLATE(const struct ofpact_unroll_xlate *a, struct ds *s)
                   colors.paren,   colors.end);
 }
 
+/* The NXAST_CLONE action is "struct ext_action_header", followed by zero or
+ * more embedded OpenFlow actions. */
+
+static enum ofperr
+decode_NXAST_RAW_CLONE(const struct ext_action_header *eah,
+                        enum ofp_version ofp_version,
+                        struct ofpbuf *out)
+{
+    int error;
+    struct ofpbuf openflow;
+    const size_t clone_offset = ofpacts_pull(out);
+    struct ofpact_nest *clone = ofpact_put_CLONE(out);
+
+    /* decode action list */
+    ofpbuf_pull(out, sizeof(*clone));
+    openflow = ofpbuf_const_initializer(
+                    eah + 1, ntohs(eah->len) - sizeof *eah);
+    error = ofpacts_pull_openflow_actions__(&openflow, openflow.size,
+                                            ofp_version,
+                                            1u << OVSINST_OFPIT11_APPLY_ACTIONS,
+                                            out, 0);
+    clone = ofpbuf_push_uninit(out, sizeof *clone);
+    out->header = &clone->ofpact;
+    ofpact_finish_CLONE(out, &clone);
+    ofpbuf_push_uninit(out, clone_offset);
+    return error;
+}
+
+static void
+encode_CLONE(const struct ofpact_nest *clone,
+              enum ofp_version ofp_version, struct ofpbuf *out)
+{
+    size_t len;
+    const size_t ofs = out->size;
+    struct ext_action_header *eah;
+
+    eah = put_NXAST_CLONE(out);
+    len = ofpacts_put_openflow_actions(clone->actions,
+                                       ofpact_nest_get_action_len(clone),
+                                       out, ofp_version);
+    len += sizeof *eah;
+    eah = ofpbuf_at(out, ofs, sizeof *eah);
+    eah->len = htons(len);
+}
+
+static char * OVS_WARN_UNUSED_RESULT
+parse_CLONE(char *arg, struct ofpbuf *ofpacts,
+             enum ofputil_protocol *usable_protocols)
+{
+    const size_t clone_offset = ofpacts_pull(ofpacts);
+    struct ofpact_nest *clone = ofpact_put_CLONE(ofpacts);
+    char *error;
+
+    ofpbuf_pull(ofpacts, sizeof *clone);
+    error = ofpacts_parse_copy(arg, ofpacts, usable_protocols, false, 0);
+    /* header points to the action list */
+    ofpacts->header = ofpbuf_push_uninit(ofpacts, sizeof *clone);
+    clone = ofpacts->header;
+
+    ofpact_finish_CLONE(ofpacts, &clone);
+    ofpbuf_push_uninit(ofpacts, clone_offset);
+    return error;
+}
+
+static void
+format_CLONE(const struct ofpact_nest *a, struct ds *s)
+{
+    ds_put_format(s, "%sclone(%s", colors.paren, colors.end);
+    ofpacts_format(a->actions, ofpact_nest_get_action_len(a), s);
+    ds_put_format(s, "%s)%s", colors.paren, colors.end);
+}
+
 /* Action structure for NXAST_SAMPLE.
  *
  * Samples matching packets with the given probability and sends them
@@ -5379,10 +5438,19 @@ parse_CT(char *arg, struct ofpbuf *ofpacts,
 static void
 format_alg(int port, struct ds *s)
 {
-    if (port == IPPORT_FTP) {
+    switch(port) {
+    case IPPORT_FTP:
         ds_put_format(s, "%salg=%sftp,", colors.param, colors.end);
-    } else if (port) {
+        break;
+    case IPPORT_TFTP:
+        ds_put_format(s, "%salg=%stftp,", colors.param, colors.end);
+        break;
+    case 0:
+        /* Don't print. */
+        break;
+    default:
         ds_put_format(s, "%salg=%s%d,", colors.param, colors.end, port);
+        break;
     }
 }
 
@@ -6212,6 +6280,7 @@ ofpact_is_set_or_move_action(const struct ofpact *a)
     case OFPACT_BUNDLE:
     case OFPACT_CLEAR_ACTIONS:
     case OFPACT_CT:
+    case OFPACT_CLONE:
     case OFPACT_NAT:
     case OFPACT_CONTROLLER:
     case OFPACT_DEC_MPLS_TTL:
@@ -6288,6 +6357,7 @@ ofpact_is_allowed_in_actions_set(const struct ofpact *a)
      * the specification.  Thus the order in which they should be applied
      * in the action set is undefined. */
     case OFPACT_BUNDLE:
+    case OFPACT_CLONE:
     case OFPACT_CONTROLLER:
     case OFPACT_CT:
     case OFPACT_NAT:
@@ -6482,6 +6552,7 @@ ovs_instruction_type_from_ofpact_type(enum ofpact_type type)
         return OVSINST_OFPIT11_GOTO_TABLE;
     case OFPACT_OUTPUT:
     case OFPACT_GROUP:
+    case OFPACT_CLONE:
     case OFPACT_CONTROLLER:
     case OFPACT_ENQUEUE:
     case OFPACT_OUTPUT_REG:
@@ -7082,12 +7153,20 @@ ofpact_check__(enum ofputil_protocol *usable_protocols, struct ofpact *a,
     case OFPACT_SAMPLE:
         return 0;
 
+    case OFPACT_CLONE: {
+        struct ofpact_nest *on = ofpact_get_CLONE(a);
+        return ofpacts_check(on->actions, ofpact_nest_get_action_len(on),
+                             flow, max_ports, table_id, n_tables,
+                             usable_protocols);
+    }
+
     case OFPACT_CT: {
         struct ofpact_conntrack *oc = ofpact_get_CT(a);
 
         if (!dl_type_is_ip_any(flow->dl_type)
             || (flow->ct_state & CS_INVALID && oc->flags & NX_CT_F_COMMIT)
-            || (oc->alg == IPPORT_FTP && flow->nw_proto != IPPROTO_TCP)) {
+            || (oc->alg == IPPORT_FTP && flow->nw_proto != IPPROTO_TCP)
+            || (oc->alg == IPPORT_TFTP && flow->nw_proto != IPPROTO_UDP)) {
             /* We can't downgrade to OF1.0 and expect inconsistent CT actions
              * be silently discarded.  Instead, datapath flow install fails, so
              * it is better to flag inconsistent CT actions as hard errors. */
@@ -7637,6 +7716,7 @@ ofpact_outputs_to_port(const struct ofpact *ofpact, ofp_port_t port)
     case OFPACT_POP_MPLS:
     case OFPACT_SAMPLE:
     case OFPACT_CLEAR_ACTIONS:
+    case OFPACT_CLONE:
     case OFPACT_WRITE_ACTIONS:
     case OFPACT_GOTO_TABLE:
     case OFPACT_METER:
@@ -8051,21 +8131,6 @@ struct ofp_action_header {
     ovs_be32 vendor;
 };
 OFP_ASSERT(sizeof(struct ofp_action_header) == 8);
-
-/* Header for Nicira-defined actions and for ONF vendor extensions.
- *
- * This cannot be used as an entirely generic vendor extension action header,
- * because OpenFlow does not specify the location or size of the action
- * subtype; it just happens that ONF extensions and Nicira extensions share
- * this format. */
-struct ext_action_header {
-    ovs_be16 type;                  /* OFPAT_VENDOR. */
-    ovs_be16 len;                   /* At least 16. */
-    ovs_be32 vendor;                /* NX_VENDOR_ID or ONF_VENDOR_ID. */
-    ovs_be16 subtype;               /* See enum ofp_raw_action_type. */
-    uint8_t pad[6];
-};
-OFP_ASSERT(sizeof(struct ext_action_header) == 16);
 
 static bool
 ofpact_hdrs_equal(const struct ofpact_hdrs *a,

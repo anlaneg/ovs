@@ -81,7 +81,7 @@
         Adds the specified ACL to <var>switch</var>.
         <var>direction</var> must be either <code>from-lport</code> or
         <code>to-lport</code>.  <var>priority</var> must be between
-        <code>1</code> and <code>65534</code>, inclusive.  If
+        <code>0</code> and <code>32767</code>, inclusive.  If
         <code>--log</code> is specified, packet logging is enabled for the
         ACL.  A full description of the fields are in <code>ovn-nb</code>(5).
       </dd>
@@ -125,7 +125,9 @@
         <p>
           Creates on <var>switch</var> a logical switch port named
           <var>port</var> that is a child of <var>parent</var> that is
-          identified with VLAN ID <var>tag_request</var>.  If
+          identified with VLAN ID <var>tag_request</var>,
+          which must be between <code>0</code> and
+          <code>4095</code>, inclusive. If
           <var>tag_request</var> is <code>0</code>, <code>ovn-northd</code>
           generates a tag that is unique in the scope of <var>parent</var>.
           This is useful in cases such as virtualized container environments
@@ -717,6 +719,42 @@
         <code>ovn-nbctl</code> waits even for earlier changes to the database
         to propagate down to the southbound database or all of the OVN chassis,
         according to the argument to <code>--wait</code>.
+      </dd>
+    </dl>
+
+    <h1>Remote Connectivity Commands</h1>
+    <dl>
+      <dt><code>get-connection</code></dt>
+      <dd>
+      Prints the configured connection(s).
+      </dd>
+
+      <dt><code>del-connection</code></dt>
+      <dd>
+      Deletes the configured connection(s).
+      </dd>
+
+      <dt><code>set-connection</code> <var>target</var>...</dt>
+      <dd>
+      Sets the configured manager target or targets.
+      </dd>
+    </dl>
+
+    <h1>SSL Configuration Commands</h1>
+    <dl>
+      <dt><code>get-ssl</code></dt>
+      <dd>
+      Prints the SSL configuration.
+      </dd>
+
+      <dt><code>del-ssl</code></dt>
+      <dd>
+      Deletes the current SSL configuration.
+      </dd>
+
+      <dt>[<code>--bootstrap</code>] <code>set-ssl</code> <var>private-key</var> <var>certificate</var> <var>ca-cert</var></dt>
+      <dd>
+      Sets the SSL configuration.
       </dd>
     </dl>
 

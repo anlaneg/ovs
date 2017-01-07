@@ -109,6 +109,7 @@
     OFPACT(CT,              ofpact_conntrack,   ofpact, "ct")           \
     OFPACT(NAT,             ofpact_nat,         ofpact, "nat")          \
     OFPACT(OUTPUT_TRUNC,    ofpact_output_trunc,ofpact, "output_trunc") \
+    OFPACT(CLONE,           ofpact_nest,        actions, "clone")       \
                                                                         \
     /* Debugging actions.                                               \
      *                                                                  \
@@ -532,9 +533,9 @@ struct ofpact_meter {
     uint32_t meter_id;
 };
 
-/* OFPACT_WRITE_ACTIONS.
+/* OFPACT_WRITE_ACTIONS, OFPACT_CLONE.
  *
- * Used for OFPIT11_WRITE_ACTIONS. */
+ * Used for OFPIT11_WRITE_ACTIONS, NXAST_CLONE. */
 struct ofpact_nest {
     OFPACT_PADDED_MEMBERS(struct ofpact ofpact;);
     struct ofpact actions[];
@@ -542,6 +543,12 @@ struct ofpact_nest {
 BUILD_ASSERT_DECL(offsetof(struct ofpact_nest, actions) % OFPACT_ALIGNTO == 0);
 BUILD_ASSERT_DECL(offsetof(struct ofpact_nest, actions)
                   == sizeof(struct ofpact_nest));
+
+static inline size_t
+ofpact_nest_get_action_len(const struct ofpact_nest *on)
+{
+    return on->ofpact.len - offsetof(struct ofpact_nest, actions);
+}
 
 /* Bits for 'flags' in struct nx_action_conntrack.
  *
@@ -557,6 +564,10 @@ enum nx_conntrack_flags {
 
 #if !defined(IPPORT_FTP)
 #define IPPORT_FTP  21
+#endif
+
+#if !defined(IPPORT_TFTP)
+#define IPPORT_TFTP  69
 #endif
 
 /* OFPACT_CT.
@@ -582,12 +593,6 @@ static inline size_t
 ofpact_ct_get_action_len(const struct ofpact_conntrack *oc)
 {
     return oc->ofpact.len - offsetof(struct ofpact_conntrack, actions);
-}
-
-static inline size_t
-ofpact_nest_get_action_len(const struct ofpact_nest *on)
-{
-    return on->ofpact.len - offsetof(struct ofpact_nest, actions);
 }
 
 void ofpacts_execute_action_set(struct ofpbuf *action_list,

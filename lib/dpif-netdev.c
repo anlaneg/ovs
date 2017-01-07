@@ -1442,7 +1442,7 @@ get_port_by_number(struct dp_netdev *dp,
         return EINVAL;
     } else {
         *portp = dp_netdev_lookup_port(dp, port_no);
-        return *portp ? 0 : ENOENT;
+        return *portp ? 0 : ENODEV;
     }
 }
 
@@ -1481,7 +1481,10 @@ get_port_by_name(struct dp_netdev *dp,
             return 0;
         }
     }
-    return ENOENT;
+
+    /* Callers of dpif_netdev_port_query_by_name() expect ENODEV for a non
+     * existing port. */
+    return ENODEV;
 }
 
 static int

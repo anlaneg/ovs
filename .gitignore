@@ -76,3 +76,4 @@ testsuite.tmp.orig
 .cproject
 .project
 .settings/
+/.venv

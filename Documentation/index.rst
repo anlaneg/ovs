@@ -41,12 +41,17 @@ The Open vSwitch documentation is organised into multiple sections:
   OVN internals and operation
 - :doc:`How-to guides </howto/index>` are recipes or use-cases for OVS and OVN.
   They are more advanced than the tutorials.
+- :doc:`Frequently Asked Questions </faq/index>` provide general insight into
+  a variety of topics related to configuration and operation of OVS and OVN.
 
 First Steps
 -----------
 
 Getting started with Open vSwitch (OVS) or Open Virtual Network (OVN) for Open
 vSwitch? Start here.
+
+- **Overview:** :doc:`intro/what-is-ovs` |
+  :doc:`intro/why-ovs`
 
 - **Install:** :doc:`intro/install/general` |
   :doc:`intro/install/userspace` |
@@ -61,7 +66,25 @@ vSwitch? Start here.
 Deeper Dive
 -----------
 
+- **Architecture** :doc:`topics/design` |
+  :doc:`topics/openflow` |
+  :doc:`topics/integration` |
+  :doc:`topics/porting`
+
+- **DPDK** :doc:`howto/dpdk` |
+  :doc:`topics/dpdk/vhost-user`
+
+- **Windows** :doc:`topics/windows`
+
+- **Integrations:** :doc:`topics/language-bindings`
+
 - **Reference Guides:** :doc:`ref/index`
+
+- **Testing** :doc:`topics/testing`
+
+- **Packaging:** :doc:`intro/install/debian` |
+  :doc:`intro/install/rhel` |
+  :doc:`intro/install/fedora`
 
 The Open vSwitch Project
 ------------------------
@@ -71,6 +94,7 @@ Learn more about the Open vSwitch project and about how you can contribute:
 - **Community:** :doc:`internals/release-process` |
   :doc:`internals/authors` |
   :doc:`internals/mailing-lists` |
+  :doc:`internals/patchwork` |
   :doc:`internals/bugs` |
   :doc:`internals/security`
 
@@ -82,7 +106,8 @@ Learn more about the Open vSwitch project and about how you can contribute:
   :doc:`internals/committer-responsibilities` |
   :doc:`internals/committer-grant-revocation`
 
-- **Documentation:** :doc:`internals/contributing/documentation-style`
+- **Documentation:** :doc:`internals/contributing/documentation-style` |
+  :doc:`Building Open vSwitch Documentation <intro/install/documentation>`
 
 Getting Help
 -------------
