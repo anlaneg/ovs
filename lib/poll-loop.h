@@ -61,6 +61,7 @@ void poll_timer_wait_at(long long int msec, const char *where);
 #define poll_timer_wait(msec) poll_timer_wait_at(msec, OVS_SOURCE_LOCATOR)
 
 void poll_timer_wait_until_at(long long int msec, const char *where);
+/*设置pool时间及位置*/
 #define poll_timer_wait_until(msec)             \
     poll_timer_wait_until_at(msec, OVS_SOURCE_LOCATOR)
 

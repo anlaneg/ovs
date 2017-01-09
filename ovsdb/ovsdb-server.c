@@ -239,7 +239,7 @@ main_loop(struct ovsdb_jsonrpc_server *jsonrpc, struct shash *all_dbs,
             poll_immediate_wake();
         }
         poll_timer_wait_until(status_timer);
-        poll_block();
+        poll_block();//尝试poll阻塞
         if (should_service_stop()) {
             *exiting = true;
         }

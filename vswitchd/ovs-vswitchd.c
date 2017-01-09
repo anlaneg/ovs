@@ -119,9 +119,9 @@ main(int argc, char *argv[])
         unixctl_server_wait(unixctl);
         netdev_wait();
         if (exiting) {
-            poll_immediate_wake();
+            poll_immediate_wake();//立即触发poll_block()
         }
-        poll_block();
+        poll_block();//阻塞等待事件
         if (should_service_stop()) {
             exiting = true;
         }

@@ -302,7 +302,7 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
         }
 
 #ifndef _WIN32
-        retval = poll(pollfds, n_pollfds, time_left);
+        retval = poll(pollfds, n_pollfds, time_left);//在此阻塞接受fd
         if (retval < 0) {
             retval = -errno;
         }

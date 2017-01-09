@@ -144,6 +144,7 @@ fd_send(struct stream *stream, const void *buffer, size_t n)//发送buffer中的
     return (retval > 0 ? retval : -EAGAIN);
 }
 
+//按等待类型，创建期待可读或可写的poll_node
 static void
 fd_wait(struct stream *stream, enum stream_wait_type wait)
 {
@@ -151,11 +152,11 @@ fd_wait(struct stream *stream, enum stream_wait_type wait)
     switch (wait) {
     case STREAM_CONNECT:
     case STREAM_SEND:
-        poll_fd_wait(s->fd, POLLOUT);
+        poll_fd_wait(s->fd, POLLOUT);//创建write事件
         break;
 
     case STREAM_RECV:
-        poll_fd_wait(s->fd, POLLIN);
+        poll_fd_wait(s->fd, POLLIN);//创建read事件
         break;
 
     default:
@@ -173,7 +174,7 @@ static const struct stream_class stream_fd_class = {
     fd_send,                    /* send */ //发送
     NULL,                       /* run */
     NULL,                       /* run_wait */
-    fd_wait,                    /* wait */
+    fd_wait,                    /* wait */ //将fd加入到poll_node,期待相应的读写事件
 };
 
 /* Passive file descriptor stream. */

@@ -219,13 +219,13 @@ fatal_signal_run(void)
 }
 
 void
-fatal_signal_wait(void)//创建相应的等待句柄
+fatal_signal_wait(void)//创建对信号的等待poll_node
 {
     fatal_signal_init();
 #ifdef _WIN32
     poll_wevent_wait(wevent);
 #else
-    poll_fd_wait(signal_fds[0], POLLIN);
+    poll_fd_wait(signal_fds[0], POLLIN);//注册信号fd
 #endif
 }
 
