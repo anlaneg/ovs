@@ -24,7 +24,7 @@
 #include "util.h"
 
 static void
-dp_packet_init__(struct dp_packet *b, size_t allocated, enum dp_packet_source source)
+dp_packet_init__(struct dp_packet *b, size_t allocated, enum dp_packet_source source)//初始化设置packet
 {
     dp_packet_set_allocated(b, allocated);
     b->source = source;
@@ -51,6 +51,7 @@ dp_packet_use__(struct dp_packet *b, void *base, size_t allocated,
  * freed. */
 void
 dp_packet_use(struct dp_packet *b, void *base, size_t allocated)
+//使用malloc类型管理packet,base是packet的起始内存，allocated是申请字节数
 {
     dp_packet_use__(b, base, allocated, DPBUF_MALLOC);
 }
@@ -70,7 +71,7 @@ dp_packet_use(struct dp_packet *b, void *base, size_t allocated)
  * on an dp_packet initialized by this function, so that if it expanded into the
  * heap, that memory is freed. */
 void
-dp_packet_use_stub(struct dp_packet *b, void *base, size_t allocated)
+dp_packet_use_stub(struct dp_packet *b, void *base, size_t allocated)//使用stub类型管理packet
 {
     dp_packet_use__(b, base, allocated, DPBUF_STUB);
 }
@@ -83,7 +84,7 @@ dp_packet_use_stub(struct dp_packet *b, void *base, size_t allocated)
  * An dp_packet operation that requires reallocating data will assert-fail if this
  * function was used to initialize it. */
 void
-dp_packet_use_const(struct dp_packet *b, const void *data, size_t size)
+dp_packet_use_const(struct dp_packet *b, const void *data, size_t size)//使用stack方式创建dp_packet
 {
     dp_packet_use__(b, CONST_CAST(void *, data), size, DPBUF_STACK);
     dp_packet_set_size(b, size);
@@ -96,7 +97,7 @@ dp_packet_use_const(struct dp_packet *b, const void *data, size_t size)
  * buffer.  dp_packet base, data and size are initialized by dpdk rcv() so no
  * need to initialize those fields. */
 void
-dp_packet_init_dpdk(struct dp_packet *b, size_t allocated)
+dp_packet_init_dpdk(struct dp_packet *b, size_t allocated)//使用dpdk类型管理packet
 {
     dp_packet_init__(b, allocated, DPBUF_DPDK);
 }
@@ -225,6 +226,7 @@ dp_packet_copy__(struct dp_packet *b, uint8_t *new_base,
 
 /* Reallocates 'b' so that it has exactly 'new_headroom' and 'new_tailroom'
  * bytes of headroom and tailroom, respectively. */
+//增长packet，使其headroom为new_headroom,使其tailroom为new_tailroom
 static void
 dp_packet_resize__(struct dp_packet *b, size_t new_headroom, size_t new_tailroom)
 {
@@ -238,19 +240,20 @@ dp_packet_resize__(struct dp_packet *b, size_t new_headroom, size_t new_tailroom
         OVS_NOT_REACHED();//dpdk不能进入此函数，进入即报错(dpdk在基头部预存了64字节）
 
     case DPBUF_MALLOC:
-        if (new_headroom == dp_packet_headroom(b)) {
+        if (new_headroom == dp_packet_headroom(b)) {//头部大小合适时，采用realloc
             new_base = xrealloc(dp_packet_base(b), new_allocated);
         } else {
             new_base = xmalloc(new_allocated);
             dp_packet_copy__(b, new_base, new_headroom, new_tailroom);
-            free(dp_packet_base(b));
+            //重新申请空间，将旧的copy到新的，保证new_headroom,new_tailroom
+            free(dp_packet_base(b));//释放内存
         }
         break;
 
-    case DPBUF_STACK:
+    case DPBUF_STACK://stack上无法增加
         OVS_NOT_REACHED();
 
-    case DPBUF_STUB:
+    case DPBUF_STUB://增大，但不释放旧的
         b->source = DPBUF_MALLOC;
         new_base = xmalloc(new_allocated);
         dp_packet_copy__(b, new_base, new_headroom, new_tailroom);
@@ -287,7 +290,7 @@ void
 dp_packet_prealloc_headroom(struct dp_packet *b, size_t size)//在报文头部空出size字节（即保证headroom>=size)
 {
     if (size > dp_packet_headroom(b)) {//要求的size比headroom大
-        dp_packet_resize__(b, MAX(size, 64), dp_packet_tailroom(b));
+        dp_packet_resize__(b, MAX(size, 64), dp_packet_tailroom(b));//扩充headroom
     }
 }
 
@@ -408,10 +411,11 @@ dp_packet_push_uninit(struct dp_packet *b, size_t size)//在packet头部先空�
 /* Prefixes 'size' zeroed bytes to the head end of 'b', reallocating and
  * copying its data if necessary.  Returns a pointer to the first byte of the
  * data's location in the dp_packet. */
+//在头部空出size字节，并将这size字节置为0
 void *
 dp_packet_push_zeros(struct dp_packet *b, size_t size)
 {
-    void *dst = dp_packet_push_uninit(b, size);
+    void *dst = dp_packet_push_uninit(b, size);//在头部空出size字节，并将这size字节置为0
     memset(dst, 0, size);
     return dst;
 }
@@ -419,6 +423,7 @@ dp_packet_push_zeros(struct dp_packet *b, size_t size)
 /* Copies the 'size' bytes starting at 'p' to the head end of 'b', reallocating
  * and copying its data if necessary.  Returns a pointer to the first byte of
  * the data's location in the dp_packet. */
+//在头部空出size字节，在这size字节里填充b
 void *
 dp_packet_push(struct dp_packet *b, const void *p, size_t size)
 {
@@ -461,17 +466,17 @@ dp_packet_adjust_layer_offset(uint16_t *offset, int increment)
  * pointer and the layer offsets.  The caller is responsible for
  * modifying the contents. */
 void *
-dp_packet_resize_l2_5(struct dp_packet *b, int increment)
+dp_packet_resize_l2_5(struct dp_packet *b, int increment)//调整报文数据占用空间及offset设置
 {
     if (increment >= 0) {
-        dp_packet_push_uninit(b, increment);
+        dp_packet_push_uninit(b, increment);//头部直加increment
     } else {
-        dp_packet_pull(b, -increment);
+        dp_packet_pull(b, -increment);//数据缩进increment
     }
 
     /* Adjust layer offsets after l2_5. */
-    dp_packet_adjust_layer_offset(&b->l3_ofs, increment);
-    dp_packet_adjust_layer_offset(&b->l4_ofs, increment);
+    dp_packet_adjust_layer_offset(&b->l3_ofs, increment);//变更l3_ofs
+    dp_packet_adjust_layer_offset(&b->l4_ofs, increment);//变更l4_ofs
 
     return dp_packet_data(b);
 }
@@ -480,9 +485,9 @@ dp_packet_resize_l2_5(struct dp_packet *b, int increment)
  * pointer and the layer offsets.  The caller is responsible for
  * modifying the contents. */
 void *
-dp_packet_resize_l2(struct dp_packet *b, int increment)
+dp_packet_resize_l2(struct dp_packet *b, int increment)//更新报文空间占用，更新l3,l4 offset
 {
     dp_packet_resize_l2_5(b, increment);
-    dp_packet_adjust_layer_offset(&b->l2_5_ofs, increment);
+    dp_packet_adjust_layer_offset(&b->l2_5_ofs, increment);//变更l2_5_ofs
     return dp_packet_data(b);
 }

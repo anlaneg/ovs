@@ -61,7 +61,7 @@ struct dp_packet {
     enum dp_packet_source source;  /* Source of memory allocated as 'base'. */ //指明packet buffer来源
     uint8_t l2_pad_size;           /* Detected l2 padding size.　//l2层占用的size
                                     * Padding is non-pullable. */
-    uint16_t l2_5_ofs;             /* MPLS label stack offset, or UINT16_MAX */
+    uint16_t l2_5_ofs;             /* MPLS label stack offset, or UINT16_MAX */ //2.5层协议
     uint16_t l3_ofs;               /* Network-level header offset,
                                     * or UINT16_MAX. */
     uint16_t l4_ofs;               /* Transport-level header offset,
@@ -236,12 +236,12 @@ dp_packet_clear(struct dp_packet *b)
 /* Removes 'size' bytes from the head end of 'b', which must contain at least
  * 'size' bytes of data.  Returns the first byte of data removed. */
 static inline void *
-dp_packet_pull(struct dp_packet *b, size_t size)
+dp_packet_pull(struct dp_packet *b, size_t size)//通过右移增加headroom来移除size长度的数据
 {
     void *data = dp_packet_data(b);
     ovs_assert(dp_packet_size(b) - dp_packet_l2_pad_size(b) >= size);
-    dp_packet_set_data(b, (char *) dp_packet_data(b) + size);
-    dp_packet_set_size(b, dp_packet_size(b) - size);
+    dp_packet_set_data(b, (char *) dp_packet_data(b) + size);//变更数据新位置
+    dp_packet_set_size(b, dp_packet_size(b) - size);//变更报文新位置
     return data;
 }
 
@@ -265,7 +265,7 @@ dp_packet_equal(const struct dp_packet *a, const struct dp_packet *b)
 /* Get the start of the Ethernet frame.  'l3_ofs' marks the end of the l2
  * headers, so return NULL if it is not set. */
 static inline void *
-dp_packet_l2(const struct dp_packet *b)
+dp_packet_l2(const struct dp_packet *b)//返回l2起始位置
 {
     return (b->l3_ofs != UINT16_MAX) ? dp_packet_data(b) : NULL;
 }
@@ -282,20 +282,20 @@ dp_packet_reset_offsets(struct dp_packet *b)//将offset置为无效
 }
 
 static inline uint8_t
-dp_packet_l2_pad_size(const struct dp_packet *b)
+dp_packet_l2_pad_size(const struct dp_packet *b)//返回l2层占用的字节数
 {
     return b->l2_pad_size;
 }
 
 static inline void
-dp_packet_set_l2_pad_size(struct dp_packet *b, uint8_t pad_size)
+dp_packet_set_l2_pad_size(struct dp_packet *b, uint8_t pad_size)//设置l2层占用的字节数
 {
     ovs_assert(pad_size <= dp_packet_size(b));
     b->l2_pad_size = pad_size;
 }
 
 static inline void *
-dp_packet_l2_5(const struct dp_packet *b)
+dp_packet_l2_5(const struct dp_packet *b)//获取2.5层偏移
 {
     return b->l2_5_ofs != UINT16_MAX
            ? (char *) dp_packet_data(b) + b->l2_5_ofs
@@ -303,7 +303,7 @@ dp_packet_l2_5(const struct dp_packet *b)
 }
 
 static inline void
-dp_packet_set_l2_5(struct dp_packet *b, void *l2_5)
+dp_packet_set_l2_5(struct dp_packet *b, void *l2_5)//设置2.5层偏移
 {
     b->l2_5_ofs = l2_5
                   ? (char *) l2_5 - (char *) dp_packet_data(b)
@@ -311,7 +311,7 @@ dp_packet_set_l2_5(struct dp_packet *b, void *l2_5)
 }
 
 static inline void *
-dp_packet_l3(const struct dp_packet *b)
+dp_packet_l3(const struct dp_packet *b)//返回l3层首地址
 {
     return b->l3_ofs != UINT16_MAX
            ? (char *) dp_packet_data(b) + b->l3_ofs
@@ -319,13 +319,13 @@ dp_packet_l3(const struct dp_packet *b)
 }
 
 static inline void
-dp_packet_set_l3(struct dp_packet *b, void *l3)
+dp_packet_set_l3(struct dp_packet *b, void *l3)//设置l3层首地址
 {
     b->l3_ofs = l3 ? (char *) l3 - (char *) dp_packet_data(b) : UINT16_MAX;
 }
 
 static inline void *
-dp_packet_l4(const struct dp_packet *b)
+dp_packet_l4(const struct dp_packet *b)//返回l4层首地址
 {
     return b->l4_ofs != UINT16_MAX
            ? (char *) dp_packet_data(b) + b->l4_ofs
@@ -333,7 +333,7 @@ dp_packet_l4(const struct dp_packet *b)
 }
 
 static inline void
-dp_packet_set_l4(struct dp_packet *b, void *l4)
+dp_packet_set_l4(struct dp_packet *b, void *l4)//设置l4层
 {
     b->l4_ofs = l4 ? (char *) l4 - (char *) dp_packet_data(b) : UINT16_MAX;
 }
@@ -348,11 +348,11 @@ dp_packet_l4_size(const struct dp_packet *b)
 }
 
 static inline const void *
-dp_packet_get_tcp_payload(const struct dp_packet *b)
+dp_packet_get_tcp_payload(const struct dp_packet *b)//返回tcp数据部分
 {
     size_t l4_size = dp_packet_l4_size(b);
 
-    if (OVS_LIKELY(l4_size >= TCP_HEADER_LEN)) {
+    if (OVS_LIKELY(l4_size >= TCP_HEADER_LEN)) {//肯定得大于tcp header len
         struct tcp_header *tcp = dp_packet_l4(b);
         int tcp_len = TCP_OFFSET(tcp->tcp_ctl) * 4;
 
@@ -364,28 +364,28 @@ dp_packet_get_tcp_payload(const struct dp_packet *b)
 }
 
 static inline const void *
-dp_packet_get_udp_payload(const struct dp_packet *b)
+dp_packet_get_udp_payload(const struct dp_packet *b)//返回udp负载
 {
     return OVS_LIKELY(dp_packet_l4_size(b) >= UDP_HEADER_LEN)
         ? (const char *)dp_packet_l4(b) + UDP_HEADER_LEN : NULL;
 }
 
 static inline const void *
-dp_packet_get_sctp_payload(const struct dp_packet *b)
+dp_packet_get_sctp_payload(const struct dp_packet *b)//返回sctp负载
 {
     return OVS_LIKELY(dp_packet_l4_size(b) >= SCTP_HEADER_LEN)
         ? (const char *)dp_packet_l4(b) + SCTP_HEADER_LEN : NULL;
 }
 
 static inline const void *
-dp_packet_get_icmp_payload(const struct dp_packet *b)
+dp_packet_get_icmp_payload(const struct dp_packet *b)//返回icmp负载
 {
     return OVS_LIKELY(dp_packet_l4_size(b) >= ICMP_HEADER_LEN)
         ? (const char *)dp_packet_l4(b) + ICMP_HEADER_LEN : NULL;
 }
 
 static inline const void *
-dp_packet_get_nd_payload(const struct dp_packet *b)
+dp_packet_get_nd_payload(const struct dp_packet *b)//返回nd负载
 {
     return OVS_LIKELY(dp_packet_l4_size(b) >= ND_MSG_LEN)
         ? (const char *)dp_packet_l4(b) + ND_MSG_LEN : NULL;
@@ -401,6 +401,7 @@ dp_packet_base(const struct dp_packet *b)
     return b->mbuf.buf_addr;
 }
 
+//设置报文的buf起始地址
 static inline void
 dp_packet_set_base(struct dp_packet *b, void *d)
 {
@@ -414,7 +415,7 @@ dp_packet_size(const struct dp_packet *b)//返回报文长度
 }
 
 static inline void
-dp_packet_set_size(struct dp_packet *b, uint32_t v)//更新报文长度
+dp_packet_set_size(struct dp_packet *b, uint32_t v)//更新报文长度（没有考虑分片）
 {
     /* netdev-dpdk does not currently support segmentation; consequently, for
      * all intents and purposes, 'data_len' (16 bit) and 'pkt_len' (32 bit) may
@@ -443,13 +444,14 @@ __packet_set_data(struct dp_packet *b, uint16_t v)
     b->mbuf.data_off = v;
 }
 
-//返回mbuf对应的报文数据长度
+//返回缓存区总大小
 static inline uint16_t
 dp_packet_get_allocated(const struct dp_packet *b)
 {
     return b->mbuf.buf_len;
 }
 
+//设置缓冲区总大小
 static inline void
 dp_packet_set_allocated(struct dp_packet *b, uint16_t s)
 {
@@ -543,13 +545,13 @@ dp_packet_data(const struct dp_packet *b)
 }
 
 static inline void
-dp_packet_set_data(struct dp_packet *b, void *data)
+dp_packet_set_data(struct dp_packet *b, void *data)//设置data位置，如果data为NULL,则置为无效
 {
     if (data) {
     	//有数据时，把data要放在现有报文的前面，偏移量需要减少
         __packet_set_data(b, (char *) data - (char *) dp_packet_base(b));
     } else {
-        __packet_set_data(b, UINT16_MAX);
+        __packet_set_data(b, UINT16_MAX);//置为无效
     }
 }
 
@@ -596,7 +598,7 @@ dp_packet_rss_valid(struct dp_packet *p)
 }
 
 static inline void
-dp_packet_rss_invalidate(struct dp_packet *p)
+dp_packet_rss_invalidate(struct dp_packet *p)//将rss置为无效
 {
 #ifdef DPDK_NETDEV
     p->mbuf.ol_flags &= ~PKT_RX_RSS_HASH;

@@ -275,9 +275,10 @@ static struct ovs_list dpdk_list OVS_GUARDED_BY(dpdk_mutex)
 static struct ovs_mutex dpdk_mp_mutex OVS_ACQ_AFTER(dpdk_mutex)
     = OVS_MUTEX_INITIALIZER;
 
-static struct ovs_list dpdk_mp_list OVS_GUARDED_BY(dpdk_mp_mutex)
+static struct ovs_list dpdk_mp_list OVS_GUARDED_BY(dpdk_mp_mutex)//挂接所有dpdk memory pool
     = OVS_LIST_INITIALIZER(&dpdk_mp_list);
 
+//dpdk memory pool使用
 struct dpdk_mp {
     struct rte_mempool *mp;
     int mtu;
@@ -326,7 +327,7 @@ enum dpdk_hw_ol_features {
 struct netdev_dpdk {
     struct netdev up;//外部的结构体，供框架用
     int port_id;
-    int max_packet_len;
+    int max_packet_len;//支持的最大报文数
     enum dpdk_dev_type type;
 
     struct dpdk_tx_queue *tx_q;
@@ -368,7 +369,7 @@ struct netdev_dpdk {
     /* The following properties cannot be changed when a device is running,
      * so we remember the request and update them next time
      * netdev_dpdk*_reconfigure() is called */
-    int requested_mtu;
+    int requested_mtu;//含ethhdr,crc,vlan
     int requested_n_txq;
     int requested_n_rxq;
     int requested_rxq_size;
@@ -379,7 +380,7 @@ struct netdev_dpdk {
     int txq_size;
 
     /* Socket ID detected when vHost device is brought up */
-    int requested_socket_id;
+    int requested_socket_id;//要求在哪个socket上，依据此创建对应mempool
 
     /* Denotes whether vHost port is client/server mode */
     uint64_t vhost_driver_flags;
@@ -461,6 +462,7 @@ ovs_rte_pktmbuf_init(struct rte_mempool *mp,
     rte_pktmbuf_init(mp, opaque_arg, _p, i);
 
     dp_packet_init_dpdk((struct dp_packet *) pkt, pkt->buf_len);
+    //直接将mbuf传入，要求mbuf的header room上必须跑够容纳dp_packet
 }
 
 static struct dpdk_mp *
@@ -478,6 +480,7 @@ dpdk_mp_create(int socket_id, int mtu)
     dmp->socket_id = socket_id;
     dmp->mtu = mtu;
     dmp->refcount = 1;
+    //新版本dpdk的体贴服务，容许使用者存放一些私有结构,为此想法提出者点个赞
     mbp_priv.mbuf_data_room_size = MBUF_SIZE(mtu) - sizeof(struct dp_packet);
     mbp_priv.mbuf_priv_size = sizeof(struct dp_packet)
                               - sizeof(struct rte_mbuf);
@@ -486,6 +489,7 @@ dpdk_mp_create(int socket_id, int mtu)
      * when the number of ports and rxqs that utilize a particular mempool can
      * change dynamically at runtime. For now, use this rough heurisitic.
      */
+    //需要申请的mbuf数量
     if (mtu >= ETHER_MTU) {
         mp_size = MAX_NB_MBUF;
     } else {
@@ -517,13 +521,13 @@ dpdk_mp_create(int socket_id, int mtu)
 }
 
 static struct dpdk_mp *
-dpdk_mp_get(int socket_id, int mtu)
+dpdk_mp_get(int socket_id, int mtu)//获取或创建指定dpdk mp
 {
     struct dpdk_mp *dmp;
 
     ovs_mutex_lock(&dpdk_mp_mutex);
     LIST_FOR_EACH (dmp, list_node, &dpdk_mp_list) {
-        if (dmp->socket_id == socket_id && dmp->mtu == mtu) {
+        if (dmp->socket_id == socket_id && dmp->mtu == mtu) {//不同socket,不同mtu决定不同的memory pool
             dmp->refcount++;
             goto out;
         }
@@ -550,7 +554,7 @@ dpdk_mp_put(struct dpdk_mp *dmp)
 
     if (!--dmp->refcount) {
         ovs_list_remove(&dmp->list_node);
-        rte_mempool_free(dmp->mp);
+        rte_mempool_free(dmp->mp);//dpdk新版本已支持mempool释放
         rte_free(dmp);
     }
     ovs_mutex_unlock(&dpdk_mp_mutex);
@@ -561,7 +565,7 @@ dpdk_mp_put(struct dpdk_mp *dmp)
  * On success new configuration will be applied.
  * On error, device will be left unchanged. */
 static int
-netdev_dpdk_mempool_configure(struct netdev_dpdk *dev)
+netdev_dpdk_mempool_configure(struct netdev_dpdk *dev)//配置dev的内存池（mbuf池）
     OVS_REQUIRES(dev->mutex)
 {
     uint32_t buf_size = dpdk_buf_size(dev->requested_mtu);
@@ -574,7 +578,7 @@ netdev_dpdk_mempool_configure(struct netdev_dpdk *dev)
                  dev->up.name, dev->requested_mtu, dev->requested_socket_id);
         return ENOMEM;
     } else {
-        dpdk_mp_put(dev->dpdk_mp);
+        dpdk_mp_put(dev->dpdk_mp);//释放mempool
         dev->dpdk_mp = mp;
         dev->mtu = dev->requested_mtu;
         dev->socket_id = dev->requested_socket_id;
@@ -3149,7 +3153,7 @@ netdev_dpdk_reconfigure(struct netdev *netdev)
     rte_eth_dev_stop(dev->port_id);
 
     if (dev->mtu != dev->requested_mtu) {
-        netdev_dpdk_mempool_configure(dev);
+        netdev_dpdk_mempool_configure(dev);//mempool创建，释放
     }
 
     netdev->n_txq = dev->requested_n_txq;
