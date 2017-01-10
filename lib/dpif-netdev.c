@@ -1299,7 +1299,7 @@ port_create(const char *devname, const char *type,
                      devname, ovs_strerror(errno));
             goto out_rxq_close;
         }
-        port->rxqs[i].core_id = -1;
+        port->rxqs[i].core_id = OVS_CORE_UNSPEC;
         n_open_rxqs++;
     }
 
@@ -1528,7 +1528,7 @@ has_pmd_rxq_for_numa(struct dp_netdev *dp, int numa_id)
             for (i = 0; i < port->n_rxq; i++) {
                 unsigned core_id = port->rxqs[i].core_id;
 
-                if (core_id != -1
+                if (core_id != OVS_CORE_UNSPEC
                     && ovs_numa_get_numa_id(core_id) == numa_id) {
                     return true;
                 }
@@ -2722,7 +2722,7 @@ parse_affinity_list(const char *affinity_list, unsigned *core_ids, int n_rxq)
     int error = 0;
 
     for (i = 0; i < n_rxq; i++) {
-        core_ids[i] = -1;
+        core_ids[i] = OVS_CORE_UNSPEC;
     }
 
     if (!affinity_list) {
@@ -3635,7 +3635,7 @@ dp_netdev_add_port_rx_to_pmds(struct dp_netdev *dp,
 
     for (i = 0; i < port->n_rxq; i++) {
         if (pinned) {
-            if (port->rxqs[i].core_id == -1) {
+            if (port->rxqs[i].core_id == OVS_CORE_UNSPEC) {
                 continue;
             }
             pmd = dp_netdev_get_pmd(dp, port->rxqs[i].core_id);//获取到core对应的pmd
@@ -3649,7 +3649,7 @@ dp_netdev_add_port_rx_to_pmds(struct dp_netdev *dp,
             pmd->isolated = true;
             dp_netdev_pmd_unref(pmd);
         } else {
-            if (port->rxqs[i].core_id != -1) {
+            if (port->rxqs[i].core_id != OVS_CORE_UNSPEC) {
                 continue;
             }
             pmd = dp_netdev_less_loaded_pmd_on_numa(dp, numa_id);
@@ -3778,7 +3778,7 @@ dp_netdev_reset_pmd_threads(struct dp_netdev *dp)
             for (i = 0; i < port->n_rxq; i++) {
                 unsigned core_id = port->rxqs[i].core_id;
 
-                if (core_id != -1) {
+                if (core_id != OVS_CORE_UNSPEC) {
                     numa_id = ovs_numa_get_numa_id(core_id);
                     hmapx_add(&numas, (void *) numa_id);
                 }
