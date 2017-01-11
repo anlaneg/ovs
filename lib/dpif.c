@@ -75,7 +75,7 @@ struct registered_dpif_class {
     const struct dpif_class *dpif_class;
     int refcount;
 };
-//存放已经注册了的dp_if_class,目前来源于base_dpif_classes
+//存放已经注册了的dp_if_class,目前来源于base_dpif_classes，用netlink_class,netdev_class
 static struct shash dpif_classes = SHASH_INITIALIZER(&dpif_classes);
 static struct sset dpif_blacklist = SSET_INITIALIZER(&dpif_blacklist);
 
@@ -112,6 +112,7 @@ static void log_flow_get_message(const struct dpif *,
 /* Incremented whenever tnl route, arp, etc changes. */
 struct seq *tnl_conf_seq;
 
+//注册dpif_class,初始化tunnel需要的邻居表项，路由表项
 static void
 dp_initialize(void)
 {
@@ -124,9 +125,11 @@ dp_initialize(void)
         dpctl_unixctl_register();
         tnl_port_map_init();
         tnl_neigh_cache_init();
-        route_table_init();
+        route_table_init();//路由表初始化（会监听kernel路由表变化）
 
-        for (i = 0; i < ARRAY_SIZE(base_dpif_classes); i++) {//注册base_dpif_classes中的dpif_class,目前两个system,netdev
+        //注册base_dpif_classes中的dpif_class,目前两个system,netdev
+        //注册dpif_classes{netdev,netlink方式}
+        for (i = 0; i < ARRAY_SIZE(base_dpif_classes); i++) {
             dp_register_provider(base_dpif_classes[i]);
         }
 
@@ -170,6 +173,7 @@ dp_register_provider__(const struct dpif_class *new_class)//dpif_class注册
 
 /* Registers a new datapath provider.  After successful registration, new
  * datapaths of that type can be opened using dpif_open(). */
+//dpif_class加锁注册
 int
 dp_register_provider(const struct dpif_class *new_class)
 {
@@ -237,6 +241,7 @@ dp_blacklist_provider(const char *type)
 
 /* Adds the types of all currently registered datapath providers to 'types'.
  * The caller must first initialize the sset. */
+//返回当前我们注册的所有datapath的类型，目前有netdev,system两种类型
 void
 dp_enumerate_types(struct sset *types)
 {
@@ -599,8 +604,9 @@ dpif_port_destroy(struct dpif_port *dpif_port)
 
 /* Checks if port named 'devname' exists in 'dpif'.  If so, returns
  * true; otherwise, returns false. */
+//检查devname是否在datapath interface下存在
 bool
-dpif_port_exists(const struct dpif *dpif, const char *devname)//检查devname是否在datapath interface下存在
+dpif_port_exists(const struct dpif *dpif, const char *devname)
 {
     int error = dpif->dpif_class->port_query_by_name(dpif, devname, NULL);
     if (error != 0 && error != ENODEV) {

@@ -550,6 +550,7 @@ mpls_lse_to_bos(ovs_be32 mpls_lse)
 
 /* Returns true if 'netmask' is a CIDR netmask, that is, if it consists of N
  * high-order 1-bits and 32-N low-order 0-bits. */
+//检查是否为cidr格式
 static inline bool
 ip_is_cidr(ovs_be32 netmask)
 {

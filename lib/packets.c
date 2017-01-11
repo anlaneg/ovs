@@ -456,15 +456,18 @@ ip_parse_port(const char *s, ovs_be32 *ip, ovs_be16 *port)
  *
  * Returns NULL if successful, otherwise an error message that the caller must
  * free(). */
+//识别s串中的ip及掩码
 char * OVS_WARN_UNUSED_RESULT
 ip_parse_masked_len(const char *s, int *n, ovs_be32 *ip,
                     ovs_be32 *mask)
 {
     int prefix;
 
+    //将ip,mask按"x.x.x.x/x.x.x.x“格式识别
     if (ovs_scan_len(s, n, IP_SCAN_FMT"/"IP_SCAN_FMT,
                  IP_SCAN_ARGS(ip), IP_SCAN_ARGS(mask))) {
         /* OK. */
+    //将ip,mask按"x.x.x.x/n'格式识别
     } else if (ovs_scan_len(s, n, IP_SCAN_FMT"/%d",
                             IP_SCAN_ARGS(ip), &prefix)) {
         if (prefix < 0 || prefix > 32) {
@@ -472,6 +475,7 @@ ip_parse_masked_len(const char *s, int *n, ovs_be32 *ip,
                               "32, inclusive", s);
         }
         *mask = be32_prefix_mask(prefix);
+        //按'x.x.x.x'格式识别，且mask为255.255.255.255
     } else if (ovs_scan_len(s, n, IP_SCAN_FMT, IP_SCAN_ARGS(ip))) {
         *mask = OVS_BE32_MAX;
     } else {
@@ -500,6 +504,7 @@ ip_parse_masked(const char *s, ovs_be32 *ip, ovs_be32 *mask)
 
 /* Similar to ip_parse_masked_len(), but the mask, if present, must be a CIDR
  * mask and is returned as a prefix len in '*plen'. */
+//获得ip地址及掩码长度（不需要保证s字符串恰好被用光）
 char * OVS_WARN_UNUSED_RESULT
 ip_parse_cidr_len(const char *s, int *n, ovs_be32 *ip, unsigned int *plen)
 {
@@ -511,7 +516,7 @@ ip_parse_cidr_len(const char *s, int *n, ovs_be32 *ip, unsigned int *plen)
         return error;
     }
 
-    if (!ip_is_cidr(mask)) {
+    if (!ip_is_cidr(mask)) {//必须为x.x.x.x/n格式
         return xasprintf("%s: CIDR network required", s);
     }
     *plen = ip_count_cidr_bits(mask);
@@ -521,6 +526,7 @@ ip_parse_cidr_len(const char *s, int *n, ovs_be32 *ip, unsigned int *plen)
 /* Similar to ip_parse_cidr_len(), but doesn't return the number of scanned
  * characters and expects 's' to be NULL terminated at the end of the
  * ip/(optional) cidr. */
+//解析ip地址及子网掩码（s字符串恰好全用掉）
 char * OVS_WARN_UNUSED_RESULT
 ip_parse_cidr(const char *s, ovs_be32 *ip, unsigned int *plen)
 {
@@ -535,6 +541,7 @@ ip_parse_cidr(const char *s, ovs_be32 *ip, unsigned int *plen)
 
 /* Parses string 's', which must be an IPv6 address.  Stores the IPv6 address
  * into '*ip'.  Returns true if successful, otherwise false. */
+//字符串转换为ip地址
 bool
 ipv6_parse(const char *s, struct in6_addr *ip)
 {
@@ -548,6 +555,7 @@ ipv6_parse(const char *s, struct in6_addr *ip)
  *
  * Returns NULL if successful, otherwise an error message that the caller must
  * free(). */
+//ipv6解析ip及掩码长度
 char * OVS_WARN_UNUSED_RESULT
 ipv6_parse_masked_len(const char *s, int *n, struct in6_addr *ip,
                       struct in6_addr *mask)
@@ -594,6 +602,7 @@ ipv6_parse_masked(const char *s, struct in6_addr *ip, struct in6_addr *mask)
 
 /* Similar to ipv6_parse_masked_len(), but the mask, if present, must be a CIDR
  * mask and is returned as a prefix length in '*plen'. */
+//从s中提取ipv6地址及掩码
 char * OVS_WARN_UNUSED_RESULT
 ipv6_parse_cidr_len(const char *s, int *n, struct in6_addr *ip,
                     unsigned int *plen)
@@ -615,6 +624,7 @@ ipv6_parse_cidr_len(const char *s, int *n, struct in6_addr *ip,
 
 /* Similar to ipv6_parse_cidr_len(), but doesn't return the number of scanned
  * characters and expects 's' to end after the ipv6/(optional) cidr. */
+//从s中提取ipv6地址及掩码（且字符串恰好都用掉）
 char * OVS_WARN_UNUSED_RESULT
 ipv6_parse_cidr(const char *s, struct in6_addr *ip, unsigned int *plen)
 {
@@ -707,6 +717,7 @@ ipv6_string_mapped(char *addr_str, const struct in6_addr *addr)
 #define IPV6_FOR_EACH(VAR) for (int VAR = 0; VAR < 16; VAR++)
 #endif
 
+//ipv6地址按位与
 struct in6_addr
 ipv6_addr_bitand(const struct in6_addr *a, const struct in6_addr *b)
 {
@@ -792,6 +803,7 @@ ipv6_count_cidr_bits(const struct in6_addr *netmask)
 
 /* Returns true if 'netmask' is a CIDR netmask, that is, if it consists of N
  * high-order 1-bits and 128-N low-order 0-bits. */
+//是否为ipv6的cidr格式
 bool
 ipv6_is_cidr(const struct in6_addr *netmask)
 {

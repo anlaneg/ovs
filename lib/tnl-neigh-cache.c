@@ -53,7 +53,7 @@ struct tnl_neigh_entry {
     struct in6_addr ip;
     struct eth_addr mac;
     time_t expires;             /* Expiration time. */
-    char br_name[IFNAMSIZ];
+    char br_name[IFNAMSIZ];//属于哪个桥的arp表项
 };
 
 static struct cmap table = CMAP_INITIALIZER;//邻居表缓存（所有桥使用此表）
@@ -121,7 +121,7 @@ tnl_neigh_set__(const char name[IFNAMSIZ], const struct in6_addr *dst,
 {
     ovs_mutex_lock(&mutex);
     struct tnl_neigh_entry *neigh = tnl_neigh_lookup__(name, dst);
-    if (neigh) {
+    if (neigh) {//有neighbor，则仅更新过期时间
         if (eth_addr_equals(neigh->mac, mac)) {
             neigh->expires = time_now() + NEIGH_ENTRY_DEFAULT_IDLE_TIME;
             ovs_mutex_unlock(&mutex);
@@ -190,6 +190,7 @@ tnl_nd_snoop(const struct flow *flow, struct flow_wildcards *wc,
     return 0;
 }
 
+//学习邻居表项
 int
 tnl_neigh_snoop(const struct flow *flow, struct flow_wildcards *wc,
                 const char name[IFNAMSIZ])
@@ -202,6 +203,7 @@ tnl_neigh_snoop(const struct flow *flow, struct flow_wildcards *wc,
     return tnl_nd_snoop(flow, wc, name);
 }
 
+//邻居表项过期维护
 void
 tnl_neigh_cache_run(void)
 {
@@ -222,6 +224,7 @@ tnl_neigh_cache_run(void)
     }
 }
 
+//清空指定桥关连的arp表项
 static void
 tnl_neigh_cache_flush(struct unixctl_conn *conn, int argc OVS_UNUSED,
                     const char *argv[] OVS_UNUSED, void *aux OVS_UNUSED)
@@ -241,6 +244,7 @@ tnl_neigh_cache_flush(struct unixctl_conn *conn, int argc OVS_UNUSED,
     unixctl_command_reply(conn, "OK");
 }
 
+//将字符串表示的ip地址转换为２进制ip地址
 static int
 lookup_any(const char *host_name, struct in6_addr *address)
 {
@@ -258,6 +262,7 @@ lookup_any(const char *host_name, struct in6_addr *address)
     return ENOENT;
 }
 
+//处理命令行配置的neighbor表项
 static void
 tnl_neigh_cache_add(struct unixctl_conn *conn, int argc OVS_UNUSED,
                     const char *argv[], void *aux OVS_UNUSED)
@@ -280,6 +285,7 @@ tnl_neigh_cache_add(struct unixctl_conn *conn, int argc OVS_UNUSED,
     unixctl_command_reply(conn, "OK");
 }
 
+//处理邻居表项显示
 static void
 tnl_neigh_cache_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
                      const char *argv[] OVS_UNUSED, void *aux OVS_UNUSED)
@@ -312,10 +318,12 @@ tnl_neigh_cache_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
     ds_destroy(&ds);
 }
 
+//邻居表项命令行处理
 void
 tnl_neigh_cache_init(void)
 {
     unixctl_command_register("tnl/arp/show", "", 0, 0, tnl_neigh_cache_show, NULL);
+    //容许对arp进行命令行配置
     unixctl_command_register("tnl/arp/set", "BRIDGE IP MAC", 3, 3, tnl_neigh_cache_add, NULL);
     unixctl_command_register("tnl/arp/flush", "", 0, 0, tnl_neigh_cache_flush, NULL);
     unixctl_command_register("tnl/neigh/show", "", 0, 0, tnl_neigh_cache_show, NULL);

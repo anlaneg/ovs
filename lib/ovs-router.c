@@ -46,6 +46,8 @@
 #include "unixctl.h"
 #include "util.h"
 
+//实现了路由表查找，增删改。
+
 static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
 static struct classifier cls;//router表对应的cls
 
@@ -53,12 +55,13 @@ struct ovs_router_entry {
     struct cls_rule cr;
     char output_bridge[IFNAMSIZ];//从哪个桥发出
     struct in6_addr gw;//网关
-    struct in6_addr nw_addr;
+    struct in6_addr nw_addr;//目的网段
     struct in6_addr src_addr;//采用哪个源ip
     uint8_t plen;
     uint8_t priority;
 };
 
+//通过cr找ovs_router_entry
 static struct ovs_router_entry *
 ovs_router_entry_cast(const struct cls_rule *cr)
 {
@@ -69,6 +72,7 @@ ovs_router_entry_cast(const struct cls_rule *cr)
     }
 }
 
+//填充gw6,填充src6，在查询失败时
 static bool
 ovs_router_lookup_fallback(const struct in6_addr *ip6_dst, char output_bridge[],
                            struct in6_addr *src6, struct in6_addr *gw6)
@@ -106,9 +110,11 @@ ovs_router_lookup(const struct in6_addr *ip6_dst, char output_bridge[],
         }
         return true;
     }
+    //如果没有查找到，则进行失败设置
     return ovs_router_lookup_fallback(ip6_dst, output_bridge, src, gw);
 }
 
+//ovs_router_entry释放
 static void
 rt_entry_free(struct ovs_router_entry *p)
 {
@@ -116,6 +122,7 @@ rt_entry_free(struct ovs_router_entry *p)
     free(p);
 }
 
+//将dst,dst-mask填充进match
 static void rt_init_match(struct match *match, const struct in6_addr *ip6_dst,
                           uint8_t plen)
 {
@@ -124,12 +131,13 @@ static void rt_init_match(struct match *match, const struct in6_addr *ip6_dst,
 
     mask = ipv6_create_mask(plen);
 
-    dst = ipv6_addr_bitand(ip6_dst, &mask);
+    dst = ipv6_addr_bitand(ip6_dst, &mask);//规则划目的地址
     memset(match, 0, sizeof *match);
-    match->flow.ipv6_dst = dst;
-    match->wc.masks.ipv6_dst = mask;
+    match->flow.ipv6_dst = dst;//填写dst
+    match->wc.masks.ipv6_dst = mask;//填写dst-mask
 }
 
+//通过查找对应netdev设备，选择源地址
 static int
 get_src_addr(const struct in6_addr *ip6_dst,
              const char output_bridge[], struct in6_addr *psrc)
@@ -139,18 +147,19 @@ get_src_addr(const struct in6_addr *ip6_dst,
     struct netdev *dev;
     bool is_ipv4;
 
-    err = netdev_open(output_bridge, NULL, &dev);
+    err = netdev_open(output_bridge, NULL, &dev);//在system中查找此netdev
     if (err) {
         return err;
     }
 
-    err = netdev_get_addr_list(dev, &addr6, &mask, &n_in6);
+    err = netdev_get_addr_list(dev, &addr6, &mask, &n_in6);//找出所有ip地址
     if (err) {
         goto out;
     }
 
     is_ipv4 = IN6_IS_ADDR_V4MAPPED(ip6_dst);
 
+    //针对所有ip地址，找一个bits更长一些的
     for (i = 0; i < n_in6; i++) {
         struct in6_addr a1, a2;
         int mask_bits;
@@ -163,6 +172,7 @@ get_src_addr(const struct in6_addr *ip6_dst,
         a2 = ipv6_addr_bitand(&addr6[i], &mask[i]);
         mask_bits = bitmap_count1(ALIGNED_CAST(const unsigned long *, &mask[i]), 128);
 
+        //选同网段，且bits更长一些的
         if (!memcmp(&a1, &a2, sizeof (a1)) && mask_bits > max_plen) {
             *psrc = addr6[i];
             max_plen = mask_bits;
@@ -178,6 +188,7 @@ out:
     return err;
 }
 
+//向路由表中插入(ip6_dst/plen 走gw,发出时源ip为output_bridge桥ip地址决定）
 static int
 ovs_router_insert__(uint8_t priority, const struct in6_addr *ip6_dst,
                     uint8_t plen, const char output_bridge[],
@@ -198,11 +209,11 @@ ovs_router_insert__(uint8_t priority, const struct in6_addr *ip6_dst,
     p->nw_addr = match.flow.ipv6_dst;
     p->plen = plen;
     p->priority = priority;
-    err = get_src_addr(ip6_dst, output_bridge, &p->src_addr);
-    if (err && ipv6_addr_is_set(gw)) {
-        err = get_src_addr(gw, output_bridge, &p->src_addr);
+    err = get_src_addr(ip6_dst, output_bridge, &p->src_addr);//自设备output_bridge上查找合适的ip地址
+    if (err && ipv6_addr_is_set(gw)) {//出错，且gw被设置为非０
+        err = get_src_addr(gw, output_bridge, &p->src_addr);//尝试gw
     }
-    if (err) {
+    if (err) {//不可达
         free(p);
         return err;
     }
@@ -222,6 +233,7 @@ ovs_router_insert__(uint8_t priority, const struct in6_addr *ip6_dst,
     return 0;
 }
 
+//表项插入
 void
 ovs_router_insert(const struct in6_addr *ip_dst, uint8_t plen,
                   const char output_bridge[], const struct in6_addr *gw)
@@ -229,7 +241,7 @@ ovs_router_insert(const struct in6_addr *ip_dst, uint8_t plen,
     ovs_router_insert__(plen, ip_dst, plen, output_bridge, gw);
 }
 
-
+//表项删除
 static bool
 __rt_entry_delete(const struct cls_rule *cr)
 {
@@ -245,6 +257,7 @@ __rt_entry_delete(const struct cls_rule *cr)
     return false;
 }
 
+//表项删除
 static bool
 rt_entry_delete(uint8_t priority, const struct in6_addr *ip6_dst, uint8_t plen)
 {
@@ -267,6 +280,7 @@ rt_entry_delete(uint8_t priority, const struct in6_addr *ip6_dst, uint8_t plen)
     return res;
 }
 
+//解析字符串，取出s表示的ipv6地址及掩码长度，解析成功返回true,否则返回false
 static bool
 scan_ipv6_route(const char *s, struct in6_addr *addr, unsigned int *plen)
 {
@@ -278,6 +292,7 @@ scan_ipv6_route(const char *s, struct in6_addr *addr, unsigned int *plen)
     return true;
 }
 
+//解析字符串，取出s表示的ip地址及掩码长度，解析成功返回true,否则返回false
 static bool
 scan_ipv4_route(const char *s, ovs_be32 *addr, unsigned int *plen)
 {
@@ -289,6 +304,7 @@ scan_ipv4_route(const char *s, ovs_be32 *addr, unsigned int *plen)
     return true;
 }
 
+//命令行插入
 static void
 ovs_router_add(struct unixctl_conn *conn, int argc,
               const char *argv[], void *aux OVS_UNUSED)
@@ -299,16 +315,17 @@ ovs_router_add(struct unixctl_conn *conn, int argc,
     struct in6_addr gw6;
     int err;
 
-    if (scan_ipv4_route(argv[1], &ip, &plen)) {
+    //比如x.x.x.x/n　xx gw
+    if (scan_ipv4_route(argv[1], &ip, &plen)) {//解析成功
         ovs_be32 gw = 0;
-        if (argc > 3 && !ip_parse(argv[3], &gw)) {
+        if (argc > 3 && !ip_parse(argv[3], &gw)) {//转换gw　ip地址
             unixctl_command_reply_error(conn, "Invalid gateway");
             return;
         }
         in6_addr_set_mapped_ipv4(&ip6, ip);
         in6_addr_set_mapped_ipv4(&gw6, gw);
         plen += 96;
-    } else if (scan_ipv6_route(argv[1], &ip6, &plen)) {
+    } else if (scan_ipv6_route(argv[1], &ip6, &plen)) {//解析ipv6
         gw6 = in6addr_any;
         if (argc > 3 && !ipv6_parse(argv[3], &gw6)) {
             unixctl_command_reply_error(conn, "Invalid IPv6 gateway");
@@ -318,7 +335,7 @@ ovs_router_add(struct unixctl_conn *conn, int argc,
         unixctl_command_reply_error(conn, "Invalid parameters");
         return;
     }
-    err = ovs_router_insert__(plen + 32, &ip6, plen, argv[2], &gw6);
+    err = ovs_router_insert__(plen + 32, &ip6, plen, argv[2], &gw6);//加入ipaddr,masklen,bridge,gateway
     if (err) {
         unixctl_command_reply_error(conn, "Error while inserting route.");
     } else {
@@ -326,6 +343,7 @@ ovs_router_add(struct unixctl_conn *conn, int argc,
     }
 }
 
+//命令行删除
 static void
 ovs_router_del(struct unixctl_conn *conn, int argc OVS_UNUSED,
               const char *argv[], void *aux OVS_UNUSED)
@@ -349,6 +367,7 @@ ovs_router_del(struct unixctl_conn *conn, int argc OVS_UNUSED,
     }
 }
 
+//命令行显示
 static void
 ovs_router_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
                const char *argv[] OVS_UNUSED, void *aux OVS_UNUSED)
@@ -382,6 +401,7 @@ ovs_router_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
     ds_destroy(&ds);
 }
 
+//命令行路由查询
 static void
 ovs_router_lookup_cmd(struct unixctl_conn *conn, int argc OVS_UNUSED,
                       const char *argv[], void *aux OVS_UNUSED)
@@ -413,6 +433,7 @@ ovs_router_lookup_cmd(struct unixctl_conn *conn, int argc OVS_UNUSED,
     }
 }
 
+//命令行路由清空
 void
 ovs_router_flush(void)
 {

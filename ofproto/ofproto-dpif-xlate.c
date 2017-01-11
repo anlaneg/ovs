@@ -4818,7 +4818,8 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
     struct flow *flow = &ctx->xin->flow;
     const struct ofpact *a;
 
-    if (ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {//检查是否需要缓存arp表项
+    //有tunnel口，tunnel口需要邻居表项支持
+    if (ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {
         tnl_neigh_snoop(flow, wc, ctx->xbridge->name);
     }
     /* dl_type already in the mask, not set below. */

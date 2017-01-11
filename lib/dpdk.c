@@ -273,9 +273,9 @@ dpdk_init__(const struct smap *ovs_other_config)
     cpu_set_t cpuset;
     char *sock_dir_subcomponent;
 
-    if (!smap_get_bool(ovs_other_config, "dpdk-init", false)) {
+    if (!smap_get_bool(ovs_other_config, "dpdk-init", false)) {//没有配置dpdk-init
         VLOG_INFO("DPDK Disabled - to change this requires a restart.\n");
-        return;
+        return;//dpdk不初始化
     }
 
     VLOG_INFO("DPDK Enabled, initializing");

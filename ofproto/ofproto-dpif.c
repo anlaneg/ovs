@@ -202,7 +202,8 @@ ofproto_dpif_cast(const struct ofproto *ofproto)
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
 /* Initial mappings of port to bridge mappings. */
-static struct shash init_ofp_ports = SHASH_INITIALIZER(&init_ofp_ports);//dpif做init时，初始化了此类型，记录所有birdge的所有port配置
+//dpif做init时，初始化了此类型，记录首次来自ovsdb的所有birdge的所有port配置
+static struct shash init_ofp_ports = SHASH_INITIALIZER(&init_ofp_ports);
 
 /* Initialize 'ofm' for a learn action.  If the rule already existed, reference
  * to that rule is taken, otherwise a new rule is created.  'ofm' keeps the
@@ -232,9 +233,10 @@ ofproto_dpif_send_async_msg(struct ofproto_dpif *ofproto,
 }
 
 /* Factory functions. */
-
+//每一份class对应一个初始化，故需要在此class中copy一份
+//将iface_hints中的内容保存在本文件中的init_ofp_ports,并初始化命令行
 static void
-init(const struct shash *iface_hints)//每一份class对应一个初始化，故需要在此class中copy一份
+init(const struct shash *iface_hints)
 {
     struct shash_node *node;
 
@@ -248,16 +250,16 @@ init(const struct shash *iface_hints)//每一份class对应一个初始化，故
         new_hint->br_type = xstrdup(orig_hint->br_type);
         new_hint->ofp_port = orig_hint->ofp_port;
 
-        shash_add(&init_ofp_ports, node->name, new_hint);
+        shash_add(&init_ofp_ports, node->name, new_hint);//将数据保存在init_ofp_ports上
     }
 
-    ofproto_unixctl_init();
+    ofproto_unixctl_init();//注册命令行
     ofproto_dpif_trace_init();
     udpif_init();
 }
 
 static void
-enumerate_types(struct sset *types)//枚举当前支持的types
+enumerate_types(struct sset *types)//枚举当前dp支持的types
 {
     dp_enumerate_types(types);
 }
@@ -5110,17 +5112,17 @@ ofproto_dpif_delete_internal_flow(struct ofproto_dpif *ofproto,
 
 const struct ofproto_class ofproto_dpif_class = {
     init,
-    enumerate_types,
+    enumerate_types,//所以ofproto的datapath对应的类型，目前有system,netdev
     enumerate_names,
     del,
     port_open_type,
-    type_run,
+    type_run,//各type自已的周期性事务（支持单个class实现多个type)
     type_wait,
     alloc,
     construct,
     destruct,
     dealloc,
-    run,
+    run,//各ofproto对应的周期事务
     ofproto_dpif_wait,
     NULL,                       /* get_memory_usage. */
     type_get_memory_usage,

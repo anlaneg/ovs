@@ -88,13 +88,14 @@ main(int argc, char *argv[])
 #endif
     }
 
+    //创建unix控制端服务器
     retval = unixctl_server_create(unixctl_path, &unixctl);
     if (retval) {
         exit(EXIT_FAILURE);
     }
     unixctl_command_register("exit", "", 0, 0, ovs_vswitchd_exit, &exiting);//注册退出命令
 
-    bridge_init(remote);
+    bridge_init(remote);//命令及ovsdb连接初始化
     free(remote);
 
     exiting = false;

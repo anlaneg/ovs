@@ -37,6 +37,9 @@
 
 VLOG_DEFINE_THIS_MODULE(route_table);
 
+//主要是对linux kernel的路由表进行监听
+//获知路由表发生了变化
+
 struct route_data {
     /* Copied from struct rtmsg. */
     unsigned char rtm_dst_len;
@@ -100,6 +103,7 @@ route_table_init(void)
     nln = nln_create(NETLINK_ROUTE, (nln_parse_func *) route_table_parse,
                      &rtmsg);
 
+    //监听路由变化
     route_notifier =
         nln_notifier_create(nln, RTNLGRP_IPV4_ROUTE,
                             (nln_notify_func *) route_table_change, NULL);
@@ -124,7 +128,7 @@ route_table_run(void)
         nln_run(nln);
 
         if (!route_table_valid) {
-            route_table_reset();
+            route_table_reset();//重新载入
         }
     }
     ovs_mutex_unlock(&route_table_mutex);

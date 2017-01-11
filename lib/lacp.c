@@ -201,6 +201,7 @@ parse_lacp_packet(const struct dp_packet *p)
 /* LACP Protocol Implementation. */
 
 /* Initializes the lacp module. */
+//lacp命令注册
 void
 lacp_init(void)
 {

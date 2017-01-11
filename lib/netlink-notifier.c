@@ -192,7 +192,7 @@ nln_run(struct nln *nln)
             int group = nln->parse(&buf, nln->change);
 
             if (group != 0) {
-                nln_report(nln, nln->change, group);
+                nln_report(nln, nln->change, group);//调用回调
             } else {
                 VLOG_WARN_RL(&rl, "unexpected netlink message contents");
                 nln_report(nln, NULL, 0);

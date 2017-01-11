@@ -323,6 +323,7 @@ static ofp_port_t iface_pick_ofport(const struct ovsrec_interface *);
 
 static void discover_types(const struct ovsrec_open_vswitch *cfg);
 
+//用cfg中的所有交换机上的接口信息，调用ofproto_init，完成首次初始化
 static void
 bridge_init_ofproto(const struct ovsrec_open_vswitch *cfg)
 {
@@ -330,7 +331,7 @@ bridge_init_ofproto(const struct ovsrec_open_vswitch *cfg)
     static bool initialized = false;
     int i;
 
-    if (initialized) {
+    if (initialized) {//如果已初始化过，则不再进入
         return;
     }
 
@@ -362,16 +363,18 @@ bridge_init_ofproto(const struct ovsrec_open_vswitch *cfg)
 
     ofproto_init(&iface_hints);//所有交换机的if信息
 
-    shash_destroy_free_data(&iface_hints);
+    shash_destroy_free_data(&iface_hints);//销毁iface_hints
     initialized = true;
 }
 
+//接口状态变更回调
 static void
 if_change_cb(void *aux OVS_UNUSED)
 {
     seq_change(ifaces_changed);
 }
 
+//检查是否发生变化，如果未变化，则注册变化通知
 static bool
 if_notifier_changed(struct if_notifier *notifier OVS_UNUSED)
 {
@@ -492,7 +495,7 @@ bridge_init(const char *remote)//用database路径初始化桥
     rstp_init();
     ifaces_changed = seq_create();
     last_ifaces_changed = seq_read(ifaces_changed);
-    ifnotifier = if_notifier_create(if_change_cb, NULL);
+    ifnotifier = if_notifier_create(if_change_cb, NULL);//接口发生变化时，更改ifaces_changed值
 }
 
 void
@@ -2878,12 +2881,17 @@ bridge_run__(void)
     /* Let each datapath type do the work that it needs to do. */
     sset_init(&types);
     ofproto_enumerate_types(&types);
+
+    //调用各datapath类型的type_run
     SSET_FOR_EACH (type, &types) {
+    	//比如system,netdev对应的应调用ofproto_dpif_class的type_run(传入type)
         ofproto_type_run(type);
     }
     sset_destroy(&types);
 
     /* Let each bridge do the work that it needs to do. */
+    //针对每个bridges，调用其对应的ofproto_class对应的run
+    //比如system,netdev对应的应调用ofproto_dpif_class的run函数（传入对应的ofproto)
     HMAP_FOR_EACH (br, node, &all_bridges) {
         ofproto_run(br->ofproto);
     }
@@ -2897,11 +2905,11 @@ bridge_run(void)
 
     ovsrec_open_vswitch_init(&null_cfg);
 
-    ovsdb_idl_run(idl);
+    ovsdb_idl_run(idl);//数据库里的消息处理
 
-    if_notifier_run();
+    if_notifier_run();//来自kernel的信息
 
-    if (ovsdb_idl_is_lock_contended(idl)) {
+    if (ovsdb_idl_is_lock_contended(idl)) {//当前进程需要停止
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
         struct bridge *br, *next_br;
 

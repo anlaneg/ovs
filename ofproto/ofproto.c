@@ -320,6 +320,7 @@ static bool flow_restore_wait = true;
  * provider will make copies of anything required.  An ofproto provider
  * will remove any existing state that is not described by the hint, and
  * may choose to remove it all. */
+//遍历ofproto_classes中的所有已注册class{实际上当前仅有ofproto_dpif_class}，调用其对应的init回调
 void
 ofproto_init(const struct shash *iface_hints)
 {
@@ -329,7 +330,7 @@ ofproto_init(const struct shash *iface_hints)
     ofproto_class_register(&ofproto_dpif_class);//注册ofproto dpif的class
 
     /* Make a local copy, since we don't own 'iface_hints' elements. */
-    //做一份copy
+    //由于iface_hints出去后，会被销毁，故做一份copy
     SHASH_FOR_EACH(node, iface_hints) {
         const struct iface_hint *orig_hint = node->data;
         struct iface_hint *new_hint = xmalloc(sizeof *new_hint);
@@ -342,6 +343,8 @@ ofproto_init(const struct shash *iface_hints)
         shash_add(&init_ofp_ports, node->name, new_hint);//所有交换机及端口的配置
     }
 
+    //用这一份数据，初始化所有的ofproto_classes
+    //当前仅进行了数据保存，未有其它处理
     for (i = 0; i < n_ofproto_classes; i++) {
         ofproto_classes[i]->init(&init_ofp_ports);
     }
@@ -352,8 +355,9 @@ ofproto_init(const struct shash *iface_hints)
 /* 'type' should be a normalized datapath type, as returned by
  * ofproto_normalize_type().  Returns the corresponding ofproto_class
  * structure, or a null pointer if there is none registered for 'type'. */
+//返回支持此type的ofproto_class
 static const struct ofproto_class *
-ofproto_class_find__(const char *type)//给出type取对应支持此type的ofproto-class
+ofproto_class_find__(const char *type)
 {
     size_t i;
 
@@ -422,6 +426,7 @@ ofproto_class_unregister(const struct ofproto_class *class)
 
 /* Clears 'types' and enumerates all registered ofproto types into it.  The
  * caller must first initialize the sset. */
+//返回ofproto_classes目前支持的所有datapath类型
 void
 ofproto_enumerate_types(struct sset *types)
 {
@@ -1678,6 +1683,7 @@ process_port_change(struct ofproto *ofproto, int error, char *devname)
     }
 }
 
+//调用datapath_type对应的class的type_run
 int
 ofproto_type_run(const char *datapath_type)
 {
@@ -1687,6 +1693,7 @@ ofproto_type_run(const char *datapath_type)
     datapath_type = ofproto_normalize_type(datapath_type);
     class = ofproto_class_find__(datapath_type);
 
+    //如果此类型有type_run,则调用type_run
     error = class->type_run ? class->type_run(datapath_type) : 0;
     if (error && error != EAGAIN) {
         VLOG_ERR_RL(&rl, "%s: type_run failed (%s)",
@@ -8503,6 +8510,7 @@ ofproto_lookup(const char *name)//给定名称获取对应的openflow交换机
     return NULL;
 }
 
+//显示系统当前已存在的交换机
 static void
 ofproto_unixctl_list(struct unixctl_conn *conn, int argc OVS_UNUSED,
                      const char *argv[] OVS_UNUSED, void *aux OVS_UNUSED)
@@ -8518,6 +8526,7 @@ ofproto_unixctl_list(struct unixctl_conn *conn, int argc OVS_UNUSED,
     ds_destroy(&results);
 }
 
+//注册命令
 static void
 ofproto_unixctl_init(void)
 {

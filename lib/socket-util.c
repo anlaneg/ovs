@@ -139,6 +139,7 @@ set_dscp(int fd, int family, uint8_t dscp)
 /* Checks whether 'host_name' is an IPv4 or IPv6 address.  It is assumed
  * that 'host_name' is valid.  Returns false if it is IPv4 address, true if
  * it is IPv6 address. */
+//是否为字符串表示的ipv6地址
 bool
 addr_is_ipv6(const char *host_name)
 {
@@ -148,6 +149,7 @@ addr_is_ipv6(const char *host_name)
 /* Translates 'host_name', which must be a string representation of an IP
  * address, into a numeric IP address in '*addr'.  Returns 0 if successful,
  * otherwise a positive errno value. */
+//字符串转ipv4地址
 int
 lookup_ip(const char *host_name, struct in_addr *addr)
 {
@@ -162,6 +164,7 @@ lookup_ip(const char *host_name, struct in_addr *addr)
 /* Translates 'host_name', which must be a string representation of an IPv6
  * address, into a numeric IPv6 address in '*addr'.  Returns 0 if successful,
  * otherwise a positive errno value. */
+//将字符串的ipv6地址，转换为2进制的ipv6地址
 int
 lookup_ipv6(const char *host_name, struct in6_addr *addr)
 {

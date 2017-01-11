@@ -220,15 +220,16 @@ seq_wait__(struct seq *seq, uint64_t value, const char *where)
  * ('where' is used in debug logging.  Commonly one would use seq_wait() to
  * automatically provide the caller's source file and line number for
  * 'where'.) */
+//尝试着去创建等待句柄，如果已变化，则立即唤醒
 void
 seq_wait_at(const struct seq *seq_, uint64_t value, const char *where)
     OVS_EXCLUDED(seq_mutex)
 {
     struct seq *seq = CONST_CAST(struct seq *, seq_);
 
-    ovs_mutex_lock(&seq_mutex);
+    ovs_mutex_lock(&seq_mutex);//加锁后再检查
     if (value == seq->value) {
-        seq_wait__(seq, value, where);
+        seq_wait__(seq, value, where);//注册等待句柄
     } else {
         poll_immediate_wake_at(where);//立即唤醒
     }

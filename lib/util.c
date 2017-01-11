@@ -1903,6 +1903,7 @@ scan_chars(const char *s, const struct scan_spec *spec, va_list *args)
     return s + n;
 }
 
+//scanf函数实现
 static bool
 ovs_scan__(const char *s, int *n, const char *format, va_list *args)
 {
@@ -1916,16 +1917,16 @@ ovs_scan__(const char *s, int *n, const char *format, va_list *args)
         unsigned char c = *p++;
         bool discard;
 
-        if (isspace(c)) {
+        if (isspace(c)) {//如果format中有一个空格，则实例数据需要跳过全部空格
             s = skip_spaces(s);
             continue;
-        } else if (c != '%') {
+        } else if (c != '%') {//普通串不匹配
             if (*s != c) {
                 goto exit;
             }
             s++;
             continue;
-        } else if (*p == '%') {
+        } else if (*p == '%') {//%%情况
             if (*s++ != '%') {
                 goto exit;
             }
@@ -1939,7 +1940,7 @@ ovs_scan__(const char *s, int *n, const char *format, va_list *args)
 
         /* Parse field width. */
         spec.width = 0;
-        while (*p >= '0' && *p <= '9') {
+        while (*p >= '0' && *p <= '9') {//转数字
             spec.width = spec.width * 10 + (*p++ - '0');
         }
         if (spec.width == 0) {
