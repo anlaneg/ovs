@@ -1677,7 +1677,7 @@ transition_ukey(struct udpif_key *ukey, enum ukey_state dst)
     OVS_REQUIRES(ukey->mutex)
 {
     ovs_assert(dst >= ukey->state);
-    if (ukey->state == dst) {
+    if (ukey->state == dst && dst == UKEY_OPERATIONAL) {
         return;
     }
 
@@ -1799,9 +1799,11 @@ ukey_delete(struct umap *umap, struct udpif_key *ukey)
     OVS_REQUIRES(umap->mutex)
 {
     ovs_mutex_lock(&ukey->mutex);
-    cmap_remove(&umap->cmap, &ukey->cmap_node, ukey->hash);
-    ovsrcu_postpone(ukey_delete__, ukey);
-    transition_ukey(ukey, UKEY_DELETED);
+    if (ukey->state < UKEY_DELETED) {
+        cmap_remove(&umap->cmap, &ukey->cmap_node, ukey->hash);
+        ovsrcu_postpone(ukey_delete__, ukey);
+        transition_ukey(ukey, UKEY_DELETED);
+    }
     ovs_mutex_unlock(&ukey->mutex);
 }
 

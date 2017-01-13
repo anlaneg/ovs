@@ -294,9 +294,14 @@ struct netdev_class {
     /* Changes the device 'netdev''s configuration to 'args'.
      *
      * If this netdev class does not support configuration, this may be a null
-     * pointer. */
+     * pointer.
+     *
+     * If the return value is not zero (meaning that an error occurred),
+     * the provider can allocate a string with an error message in '*errp'.
+     * The caller has to call free on it. */
     //也负责tunnel的配置设置
-    int (*set_config)(struct netdev *netdev, const struct smap *args);
+    int (*set_config)(struct netdev *netdev, const struct smap *args,
+                      char **errp);
 
     /* Returns the tunnel configuration of 'netdev'.  If 'netdev' is
      * not a tunnel, returns null.

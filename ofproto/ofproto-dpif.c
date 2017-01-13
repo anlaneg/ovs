@@ -3614,7 +3614,7 @@ ofproto_dpif_execute_actions__(struct ofproto_dpif *ofproto,
                                ovs_version_t version, const struct flow *flow,
                                struct rule_dpif *rule,
                                const struct ofpact *ofpacts, size_t ofpacts_len,
-                               int indentation, int depth, int resubmits,
+                               int depth, int resubmits,
                                struct dp_packet *packet)
 {
     struct dpif_flow_stats stats;
@@ -3638,7 +3638,6 @@ ofproto_dpif_execute_actions__(struct ofproto_dpif *ofproto,
     xin.ofpacts = ofpacts;
     xin.ofpacts_len = ofpacts_len;
     xin.resubmit_stats = &stats;
-    xin.indentation = indentation;
     xin.depth = depth;
     xin.resubmits = resubmits;
     if (xlate_actions(&xin, &xout) != XLATE_OK) {
@@ -3677,8 +3676,7 @@ ofproto_dpif_execute_actions(struct ofproto_dpif *ofproto,
                              struct dp_packet *packet)
 {
     return ofproto_dpif_execute_actions__(ofproto, version, flow, rule,
-                                          ofpacts, ofpacts_len, 0, 0, 0,
-                                          packet);
+                                          ofpacts, ofpacts_len, 0, 0, packet);
 }
 
 //更新规则对应的统计信息
