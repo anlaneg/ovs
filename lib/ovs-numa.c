@@ -61,7 +61,7 @@ VLOG_DEFINE_THIS_MODULE(ovs_numa);
 struct numa_node {
     struct hmap_node hmap_node;     /* In the 'all_numa_nodes'. */
     struct ovs_list cores;          /* List of cpu cores on the numa node. */
-    int numa_id;                    /* numa node id. */
+    int numa_id;                    /* numa node id. */ //numa id号
 };
 
 /* Cpu core on a numa node. */
@@ -70,16 +70,18 @@ struct cpu_core {
     struct ovs_list list_node; /* In 'numa_node->cores' list. */
     struct numa_node *numa;    /* numa node containing the core. */
     unsigned core_id;          /* Core id. */
-    bool available;            /* If the core can be pinned. */
+    bool available;            /* If the core can be pinned. */ //是否使用了这个core
     bool pinned;               /* If a thread has been pinned to the core. */
 };
 
 /* Contains all 'struct numa_node's. */
+//记录系统中已发现的所有nova节点
 static struct hmap all_numa_nodes = HMAP_INITIALIZER(&all_numa_nodes);
 /* Contains all 'struct cpu_core's. */
+//记录系统中已发现的所有cpu及core
 static struct hmap all_cpu_cores = HMAP_INITIALIZER(&all_cpu_cores);
 /* True if numa node and core info are correctly extracted. */
-static bool found_numa_and_core;
+static bool found_numa_and_core;//指代cpu,numa在上面两个变量的记录是否正确
 /* True if the module was initialized with dummy options. In this case, the
  * module must not interact with the actual cpus/nodes in the system. */
 static bool dummy_numa = false;
@@ -98,6 +100,7 @@ contain_all_digits(const char *str)
 }
 #endif /* __linux__ */
 
+//将新发现的numa_node插入到all_numa_nodes中
 static struct numa_node *
 insert_new_numa_node(int numa_id)
 {
@@ -110,6 +113,7 @@ insert_new_numa_node(int numa_id)
     return n;
 }
 
+//将发现的numa_node,core_id插入all_cpu_cores
 static struct cpu_core *
 insert_new_cpu_core(struct numa_node *n, unsigned core_id)
 {
@@ -177,6 +181,7 @@ discover_numa_and_core_dummy(const char *dummy_config)
 
 /* Discovers all numa nodes and the corresponding cpu cores.
  * Constructs the 'struct numa_node' and 'struct cpu_core'. */
+//主动发现numa,core的配置，将识别出来的numa,core保存在相关的全局变量上
 static void
 discover_numa_and_core(void)
 {
@@ -188,13 +193,14 @@ discover_numa_and_core(void)
     /* Check if NUMA supported on this system. */
     dir = opendir("/sys/devices/system/node");
 
-    if (!dir && errno == ENOENT) {
+    if (!dir && errno == ENOENT) {//系统不支持numa
         numa_supported = false;
     }
     if (dir) {
         closedir(dir);
     }
 
+    //最多支持128个numa节点
     for (i = 0; i < MAX_NUMA_NODES; i++) {
         char* path;
 
@@ -214,13 +220,14 @@ discover_numa_and_core(void)
 
             n = insert_new_numa_node(i);
 
+            //遍历所有子目录，对以cpu开头的目录，记为识别的cpu
             while ((subdir = readdir(dir)) != NULL) {
                 if (!strncmp(subdir->d_name, "cpu", 3)
                     && contain_all_digits(subdir->d_name + 3)) {
                     unsigned core_id;
 
                     core_id = strtoul(subdir->d_name + 3, NULL, 10);
-                    insert_new_cpu_core(n, core_id);
+                    insert_new_cpu_core(n, core_id);//加入识别的cpu(可能是core)
                 }
             }
             closedir(dir);
@@ -269,6 +276,7 @@ get_numa_by_numa_id(int numa_id)
 
 
 
+//ovs中numa,cpu初始化
 static bool
 ovs_numa_init__(const char *dummy_config)
 {
@@ -277,12 +285,13 @@ ovs_numa_init__(const char *dummy_config)
     if (ovsthread_once_start(&once)) {
         const struct numa_node *n;
 
-        if (!dummy_config) {
-            discover_numa_and_core();
+        if (!dummy_config) {//无dummy_config
+            discover_numa_and_core();//真实情况
         } else {
-            discover_numa_and_core_dummy(dummy_config);
+            discover_numa_and_core_dummy(dummy_config);//dummy情况
         }
 
+        //显示相应的numa,core
         HMAP_FOR_EACH(n, hmap_node, &all_numa_nodes) {
             VLOG_INFO("Discovered %"PRIuSIZE" CPU cores on NUMA node %d",
                       ovs_list_size(&n->cores), n->numa_id);
@@ -292,7 +301,7 @@ ovs_numa_init__(const char *dummy_config)
                    hmap_count(&all_numa_nodes), hmap_count(&all_cpu_cores));
 
         if (hmap_count(&all_numa_nodes) && hmap_count(&all_cpu_cores)) {
-            found_numa_and_core = true;
+            found_numa_and_core = true;//标记为真
         }
 
         ovsthread_once_done(&once);
@@ -353,6 +362,7 @@ ovs_numa_core_is_pinned(unsigned core_id)
 }
 
 /* Returns the number of numa nodes. */
+//返回系统中numa个数
 int
 ovs_numa_get_n_numas(void)
 {
@@ -361,6 +371,7 @@ ovs_numa_get_n_numas(void)
 }
 
 /* Returns the number of cpu cores. */
+//返回系统中cpu个数
 int
 ovs_numa_get_n_cores(void)
 {
@@ -530,6 +541,7 @@ ovs_numa_dump_destroy(struct ovs_numa_dump *dump)
 /* Reads the cpu mask configuration from 'cmask' and sets the
  * 'available' of corresponding cores.  For unspecified cores,
  * sets 'available' to false. */
+//通过cmask置cpu的对本程序的可用
 void
 ovs_numa_set_cpu_mask(const char *cmask)
 {
@@ -542,7 +554,7 @@ ovs_numa_set_cpu_mask(const char *cmask)
     }
 
     /* If no mask specified, resets the 'available' to true for all cores. */
-    if (!cmask) {
+    if (!cmask) {//未指定cmask时，所有core为有效core
         struct cpu_core *core;
 
         HMAP_FOR_EACH(core, hmap_node, &all_cpu_cores) {
@@ -553,6 +565,7 @@ ovs_numa_set_cpu_mask(const char *cmask)
     }
 
     /* Ignore leading 0x. */
+    //跳过不必要的"0X"
     end_idx = 0;
     if (!strncmp(cmask, "0x", 2) || !strncmp(cmask, "0X", 2)) {
         end_idx = 2;
@@ -566,26 +579,29 @@ ovs_numa_set_cpu_mask(const char *cmask)
             bin = hex - '0';
         } else if (hex >= 'A' && hex <= 'F') {
             bin = hex - 'A' + 10;
-        } else {
+        } else {//这里的配置是错误的（目前处理为忽略，这里处理为强挂是否要好一些？）
             bin = 0;
             VLOG_WARN("Invalid cpu mask: %c", cmask[i]);
         }
 
+        //由于是16进制，故bin只有４个有效的bit位
         for (j = 0; j < 4; j++) {
             struct cpu_core *core;
 
             core = CONTAINER_OF(hmap_first_with_hash(&all_cpu_cores,
                                                      hash_int(core_id++, 0)),
                                 struct cpu_core, hmap_node);
-            core->available = (bin >> j) & 0x1;
+            core->available = (bin >> j) & 0x1;//如果没有指定为false,否则为true
 
             if (core_id >= hmap_count(&all_cpu_cores)) {
+            	//超过系统现存，没必要继续检查
                 return;
             }
         }
     }
 
     /* For unspecified cores, sets 'available' to false.  */
+    //系统中其它配置没有涉及到，比如有２０个core,只配置了４个，则剩余的均置为false
     while (core_id < hmap_count(&all_cpu_cores)) {
         struct cpu_core *core;
 

@@ -183,9 +183,11 @@ COVERAGE_DEFINE(rev_mac_learning);
 COVERAGE_DEFINE(rev_mcast_snooping);
 
 /* All existing ofproto_backer instances, indexed by ofproto->up.type. */
+//按type索引的所有的ofproto后端实例
 struct shash all_dpif_backers = SHASH_INITIALIZER(&all_dpif_backers);
 
 /* All existing ofproto_dpif instances, indexed by ->up.name. */
+//所有ofproto实例表，按datapath名称索引
 struct hmap all_ofproto_dpifs = HMAP_INITIALIZER(&all_ofproto_dpifs);
 
 static bool ofproto_use_tnl_push_pop = true;
@@ -264,8 +266,9 @@ enumerate_types(struct sset *types)//枚举当前dp支持的types
     dp_enumerate_types(types);
 }
 
+//枚举当前所有ofproto的名称
 static int
-enumerate_names(const char *type, struct sset *names)//枚举当前支持的name
+enumerate_names(const char *type, struct sset *names)
 {
     struct ofproto_dpif *ofproto;
 
@@ -280,6 +283,7 @@ enumerate_names(const char *type, struct sset *names)//枚举当前支持的name
     return 0;
 }
 
+//ofproto删除
 static int
 del(const char *type, const char *name)
 {
@@ -335,8 +339,10 @@ type_run(const char *type)
     }
 
     /* This must be called before dpif_run() */
+    //防止pmd_cpu_mask发生变化
     dpif_poll_threads_set(backer->dpif, pmd_cpu_mask);
 
+    //触发backer的run（目前有两个backer,一个是system,一个netdev)
     if (dpif_run(backer->dpif)) {
         backer->need_revalidate = REV_RECONFIGURE;
     }
@@ -351,6 +357,7 @@ type_run(const char *type)
 
         backer->recv_set_enable = true;
 
+        //dpif-netdev不处理
         error = dpif_recv_set(backer->dpif, backer->recv_set_enable);
         if (error) {
             VLOG_ERR("Failed to enable receiving packets in dpif.");
@@ -1222,7 +1229,7 @@ construct(struct ofproto *ofproto_)//ofproto构造函数
     }
 
     hmap_insert(&all_ofproto_dpifs, &ofproto->all_ofproto_dpifs_node,
-                hash_string(ofproto->up.name, 0));//加入all_ofproto_dpifs链
+                hash_string(ofproto->up.name, 0));//加入all_ofproto_dpifs链，此链用于查找指定ofproto
     memset(&ofproto->stats, 0, sizeof ofproto->stats);//准备统计状态
 
     ofproto_init_tables(ofproto_, N_TABLES);//默认构造255个表
@@ -5113,8 +5120,8 @@ ofproto_dpif_delete_internal_flow(struct ofproto_dpif *ofproto,
 const struct ofproto_class ofproto_dpif_class = {
     init,
     enumerate_types,//所以ofproto的datapath对应的类型，目前有system,netdev
-    enumerate_names,
-    del,
+    enumerate_names,//所有ofproto的实体名称收集
+    del,//删除ofproto
     port_open_type,
     type_run,//各type自已的周期性事务（支持单个class实现多个type)
     type_wait,
@@ -5140,9 +5147,9 @@ const struct ofproto_class ofproto_dpif_class = {
     port_del,
     port_set_config,
     port_get_stats,
-    port_dump_start,
-    port_dump_next,
-    port_dump_done,
+    port_dump_start,//对ofproto所有port进行遍历的起始函数
+    port_dump_next,//对ofproto所有port进行遍历的next函数
+    port_dump_done,//对ofproto所有port进行遍历的完成函数
     port_poll,
     port_poll_wait,
     port_is_lacp_current,

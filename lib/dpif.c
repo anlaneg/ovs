@@ -64,6 +64,7 @@ COVERAGE_DEFINE(dpif_execute);
 COVERAGE_DEFINE(dpif_purge);
 COVERAGE_DEFINE(dpif_execute_with_help);
 
+//datapath接口类，目前支持两种，'system','netdev'
 static const struct dpif_class *base_dpif_classes[] = {
 #if defined(__linux__) || defined(_WIN32)
     &dpif_netlink_class,
@@ -338,7 +339,7 @@ dp_parse_name(const char *datapath_name_, char **name, char **type)
 }
 
 static int
-do_open(const char *name, const char *type, bool create, struct dpif **dpifp)//创建dpif
+do_open(const char *name, const char *type, bool create, struct dpif **dpifp)//创建或者打开已存在的dpif
 {
     struct dpif *dpif = NULL;
     int error;
@@ -373,10 +374,11 @@ exit:
  * the empty string to specify the default system type.  Returns 0 if
  * successful, otherwise a positive errno value.  On success stores a pointer
  * to the datapath in '*dpifp', otherwise a null pointer. */
+//尝试着打开一个已存在的命名为name,类型为type的，datapath
 int
 dpif_open(const char *name, const char *type, struct dpif **dpifp)
 {
-    return do_open(name, type, false, dpifp);
+    return do_open(name, type, false, dpifp);//false防创建
 }
 
 /* Tries to create and open a new datapath with the given 'name' and 'type'.
@@ -429,6 +431,8 @@ dpif_close(struct dpif *dpif)
 }
 
 /* Performs periodic work needed by 'dpif'. */
+//执行dpif的周期性动作（dpif-netdev,dpif-netlink)
+//主要是实现的一些东西，比如配置发生变化后需要执行些关联操作
 bool
 dpif_run(struct dpif *dpif)
 {
@@ -484,6 +488,7 @@ dpif_normalize_type(const char *type)//datapath类型，如果没有指出默认
 /* Destroys the datapath that 'dpif' is connected to, first removing all of its
  * ports.  After calling this function, it does not make sense to pass 'dpif'
  * to any functions other than dpif_name() or dpif_close(). */
+//删除datapath
 int
 dpif_delete(struct dpif *dpif)
 {
@@ -891,6 +896,7 @@ dpif_flow_flush(struct dpif *dpif)
 
     COVERAGE_INC(dpif_flow_flush);
 
+    //清空所有flows
     error = dpif->dpif_class->flow_flush(dpif);
     log_operation(dpif, "flow_flush", error);
     return error;
@@ -1460,6 +1466,7 @@ dpif_poll_threads_set(struct dpif *dpif, const char *cmask)
 {
     int error = 0;
 
+    //重新设置cmask
     if (dpif->dpif_class->poll_threads_set) {
         error = dpif->dpif_class->poll_threads_set(dpif, cmask);
         if (error) {

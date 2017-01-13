@@ -110,6 +110,7 @@ struct port {
 
     /* An ordinary bridge port has 1 interface.
      * A bridge port for bonding has at least 2 interfaces. */
+    //记录port对应的iface或者bonding对应的ifaces
     struct ovs_list ifaces;    /* List of "struct iface"s. */
 };
 
@@ -118,19 +119,19 @@ struct bridge {
     char *name;                 /* User-specified arbitrary name. */
     char *type;                 /* Datapath type. */
     struct eth_addr ea;         /* Bridge Ethernet Address. */
-    struct eth_addr default_ea; /* Default MAC. */
+    struct eth_addr default_ea; /* Default MAC. */ //桥的默认mac地址
     const struct ovsrec_bridge *cfg;//桥的配置（可能还未生效）
 
     /* OpenFlow switch processing. */
-    struct ofproto *ofproto;    /* OpenFlow switch. */ //对应的of交换机
+    struct ofproto *ofproto;    /* OpenFlow switch. */ //是否已创建有与其对应的ofproto交换机
 
     /* Bridge ports. */
-    struct hmap ports;          /* "struct port"s indexed by name. */
+    struct hmap ports;          /* "struct port"s indexed by name. */ //桥所有port
     struct hmap ifaces;         /* "struct iface"s indexed by ofp_port. */ //br的所有iface
     struct hmap iface_by_name;  /* "struct iface"s indexed by name. */ //通过名称查找iface
 
     /* Port mirroring. */
-    struct hmap mirrors;        /* "struct mirror" indexed by UUID. */
+    struct hmap mirrors;        /* "struct mirror" indexed by UUID. */　//mirrors信息
 
     /* Auto Attach */
     struct hmap mappings;       /* "struct" indexed by UUID */
@@ -153,6 +154,7 @@ struct aa_mapping {
 };
 
 /* All bridges, indexed by name. */
+//所有的桥将被加入到此全局变量，按名称索引
 static struct hmap all_bridges = HMAP_INITIALIZER(&all_bridges);
 
 /* OVSDB IDL used to obtain configuration. */
@@ -176,7 +178,7 @@ static bool initial_config_done;
 static struct ovsdb_idl_txn *daemonize_txn;
 
 /* Most recently processed IDL sequence number. */
-static unsigned int idl_seqno;
+static unsigned int idl_seqno;//记录最近更新过的配置序列
 
 /* Track changes to port connectivity. */
 static uint64_t connectivity_seqno = LLONG_MIN;
@@ -601,9 +603,10 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
     add_del_bridges(ovs_cfg);
     HMAP_FOR_EACH (br, node, &all_bridges) {
         bridge_collect_wanted_ports(br, &br->wanted_ports);
-        bridge_del_ports(br, &br->wanted_ports);
+        bridge_del_ports(br, &br->wanted_ports);//删除不需要的port,更新已存在的port的配置
     }
 
+    //感谢原作者用这一段注释，将bridge与ofproto划分开
     /* Start pushing configuration changes down to the ofproto layer:
      *
      *   - Delete ofprotos that are no longer configured.
@@ -617,7 +620,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      * the ports to be added might require resources that will be freed up by
      * deletions (they might especially overlap in name). */
     bridge_delete_ofprotos();
-    HMAP_FOR_EACH (br, node, &all_bridges) {
+    HMAP_FOR_EACH (br, node, &all_bridges) {//检查所有交换机，如果它已有对应的ofproto，则检查它的port
         if (br->ofproto) {
             bridge_delete_or_reconfigure_ports(br);
         }
@@ -706,6 +709,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
 
 /* Delete ofprotos which aren't configured or have the wrong type.  Create
  * ofprotos which don't exist but need to. */
+//删除哪些没有被配置或者类型不正确的桥，注释上提到了创建，但这个函数没有做!!!
 static void
 bridge_delete_ofprotos(void)
 {
@@ -718,12 +722,13 @@ bridge_delete_ofprotos(void)
     sset_init(&names);
     sset_init(&types);
     ofproto_enumerate_types(&types);
-    SSET_FOR_EACH (type, &types) {
+    SSET_FOR_EACH (type, &types) {//遍历每种datapath type
         const char *name;
 
-        ofproto_enumerate_names(type, &names);
+        ofproto_enumerate_names(type, &names);//取出这种datapath type下所有ofproto的名称
         SSET_FOR_EACH (name, &names) {
             br = bridge_lookup(name);
+            //如果我们没有找到这个桥，或者这个桥的类型变了，则删除这个ofproto
             if (!br || strcmp(type, br->type)) {
                 ofproto_delete(name, type);
             }
@@ -789,24 +794,26 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
      * Side tasks: Reconfigure the ports that are still in 'br'.  Delete ports
      * that have the wrong OpenFlow port number (and arrange to add them back
      * with the correct OpenFlow port number). */
+    //遍历ofproto上所有port
     OFPROTO_PORT_FOR_EACH (&ofproto_port, &dump, br->ofproto) {
         ofp_port_t requested_ofp_port;
         struct iface *iface;
 
         sset_add(&ofproto_ports, ofproto_port.name);
 
-        iface = iface_lookup(br, ofproto_port.name);
-        if (!iface) {
+        iface = iface_lookup(br, ofproto_port.name);//查这个名称对应的iface
+        if (!iface) {//配置中没有这个iface
             /* No such iface is configured, so we should delete this
              * ofproto_port.
              *
              * As a corner case exception, keep the port if it's a bond fake
              * interface. */
+        	//排除fake_iface情况
             if (bridge_has_bond_fake_iface(br, ofproto_port.name)
                 && !strcmp(ofproto_port.type, "internal")) {
                 continue;
             }
-            goto delete;
+            goto delete;//否则都删除
         }
 
         if (strcmp(ofproto_port.type, iface->netdev_type)
@@ -1666,9 +1673,14 @@ bridge_has_bond_fake_iface(const struct bridge *br, const char *name)
 static bool
 port_is_bond_fake_iface(const struct port *port)
 {
+	//along add comment
+	//bond_fake_iface: boolean
+	//For a bonded port, whether to create a fake internal interface with thename of the port.
+	//Use only for compatibility with legacy software thatrequires this.
     return port->cfg->bond_fake_iface && !ovs_list_is_short(&port->ifaces);
 }
 
+//区分哪些要桥创建，哪些桥需要删除并执行创建和删除操作
 static void
 add_del_bridges(const struct ovsrec_open_vswitch *cfg)
 {
@@ -2965,13 +2977,14 @@ bridge_run(void)
         stream_ssl_set_ca_cert_file(ssl->ca_cert, ssl->bootstrap_ca_cert);
     }
 
+    //配置发生了变化
     if (ovsdb_idl_get_seqno(idl) != idl_seqno ||
         if_notifier_changed(ifnotifier)) {
         struct ovsdb_idl_txn *txn;
 
-        idl_seqno = ovsdb_idl_get_seqno(idl);
+        idl_seqno = ovsdb_idl_get_seqno(idl);//记录序列号
         txn = ovsdb_idl_txn_create(idl);
-        bridge_reconfigure(cfg ? cfg : &null_cfg);//bridge配置
+        bridge_reconfigure(cfg ? cfg : &null_cfg);//执行bridge对cfg的配置
 
         if (cfg) {
             ovsrec_open_vswitch_set_cur_cfg(cfg, cfg->next_cfg);
@@ -3238,6 +3251,7 @@ bridge_destroy(struct bridge *br, bool del)//桥的销毁
         struct mirror *mirror, *next_mirror;
         struct port *port, *next_port;
 
+        //桥所有port删除
         HMAP_FOR_EACH_SAFE (port, next_port, hmap_node, &br->ports) {
             port_destroy(port);
         }
@@ -3258,8 +3272,9 @@ bridge_destroy(struct bridge *br, bool del)//桥的销毁
     }
 }
 
+//通过名称查找对应的桥
 static struct bridge *
-bridge_lookup(const char *name)//通过名称查找对应的桥
+bridge_lookup(const char *name)
 {
     struct bridge *br;
 
@@ -3337,6 +3352,7 @@ bridge_get_controllers(const struct bridge *br,
     return n_controllers;
 }
 
+//收集计划配置的所有桥上的所有口，及controller相关的口
 static void
 bridge_collect_wanted_ports(struct bridge *br,
                             struct shash *wanted_ports)
@@ -3352,6 +3368,8 @@ bridge_collect_wanted_ports(struct bridge *br,
                       br->name, name);
         }
     }
+
+    //检查此桥是否有controllers的控制
     if (bridge_get_controllers(br, NULL)
         && !shash_find(wanted_ports, br->name)) {
         VLOG_WARN("bridge %s: no port named %s, synthesizing one",
@@ -3384,6 +3402,9 @@ bridge_del_ports(struct bridge *br, const struct shash *wanted_ports)
 
     /* Get rid of deleted ports.
      * Get rid of deleted interfaces on ports that still exist. */
+    //遍历当前桥上所有的口，如果这个接口可以找到cfg,则这个桥在新配置中还在
+    //如果这个port找不到cfg,则这个桥在新配置中就不在了，需要port_destroy
+    //如果这个port找到了cfg,则需要检查这个port是否需要删除ifaces（port_del_ifaces)
     HMAP_FOR_EACH_SAFE (port, next, hmap_node, &br->ports) {
         port->cfg = shash_find_data(wanted_ports, port->name);
         if (!port->cfg) {
@@ -3394,6 +3415,7 @@ bridge_del_ports(struct bridge *br, const struct shash *wanted_ports)
     }
 
     /* Update iface->cfg and iface->type in interfaces that still exist. */
+    //处理所有需要更新的port，更新它们的配置及iface->type
     SHASH_FOR_EACH (port_node, wanted_ports) {
         const struct ovsrec_port *port = port_node->data;
         size_t i;
@@ -3403,8 +3425,10 @@ bridge_del_ports(struct bridge *br, const struct shash *wanted_ports)
             struct iface *iface = iface_lookup(br, cfg->name);
             const char *type = iface_get_type(cfg, br->cfg);
             const char *dp_type = br->cfg->datapath_type;
+            //检查是否需要将type更新为netdev_type
             const char *netdev_type = ofproto_port_open_type(dp_type, type);
 
+            //更新iface配置
             if (iface) {
                 iface->cfg = cfg;
                 iface->type = type;
@@ -4025,6 +4049,7 @@ port_create(struct bridge *br, const struct ovsrec_port *cfg)
 }
 
 /* Deletes interfaces from 'port' that are no longer configured for it. */
+//针对port的配置，检查port当前的iface,如果新的配置中不再有这个iface，就把它删除
 static void
 port_del_ifaces(struct port *port)
 {
@@ -4045,7 +4070,7 @@ port_del_ifaces(struct port *port)
     /* Get rid of deleted interfaces. */
     LIST_FOR_EACH_SAFE (iface, next, port_elem, &port->ifaces) {
         if (!sset_contains(&new_ifaces, iface->name)) {
-            iface_destroy(iface);
+            iface_destroy(iface);//这个iface需要删除
         }
     }
 
@@ -4274,6 +4299,7 @@ iface_is_internal(const struct ovsrec_interface *iface,
 
 /* Returns the correct network device type for interface 'iface' in bridge
  * 'br'. */
+//获取iface对应的type，如果是internal口，就返回internal,如果type为NULL,则返回'system'
 static const char *
 iface_get_type(const struct ovsrec_interface *iface,
                const struct ovsrec_bridge *br)

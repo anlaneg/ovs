@@ -91,7 +91,8 @@ enum { MAX_FLOWS = 65536 };     /* Maximum number of flows in flow table. */
 static struct ovs_mutex dp_netdev_mutex = OVS_MUTEX_INITIALIZER;
 
 /* Contains all 'struct dp_netdev's. */
-static struct shash dp_netdevs OVS_GUARDED_BY(dp_netdev_mutex)//所有由netdev创建的dp
+//所有由netdev创建的datapath netdev
+static struct shash dp_netdevs OVS_GUARDED_BY(dp_netdev_mutex)
     = SHASH_INITIALIZER(&dp_netdevs);
 
 static struct vlog_rate_limit upcall_rl = VLOG_RATE_LIMIT_INIT(600, 600);
@@ -237,7 +238,7 @@ struct dp_netdev {//datapath对应的netdev
     void *dp_purge_aux;
 
     /* Stores all 'struct dp_netdev_pmd_thread's. */
-    struct cmap poll_threads;
+    struct cmap poll_threads;//用于存储所有dp_netdev_pmd_thread
 
     /* Protects the access of the 'struct dp_netdev_pmd_thread'
      * instance for non-pmd thread. */
@@ -247,8 +248,8 @@ struct dp_netdev {//datapath对应的netdev
      * 'struct dp_netdev_pmd_thread' in 'per_pmd_key'. */
     ovsthread_key_t per_pmd_key;
 
-    struct seq *reconfigure_seq;
-    uint64_t last_reconfigure_seq;
+    struct seq *reconfigure_seq;//重配置序列器（读取此值，用于获取当前重配置要求的序列号）
+    uint64_t last_reconfigure_seq;//上次我们完成重配置后的序列号(与reconfigure_seq决定是否需要重配置）
 
     /* Cpu mask for pin of pmd threads. */
     char *pmd_cmask;
@@ -298,6 +299,7 @@ struct dp_netdev_port {
     unsigned *txq_used;         /* Number of threads that uses each tx queue. */
     struct ovs_mutex txq_used_mutex;
     char *type;                 /* Port type as requested by user. */
+    //收队列的cpu亲昵性
     char *rxq_affinity_list;    /* Requested affinity of rx queues. */
 };
 
@@ -619,6 +621,7 @@ emc_cache_init(struct emc_cache *flow_cache)
     }
 }
 
+//删除emc缓存中所有内容
 static void
 emc_cache_uninit(struct emc_cache *flow_cache)
 {
@@ -909,6 +912,7 @@ dpif_netdev_class_is_dummy(const struct dpif_class *class)
     return class != &dpif_netdev_class;
 }
 
+//针对netdev类型port，对于internal类型，打开时，会打开为tap口
 static const char *
 dpif_netdev_port_open_type(const struct dpif_class *class, const char *type)
 {
@@ -1016,6 +1020,8 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     ovs_mutex_lock(&dp->port_mutex);
     dp_netdev_set_nonpmd(dp);
 
+    //创建一个datapath时，会隐含创建一个"internal“类型的port
+    //这个port的名称与datapath的名称相同，且端口号为０
     error = do_add_port(dp, name, dpif_netdev_port_open_type(dp->class,
                                                              "internal"),
                         ODPP_LOCAL);
@@ -1036,6 +1042,7 @@ dp_netdev_request_reconfigure(struct dp_netdev *dp)
     seq_change(dp->reconfigure_seq);
 }
 
+//检查dp_netdev是否需要重配置
 static bool
 dp_netdev_is_reconf_required(struct dp_netdev *dp)
 {
@@ -1139,12 +1146,13 @@ dpif_netdev_close(struct dpif *dpif)
     free(dpif);
 }
 
+//datapath删除
 static int
 dpif_netdev_destroy(struct dpif *dpif)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
 
-    if (!atomic_flag_test_and_set(&dp->destroyed)) {//廷后删除？
+    if (!atomic_flag_test_and_set(&dp->destroyed)) {//廷后删除
         if (ovs_refcount_unref_relaxed(&dp->ref_cnt) == 1) {
             /* Can't happen: 'dpif' still owns a reference to 'dp'. */
             OVS_NOT_REACHED();
@@ -1347,7 +1355,7 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
         return error;
     }
 
-    if (netdev_is_pmd(port->netdev)) {
+    if (netdev_is_pmd(port->netdev)) {//如果是pmd类型的port,会转去创建收发包线程
         int numa_id = netdev_get_numa_id(port->netdev);
 
         ovs_assert(ovs_numa_numa_id_is_valid(numa_id));
@@ -1397,9 +1405,9 @@ dpif_netdev_port_del(struct dpif *dpif, odp_port_t port_no)
     int error;
 
     ovs_mutex_lock(&dp->port_mutex);
-    if (port_no == ODPP_LOCAL) {
+    if (port_no == ODPP_LOCAL) {//如果是local口，返回无效参数
         error = EINVAL;
-    } else {
+    } else {//否则移除此port
         struct dp_netdev_port *port;
 
         error = get_port_by_number(dp, port_no, &port);
@@ -1476,7 +1484,7 @@ get_port_by_name(struct dp_netdev *dp,
     struct dp_netdev_port *port;
 
     HMAP_FOR_EACH (port, node, &dp->ports) {
-        if (!strcmp(netdev_get_name(port->netdev), devname)) {
+        if (!strcmp(netdev_get_name(port->netdev), devname)) {//名称和devname相同
             *portp = port;
             return 0;
         }
@@ -2699,6 +2707,7 @@ dpif_netdev_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops)
 
 /* Changes the number or the affinity of pmd threads.  The changes are actually
  * applied in dpif_netdev_run(). */
+//重新设置pmd_cmask
 static int
 dpif_netdev_pmd_set(struct dpif *dpif, const char *cmask)
 {
@@ -2707,7 +2716,7 @@ dpif_netdev_pmd_set(struct dpif *dpif, const char *cmask)
     if (!nullable_string_is_equal(dp->pmd_cmask, cmask)) {
         free(dp->pmd_cmask);
         dp->pmd_cmask = nullable_xstrdup(cmask);
-        dp_netdev_request_reconfigure(dp);
+        dp_netdev_request_reconfigure(dp);//通知dp配置发生变化
     }
 
     return 0;
@@ -2898,12 +2907,14 @@ dp_netdev_process_rxq_port(struct dp_netdev_pmd_thread *pmd,
     }
 }
 
+//重配指定port
 static int
 port_reconfigure(struct dp_netdev_port *port)
 {
     struct netdev *netdev = port->netdev;
     int i, err;
 
+    //不需要重配置
     if (!netdev_is_reconf_required(netdev)) {
         return 0;
     }
@@ -2950,19 +2961,24 @@ reconfigure_pmd_threads(struct dp_netdev *dp)
     struct dp_netdev_port *port, *next;
     int n_cores;
 
+    //更新我们的序列号
     dp->last_reconfigure_seq = seq_read(dp->reconfigure_seq);
 
+    //删除dp上对应的所有pmd
     dp_netdev_destroy_all_pmds(dp);
 
     /* Reconfigures the cpu mask. */
     ovs_numa_set_cpu_mask(dp->pmd_cmask);
 
     n_cores = ovs_numa_get_n_cores();
-    if (n_cores == OVS_CORE_UNSPEC) {
+    if (n_cores == OVS_CORE_UNSPEC) {//实别了cpu
         VLOG_ERR("Cannot get cpu core info");
         return;
     }
 
+    //重新配置datapath上所有port（当低层需要重新初始队列来完成配置时
+    //通过netdev_request_reconfigure来通知上层，上层自此进入，先销毁
+    //queue,再重新构建来完成配置
     HMAP_FOR_EACH_SAFE (port, next, node, &dp->ports) {
         int err;
 
@@ -2982,6 +2998,7 @@ reconfigure_pmd_threads(struct dp_netdev *dp)
 }
 
 /* Returns true if one of the netdevs in 'dp' requires a reconfiguration */
+//检查dp上是否存在某port要求重启配置，如果有返回True,否则False
 static bool
 ports_require_restart(const struct dp_netdev *dp)
     OVS_REQUIRES(dp->port_mutex)
@@ -3011,9 +3028,11 @@ dpif_netdev_run(struct dpif *dpif)
     if (non_pmd) {
         ovs_mutex_lock(&dp->non_pmd_mutex);
         HMAP_FOR_EACH (port, node, &dp->ports) {
+        	//维护非pmd的port
             if (!netdev_is_pmd(port->netdev)) {
                 int i;
 
+                //收取非pmd类型port的报文
                 for (i = 0; i < port->n_rxq; i++) {
                     dp_netdev_process_rxq_port(non_pmd, port,
                                                port->rxqs[i].rxq);
@@ -3026,6 +3045,7 @@ dpif_netdev_run(struct dpif *dpif)
         dp_netdev_pmd_unref(non_pmd);
     }
 
+    //如果dp要求重配置或者dp中的port要求重配置，则进入重配置
     if (dp_netdev_is_reconf_required(dp) || ports_require_restart(dp)) {
         reconfigure_pmd_threads(dp);
     }
@@ -3232,6 +3252,7 @@ dp_netdev_pmd_reload_done(struct dp_netdev_pmd_thread *pmd)
  * 'core_id' is NON_PMD_CORE_ID).
  *
  * Caller must unrefs the returned reference.  */
+//给定core_id查找其对应的pmd
 static struct dp_netdev_pmd_thread *
 dp_netdev_get_pmd(struct dp_netdev *dp, unsigned core_id)
 {
@@ -3248,6 +3269,7 @@ dp_netdev_get_pmd(struct dp_netdev *dp, unsigned core_id)
 }
 
 /* Sets the 'struct dp_netdev_pmd_thread' for non-pmd threads. */
+//生成non-pmd对应的pmd
 static void
 dp_netdev_set_nonpmd(struct dp_netdev *dp)
     OVS_REQUIRES(dp->port_mutex)
@@ -3361,6 +3383,7 @@ dp_netdev_destroy_pmd(struct dp_netdev_pmd_thread *pmd)
 
 /* Stops the pmd thread, removes it from the 'dp->poll_threads',
  * and unrefs the struct. */
+//从dp上删除给定的pmd
 static void
 dp_netdev_del_pmd(struct dp_netdev *dp, struct dp_netdev_pmd_thread *pmd)
 {
@@ -3383,11 +3406,12 @@ dp_netdev_del_pmd(struct dp_netdev *dp, struct dp_netdev_pmd_thread *pmd)
     if (dp->dp_purge_cb) {
         dp->dp_purge_cb(dp->dp_purge_aux, pmd->core_id);
     }
-    cmap_remove(&pmd->dp->poll_threads, &pmd->node, hash_int(pmd->core_id, 0));
+    cmap_remove(&pmd->dp->poll_threads, &pmd->node, hash_int(pmd->core_id, 0));//将此pmd自poll_threads上移除
     dp_netdev_pmd_unref(pmd);
 }
 
 /* Destroys all pmd threads. */
+//删除dp上所有的pmd
 static void
 dp_netdev_destroy_all_pmds(struct dp_netdev *dp)
 {

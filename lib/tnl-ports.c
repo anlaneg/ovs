@@ -42,6 +42,7 @@ struct ip_device {
     struct eth_addr mac;
     struct in6_addr *addr;//ip地址数组
     int n_addr;//指出有多少个ip地址
+    //记录此ip_device的版本，当此ip_device对应的dev版本发生变更时，将重建
     uint64_t change_seq;
     struct ovs_list node;
     char dev_name[IFNAMSIZ];
@@ -381,6 +382,7 @@ map_insert_ipdev(struct ip_device *ip_dev)
     }
 }
 
+//向addr_list中插入dev
 static void
 insert_ipdev__(struct netdev *dev,
                struct in6_addr *addr, int n_addr)
@@ -415,6 +417,7 @@ err:
     free(addr);
 }
 
+//将桥dev_name加入到addr_list
 static void
 insert_ipdev(const char dev_name[])
 {
@@ -427,6 +430,7 @@ insert_ipdev(const char dev_name[])
         return;
     }
 
+    //获取此dev对应的ip地址
     error = netdev_get_addr_list(dev, &addr, &mask, &n_in6);
     if (error) {
         netdev_close(dev);
@@ -452,6 +456,7 @@ delete_ipdev(struct ip_device *ip_dev)
     free(ip_dev);
 }
 
+//向addr_list中插入ipdev
 void
 tnl_port_map_insert_ipdev(const char dev_name[])
 {
@@ -460,12 +465,13 @@ tnl_port_map_insert_ipdev(const char dev_name[])
     ovs_mutex_lock(&mutex);
 
     LIST_FOR_EACH_SAFE(ip_dev, next, node, &addr_list) {
-        if (!strcmp(netdev_get_name(ip_dev->dev), dev_name)) {
+        if (!strcmp(netdev_get_name(ip_dev->dev), dev_name)) {//找到这个ip_dev
+        	//如果seq没有发生变化，则不必要处理
             if (ip_dev->change_seq == netdev_get_change_seq(ip_dev->dev)) {
                 goto out;
             }
             /* Address changed. */
-            delete_ipdev(ip_dev);
+            delete_ipdev(ip_dev);//变化了，且存在删除掉后再添加
         }
     }
     insert_ipdev(dev_name);
@@ -488,6 +494,8 @@ tnl_port_map_delete_ipdev(const char dev_name[])
     ovs_mutex_unlock(&mutex);
 }
 
+//维护addr_list列表，将配置发生变化的dev进行检查，如果它没有ip地址
+//则没有必要加入到addr_list列表中了
 void
 tnl_port_map_run(void)
 {
@@ -503,8 +511,8 @@ tnl_port_map_run(void)
 
         /* Address changed. */
         ovs_strlcpy(dev_name, ip_dev->dev_name, sizeof dev_name);
-        delete_ipdev(ip_dev);
-        insert_ipdev(dev_name);
+        delete_ipdev(ip_dev);//删除它
+        insert_ipdev(dev_name);//尝试着重新插入它，如果它没有ip地址了，将被删除掉
     }
     ovs_mutex_unlock(&mutex);
 }

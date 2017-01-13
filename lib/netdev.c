@@ -608,8 +608,9 @@ netdev_rxq_open(struct netdev *netdev, struct netdev_rxq **rxp, int id)//构造�
 }
 
 /* Closes 'rx'. */
+//关闭收队列，释放内存，释放对netdev的引用
 void
-netdev_rxq_close(struct netdev_rxq *rx)//关闭收队列，释放内存，释放对netdev的引用
+netdev_rxq_close(struct netdev_rxq *rx)
     OVS_EXCLUDED(netdev_mutex)
 {
     if (rx) {
@@ -1968,6 +1969,7 @@ netdev_wait_reconf_required(struct netdev *netdev)//创建等待句柄
     seq_wait(netdev->reconfigure_seq, netdev->last_reconfigure_seq);
 }
 
+//检查给定netdev是否要重新配置
 bool
 netdev_is_reconf_required(struct netdev *netdev)
 {

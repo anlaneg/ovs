@@ -218,7 +218,7 @@ struct ofport_dpif *odp_port_to_ofport(const struct dpif_backer *, odp_port_t);
 /* A bridge based on a "dpif" datapath. */
 
 struct ofproto_dpif {
-    struct hmap_node all_ofproto_dpifs_node; /* In 'all_ofproto_dpifs'. */
+    struct hmap_node all_ofproto_dpifs_node; /* In 'all_ofproto_dpifs'. */ //用于加入链表用
     struct ofproto up;
     struct dpif_backer *backer;
 

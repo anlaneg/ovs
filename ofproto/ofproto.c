@@ -297,7 +297,7 @@ unsigned ofproto_flow_limit = OFPROTO_FLOW_LIMIT_DEFAULT;
 unsigned ofproto_max_idle = OFPROTO_MAX_IDLE_DEFAULT;
 
 size_t n_handlers, n_revalidators;
-char *pmd_cpu_mask;
+char *pmd_cpu_mask;//记录pmd类型设备的cpu_mask
 
 /* Map from datapath name to struct ofproto, for use by unixctl commands. */
 //记录所有的open flow交换机
@@ -454,6 +454,7 @@ ofproto_normalize_type(const char *type)
  *
  * Some kinds of datapaths might not be practically enumerable.  This is not
  * considered an error. */
+//获取所有指定type的ofprotos的名称
 int
 ofproto_enumerate_names(const char *type, struct sset *names)
 {
@@ -1663,6 +1664,7 @@ ofproto_destroy(struct ofproto *p, bool del)
  * represent the datapath.
  *
  * The datapath should not be currently open as an ofproto. */
+//删除指定名称，指定类型的桥
 int
 ofproto_delete(const char *name, const char *type)
 {
@@ -1964,14 +1966,14 @@ ofproto_port_dump_done(struct ofproto_port_dump *dump)
  *
  * Returns either 'type' itself or a string literal, which must not be
  * freed. */
-//依据datapath类型来返回对应的port_type(如上面注释举例说说的 userspace datapath时，internal被返回为tap
+//依据datapath类型来返回对应的port_type(如上面注释举例说说的 userspace datapath时，internal被返回为tap）
 const char *
 ofproto_port_open_type(const char *datapath_type, const char *port_type)
 {
     const struct ofproto_class *class;
 
     datapath_type = ofproto_normalize_type(datapath_type);//datapath类型规则化
-    class = ofproto_class_find__(datapath_type);
+    class = ofproto_class_find__(datapath_type);//找出datapath类型对应的class
     if (!class) {
         return port_type;
     }

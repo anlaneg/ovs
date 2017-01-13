@@ -60,7 +60,9 @@ struct netdev {
      * the operations on the device and calling netdev_reconfigure() to allow
      * the configuration changes.  'last_reconfigure_seq' remembers the value
      * of 'reconfigure_seq' when the last reconfiguration happened. */
-    struct seq *reconfigure_seq;
+    //netdev_request_reconfigure可以通知上层，需要进行reconfigure,上层会调用netdev_reconfigure来
+    //完成此请求
+    struct seq *reconfigure_seq;//netdev重配置序列器
     uint64_t last_reconfigure_seq;//最后一次配置发生变化时的序列
 
     /* If this is 'true', the user explicitly specified an MTU for this

@@ -228,6 +228,7 @@ ovs_router_insert__(uint8_t priority, const struct in6_addr *ip6_dst,
         /* An old rule with the same match was displaced. */
         ovsrcu_postpone(rt_entry_free, ovs_router_entry_cast(cr));
     }
+    //这个条的上连口有ip地址，尝试将它加入ipdev
     tnl_port_map_insert_ipdev(output_bridge);
     seq_change(tnl_conf_seq);
     return 0;
