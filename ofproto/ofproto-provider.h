@@ -74,7 +74,7 @@ struct ofproto {//openflow 交换机
 
     /* Settings. */
     uint64_t fallback_dpid;     /* Datapath ID if no better choice found. */
-    uint64_t datapath_id;       /* Datapath ID. */
+    uint64_t datapath_id;       /* Datapath ID. */ //设直datapath
     bool forward_bpdu;          /* Option to allow forwarding of BPDU frames
                                  * when NORMAL action is invoked. */
     char *mfr_desc;             /* Manufacturer (NULL for default). */
