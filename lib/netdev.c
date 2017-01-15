@@ -430,6 +430,7 @@ netdev_set_config(struct netdev *netdev, const struct smap *args, char **errp)//
         char *verbose_error = NULL;
         int error;
 
+        //为此接口设置配置
         error = netdev->netdev_class->set_config(netdev,
                                                  args ? args : &no_args,
                                                  &verbose_error);

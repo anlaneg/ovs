@@ -300,6 +300,7 @@ struct netdev_class {
      * the provider can allocate a string with an error message in '*errp'.
      * The caller has to call free on it. */
     //也负责tunnel的配置设置
+    //设置接口的配置，这个配置是当前全新的。
     int (*set_config)(struct netdev *netdev, const struct smap *args,
                       char **errp);
 

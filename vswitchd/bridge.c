@@ -816,6 +816,8 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
             goto delete;//否则都删除
         }
 
+        //配置仍有这个口，说明这个口需要考虑更新
+        //如果接口类型发生变化或者为此接口进行配置时失败，则将此接口删除掉，一会再添加。
         if (strcmp(ofproto_port.type, iface->netdev_type)
             || netdev_set_config(iface->netdev, &iface->cfg->options, NULL)) {
             /* The interface is the wrong type or can't be configured.
