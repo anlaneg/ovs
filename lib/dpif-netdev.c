@@ -229,7 +229,9 @@ struct dp_netdev {//datapath对应的netdev
     /* Protects access to ofproto-dpif-upcall interface during revalidator
      * thread synchronization. */
     struct fat_rwlock upcall_rwlock;
+    //upcall回调
     upcall_callback *upcall_cb;  /* Callback function for executing upcalls. */
+    //upcall 对应的参数
     void *upcall_aux;
 
     /* Callback function for notifying the purging of dp flows (during
@@ -2851,6 +2853,7 @@ dp_netdev_actions_create(const struct nlattr *actions, size_t size)
     return netdev_actions;
 }
 
+//从flow中取出action
 struct dp_netdev_actions *
 dp_netdev_flow_get_actions(const struct dp_netdev_flow *flow)
 {
@@ -2897,6 +2900,7 @@ cycles_count_end(struct dp_netdev_pmd_thread *pmd,
     non_atomic_ullong_add(&pmd->cycles.n[type], interval);
 }
 
+//自队列中收取报文，并进行处理
 static void
 dp_netdev_process_rxq_port(struct dp_netdev_pmd_thread *pmd,
                            struct dp_netdev_port *port,
@@ -3972,6 +3976,7 @@ packet_batch_per_flow_init(struct packet_batch_per_flow *batch,
     batch->tcp_flags = 0;
 }
 
+//按流执行action
 static inline void
 packet_batch_per_flow_execute(struct packet_batch_per_flow *batch,
                               struct dp_netdev_pmd_thread *pmd,
@@ -4142,6 +4147,7 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet,
     }
 }
 
+//执行l2,l3查询
 static inline void
 fast_path_processing(struct dp_netdev_pmd_thread *pmd,
                      struct dp_packet_batch *packets_,
@@ -4172,7 +4178,7 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
         keys[i].len = netdev_flow_key_size(miniflow_n_values(&keys[i].mf));//设置在emc中解释后key解释出来的数据长度
     }
     /* Get the classifier for the in_port */
-    cls = dp_netdev_pmd_lookup_dpcls(pmd, in_port);//通过in_port分类(如果规则不能port做为匹配条件，如何构造cls，每个cls中都加入？）
+    cls = dp_netdev_pmd_lookup_dpcls(pmd, in_port);//通过in_port分类
     if (OVS_LIKELY(cls)) {
         any_miss = !dpcls_lookup(cls, keys, rules, cnt, &lookup_cnt);
     } else {

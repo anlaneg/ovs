@@ -1406,6 +1406,7 @@ dpif_register_dp_purge_cb(struct dpif *dpif, dp_purge_callback *cb, void *aux)
     }
 }
 
+//注册upcall回调及回调对应参数
 void
 dpif_register_upcall_cb(struct dpif *dpif, upcall_callback *cb, void *aux)
 {

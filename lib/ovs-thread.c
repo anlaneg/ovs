@@ -294,22 +294,22 @@ ovs_barrier_destroy(struct ovs_barrier *barrier)
  * visible on return and to prevent the following memory accesses to be
  * reordered before the ovs_barrier_block(). */
 void
-ovs_barrier_block(struct ovs_barrier *barrier)
+ovs_barrier_block(struct ovs_barrier *barrier)//提供同步棚栏
 {
     uint64_t seq = seq_read(barrier->seq);
     uint32_t orig;
 
-    orig = atomic_count_inc(&barrier->count);
-    if (orig + 1 == barrier->size) {
-        atomic_count_set(&barrier->count, 0);
+    orig = atomic_count_inc(&barrier->count);//计数加１
+    if (orig + 1 == barrier->size) {//如果这个线程是barrier约定的最后一个
+        atomic_count_set(&barrier->count, 0);//最后一个线程将计数清０
         /* seq_change() serves as a release barrier against the other threads,
          * so the zeroed count is visible to them as they continue. */
-        seq_change(barrier->seq);
-    } else {
+        seq_change(barrier->seq);//通知seq变化，通知其它先进入的小伙伴，指明人到齐，可以开始离开了
+    } else {//早到的小伙伴，需要等其它线程进入后才能开始
         /* To prevent thread from waking up by other event,
          * keeps waiting for the change of 'barrier->seq'. */
         while (seq == seq_read(barrier->seq)) {
-            seq_wait(barrier->seq, seq);
+            seq_wait(barrier->seq, seq);//添加句柄
             poll_block();
         }
     }

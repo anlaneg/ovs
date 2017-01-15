@@ -194,6 +194,7 @@ struct dpif_backer {
     struct udpif *udpif;
 
     struct ovs_rwlock odp_to_ofport_lock;
+    //所有当前backer的port保存在此hash表上，索引odp_port_t
     struct hmap odp_to_ofport_map OVS_GUARDED; /* Contains "struct ofport"s. */
 
     struct simap tnl_backers;      /* Set of dpif ports backing tunnels. */
@@ -220,7 +221,7 @@ struct ofport_dpif *odp_port_to_ofport(const struct dpif_backer *, odp_port_t);
 struct ofproto_dpif {
     struct hmap_node all_ofproto_dpifs_node; /* In 'all_ofproto_dpifs'. */ //用于加入链表用
     struct ofproto up;
-    struct dpif_backer *backer;
+    struct dpif_backer *backer;//ofproto对应的backer(等价与type,但提供比type更多的信息）
 
     /* Unique identifier for this instantiation of this bridge in this running
      * process.  */
@@ -240,8 +241,8 @@ struct ofproto_dpif {
     struct dpif_sflow *sflow;
     struct dpif_ipfix *ipfix;
     struct hmap bundles;        /* Contains "struct ofbundle"s. */
-    struct mac_learning *ml;
-    struct mcast_snooping *ms;
+    struct mac_learning *ml;//mac学习表
+    struct mcast_snooping *ms;//组播学习表
     bool has_bonded_bundles;
     bool lacp_enabled;
     struct mbridge *mbridge;

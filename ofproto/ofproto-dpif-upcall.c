@@ -150,7 +150,7 @@ struct udpif {
      * threads to wait on 'pause_barrier' at the beginning of the next
      * revalidation round. */
     bool pause;                        /* Set by leader on 'pause_latch. */
-    struct latch pause_latch;          /* Set to force revalidators pause. */
+    struct latch pause_latch;          /* Set to force revalidators pause. */　//用于暂停revalidators
     struct ovs_barrier pause_barrier;  /* Barrier used to pause all */
                                        /* revalidators by main thread. */
 
@@ -555,6 +555,7 @@ udpif_start_threads(struct udpif *udpif, size_t n_handlers,
             struct revalidator *revalidator = &udpif->revalidators[i];
 
             revalidator->udpif = udpif;
+            //创建线程
             revalidator->thread = ovs_thread_create(
                 "revalidator", udpif_revalidator, revalidator);
         }
@@ -576,7 +577,7 @@ udpif_pause_revalidators(struct udpif *udpif)
 /* Resumes the pausing of revalidators.  Should only be called by the
  * main thread. */
 static void
-udpif_resume_revalidators(struct udpif *udpif)
+udpif_resume_revalidators(struct udpif *udpif)//继续revalidator
 {
     if (udpif->backer->recv_set_enable) {
         latch_poll(&udpif->pause_latch);
@@ -848,7 +849,7 @@ udpif_revalidator(void *arg)
     /* Used by all revalidators. */
     struct revalidator *revalidator = arg;
     struct udpif *udpif = revalidator->udpif;
-    bool leader = revalidator == &udpif->revalidators[0];
+    bool leader = revalidator == &udpif->revalidators[0];//0号是leader
 
     /* Used only by the leader. */
     long long int start_time = 0;
@@ -857,7 +858,7 @@ udpif_revalidator(void *arg)
 
     revalidator->id = ovsthread_id_self();
     for (;;) {
-        if (leader) {
+        if (leader) {//leader的工作
             uint64_t reval_seq;
 
             recirc_run(); /* Recirculation cleanup. */
@@ -890,7 +891,7 @@ udpif_revalidator(void *arg)
         }
 
         /* Wait for the leader to start the flow dump. */
-        ovs_barrier_block(&udpif->reval_barrier);
+        ovs_barrier_block(&udpif->reval_barrier);//等待所有线程运行到这里
         if (udpif->pause) {
             revalidator_pause(revalidator);
         }
@@ -1209,7 +1210,7 @@ upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufi
           struct flow_wildcards *wc, struct ofpbuf *put_actions, void *aux)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
-    struct udpif *udpif = aux;
+    struct udpif *udpif = aux;//upcall的参数udpif
     struct upcall upcall;
     bool megaflow;
     int error;

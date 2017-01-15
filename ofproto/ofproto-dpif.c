@@ -331,8 +331,9 @@ type_run(const char *type)
 {
     struct dpif_backer *backer;
 
+    //找出type类型对应的backer
     backer = shash_find_data(&all_dpif_backers, type);
-    if (!backer) {
+    if (!backer) {//这种类型还没有创建backer
         /* This is not necessarily a problem, since backers are only
          * created on demand. */
         return 0;
@@ -442,15 +443,18 @@ type_run(const char *type)
         }
         backer->need_revalidate = 0;
 
+        //遍历每个ofproto(促使生成新的xlate_cfg)
         HMAP_FOR_EACH (ofproto, all_ofproto_dpifs_node, &all_ofproto_dpifs) {
             struct ofport_dpif *ofport;
             struct ofbundle *bundle;
 
-            if (ofproto->backer != backer) {
+            if (ofproto->backer != backer) {//类型不一致，不处理
                 continue;
             }
 
-            xlate_txn_start();
+            xlate_txn_start();//开始xlate变化事务
+            //更新xcfg
+            //更新bridge
             xlate_ofproto_set(ofproto, ofproto->up.name,
                               ofproto->backer->dpif, ofproto->ml,
                               ofproto->stp, ofproto->rstp, ofproto->ms,
@@ -460,6 +464,7 @@ type_run(const char *type)
                               connmgr_has_in_band(ofproto->up.connmgr),
                               &ofproto->backer->support);
 
+            //更新bundles
             HMAP_FOR_EACH (bundle, hmap_node, &ofproto->bundles) {
                 xlate_bundle_set(ofproto, bundle, bundle->name,
                                  bundle->vlan_mode, bundle->vlan,
@@ -468,6 +473,7 @@ type_run(const char *type)
                                  bundle->floodable, bundle->protected);
             }
 
+            //更新port
             HMAP_FOR_EACH (ofport, up.hmap_node, &ofproto->up.ports) {
                 int stp_port = ofport->stp_port
                     ? stp_port_no(ofport->stp_port)
@@ -481,7 +487,7 @@ type_run(const char *type)
                                  ofport->up.pp.state, ofport->is_tunnel,
                                  ofport->may_enable);
             }
-            xlate_txn_commit();
+            xlate_txn_commit();//提交xcfg变化
         }
 
         udpif_revalidate(backer->udpif);
@@ -739,6 +745,9 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
         free(backer);
         return error;
     }
+    //此时的backer除dpif外，其它仅是一块未使用的内存
+    //构造udpif,并注册upcall回调，将udpif做为参数传入，处理报文至upcall时
+    //udpif将被取出
     backer->udpif = udpif_create(backer, backer->dpif);
 
     backer->type = xstrdup(type);

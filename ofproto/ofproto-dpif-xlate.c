@@ -95,7 +95,7 @@ struct xbridge {
     struct ovs_list xbundles;     /* Owned xbundles. */
     struct hmap xports;           /* Indexed by ofp_port. */ //此交换机的所有接口
 
-    char *name;                   /* Name used in log messages. */
+    char *name;                   /* Name used in log messages. */ //交换机名称
     struct dpif *dpif;            /* Datapath interface. */
     struct mac_learning *ml;      /* Mac learning handle. */ //mac学习表
     struct mcast_snooping *ms;    /* Multicast Snooping handle. */ //igmp snooping表项（通过检查此指针是否为空，来断定是否开启了igmp snooping)
@@ -465,6 +465,9 @@ struct skb_priority_to_dscp {
     uint8_t dscp;               /* DSCP bits to mark outgoing traffic with. */
 };
 
+//像下面的注释所言，通过rcu保证了数据的事务性，xlate_cfg是一个类似于快照的东西，它
+//在配置变化过程中，提供了一个稳定形式给转发层面。随时会有配置发生变化，但type_run是
+//运行在配置线程中，它总在合适的时机生成新的xlate_cfg,这样ofproto变化的间隙就会影响xlate_cfg
 /* Xlate config contains hash maps of all bridges, bundles and ports.
  * Xcfgp contains the pointer to the current xlate configuration.
  * When the main thread needs to change the configuration, it copies xcfgp to
@@ -476,6 +479,7 @@ struct xlate_cfg {
     struct hmap xports;//记录xport类型（所有的port)
 };
 static OVSRCU_TYPE(struct xlate_cfg *) xcfgp = OVSRCU_INITIALIZER(NULL);//全局变量指向xlate_cfg
+//临时xcfg,用于创建一块临时内存，保证改变的事务性（xcfgp是生效的xcfg)
 static struct xlate_cfg *new_xcfg = NULL;
 
 static bool may_receive(const struct xport *, struct xlate_ctx *);
@@ -748,6 +752,7 @@ xlate_report_subfield(const struct xlate_ctx *ctx,
     }
 }
 
+//将桥xbridge加入到xcfg
 static void
 xlate_xbridge_init(struct xlate_cfg *xcfg, struct xbridge *xbridge)
 {
@@ -776,6 +781,7 @@ xlate_xport_init(struct xlate_cfg *xcfg, struct xport *xport)
                 hash_ofp_port(xport->ofp_port));
 }
 
+//更新xbridge（使xbridge与ofproto一致）
 static void
 xlate_xbridge_set(struct xbridge *xbridge,
                   struct dpif *dpif,
@@ -902,6 +908,7 @@ xlate_xport_set(struct xport *xport, odp_port_t odp_port,
     }
 }
 
+//实现xbridge信息的copy
 static void
 xlate_xbridge_copy(struct xbridge *xbridge)
 {
@@ -930,6 +937,7 @@ xlate_xbridge_copy(struct xbridge *xbridge)
     }
 }
 
+//实现xbundle的copy
 static void
 xlate_xbundle_copy(struct xbridge *xbridge, struct xbundle *xbundle)
 {
@@ -949,6 +957,7 @@ xlate_xbundle_copy(struct xbridge *xbridge, struct xbundle *xbundle)
     }
 }
 
+//实现xport的copy
 static void
 xlate_xport_copy(struct xbridge *xbridge, struct xbundle *xbundle,
                  struct xport *xport)
@@ -1007,15 +1016,16 @@ xlate_txn_commit(void)
 {
     struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
 
-    ovsrcu_set(&xcfgp, new_xcfg);
+    ovsrcu_set(&xcfgp, new_xcfg);//原子变换
     ovsrcu_synchronize();
-    xlate_xcfg_free(xcfg);
-    new_xcfg = NULL;
+    xlate_xcfg_free(xcfg);//释放旧内存
+    new_xcfg = NULL;//回归原始
 }
 
 /* Copies the current xlate configuration in xcfgp to new_xcfg.
  *
  * This needs to be called prior to editing the xlate configuration. */
+//转换的事务起始函数，通过"申请空间，更改，变更空间“来实现事务一致性
 void
 xlate_txn_start(void)
 {
@@ -1034,6 +1044,7 @@ xlate_txn_start(void)
         return;
     }
 
+    //将旧数据copy一份，准备变化
     HMAP_FOR_EACH (xbridge, hmap_node, &xcfg->xbridges) {
         xlate_xbridge_copy(xbridge);
     }
@@ -1060,7 +1071,7 @@ xlate_xcfg_free(struct xlate_cfg *xcfg)
 }
 
 void
-xlate_ofproto_set(struct ofproto_dpif *ofproto, const char *name,
+xlate_ofproto_set(struct ofproto_dpif *ofproto, const char *name,//ofproto,ofproto名称
                   struct dpif *dpif,
                   const struct mac_learning *ml, struct stp *stp,
                   struct rstp *rstp, const struct mcast_snooping *ms,
@@ -1076,7 +1087,7 @@ xlate_ofproto_set(struct ofproto_dpif *ofproto, const char *name,
     ovs_assert(new_xcfg);
 
     xbridge = xbridge_lookup(new_xcfg, ofproto);
-    if (!xbridge) {
+    if (!xbridge) {//xcfg中没有此ofproto,则创建并加入
         xbridge = xzalloc(sizeof *xbridge);
         xbridge->ofproto = ofproto;
 
@@ -1108,7 +1119,7 @@ xlate_xbridge_remove(struct xlate_cfg *xcfg, struct xbridge *xbridge)
         xlate_xbundle_remove(xcfg, xbundle);
     }
 
-    hmap_remove(&xcfg->xbridges, &xbridge->hmap_node);
+    hmap_remove(&xcfg->xbridges, &xbridge->hmap_node);//xbridges的移除操作
     mac_learning_unref(xbridge->ml);
     mcast_snooping_unref(xbridge->ms);
     mbridge_unref(xbridge->mbridge);
