@@ -396,7 +396,7 @@ struct ofproto_bundle_settings {
     ofp_port_t *slaves;         /* OpenFlow port numbers for slaves. */
     size_t n_slaves;
 
-    enum port_vlan_mode vlan_mode; /* Selects mode for vlan and trunks */
+    enum port_vlan_mode vlan_mode; /* Selects mode for vlan and trunks */ //vlan模式
     int vlan;                   /* VLAN VID, except for PORT_VLAN_TRUNK. */
     unsigned long *trunks;      /* vlan_bitmap, except for PORT_VLAN_ACCESS. */
     bool use_priority_tags;     /* Use 802.1p tag for frames in VLAN 0? */

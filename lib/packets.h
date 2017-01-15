@@ -213,6 +213,7 @@ static inline bool eth_addr_equal_except(const struct eth_addr a,
              || ((a.be16[2] ^ b.be16[2]) & mask.be16[2]));
 }
 
+//由以太网地址转datapath-id
 static inline uint64_t eth_addr_to_uint64(const struct eth_addr ea)
 {
     return (((uint64_t) ntohs(ea.be16[0]) << 32)

@@ -118,7 +118,7 @@ struct bridge {
     struct hmap_node node;      /* In 'all_bridges'. */
     char *name;                 /* User-specified arbitrary name. */
     char *type;                 /* Datapath type. */
-    struct eth_addr ea;         /* Bridge Ethernet Address. */
+    struct eth_addr ea;         /* Bridge Ethernet Address. */ //记录桥上的local口的mac地址
     struct eth_addr default_ea; /* Default MAC. */ //桥的默认mac地址
     const struct ovsrec_bridge *cfg;//桥的配置（可能还未生效）
 
@@ -698,7 +698,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
         bridge_configure_aa(br);
     }
     free(managers);
-
+    //配置完成，进行维护
     /* The ofproto-dpif provider does some final reconfiguration in its
      * ->type_run() function.  We have to call it before notifying the database
      * client that reconfiguration is complete, otherwise there is a very
@@ -1052,7 +1052,7 @@ bridge_configure_datapath_id(struct bridge *br)
 
     bridge_pick_local_hw_addr(br, &ea, &hw_addr_iface);
     local_iface = iface_from_ofp_port(br, OFPP_LOCAL);
-    if (local_iface) {
+    if (local_iface) {//为local口设置mac
         int error = netdev_set_etheraddr(local_iface->netdev, ea);
         if (error) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
@@ -1064,7 +1064,7 @@ bridge_configure_datapath_id(struct bridge *br)
     br->ea = ea;
 
     dpid = bridge_pick_datapath_id(br, ea, hw_addr_iface);
-    if (dpid != ofproto_get_datapath_id(br->ofproto)) {
+    if (dpid != ofproto_get_datapath_id(br->ofproto)) {//设置datapath
         VLOG_INFO("bridge %s: using datapath ID %016"PRIx64, br->name, dpid);
         ofproto_set_datapath_id(br->ofproto, dpid);
     }
@@ -1994,7 +1994,7 @@ find_local_hw_addr(const struct bridge *br, struct eth_addr *ea,
                 struct eth_addr candidate_ea;
                 if (!netdev_get_etheraddr(candidate->netdev, &candidate_ea)
                     && eth_addr_equals(iface_ea, candidate_ea)) {
-                    iface = candidate;
+                    iface = candidate;//找到拥有candidate_ea mac的iface
                 }
             }
         } else {
@@ -2066,17 +2066,18 @@ bridge_pick_local_hw_addr(struct bridge *br, struct eth_addr *ea,
     /* Did the user request a particular MAC? */
     const char *hwaddr = smap_get_def(&br->cfg->other_config, "hwaddr", "");
     if (eth_addr_from_string(hwaddr, ea)) {
-        if (eth_addr_is_multicast(*ea)) {
+        if (eth_addr_is_multicast(*ea)) {//桥地址不能是组播地址
             VLOG_ERR("bridge %s: cannot set MAC address to multicast "
                      "address "ETH_ADDR_FMT, br->name, ETH_ADDR_ARGS(*ea));
         } else if (eth_addr_is_zero(*ea)) {
             VLOG_ERR("bridge %s: cannot set MAC address to zero", br->name);
         } else {
-            return;
+            return;//用户配置了mac
         }
     }
 
     /* Find a local hw address */
+    //用户未配置mac地址的情况下
     find_local_hw_addr(br, ea, NULL, hw_addr_iface);
 }
 
@@ -2106,7 +2107,7 @@ bridge_pick_datapath_id(struct bridge *br,
     uint64_t dpid;
 
     datapath_id = smap_get_def(&br->cfg->other_config, "datapath-id", "");
-    if (dpid_from_string(datapath_id, &dpid)) {
+    if (dpid_from_string(datapath_id, &dpid)) {//如果配置了id，则用配置的id
         return dpid;
     }
 
@@ -2130,7 +2131,7 @@ bridge_pick_datapath_id(struct bridge *br,
             char *combined = xasprintf("%s,%s", host_uuid, br->name);
             dpid = dpid_from_hash(combined, strlen(combined));
             free(combined);
-            return dpid;
+            return dpid;//随机产生一个id
         }
     }
 
@@ -4392,6 +4393,7 @@ iface_find(const char *name)
     return NULL;
 }
 
+//已知ofp_port，取iface
 static struct iface *
 iface_from_ofp_port(const struct bridge *br, ofp_port_t ofp_port)
 {
