@@ -129,7 +129,7 @@ ovsdb_file_open_log(const char *file_name, enum ovsdb_log_open_mode open_mode,
 
     ovs_assert(logp || schemap);
 
-    error = ovsdb_log_open(file_name, open_mode, -1, &log);
+    error = ovsdb_log_open(file_name, open_mode, -1, &log);//日志文件
     if (error) {
         goto error;
     }
@@ -201,6 +201,7 @@ ovsdb_file_open__(const char *file_name,
 
     db = ovsdb_create(schema ? schema : ovsdb_schema_clone(alternate_schema));
 
+    //为什么我们说ovsdb是一个内存数据库，因为它的数据仅存在内存里，日志存在磁盘上
     /* When a log gets big, we compact it into a new log that initially has
      * only a single transaction that represents the entire state of the
      * database.  Thus, we consider the first transaction in the database to be
@@ -211,6 +212,7 @@ ovsdb_file_open__(const char *file_name,
      * size, but it's just not that important. */
     off_t snapshot_size = 0;
     unsigned int n_transactions = 0;
+    //log文件重演
     while ((error = ovsdb_log_read(log, &json)) == NULL && json) {
         struct ovsdb_txn *txn;
 
@@ -508,9 +510,9 @@ ovsdb_file_read_schema(const char *file_name, struct ovsdb_schema **schemap)
 
 struct ovsdb_file {
     struct ovsdb_replica replica;
-    struct ovsdb *db;
-    struct ovsdb_log *log;
-    char *file_name;
+    struct ovsdb *db;//内存里的数据库
+    struct ovsdb_log *log;//数据库日志文件，为保证事务一致性
+    char *file_name;//文件名
     long long int last_compact;
     long long int next_compact;
     unsigned int n_transactions;

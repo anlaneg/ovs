@@ -705,7 +705,7 @@ write_fully(int fd, const void *p_, size_t size, size_t *bytes_written)
 /* Given file name 'file_name', fsyncs the directory in which it is contained.
  * Returns 0 if successful, otherwise a positive errno value. */
 int
-fsync_parent_dir(const char *file_name)
+fsync_parent_dir(const char *file_name)//刷目录至磁盘
 {
     int error = 0;
 #ifndef _WIN32
