@@ -25,12 +25,12 @@ struct ovsdb_table_schema;
 
 /* A column or a column schema (currently there is no distinction). */
 struct ovsdb_column {
-    unsigned int index;
-    char *name;
+    unsigned int index;//列在表中的编号
+    char *name;//列名称
 
-    bool mutable;
+    bool mutable;//是否可变
     bool persistent;
-    struct ovsdb_type type;
+    struct ovsdb_type type;//列类型
 };
 
 /* A few columns appear in every table with standardized column indexes.

@@ -30,7 +30,7 @@ struct ovsdb_table_schema {
     bool mutable;
     bool is_root;               /* Part of garbage collection root set? */
     unsigned int max_rows;      /* Maximum number of rows. */
-    struct shash columns;       /* Contains "struct ovsdb_column *"s. */
+    struct shash columns;       /* Contains "struct ovsdb_column *"s. */ //表包含哪些列
     struct ovsdb_column_set *indexes;
     size_t n_indexes;
 };

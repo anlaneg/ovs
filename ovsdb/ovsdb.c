@@ -26,6 +26,7 @@
 #include "table.h"
 #include "transaction.h"
 
+//创建模式对象（名称，版本，checksum)
 struct ovsdb_schema *
 ovsdb_schema_create(const char *name, const char *version, const char *cksum)
 {
@@ -137,6 +138,7 @@ ovsdb_schema_check_ref_table(struct ovsdb_column *column,
     return NULL;
 }
 
+//是否为类似1.2.3的格式
 static bool
 is_valid_version(const char *s)
 {
@@ -173,20 +175,29 @@ ovsdb_schema_from_json(struct json *json, struct ovsdb_schema **schemap)
 
     *schemap = NULL;
 
+    /**
+     * 如下格式
+     * { 'name':'$name‘，
+     *   'version‘:'$version',
+     *   'cksum':'$cksum',
+     *   'tables'：{
+     *   }
+     */
     ovsdb_parser_init(&parser, json, "database schema");
-    name = ovsdb_parser_member(&parser, "name", OP_ID);
+    name = ovsdb_parser_member(&parser, "name", OP_ID);//取name
     version_json = ovsdb_parser_member(&parser, "version",
-                                       OP_STRING | OP_OPTIONAL);
-    cksum = ovsdb_parser_member(&parser, "cksum", OP_STRING | OP_OPTIONAL);
-    tables = ovsdb_parser_member(&parser, "tables", OP_OBJECT);
-    error = ovsdb_parser_finish(&parser);
+                                       OP_STRING | OP_OPTIONAL);//取版本（如果没有返回NULL)
+    cksum = ovsdb_parser_member(&parser, "cksum", OP_STRING | OP_OPTIONAL);//取check sum
+    tables = ovsdb_parser_member(&parser, "tables", OP_OBJECT);//取table对象
+    error = ovsdb_parser_finish(&parser);//检查是否有多余字段
     if (error) {
-        return error;
+        return error;//返回错误
     }
 
+    //版本号检查
     if (version_json) {
         version = json_string(version_json);
-        if (!is_valid_version(version)) {
+        if (!is_valid_version(version)) {//无效的版本号
             return ovsdb_syntax_error(json, NULL, "schema version \"%s\" not "
                                       "in format x.y.z", version);
         }
@@ -197,12 +208,15 @@ ovsdb_schema_from_json(struct json *json, struct ovsdb_schema **schemap)
 
     schema = ovsdb_schema_create(json_string(name), version,
                                  cksum ? json_string(cksum) : "");
+    //遍历table对象（json格式），创建表结构
     SHASH_FOR_EACH (node, json_object(tables)) {
         struct ovsdb_table_schema *table;
 
+        //成员名称不容许以'_'开头
         if (node->name[0] == '_') {
             error = ovsdb_syntax_error(json, NULL, "names beginning with "
                                        "\"_\" are reserved");
+            //成员名称不能是id
         } else if (!ovsdb_parser_is_id(node->name)) {
             error = ovsdb_syntax_error(json, NULL, "name must be a valid id");
         } else {

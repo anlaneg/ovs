@@ -26,6 +26,7 @@
 #include "ovsdb-types.h"
 #include "row.h"
 
+//向表中加入列
 static void
 add_column(struct ovsdb_table_schema *ts, struct ovsdb_column *column)
 {
@@ -34,6 +35,7 @@ add_column(struct ovsdb_table_schema *ts, struct ovsdb_column *column)
     shash_add(&ts->columns, column->name, column);
 }
 
+//表模式对象创建（添加2个隐含列，_uuid列与_version表
 struct ovsdb_table_schema *
 ovsdb_table_schema_create(const char *name, bool mutable,
                           unsigned int max_rows, bool is_root)
@@ -134,6 +136,16 @@ ovsdb_table_schema_from_json(const struct json *json, const char *name,
 
     *tsp = NULL;
 
+    /**
+     * 类似以下格式
+     * {
+     * 	"columns":{},
+     * 	"mutable":False,
+     * 	"maxRows":2,
+     * 	"isRoot":True,
+     * 	"indexes":[]
+     * 	}
+     */
     ovsdb_parser_init(&parser, json, "table schema for table %s", name);
     columns = ovsdb_parser_member(&parser, "columns", OP_OBJECT);
     mutable = ovsdb_parser_member(&parser, "mutable",
@@ -148,7 +160,7 @@ ovsdb_table_schema_from_json(const struct json *json, const char *name,
     }
 
     if (max_rows) {
-        if (json_integer(max_rows) <= 0) {
+        if (json_integer(max_rows) <= 0) {//最大行数必须大于等于1
             return ovsdb_syntax_error(json, NULL,
                                       "maxRows must be at least 1");
         }
@@ -157,6 +169,7 @@ ovsdb_table_schema_from_json(const struct json *json, const char *name,
         n_max_rows = UINT_MAX;
     }
 
+    //列不能为空
     if (shash_is_empty(json_object(columns))) {
         return ovsdb_syntax_error(json, NULL,
                                   "table must have at least one column");
@@ -166,13 +179,14 @@ ovsdb_table_schema_from_json(const struct json *json, const char *name,
                                    mutable ? json_boolean(mutable) : true,
                                    MIN(n_max_rows, UINT_MAX),
                                    is_root ? json_boolean(is_root) : false);
+    //遍历列中的成员（创建列结构）
     SHASH_FOR_EACH (node, json_object(columns)) {
         struct ovsdb_column *column;
 
-        if (node->name[0] == '_') {
+        if (node->name[0] == '_') {//不能是预留名称
             error = ovsdb_syntax_error(json, NULL, "names beginning with "
                                        "\"_\" are reserved");
-        } else if (!ovsdb_parser_is_id(node->name)) {
+        } else if (!ovsdb_parser_is_id(node->name)) {//必须合乎id的有效定义
             error = ovsdb_syntax_error(json, NULL, "name must be a valid id");
         } else {
             error = ovsdb_column_from_json(node->data, node->name, &column);

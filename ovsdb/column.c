@@ -27,6 +27,7 @@
 #include "table.h"
 #include "util.h"
 
+//创建ovsdb列对象
 struct ovsdb_column *
 ovsdb_column_create(const char *name,
                     bool mutable, bool persistent,
@@ -61,6 +62,7 @@ ovsdb_column_destroy(struct ovsdb_column *column)
     free(column);
 }
 
+//解析列结构
 struct ovsdb_error *
 ovsdb_column_from_json(const struct json *json, const char *name,
                        struct ovsdb_column **columnp)
@@ -72,6 +74,14 @@ ovsdb_column_from_json(const struct json *json, const char *name,
 
     *columnp = NULL;
 
+    /**
+     * 格式如：
+     * {
+     * 	'mutable':True,
+     * 	'ephemeral':True,
+     * 	'type':'string' or 'type':{}
+     * 	}
+     */
     ovsdb_parser_init(&parser, json, "schema for column %s", name);
     mutable_json = ovsdb_parser_member(&parser, "mutable",
                                        OP_TRUE | OP_FALSE | OP_OPTIONAL);

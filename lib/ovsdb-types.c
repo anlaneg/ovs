@@ -36,6 +36,7 @@ const struct ovsdb_type ovsdb_type_boolean =
     OVSDB_TYPE_SCALAR_INITIALIZER(OVSDB_BASE_BOOLEAN_INIT);
 const struct ovsdb_type ovsdb_type_string =
     OVSDB_TYPE_SCALAR_INITIALIZER(OVSDB_BASE_STRING_INIT);
+//uuid类型
 const struct ovsdb_type ovsdb_type_uuid =
     OVSDB_TYPE_SCALAR_INITIALIZER(OVSDB_BASE_UUID_INIT);
 
@@ -542,6 +543,7 @@ ovsdb_base_type_to_json(const struct ovsdb_base_type *base)
 
 /* ovsdb_type */
 
+//列类型copy
 void
 ovsdb_type_clone(struct ovsdb_type *dst, const struct ovsdb_type *src)
 {
@@ -612,6 +614,7 @@ ovsdb_type_to_english(const struct ovsdb_type *type)
     }
 }
 
+//解析json,并创建ovsdb_type类型对象
 struct ovsdb_error *
 ovsdb_type_from_json(struct ovsdb_type *type, const struct json *json)
 {

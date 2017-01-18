@@ -22,6 +22,7 @@
 
 #include "ovsdb-error.h"
 
+//初始化parser
 void
 ovsdb_parser_init(struct ovsdb_parser *parser, const struct json *json,
                   const char *name, ...)
@@ -48,7 +49,7 @@ ovsdb_parser_is_id(const char *string)
     unsigned char c;
 
     c = *string;
-    if (!isalpha(c) && c != '_') {
+    if (!isalpha(c) && c != '_') {//非字每开头，且不是'_'的，肯定不是id
         return false;
     }
 
@@ -56,12 +57,13 @@ ovsdb_parser_is_id(const char *string)
         c = *++string;
         if (c == '\0') {
             return true;
-        } else if (!isalpha(c) && !isdigit(c) && c != '_') {
+        } else if (!isalpha(c) && !isdigit(c) && c != '_') {//包含非字每，非数字，非下划线的不是id
             return false;
         }
     }
 }
 
+//返回name对应的值
 const struct json *
 ovsdb_parser_member(struct ovsdb_parser *parser, const char *name,
                     enum ovsdb_parser_types types)
@@ -72,9 +74,9 @@ ovsdb_parser_member(struct ovsdb_parser *parser, const char *name,
         return NULL;
     }
 
-    value = shash_find_data(json_object(parser->json), name);
+    value = shash_find_data(json_object(parser->json), name);//取name对应的值
     if (!value) {
-        if (!(types & OP_OPTIONAL)) {
+        if (!(types & OP_OPTIONAL)) {//非可选项，报错
             ovsdb_parser_raise_error(parser,
                                      "Required '%s' member is missing.", name);
         }
@@ -86,9 +88,9 @@ ovsdb_parser_member(struct ovsdb_parser *parser, const char *name,
         || (types & OP_ID && value->type == JSON_STRING
             && ovsdb_parser_is_id(value->u.string)))
     {
-        sset_add(&parser->used, name);
+        sset_add(&parser->used, name);//已使用
         return value;
-    } else {
+    } else {//类型有误
         ovsdb_parser_raise_error(parser, "Type mismatch for member '%s'.",
                                  name);
         return NULL;
@@ -112,7 +114,7 @@ ovsdb_parser_raise_error(struct ovsdb_parser *parser, const char *format, ...)
                                    parser->name, message);
         free(message);
 
-        parser->error = error;
+        parser->error = error;//设置错误信息
     }
 }
 
@@ -145,11 +147,11 @@ ovsdb_parser_finish(struct ovsdb_parser *parser)
         size_t n_unused;
 
         n_unused = shash_count(object) - sset_count(&parser->used);
-        if (n_unused) {
+        if (n_unused) {//有多个没有用到的
             struct shash_node *node;
 
             SHASH_FOR_EACH (node, object) {
-                if (!sset_contains(&parser->used, node->name)) {
+                if (!sset_contains(&parser->used, node->name)) {//存在但没有用到
                     if (n_unused > 1) {
                         ovsdb_parser_raise_error(
                             parser,
@@ -168,5 +170,5 @@ ovsdb_parser_finish(struct ovsdb_parser *parser)
         }
     }
 
-    return ovsdb_parser_destroy(parser);
+    return ovsdb_parser_destroy(parser);//返回错误信息
 }
