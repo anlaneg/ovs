@@ -37,6 +37,7 @@ ovsdb_parser_init(struct ovsdb_parser *parser, const struct json *json,
 
     parser->json = (json && json->type == JSON_OBJECT ? json : NULL);
     if (!parser->json) {
+    	//期待是一个object
         ovsdb_parser_raise_error(parser, "Object expected.");
     }
 }
@@ -94,6 +95,7 @@ ovsdb_parser_member(struct ovsdb_parser *parser, const char *name,
     }
 }
 
+//触发错误
 void
 ovsdb_parser_raise_error(struct ovsdb_parser *parser, const char *format, ...)
 {

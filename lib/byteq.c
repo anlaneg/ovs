@@ -36,14 +36,14 @@ byteq_init(struct byteq *q, uint8_t *buffer, size_t size)
 
 /* Returns the number of bytes current queued in 'q'. */
 int
-byteq_used(const struct byteq *q)
+byteq_used(const struct byteq *q)//用了多少空间
 {
     return q->head - q->tail;
 }
 
 /* Returns the number of bytes that can be added to 'q' without overflow. */
 int
-byteq_avail(const struct byteq *q)
+byteq_avail(const struct byteq *q)//还有多少空间
 {
     return q->size - byteq_used(q);
 }
@@ -51,7 +51,7 @@ byteq_avail(const struct byteq *q)
 /* Returns true if no bytes are queued in 'q',
  * false if at least one byte is queued.  */
 bool
-byteq_is_empty(const struct byteq *q)
+byteq_is_empty(const struct byteq *q)//是否为空？
 {
     return !byteq_used(q);
 }
@@ -147,6 +147,7 @@ byteq_read(struct byteq *q, int fd)
 
 /* Returns the number of contiguous bytes of in-use space starting at the tail
  * of 'q'. */
+//从这里读到结尾，我们可以顺序读取多少字节
 int
 byteq_tailroom(const struct byteq *q)
 {
@@ -182,11 +183,13 @@ byteq_head(struct byteq *q)
 
 /* Returns the number of contiguous bytes of free space starting at the head
  * of 'q'. */
+//环形队列（数组实现），当前head在数组header-tailer的某处，我们从head位置开始填充
+//顺序的，我们要么有tailer-head个字节可以填充。要么有avail个字节可填充
 int
 byteq_headroom(const struct byteq *q)
 {
     int avail = byteq_avail(q);
-    int head_to_end = q->size - (q->head & (q->size - 1));
+    int head_to_end = q->size - (q->head & (q->size - 1));//head可能在中间，从head到尾有多长
     return MIN(avail, head_to_end);
 }
 

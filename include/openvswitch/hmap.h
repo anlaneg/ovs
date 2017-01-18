@@ -245,6 +245,7 @@ hmap_capacity(const struct hmap *hmap)
  * false otherwise.
  * Note: While hmap in general is not thread-safe without additional locking,
  * hmap_is_empty() is. */
+//检查节点数是否为0
 static inline bool
 hmap_is_empty(const struct hmap *hmap)
 {

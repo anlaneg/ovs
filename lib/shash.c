@@ -91,12 +91,14 @@ shash_clear_free_data(struct shash *sh)
     }
 }
 
+//检查shash是否为空
 bool
 shash_is_empty(const struct shash *shash)
 {
     return hmap_is_empty(&shash->map);
 }
 
+//获取节点数
 size_t
 shash_count(const struct shash *shash)
 {
@@ -260,10 +262,11 @@ compare_nodes_by_name(const void *a_, const void *b_)
     return strcmp((*a)->name, (*b)->name);
 }
 
+//获取sh上所有节点，并将节点按名称排序后返回(返回的内存需要调用者释放）
 const struct shash_node **
 shash_sort(const struct shash *sh)
 {
-    if (shash_is_empty(sh)) {
+    if (shash_is_empty(sh)) {//如果表为空，返回NULL
         return NULL;
     } else {
         const struct shash_node **nodes;
@@ -273,12 +276,13 @@ shash_sort(const struct shash *sh)
         n = shash_count(sh);
         nodes = xmalloc(n * sizeof *nodes);
         i = 0;
+        //填充所有节点
         SHASH_FOR_EACH (node, sh) {
             nodes[i++] = node;
         }
         ovs_assert(i == n);
 
-        qsort(nodes, n, sizeof *nodes, compare_nodes_by_name);
+        qsort(nodes, n, sizeof *nodes, compare_nodes_by_name);//按名称排序
 
         return nodes;
     }

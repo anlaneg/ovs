@@ -64,19 +64,19 @@ int jsonrpc_transact_block(struct jsonrpc *, struct jsonrpc_msg *,
 
 /* Messages. */
 enum jsonrpc_msg_type {
-    JSONRPC_REQUEST,           /* Request. */
-    JSONRPC_NOTIFY,            /* Notification. */
-    JSONRPC_REPLY,             /* Successful reply. */
-    JSONRPC_ERROR              /* Error reply. */
+    JSONRPC_REQUEST,           /* Request. */ //请求
+    JSONRPC_NOTIFY,            /* Notification. */ //通知
+    JSONRPC_REPLY,             /* Successful reply. */ //成功响应
+    JSONRPC_ERROR              /* Error reply. */ //失败响应
 };
 
 struct jsonrpc_msg {
-    enum jsonrpc_msg_type type;
-    char *method;               /* Request or notification only. */
-    struct json *params;        /* Request or notification only. */
-    struct json *result;        /* Successful reply only. */
-    struct json *error;         /* Error reply only. */
-    struct json *id;            /* Request or reply only. */
+    enum jsonrpc_msg_type type;//rpc消息类型
+    char *method;               /* Request or notification only. */ //请求报文的远程方法
+    struct json *params;        /* Request or notification only. */ //请求报文的远程方法参数
+    struct json *result;        /* Successful reply only. */ //成功响应报文填充
+    struct json *error;         /* Error reply only. */ //失败响应报文填充
+    struct json *id;            /* Request or reply only. */ //客户端唯一的请求id号
 };
 
 struct jsonrpc_msg *jsonrpc_create_request(const char *method,

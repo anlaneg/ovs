@@ -62,6 +62,7 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
 
 static struct shash commands = SHASH_INITIALIZER(&commands);//保存所有的command
 
+//列出所有命令
 static void
 unixctl_list_commands(struct unixctl_conn *conn, int argc OVS_UNUSED,
                       const char *argv[] OVS_UNUSED, void *aux OVS_UNUSED)
@@ -76,19 +77,22 @@ unixctl_list_commands(struct unixctl_conn *conn, int argc OVS_UNUSED,
         const struct shash_node *node = nodes[i];
         const struct unixctl_command *command = node->data;
 
+        //填充名称 名称，提示信息到ds
         ds_put_format(&ds, "  %-23s %s\n", node->name, command->usage);
     }
     free(nodes);
 
+    //将ds内的数据返回给用户
     unixctl_command_reply(conn, ds_cstr(&ds));
-    ds_destroy(&ds);
+    ds_destroy(&ds);//释放空间
 }
 
+//取版本号
 static void
 unixctl_version(struct unixctl_conn *conn, int argc OVS_UNUSED,
                 const char *argv[] OVS_UNUSED, void *aux OVS_UNUSED)
 {
-    unixctl_command_reply(conn, ovs_get_program_version());
+    unixctl_command_reply(conn, ovs_get_program_version());//取版本号
 }
 
 /* Registers a unixctl command with the given 'name'.  'usage' describes the
@@ -126,6 +130,7 @@ unixctl_command_register(const char *name, const char *usage,
     shash_add(&commands, name, command);//将command加入总hash表
 }
 
+//命令响应底层
 static void
 unixctl_command_reply__(struct unixctl_conn *conn,
                         bool success, const char *body)
@@ -136,11 +141,11 @@ unixctl_command_reply__(struct unixctl_conn *conn,
     COVERAGE_INC(unixctl_replied);
     ovs_assert(conn->request_id);
 
-    if (!body) {
+    if (!body) {//无内容，响应空串
         body = "";
     }
 
-    if (body[0] && body[strlen(body) - 1] != '\n') {
+    if (body[0] && body[strlen(body) - 1] != '\n') {//有值，没有以'\n'结尾
         body_json = json_string_create_nocopy(xasprintf("%s\n", body));
     } else {
         body_json = json_string_create(body);
@@ -162,7 +167,7 @@ unixctl_command_reply__(struct unixctl_conn *conn,
     /* If jsonrpc_send() returns an error, the run loop will take care of the
      * problem eventually. */
     jsonrpc_send(conn->rpc, reply);
-    json_destroy(conn->request_id);
+    json_destroy(conn->request_id);//清空json请求
     conn->request_id = NULL;
 }
 
@@ -170,20 +175,22 @@ unixctl_command_reply__(struct unixctl_conn *conn,
  * client indicating the command was processed successfully.  Only one call to
  * unixctl_command_reply() or unixctl_command_reply_error() may be made per
  * request. */
+//成功时响应结果
 void
 unixctl_command_reply(struct unixctl_conn *conn, const char *result)
 {
-    unixctl_command_reply__(conn, true, result);
+    unixctl_command_reply__(conn, true, result);//成功执行时响应
 }
 
 /* Replies to the active unixctl connection 'conn'. 'error' is sent to the
  * client indicating an error occurred processing the command.  Only one call to
  * unixctl_command_reply() or unixctl_command_reply_error() may be made per
  * request. */
+//错误响应
 void
 unixctl_command_reply_error(struct unixctl_conn *conn, const char *error)
 {
-    unixctl_command_reply__(conn, false, error);
+    unixctl_command_reply__(conn, false, error);//失败执行时响应
 }
 
 /* Creates a unixctl server listening on 'path', which for POSIX may be:
@@ -214,6 +221,7 @@ unixctl_command_reply_error(struct unixctl_conn *conn, const char *error)
  * Returns 0 if successful, otherwise a positive errno value.  If successful,
  * sets '*serverp' to the new unixctl_server (or to NULL if 'path' was "none"),
  * otherwise to NULL. */
+//创建unixctl-server
 int
 unixctl_server_create(const char *path, struct unixctl_server **serverp)
 {
@@ -267,6 +275,7 @@ exit:
     return error;
 }
 
+//处理unixctl命令
 static void
 process_command(struct unixctl_conn *conn, struct jsonrpc_msg *request)
 {
@@ -328,6 +337,7 @@ process_command(struct unixctl_conn *conn, struct jsonrpc_msg *request)
     }
 }
 
+//自对应连接上收取数据，并解析jsonrpc形成命令
 static int
 run_connection(struct unixctl_conn *conn)//自此连接收取并处理消息
 {
@@ -335,11 +345,11 @@ run_connection(struct unixctl_conn *conn)//自此连接收取并处理消息
 
     jsonrpc_run(conn->rpc);
     error = jsonrpc_get_status(conn->rpc);
-    if (error || jsonrpc_get_backlog(conn->rpc)) {
+    if (error || jsonrpc_get_backlog(conn->rpc)) {//处理时出错或者状态有误
         return error;
     }
 
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < 10; i++) {//尝试收取10次
         struct jsonrpc_msg *msg;
 
         if (error || conn->request_id) {
@@ -348,8 +358,8 @@ run_connection(struct unixctl_conn *conn)//自此连接收取并处理消息
 
         jsonrpc_recv(conn->rpc, &msg);
         if (msg) {
-            if (msg->type == JSONRPC_REQUEST) {
-                process_command(conn, msg);
+            if (msg->type == JSONRPC_REQUEST) {//rpc请求消息
+                process_command(conn, msg);//处理命令行
             } else {
                 VLOG_WARN_RL(&rl, "%s: received unexpected %s message",
                              jsonrpc_get_name(conn->rpc),
@@ -364,6 +374,7 @@ run_connection(struct unixctl_conn *conn)//自此连接收取并处理消息
     return error;
 }
 
+//丢弃连接
 static void
 kill_connection(struct unixctl_conn *conn)
 {
@@ -373,6 +384,7 @@ kill_connection(struct unixctl_conn *conn)
     free(conn);
 }
 
+//server层面的维护，封装server下的所有connection的收发
 void
 unixctl_server_run(struct unixctl_server *server)//unixctl-server处理
 {
@@ -390,6 +402,7 @@ unixctl_server_run(struct unixctl_server *server)//unixctl-server处理
         error = pstream_accept(server->listener, &stream);
         if (!error) {
             struct unixctl_conn *conn = xzalloc(sizeof *conn);
+            //将新接入的conn加入到server的connection管理中
             ovs_list_push_back(&server->conns, &conn->node);
             conn->rpc = jsonrpc_open(stream);
         } else if (error == EAGAIN) {
@@ -401,14 +414,16 @@ unixctl_server_run(struct unixctl_server *server)//unixctl-server处理
         }
     }
 
+    //遍历server管理的connect
     LIST_FOR_EACH_SAFE (conn, next, node, &server->conns) {//处理unixctl消息
         int error = run_connection(conn);
         if (error && error != EAGAIN) {
-            kill_connection(conn);
+            kill_connection(conn);//发生错误，中断连接
         }
     }
 }
 
+//产生wait句柄，准备poll
 void
 unixctl_server_wait(struct unixctl_server *server)
 {
@@ -428,6 +443,7 @@ unixctl_server_wait(struct unixctl_server *server)
 }
 
 /* Destroys 'server' and stops listening for connections. */
+//server销毁
 void
 unixctl_server_destroy(struct unixctl_server *server)
 {
@@ -453,6 +469,7 @@ unixctl_server_destroy(struct unixctl_server *server)
  *
  * Returns 0 if successful, otherwise a positive errno value.  If successful,
  * sets '*client' to the new jsonrpc, otherwise to NULL. */
+//客户端创建
 int
 unixctl_client_create(const char *path, struct jsonrpc **client)
 {
@@ -489,6 +506,7 @@ unixctl_client_create(const char *path, struct jsonrpc **client)
  * returned.  Otherwise, sets '*result' and '*err' to NULL and returns a
  * positive errno value.  The caller is responsible for freeing '*result' or
  * '*err' if not NULL. */
+//向unixctl-server发送请求（细节是：将command封装成jsonrpc,并解析server的响应)
 int
 unixctl_client_transact(struct jsonrpc *client, const char *command, int argc,
                         char *argv[], char **result, char **err)
@@ -504,7 +522,7 @@ unixctl_client_transact(struct jsonrpc *client, const char *command, int argc,
     for (i = 0; i < argc; i++) {
         json_args[i] = json_string_create(argv[i]);
     }
-    params = json_array_create(json_args, argc);
+    params = json_array_create(json_args, argc);//json字符串数组
     request = jsonrpc_create_request(command, params, NULL);
 
     error = jsonrpc_transact_block(client, request, &reply);

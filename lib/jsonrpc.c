@@ -46,8 +46,11 @@ struct jsonrpc {
     struct json_parser *parser;
 
     /* Output. */
+    //输出队列，挂接struct ofpbuf
     struct ovs_list output;     /* Contains "struct ofpbuf"s. */
+    //输出队列长度
     size_t output_count;        /* Number of elements in "output". */
+    //总的输出串长度
     size_t backlog;
 };
 
@@ -105,32 +108,34 @@ jsonrpc_close(struct jsonrpc *rpc)
 }
 
 /* Performs periodic maintenance on 'rpc', such as flushing output buffers. */
+//向外发送
 void
 jsonrpc_run(struct jsonrpc *rpc)
 {
-    if (rpc->status) {
+    if (rpc->status) {//错误状态
         return;
     }
 
     stream_run(rpc->stream);
-    while (!ovs_list_is_empty(&rpc->output)) {
+    while (!ovs_list_is_empty(&rpc->output)) {//发送直到队列为空，或者发送失败
         struct ofpbuf *buf = ofpbuf_from_list(rpc->output.next);
         int retval;
 
+        //自stream发送出buf
         retval = stream_send(rpc->stream, buf->data, buf->size);
-        if (retval >= 0) {
+        if (retval >= 0) {//发送完成或者部分发送完
             rpc->backlog -= retval;
             ofpbuf_pull(buf, retval);
-            if (!buf->size) {
+            if (!buf->size) {//发送完，移除buf
                 ovs_list_remove(&buf->list_node);
                 rpc->output_count--;
                 ofpbuf_delete(buf);
             }
-        } else {
+        } else {//发送失败
             if (retval != -EAGAIN) {
                 VLOG_WARN_RL(&rl, "%s: send error: %s",
                              rpc->name, ovs_strerror(-retval));
-                jsonrpc_error(rpc, -retval);
+                jsonrpc_error(rpc, -retval);//置错误状态
             }
             break;
         }
@@ -193,6 +198,7 @@ jsonrpc_get_name(const struct jsonrpc *rpc)
     return rpc->name;
 }
 
+//debug log显示
 static void
 jsonrpc_log_msg(const struct jsonrpc *rpc, const char *title,
                 const struct jsonrpc_msg *msg)
@@ -241,7 +247,7 @@ jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
     struct ds ds = DS_EMPTY_INITIALIZER;
     size_t length;
 
-    if (rpc->status) {
+    if (rpc->status) {//状态有误，不发送了
         jsonrpc_msg_destroy(msg);
         return rpc->status;
     }
@@ -251,22 +257,22 @@ jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
     json = jsonrpc_msg_to_json(msg);
     json_to_ds(json, 0, &ds);
     length = ds.length;
-    json_destroy(json);
+    json_destroy(json);//json用不到了，销毁
 
     buf = xmalloc(sizeof *buf);
-    ofpbuf_use_ds(buf, &ds);
+    ofpbuf_use_ds(buf, &ds);//将ds封装成ofpbuf
     ovs_list_push_back(&rpc->output, &buf->list_node);
     rpc->output_count++;
     rpc->backlog += length;
 
-    if (rpc->output_count >= 50) {
+    if (rpc->output_count >= 50) {//数量积累过多，报警
         VLOG_INFO_RL(&rl, "excessive sending backlog, jsonrpc: %s, num of"
                      " msgs: %"PRIuSIZE", backlog: %"PRIuSIZE".", rpc->name,
                      rpc->output_count, rpc->backlog);
     }
 
-    if (rpc->backlog == length) {
-        jsonrpc_run(rpc);
+    if (rpc->backlog == length) {//只有我们一个，触发run,如果有多个说明run已被触发
+        jsonrpc_run(rpc);//向对方发送消息
     }
     return rpc->status;
 }
@@ -301,26 +307,28 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
         size_t n, used;
 
         /* Fill our input buffer if it's empty. */
-        if (byteq_is_empty(&rpc->input)) {
+        //这个byteq存在的很没有必要，一个普通的数组形buffer就够使了吧
+        //而且还简单些。
+        if (byteq_is_empty(&rpc->input)) {//队列为空时(head位置不一定在header处）
             size_t chunk;
             int retval;
 
-            chunk = byteq_headroom(&rpc->input);
+            chunk = byteq_headroom(&rpc->input);//顺序向后，有多少字节可以填充
             retval = stream_recv(rpc->stream, byteq_head(&rpc->input), chunk);
             if (retval < 0) {
-                if (retval == -EAGAIN) {
+                if (retval == -EAGAIN) {//要求重试，暂时还没有数据
                     return EAGAIN;
-                } else {
+                } else {//其它出错
                     VLOG_WARN_RL(&rl, "%s: receive error: %s",
                                  rpc->name, ovs_strerror(-retval));
                     jsonrpc_error(rpc, -retval);
                     return rpc->status;
                 }
-            } else if (retval == 0) {
+            } else if (retval == 0) {//达到结尾
                 jsonrpc_error(rpc, EOF);
                 return EOF;
             }
-            byteq_advance_head(&rpc->input, retval);
+            byteq_advance_head(&rpc->input, retval);//读取了retval字节
         }
 
         /* We have some input.  Feed it into the JSON parser. */
@@ -328,18 +336,20 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
             rpc->parser = json_parser_create(0);
         }
         n = byteq_tailroom(&rpc->input);
+        //实现json解析
         used = json_parser_feed(rpc->parser,
                                 (char *) byteq_tail(&rpc->input), n);
         byteq_advance_tail(&rpc->input, used);
 
         /* If we have complete JSON, attempt to parse it as JSON-RPC. */
+        //是否已解析完成
         if (json_parser_is_done(rpc->parser)) {
-            *msgp = jsonrpc_parse_received_message(rpc);
+            *msgp = jsonrpc_parse_received_message(rpc);//收到一个rpc
             if (*msgp) {
                 return 0;
             }
 
-            if (rpc->status) {
+            if (rpc->status) {//出错
                 const struct byteq *q = &rpc->input;
                 if (q->head <= q->size) {
                     stream_report_content(q->buffer, q->head, STREAM_JSONRPC,
@@ -451,6 +461,7 @@ jsonrpc_transact_block(struct jsonrpc *rpc, struct jsonrpc_msg *request,
 /* Attempts to parse the content of 'rpc->parser' (which is complete JSON) as a
  * JSON-RPC message.  If successful, returns the JSON-RPC message.  On failure,
  * signals an error on 'rpc' with jsonrpc_error() and returns NULL. */
+//jsonrpc解析
 static struct jsonrpc_msg *
 jsonrpc_parse_received_message(struct jsonrpc *rpc)
 {
@@ -520,6 +531,7 @@ jsonrpc_create(enum jsonrpc_msg_type type, const char *method,
     return msg;
 }
 
+//整数值，形成id
 static struct json *
 jsonrpc_create_id(void)
 {
@@ -530,6 +542,7 @@ jsonrpc_create_id(void)
     return json_integer_create(id);
 }
 
+//封装request请求
 struct jsonrpc_msg *
 jsonrpc_create_request(const char *method, struct json *params,
                        struct json **idp)
@@ -714,6 +727,7 @@ exit:
     return error;
 }
 
+//将msg转换为json对象
 struct json *
 jsonrpc_msg_to_json(struct jsonrpc_msg *m)
 {

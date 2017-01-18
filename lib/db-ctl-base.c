@@ -1566,7 +1566,7 @@ parse_command(int argc, char *argv[], struct shash *local_options,
         ctl_fatal("missing command name (use --help for help)");
     }
 
-    p = shash_find_data(&all_commands, argv[i]);
+    p = shash_find_data(&all_commands, argv[i]);//找到vs-ctl对应的命令处理
     if (!p) {
         ctl_fatal("unknown command '%s'; use --help for help", argv[i]);
     }

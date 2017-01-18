@@ -321,6 +321,7 @@ dp_enumerate_names(const char *type, struct sset *names)//返回此type对应的
  * component pieces.  'name' and 'type' must be freed by the caller.
  *
  * The returned 'type' is normalized, as if by dpif_normalize_type(). */
+//自参数中解析出type,name
 void
 dp_parse_name(const char *datapath_name_, char **name, char **type)
 {
@@ -328,11 +329,11 @@ dp_parse_name(const char *datapath_name_, char **name, char **type)
     char *separator;
 
     separator = strchr(datapath_name, '@');
-    if (separator) {
+    if (separator) {//@划分
         *separator = '\0';
         *type = datapath_name;
         *name = xstrdup(dpif_normalize_type(separator + 1));
-    } else {
+    } else {//无@划分时，默认为system类型，名称为datapath_name_
         *name = datapath_name;
         *type = xstrdup(dpif_normalize_type(NULL));
     }

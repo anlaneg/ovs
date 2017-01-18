@@ -23,6 +23,7 @@
 /* General-purpose circular queue of bytes. */
 struct byteq {
     uint8_t *buffer;            /* Circular queue. */
+    //size必须为2的n次方
     unsigned int size;          /* Number of bytes allocated for 'buffer'. */
     unsigned int head;          /* Head of queue. */
     unsigned int tail;          /* Chases the head. */

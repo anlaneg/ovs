@@ -37,6 +37,7 @@ static void usage(void);
 static const char *parse_command_line(int argc, char *argv[]);
 static struct jsonrpc *connect_to_target(const char *target);
 
+//消息默认发送给"ovs-vswitchd"
 int
 main(int argc, char *argv[])
 {
@@ -57,24 +58,25 @@ main(int argc, char *argv[])
     cmd = argv[optind++];
     cmd_argc = argc - optind;
     cmd_argv = cmd_argc ? argv + optind : NULL;
+    //向server发送请求，收取server的响应
     error = unixctl_client_transact(client, cmd, cmd_argc, cmd_argv,
                                     &cmd_result, &cmd_error);
     if (error) {
         ovs_fatal(error, "%s: transaction error", target);
     }
 
-    if (cmd_error) {
-        jsonrpc_close(client);
-        fputs(cmd_error, stderr);
+    if (cmd_error) {//出错
+        jsonrpc_close(client);//关闭连接
+        fputs(cmd_error, stderr);//打出错信息
         ovs_error(0, "%s: server returned an error", target);
         exit(2);
-    } else if (cmd_result) {
+    } else if (cmd_result) {//成功
         fputs(cmd_result, stdout);
     } else {
         OVS_NOT_REACHED();
     }
 
-    jsonrpc_close(client);
+    jsonrpc_close(client);//关闭
     free(cmd_result);
     free(cmd_error);
     return 0;

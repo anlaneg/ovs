@@ -133,6 +133,7 @@ ds_put_and_free_cstr(struct ds *ds, char *s)
     free(s);
 }
 
+//将字符串格式化成动态字符串
 void
 ds_put_format(struct ds *ds, const char *format, ...)
 {
@@ -143,6 +144,7 @@ ds_put_format(struct ds *ds, const char *format, ...)
     va_end(args);
 }
 
+//调用vsnprintf完成串的填充
 void
 ds_put_format_valist(struct ds *ds, const char *format, va_list args_)
 {

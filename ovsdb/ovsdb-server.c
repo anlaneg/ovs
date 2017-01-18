@@ -181,7 +181,7 @@ main_loop(struct ovsdb_jsonrpc_server *jsonrpc, struct shash *all_dbs,
         /* Run unixctl_server_run() before reconfigure_remotes() because
          * ovsdb-server/add-remote and ovsdb-server/remove-remote can change
          * the set of remotes that reconfigure_remotes() uses. */
-        unixctl_server_run(unixctl);
+        unixctl_server_run(unixctl);//控制台运行
 
         /* In ovsdb-server's role (active or backup) has changed, restart
          * the ovsdb jsonrpc server.  */

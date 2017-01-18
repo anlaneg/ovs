@@ -28,10 +28,10 @@
 VLOG_DEFINE_THIS_MODULE(ovsdb_error);
 
 struct ovsdb_error {
-    const char *tag;            /* String for "error" member. */
-    char *details;              /* String for "details" member. */
-    char *syntax;               /* String for "syntax" member. */
-    int errno_;                 /* Unix errno value, 0 if none. */
+    const char *tag;            /* String for "error" member. */ //错误标签，警告，错误
+    char *details;              /* String for "details" member. */ //详细错误信息
+    char *syntax;               /* String for "syntax" member. */ //语法错误
+    int errno_;                 /* Unix errno value, 0 if none. */ //错误号
 };
 
 static struct ovsdb_error *
@@ -73,6 +73,7 @@ ovsdb_io_error(int errno_, const char *details, ...)
     return error;
 }
 
+//构造错误信息
 struct ovsdb_error *
 ovsdb_syntax_error(const struct json *json, const char *tag,
                    const char *details, ...)
@@ -210,6 +211,7 @@ ovsdb_error_to_json(const struct ovsdb_error *error)
     return json;
 }
 
+//将error信息格式化为字符串
 char *
 ovsdb_error_to_string(const struct ovsdb_error *error)
 {

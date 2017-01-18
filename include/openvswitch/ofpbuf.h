@@ -243,6 +243,7 @@ static inline void ofpbuf_clear(struct ofpbuf *b)
 
 /* Removes 'size' bytes from the head end of 'b', which must contain at least
  * 'size' bytes of data.  Returns the first byte of data removed. */
+//ofpbuf前移size字节
 static inline void *ofpbuf_pull(struct ofpbuf *b, size_t size)
 {
     void *data = b->data;

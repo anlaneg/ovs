@@ -74,6 +74,7 @@ ovsdb_schema_destroy(struct ovsdb_schema *schema)
     free(schema);
 }
 
+//读取文件file_name,并构造schemap
 struct ovsdb_error *
 ovsdb_schema_from_file(const char *file_name, struct ovsdb_schema **schemap)
 {
@@ -83,7 +84,7 @@ ovsdb_schema_from_file(const char *file_name, struct ovsdb_schema **schemap)
 
     *schemap = NULL;
     json = json_from_file(file_name);
-    if (json->type == JSON_STRING) {
+    if (json->type == JSON_STRING) {//字符串类型，肯定是不对的，报错
         error = ovsdb_error("failed to read schema",
                            "\"%s\" could not be read as JSON (%s)",
                            file_name, json_string(json));
@@ -159,6 +160,7 @@ root_set_size(const struct ovsdb_schema *schema)
     return n_root;
 }
 
+//通过json对象，构造模式
 struct ovsdb_error *
 ovsdb_schema_from_json(struct json *json, struct ovsdb_schema **schemap)
 {

@@ -119,7 +119,7 @@ main(int argc, char *argv[])
 
     /* Initialize IDL. */
     idl = the_idl = ovsdb_idl_create(db, &nbrec_idl_class, true, false);
-    run_prerequisites(commands, n_commands, idl);
+    run_prerequisites(commands, n_commands, idl);//向dp去进行配置
 
     /* Execute the commands.
      *

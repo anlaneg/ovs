@@ -23,7 +23,7 @@
 #include "util.h"
 
 struct ovsdb_parser {
-    char *name;                 /* Used only in error messages. */
+    char *name;                 /* Used only in error messages. */ //parser名称
     struct sset used;           /* Already-parsed names from 'object'. */
     const struct json *json;    /* JSON object being parsed. */
     struct ovsdb_error *error;  /* Error signaled, if any. */

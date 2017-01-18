@@ -34,7 +34,7 @@ struct shash_node {
 
 //基于hash表的map
 struct shash {
-    struct hmap map;
+    struct hmap map;//hash表
 };
 
 #define SHASH_INITIALIZER(SHASH) { HMAP_INITIALIZER(&(SHASH)->map) }

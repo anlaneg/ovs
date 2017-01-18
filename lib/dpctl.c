@@ -1658,6 +1658,7 @@ dpctl_run_command(int argc, const char *argv[], struct dpctl_params *dpctl_p)
         return EINVAL;
     }
 
+    //dpctl只能执行all_commands内的消息
     for (p = all_commands; p->name != NULL; p++) {
         if (!strcmp(p->name, argv[0])) {
             int n_arg = argc - 1;

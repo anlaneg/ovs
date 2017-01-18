@@ -142,6 +142,7 @@ usage(void)
     exit(EXIT_SUCCESS);
 }
 
+//默认db名称
 static const char *
 default_db(void)
 {
@@ -152,6 +153,7 @@ default_db(void)
     return db;
 }
 
+//默认模式名称
 static const char *
 default_schema(void)
 {
@@ -181,6 +183,7 @@ print_and_free_json(struct json *json)
     free(string);
 }
 
+//如果error不为空，显示错误信息，并退出
 static void
 check_ovsdb_error(struct ovsdb_error *error)
 {
@@ -199,6 +202,7 @@ do_create(struct ovs_cmdl_context *ctx)
     struct json *json;
 
     /* Read schema from file and convert to JSON. */
+    //读模式文件名称，如果失败，则显示失败信息并退出
     check_ovsdb_error(ovsdb_schema_from_file(schema_file_name, &schema));
     json = ovsdb_schema_to_json(schema);
     ovsdb_schema_destroy(schema);

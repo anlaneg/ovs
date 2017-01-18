@@ -1047,6 +1047,7 @@ json_from_string(const char *string)
  *
  * See json_from_string() for return value semantics.
  */
+//读取file_name中的内容，返回其表示的json对象
 struct json *
 json_from_file(const char *file_name)
 {
@@ -1054,7 +1055,7 @@ json_from_file(const char *file_name)
     FILE *stream;
 
     stream = fopen(file_name, "r");
-    if (!stream) {
+    if (!stream) {//打开失败，采用json对像返回一个字符串
         return json_string_create_nocopy(
             xasprintf("error opening \"%s\": %s", file_name,
                       ovs_strerror(errno)));
@@ -1073,6 +1074,7 @@ json_from_file(const char *file_name)
  *
  * See json_from_string() for return value semantics.
  */
+//读取文件中的json串，并将其构造为一个json对象
 struct json *
 json_from_stream(FILE *stream)
 {
@@ -1482,6 +1484,7 @@ json_to_string(const struct json *json, int flags)
 }
 
 /* Same as json_to_string(), but the output is appended to 'ds'. */
+//将json打成string状态
 void
 json_to_ds(const struct json *json, int flags, struct ds *ds)
 {
