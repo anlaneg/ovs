@@ -68,6 +68,7 @@ static void lockfile_do_unlock(struct lockfile * lockfile)
 /* Returns the name of the lockfile that would be created for locking a file
  * named 'filename_'.  The caller is responsible for freeing the returned name,
  * with free(), when it is no longer needed. */
+//依据filename_构造lockfile名称
 char *
 lockfile_name(const char *filename_)
 {
@@ -81,7 +82,7 @@ lockfile_name(const char *filename_)
      * is only a single lockfile for both the source and the target of the
      * symlink, not one for each. */
     filename = follow_symlinks(filename_);
-    slash = strrchr(filename, '/');
+    slash = strrchr(filename, '/');//不看路径，找到文件名称起始位置
 
 #ifdef _WIN32
     char *backslash = strrchr(filename, '\\');
@@ -106,6 +107,7 @@ lockfile_name(const char *filename_)
  * '*lockfilep' is set to point to a new "struct lockfile *" that may be
  * unlocked with lockfile_unlock().  On failure, '*lockfilep' is set to
  * NULL.  Will not block if the lock cannot be immediately acquired. */
+//锁lockfile
 int
 lockfile_lock(const char *file, struct lockfile **lockfilep)
 {
@@ -304,6 +306,7 @@ lockfile_do_unlock(struct lockfile *lockfile)
     lockfile_unhash(lockfile);
 }
 
+//尝试着加文件锁
 static int
 lockfile_try_lock(const char *name, pid_t *pidp, struct lockfile **lockfilep)
     OVS_REQUIRES(&lock_table_mutex)
@@ -317,7 +320,7 @@ lockfile_try_lock(const char *name, pid_t *pidp, struct lockfile **lockfilep)
     *pidp = 0;
 
     /* Check whether we've already got a lock on that file. */
-    if (!stat(name, &s)) {
+    if (!stat(name, &s)) {//防止我们重复锁
         if (lockfile_find(s.st_dev, s.st_ino)) {
             *pidp = getpid();
             return EDEADLK;
@@ -329,7 +332,7 @@ lockfile_try_lock(const char *name, pid_t *pidp, struct lockfile **lockfilep)
     }
 
     /* Open the lock file. */
-    fd = open(name, O_RDWR | O_CREAT, 0600);
+    fd = open(name, O_RDWR | O_CREAT, 0600);//创建锁文件
     if (fd < 0) {
         VLOG_WARN("%s: failed to open lock file: %s",
                   name, ovs_strerror(errno));
@@ -337,7 +340,7 @@ lockfile_try_lock(const char *name, pid_t *pidp, struct lockfile **lockfilep)
     }
 
     /* Get the inode and device number for the lock table. */
-    if (fstat(fd, &s)) {
+    if (fstat(fd, &s)) {//获取inode
         VLOG_ERR("%s: failed to fstat lock file: %s",
                  name, ovs_strerror(errno));
         close(fd);
@@ -351,12 +354,12 @@ lockfile_try_lock(const char *name, pid_t *pidp, struct lockfile **lockfilep)
     l.l_start = 0;
     l.l_len = 0;
 
-    error = fcntl(fd, F_SETLK, &l) == -1 ? errno : 0;
+    error = fcntl(fd, F_SETLK, &l) == -1 ? errno : 0;//锁文件
 
     if (!error) {
-        *lockfilep = lockfile_register(name, s.st_dev, s.st_ino, fd);
+        *lockfilep = lockfile_register(name, s.st_dev, s.st_ino, fd);//锁文件注册，防重复锁
     } else {
-        if (!fcntl(fd, F_GETLK, &l) && l.l_type != F_UNLCK) {
+        if (!fcntl(fd, F_GETLK, &l) && l.l_type != F_UNLCK) {//已锁，返回进程id
             *pidp = l.l_pid;
         }
         close(fd);

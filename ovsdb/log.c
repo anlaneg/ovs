@@ -76,6 +76,7 @@ ovsdb_log_open(const char *name, enum ovsdb_log_open_mode open_mode,
         locking = open_mode != OVSDB_LOG_READ_ONLY;
     }
     if (locking) {
+    	//构造db对应的lock文件
         int retval = lockfile_lock(name, &lockfile);
         if (retval) {
             error = ovsdb_io_error(retval, "%s: failed to lock lockfile",
@@ -93,7 +94,7 @@ ovsdb_log_open(const char *name, enum ovsdb_log_open_mode open_mode,
     } else if (open_mode == OVSDB_LOG_CREATE) {
 #ifndef _WIN32
         if (stat(name, &s) == -1 && errno == ENOENT
-            && lstat(name, &s) == 0 && S_ISLNK(s.st_mode)) {
+            && lstat(name, &s) == 0 && S_ISLNK(s.st_mode)) {//防止name是一个link文件
             /* 'name' is a dangling symlink.  We want to create the file that
              * the symlink points to, but POSIX says that open() with O_EXCL
              * must fail with EEXIST if the named file is a symlink.  So, we
@@ -111,19 +112,20 @@ ovsdb_log_open(const char *name, enum ovsdb_log_open_mode open_mode,
 #ifdef _WIN32
     flags = flags | O_BINARY;
 #endif
-    fd = open(name, flags, 0666);
+    fd = open(name, flags, 0666);//打开文件
     if (fd < 0) {
         const char *op = open_mode == OVSDB_LOG_CREATE ? "create" : "open";
         error = ovsdb_io_error(errno, "%s: %s failed", name, op);
         goto error_unlock;
     }
 
-    if (!fstat(fd, &s) && s.st_size == 0) {
+    if (!fstat(fd, &s) && s.st_size == 0) {//为什么不直接强制提交？
         /* It's (probably) a new file so fsync() its parent directory to ensure
          * that its directory entry is committed to disk. */
         fsync_parent_dir(name);
     }
 
+    //打开一个File流
     stream = fdopen(fd, open_mode == OVSDB_LOG_READ_ONLY ? "rb" : "w+b");
     if (!stream) {
         error = ovsdb_io_error(errno, "%s: fdopen failed", name);

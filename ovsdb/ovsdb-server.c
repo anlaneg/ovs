@@ -62,7 +62,7 @@ VLOG_DEFINE_THIS_MODULE(ovsdb_server);
 
 struct db {
     /* Initialized in main(). */
-    char *filename;
+    char *filename;//数据库文件名
     struct ovsdb_file *file;
     struct ovsdb *db;
 
@@ -94,7 +94,7 @@ static unixctl_cb_func ovsdb_server_get_sync_status;
 
 struct server_config {
     struct sset *remotes;
-    struct shash *all_dbs;
+    struct shash *all_dbs;//db类型，保存已打开的所有数据库
     FILE *config_tmpfile;
     char **sync_from;
     char **sync_exclude;
@@ -287,17 +287,17 @@ main(int argc, char *argv[])
      * configuration to it.  When --monitor is used, this preserves the effects
      * of ovs-appctl commands such as ovsdb-server/add-remote (which saves the
      * new configuration) across crashes. */
-    config_tmpfile = tmpfile();
+    config_tmpfile = tmpfile();//创建临时文件
     if (!config_tmpfile) {
         ovs_fatal(errno, "failed to create temporary file");
     }
 
     sset_init(&db_filenames);
-    if (argc > 0) {
+    if (argc > 0) {//参数指明了多个db_filename
         for (i = 0; i < argc; i++) {
             sset_add(&db_filenames, argv[i]);
          }
-    } else {
+    } else {//未指明，载入默认配置文件
         char *default_db = xasprintf("%s/conf.db", ovs_dbdir());
         sset_add(&db_filenames, default_db);
         free(default_db);
@@ -306,12 +306,14 @@ main(int argc, char *argv[])
     server_config.remotes = &remotes;
     server_config.config_tmpfile = config_tmpfile;
 
+    //保存临时配置
     save_config__(config_tmpfile, &remotes, &db_filenames, sync_from,
                   sync_exclude, is_backup);
 
     daemonize_start(false);
 
     /* Load the saved config. */
+    //加载刚刚保存的配置，overwirte旧数据（这样做的原因是什么？）
     load_config(config_tmpfile, &remotes, &db_filenames, &sync_from,
                 &sync_exclude, &is_backup);
 
@@ -329,6 +331,7 @@ main(int argc, char *argv[])
 
     perf_counters_init();
 
+    //打开多个db
     SSET_FOR_EACH (db_filename, &db_filenames) {
         error = open_db(&server_config, db_filename);
         if (error) {
@@ -461,6 +464,7 @@ main(int argc, char *argv[])
  * false if not.
  *
  * "False negatives" are possible. */
+//检查此db是否已打开
 static bool
 is_already_open(struct server_config *config OVS_UNUSED,
                 const char *filename OVS_UNUSED)
@@ -475,6 +479,7 @@ is_already_open(struct server_config *config OVS_UNUSED,
             struct db *db = node->data;
             struct stat s2;
 
+            //一个db相等的三个条件，文件名，设备，inode
             if (!stat(db->filename, &s2)
                 && s.st_dev == s2.st_dev
                 && s.st_ino == s2.st_ino) {
@@ -495,6 +500,7 @@ close_db(struct db *db)
     free(db);
 }
 
+//打开名称为filename的db
 static char *
 open_db(struct server_config *config, const char *filename)
 {
@@ -505,7 +511,7 @@ open_db(struct server_config *config, const char *filename)
     /* If we know that the file is already open, return a good error message.
      * Otherwise, if the file is open, we'll fail later on with a harder to
      * interpret file locking error. */
-    if (is_already_open(config, filename)) {
+    if (is_already_open(config, filename)) {//检查是否已打开
         return xasprintf("%s: already open", filename);
     }
 
@@ -1562,7 +1568,7 @@ parse_options(int *argcp, char **argvp[],
         }
 
         switch (c) {
-        case OPT_REMOTE:
+        case OPT_REMOTE://由--remote参数指定
             sset_add(remotes, optarg);
             break;
 
@@ -1614,11 +1620,11 @@ parse_options(int *argcp, char **argvp[],
             stream_ssl_set_peer_ca_cert_file(optarg);
             break;
 
-        case OPT_SYNC_FROM:
+        case OPT_SYNC_FROM://sync_from指定
             *sync_from = xstrdup(optarg);
             break;
 
-        case OPT_SYNC_EXCLUDE: {
+        case OPT_SYNC_EXCLUDE: {//由参数sync-exclude-tables指定
             char *err = set_blacklist_tables(optarg, false);
             if (err) {
                 ovs_fatal(0, "%s", err);
@@ -1626,7 +1632,7 @@ parse_options(int *argcp, char **argvp[],
             *sync_exclude = xstrdup(optarg);
             break;
         }
-        case OPT_ACTIVE:
+        case OPT_ACTIVE://由active参数指定
             *active = true;
             break;
 
@@ -1680,6 +1686,7 @@ sset_to_json(const struct sset *sset)
 
 /* Truncates and replaces the contents of 'config_file' by a representation of
  * 'remotes' and 'db_filenames'. */
+//将remotes,db_filename,sync_from,sync_exclude,is_backup信息写入临时配置文件config_file
 static void
 save_config__(FILE *config_file, const struct sset *remotes,
               const struct sset *db_filenames, const char *sync_from,
@@ -1688,11 +1695,22 @@ save_config__(FILE *config_file, const struct sset *remotes,
     struct json *obj;
     char *s;
 
+    //将配置文件截断为0长度
     if (ftruncate(fileno(config_file), 0) == -1) {
         VLOG_FATAL("failed to truncate temporary file (%s)",
                    ovs_strerror(errno));
     }
 
+    /**
+     * 构造以下格式
+     * {
+     * 	"remotes":["$remotes1","$remotes2"],
+     * 	"db_filenames":["$db_filename1","$db_filename2"],
+     * 	"sync_from":"$sync_from",
+     * 	"sync_exclude":"$sync_exclude",
+     * 	"is_backup":True
+     * }
+     */
     obj = json_object_create();
     json_object_put(obj, "remotes", sset_to_json(remotes));
     json_object_put(obj, "db_filenames", sset_to_json(db_filenames));
@@ -1708,6 +1726,7 @@ save_config__(FILE *config_file, const struct sset *remotes,
     s = json_to_string(obj, 0);
     json_destroy(obj);
 
+    //写入刚刚构造好的配置串s
     if (fseek(config_file, 0, SEEK_SET) != 0
         || fputs(s, config_file) == EOF
         || fflush(config_file) == EOF) {

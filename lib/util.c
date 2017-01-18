@@ -1014,6 +1014,7 @@ xreadlink(const char *filename)
  * value as the passed string.
  *
  * The caller must eventually free the returned string (with free()). */
+//防文件链接
 char *
 follow_symlinks(const char *filename)
 {
@@ -1023,11 +1024,11 @@ follow_symlinks(const char *filename)
     int i;
 
     fn = xstrdup(filename);
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < 10; i++) {//连续跟踪10次
         char *linkname;
         char *next_fn;
 
-        if (lstat(fn, &s) != 0 || !S_ISLNK(s.st_mode)) {
+        if (lstat(fn, &s) != 0 || !S_ISLNK(s.st_mode)) {//不是link文件
             return fn;
         }
 
@@ -1038,10 +1039,10 @@ follow_symlinks(const char *filename)
             return fn;
         }
 
-        if (linkname[0] == '/') {
+        if (linkname[0] == '/') {//绝对路径
             /* Target of symlink is absolute so use it raw. */
             next_fn = linkname;
-        } else {
+        } else {//相对路径处理
             /* Target of symlink is relative so add to 'fn''s directory. */
             char *dir = dir_name(fn);
 
