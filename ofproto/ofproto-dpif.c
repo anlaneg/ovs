@@ -1116,6 +1116,58 @@ check_trunc_action(struct dpif_backer *backer)
     return !error;
 }
 
+/* Tests whether 'backer''s datapath supports the clone action
+ * OVS_ACTION_ATTR_CLONE.   */
+static bool
+check_clone(struct dpif_backer *backer)
+{
+    struct dpif_execute execute;
+    struct eth_header *eth;
+    struct flow flow;
+    struct dp_packet packet;
+    struct ofpbuf actions;
+    size_t clone_start;
+    int error;
+
+    /* Compose clone with an empty action list.
+     * and check if datapath can decode the message.  */
+    ofpbuf_init(&actions, 64);
+    clone_start = nl_msg_start_nested(&actions, OVS_ACTION_ATTR_CLONE);
+    nl_msg_end_nested(&actions, clone_start);
+
+    /* Compose a dummy Ethernet packet. */
+    dp_packet_init(&packet, ETH_HEADER_LEN);
+    eth = dp_packet_put_zeros(&packet, ETH_HEADER_LEN);
+    eth->eth_type = htons(0x1234);
+
+    flow_extract(&packet, &flow);
+
+    /* Execute the actions.  On older datapaths this fails with EINVAL, on
+     * newer datapaths it succeeds. */
+    execute.actions = actions.data;
+    execute.actions_len = actions.size;
+    execute.packet = &packet;
+    execute.flow = &flow;
+    execute.needs_help = false;
+    execute.probe = true;
+    execute.mtu = 0;
+
+    error = dpif_execute(backer->dpif, &execute);
+
+    dp_packet_uninit(&packet);
+    ofpbuf_uninit(&actions);
+
+    if (error) {
+        VLOG_INFO("%s: Datapath does not support clone action",
+                  dpif_name(backer->dpif));
+    } else {
+        VLOG_INFO("%s: Datapath supports clone action",
+                  dpif_name(backer->dpif));
+    }
+
+    return !error;
+}
+
 #define CHECK_FEATURE__(NAME, SUPPORT, FIELD, VALUE)                        \
 static bool                                                                 \
 check_##NAME(struct dpif_backer *backer)                                    \
@@ -1164,13 +1216,16 @@ check_support(struct dpif_backer *backer)
     /* This feature needs to be tested after udpif threads are set. */
     backer->support.variable_length_userdata = false;
 
+    /* Actions. */
     backer->support.odp.recirc = check_recirc(backer);
     backer->support.odp.max_mpls_depth = check_max_mpls_depth(backer);
     backer->support.masked_set_action = check_masked_set_action(backer);
     backer->support.trunc = check_trunc_action(backer);
     backer->support.ufid = check_ufid(backer);
     backer->support.tnl_push_pop = dpif_supports_tnl_push_pop(backer->dpif);
+    backer->support.clone = check_clone(backer);
 
+    /* Flow fields. */
     backer->support.odp.ct_state = check_ct_state(backer);
     backer->support.odp.ct_zone = check_ct_zone(backer);
     backer->support.odp.ct_mark = check_ct_mark(backer);
@@ -1568,7 +1623,15 @@ set_tables_version(struct ofproto *ofproto_, ovs_version_t version)
 {
     struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofproto_);
 
-    atomic_store_relaxed(&ofproto->tables_version, version);
+    /* Use memory_order_release to signify that any prior memory accesses can
+     * not be reordered to happen after this atomic store.  This makes sure the
+     * new version is properly set up when the readers can read this 'version'
+     * value. */
+    atomic_store_explicit(&ofproto->tables_version, version,
+                          memory_order_release);
+    /* 'need_revalidate' can be reordered to happen before the atomic_store
+     * above, but it does not matter as this variable is not accessed by other
+     * threads. */
     ofproto->backer->need_revalidate = REV_FLOW_TABLE;
 }
 
@@ -3747,8 +3810,12 @@ ofproto_dpif_get_tables_version(struct ofproto_dpif *ofproto)//获取ofproto的�
 {
     ovs_version_t version;
 
-    atomic_read_relaxed(&ofproto->tables_version, &version);
-
+    /* Use memory_order_acquire to signify that any following memory accesses
+     * can not be reordered to happen before this atomic read.  This makes sure
+     * all following reads relate to this or a newer version, but never to an
+     * older version. */
+    atomic_read_explicit(&ofproto->tables_version, &version,
+                         memory_order_acquire);
     return version;
 }
 
@@ -3909,7 +3976,7 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
 
             port = ofp_port_to_ofport(ofproto, old_in_port);
             if (!port) {
-                VLOG_WARN_RL(&rl, "packet-in on unknown OpenFlow port %"PRIu16,
+                VLOG_WARN_RL(&rl, "packet-in on unknown OpenFlow port %"PRIu32,
                              old_in_port);
             } else if (!(port->up.pp.config & OFPUTIL_PC_NO_PACKET_IN)) {
                 rule = ofproto->miss_rule;
@@ -4986,6 +5053,26 @@ disable_datapath_truncate(struct unixctl_conn *conn OVS_UNUSED,
 }
 
 static void
+disable_datapath_clone(struct unixctl_conn *conn OVS_UNUSED,
+                       int argc, const char *argv[],
+                       void *aux OVS_UNUSED)
+{
+    struct ds ds = DS_EMPTY_INITIALIZER;
+    const char *br = argv[argc -1];
+    struct ofproto_dpif *ofproto;
+
+    ofproto = ofproto_dpif_lookup(br);
+    if (!ofproto) {
+        unixctl_command_reply_error(conn, "no such bridge");
+        return;
+    }
+    xlate_disable_dp_clone(ofproto);
+    udpif_flush(ofproto->backer->udpif);
+    ds_put_format(&ds, "Datapath clone action disabled for bridge %s", br);
+    unixctl_command_reply(conn, ds_cstr(&ds));
+}
+
+static void
 ofproto_unixctl_init(void)
 {
     static bool registered;
@@ -5014,6 +5101,9 @@ ofproto_unixctl_init(void)
 
     unixctl_command_register("dpif/disable-truncate", "", 0, 0,
                              disable_datapath_truncate, NULL);
+
+    unixctl_command_register("dpif/disable-dp-clone", "bridge", 1, 1,
+                             disable_datapath_clone, NULL);
 }
 
 static odp_port_t

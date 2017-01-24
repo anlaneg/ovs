@@ -16,12 +16,12 @@ EXTRA_DIST += \
 	Documentation/intro/install/fedora.rst \
 	Documentation/intro/install/general.rst \
 	Documentation/intro/install/netbsd.rst \
+	Documentation/intro/install/ovn-upgrades.rst \
 	Documentation/intro/install/rhel.rst \
 	Documentation/intro/install/userspace.rst \
 	Documentation/intro/install/windows.rst \
 	Documentation/intro/install/xenserver.rst \
 	Documentation/tutorials/index.rst \
-	Documentation/tutorials/ovn-basics.rst \
 	Documentation/tutorials/ovs-advanced.rst \
 	Documentation/topics/index.rst \
 	Documentation/topics/bonding.rst \
@@ -83,6 +83,7 @@ EXTRA_DIST += \
 	Documentation/internals/contributing/coding-style.rst \
 	Documentation/internals/contributing/coding-style-windows.rst \
 	Documentation/internals/contributing/documentation-style.rst \
+	Documentation/internals/contributing/libopenvswitch-abi.rst \
 	Documentation/internals/contributing/submitting-patches.rst \
 	Documentation/requirements.txt
 

@@ -15,7 +15,7 @@ lib_libopenvswitch_la_LIBADD += ${PTHREAD_LIBS}
 endif
 
 lib_libopenvswitch_la_LDFLAGS = \
-        -version-info $(LT_CURRENT):$(LT_REVISION):$(LT_AGE) \
+        $(OVS_LTINFO) \
         -Wl,--version-script=$(top_builddir)/lib/libopenvswitch.sym \
         $(AM_LDFLAGS)
 
@@ -328,7 +328,7 @@ CLEANFILES += $(nodist_lib_libopenvswitch_la_SOURCES)
 
 lib_LTLIBRARIES += lib/libsflow.la
 lib_libsflow_la_LDFLAGS = \
-        -version-info $(LT_CURRENT):$(LT_REVISION):$(LT_AGE) \
+        $(OVS_LTINFO) \
         -Wl,--version-script=$(top_builddir)/lib/libsflow.sym \
         $(AM_LDFLAGS)
 lib_libsflow_la_SOURCES = \
@@ -441,6 +441,7 @@ EXTRA_DIST += \
 	lib/dirs.c.in \
 	lib/db-ctl-base.xml \
 	lib/ssl.xml \
+	lib/ssl-bootstrap.xml \
 	lib/vlog.xml
 
 MAN_FRAGMENTS += \

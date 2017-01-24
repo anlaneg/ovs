@@ -119,6 +119,13 @@ netdev_is_pmd(const struct netdev *netdev)//检查此netdev是否为可轮询设
     return netdev->netdev_class->is_pmd;
 }
 
+bool
+netdev_has_tunnel_push_pop(const struct netdev *netdev)
+{
+    return netdev->netdev_class->push_header
+           && netdev->netdev_class->pop_header;
+}
+
 static void
 netdev_initialize(void) //netdev初始化（初始化入口)
     OVS_EXCLUDED(netdev_mutex)
@@ -333,7 +340,11 @@ netdev_is_reserved_name(const char *name)
  * null.
  *
  * Some network devices may need to be configured (with netdev_set_config())
- * before they can be used. */
+ * before they can be used.
+ *
+ * Before opening rxqs or sending packets, '*netdevp' may need to be
+ * reconfigured (with netdev_is_reconf_required() and netdev_reconfigure()).
+ * */
 int
 netdev_open(const char *name, const char *type, struct netdev **netdevp)//创建指定netdev（细分为交由type对应的class去创建）
     OVS_EXCLUDED(netdev_mutex)
@@ -705,6 +716,9 @@ netdev_set_tx_multiq(struct netdev *netdev, unsigned int n_txq)//配置发队列
  * if a partial packet was transmitted or if a packet is too big or too small
  * to transmit on the device.
  *
+ * The caller must make sure that 'netdev' supports sending by making sure that
+ * 'netdev_n_txq(netdev)' returns >= 1.
+ *
  * If the function returns a non-zero value, some of the packets might have
  * been sent anyway.
  *
@@ -729,11 +743,6 @@ int
 netdev_send(struct netdev *netdev, int qid, struct dp_packet_batch *batch,//报文发送
             bool may_steal, bool concurrent_txq)
 {
-    if (!netdev->netdev_class->send) {//没有send函数
-        dp_packet_delete_batch(batch, may_steal);
-        return EOPNOTSUPP;
-    }
-
     int error = netdev->netdev_class->send(netdev, qid, batch, may_steal,
                                            concurrent_txq);
     if (!error) {
@@ -746,17 +755,16 @@ netdev_send(struct netdev *netdev, int qid, struct dp_packet_batch *batch,//报�
 }
 
 //dev 移除header，由pop_header函数完成
+/* Pop tunnel header, build tunnel metadata and resize 'batch->packets'
+ * for further processing.
+ *
+ * The caller must make sure that 'netdev' support this operation by checking
+ * that netdev_has_tunnel_push_pop() returns true. */
 void
 netdev_pop_header(struct netdev *netdev, struct dp_packet_batch *batch)
 {
     int i, n_cnt = 0;
     struct dp_packet **buffers = batch->packets;
-
-    if (!netdev->netdev_class->pop_header) {
-        dp_packet_delete_batch(batch, true);
-        batch->count = 0;
-        return;
-    }
 
     for (i = 0; i < batch->count; i++) {
         buffers[i] = netdev->netdev_class->pop_header(buffers[i]);
@@ -798,16 +806,17 @@ int netdev_build_header(const struct netdev *netdev,
 }
 
 //采用data中的隧道头模板来封装隧道头到batch中的报文
+/* Push tunnel header (reading from tunnel metadata) and resize
+ * 'batch->packets' for further processing.
+ *
+ * The caller must make sure that 'netdev' support this operation by checking
+ * that netdev_has_tunnel_push_pop() returns true. */
 int
 netdev_push_header(const struct netdev *netdev,
                    struct dp_packet_batch *batch,
                    const struct ovs_action_push_tnl *data)
 {
     int i;
-
-    if (!netdev->netdev_class->push_header) {
-        return -EINVAL;
-    }
 
     for (i = 0; i < batch->count; i++) {
         netdev->netdev_class->push_header(batch->packets[i], data);//封装隧道头到报文中

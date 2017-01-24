@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, 2016 Nicira, Inc.
+ * Copyright (c) 2015, 2016, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -220,6 +220,17 @@ lookup_port_cb(const void *ports_, const char *port_name, unsigned int *portp)
     return true;
 }
 
+static bool
+is_chassis_resident_cb(const void *ports_, const char *port_name)
+{
+    const struct simap *ports = ports_;
+    const struct simap_node *node = simap_find(ports, port_name);
+    if (node) {
+        return true;
+    }
+    return false;
+}
+
 static void
 test_parse_expr__(int steps)
 {
@@ -247,7 +258,7 @@ test_parse_expr__(int steps)
         }
         if (!error) {
             if (steps > 1) {
-                expr = expr_simplify(expr);
+                expr = expr_simplify(expr, is_chassis_resident_cb, &ports);
             }
             if (steps > 2) {
                 expr = expr_normalize(expr);
@@ -792,6 +803,13 @@ free_rule(struct test_rule *test_rule)
     free(test_rule);
 }
 
+static bool
+tree_shape_is_chassis_resident_cb(const void *c_aux OVS_UNUSED,
+                                  const char *port_name OVS_UNUSED)
+{
+    return true;
+}
+
 static int
 test_tree_shape_exhaustively(struct expr *expr, struct shash *symtab,
                              struct expr *terminals[], int n_terminals,
@@ -838,7 +856,9 @@ test_tree_shape_exhaustively(struct expr *expr, struct shash *symtab,
                 exit(EXIT_FAILURE);
             }
         } else if (operation >= OP_SIMPLIFY) {
-            modified  = expr_simplify(expr_clone(expr));
+            modified = expr_simplify(expr_clone(expr),
+                                     tree_shape_is_chassis_resident_cb,
+                                     NULL);
             ovs_assert(expr_honors_invariants(modified));
 
             if (operation >= OP_NORMALIZE) {
@@ -1226,7 +1246,9 @@ test_parse_actions(struct ovs_cmdl_context *ctx OVS_UNUSED)
                 .ct_zones = &ct_zones,
                 .group_table = &group_table,
 
-                .first_ptable = 16,
+                .pipeline = OVNACT_P_INGRESS,
+                .ingress_ptable = 16,
+                .egress_ptable = 48,
                 .output_ptable = 64,
                 .mac_bind_ptable = 65,
             };

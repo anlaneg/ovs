@@ -519,6 +519,28 @@
             </dl>
           </dd>
 
+          <dt><code>router</code></dt>
+          <dd>
+            <p>
+              Accepted only when <ref column="type"/> is <code>router</code>.
+              This indicates that the Ethernet, IPv4, and IPv6 addresses for
+              this logical switch port should be obtained from the connected
+              logical router port, as specified by <code>router-port</code> in
+              <ref column="options"/>.
+            </p>
+
+            <p>
+              The resulting addresses are used to populate the logical
+              switch's destination lookup, and also for the logical switch
+              to generate ARP and ND replies.
+            </p>
+
+            <p>
+              Supported only in OVN 2.7 and later.  Earlier versions required
+              router addresses to be manually synchronized.
+            </p>
+          </dd>
+
         </dl>
       </column>
 
@@ -1070,6 +1092,44 @@
       column is set to <code>false</code>, the port is disabled.  A disabled
       port has all ingress and egress traffic dropped.
     </column>
+
+    <group title="Options">
+      <p>
+        Additional options for the logical router port.
+      </p>
+
+      <column name="options" key="redirect-chassis">
+        <p>
+          If set, this indicates that this logical router port represents
+          a distributed gateway port.  In addition to the southbound
+          database port representing this distributed gateway port, another
+          port will be created in the southbound database that represents a
+          particular instance, bound to a specific chassis, of this
+          otherwise distributed logical router port.  This additional port
+          can then be specified as an <code>outport</code> in some of the
+          ingress pipeline flows.  This will cause matching packets to be
+          directed to a specific chassis to carry out the egress pipeline,
+          allowing a subset of logical router functionality to be
+          implemented in a centralized manner.  At the beginning of the
+          egress pipeline, the <code>outport</code> will be reset to the
+          value of the distributed port.
+        </p>
+
+        <p>
+          This option specifies the name of the <code>chassis</code> to which
+          the additional southbound port binding of type
+          <code>chassisredirect</code> will be bound.
+        </p>
+
+        <p>
+          When this option is specified, the peer logical switch port's
+          <ref column="addresses" table="Logical_Switch_Port"/> should be
+          set to <code>router</code>, so that the corresponding logical
+          switch destination lookup flow is only programmed on the
+          <code>redirect-chassis</code>.
+        </p>
+      </column>
+    </group>
 
     <group title="Attachment">
       <p>
