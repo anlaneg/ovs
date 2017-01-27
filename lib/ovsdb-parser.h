@@ -25,7 +25,7 @@
 struct ovsdb_parser {
     char *name;                 /* Used only in error messages. */ //parser名称
     struct sset used;           /* Already-parsed names from 'object'. */ //已提取
-    const struct json *json;    /* JSON object being parsed. */
+    const struct json *json;    /* JSON object being parsed. */ //要解析的json串
     struct ovsdb_error *error;  /* Error signaled, if any. */
 };
 

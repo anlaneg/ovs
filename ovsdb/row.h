@@ -47,6 +47,7 @@ struct ovsdb_weak_ref {
 struct ovsdb_row {
     struct hmap_node hmap_node;    /* Element in ovsdb_table's 'rows' hmap. */
     struct ovsdb_table *table;     /* Table to which this belongs. */
+    //当前行是否有行事务
     struct ovsdb_txn_row *txn_row; /* Transaction that row is in, if any. */
 
     /* Weak references. */
@@ -62,6 +63,7 @@ struct ovsdb_row {
 
     /* One datum for each column (shash_count(&table->schema->columns)
      * elements). */
+    //列数据
     struct ovsdb_datum fields[];
 
     /* Followed by table->schema->n_indexes "struct hmap_node"s.  In rows that

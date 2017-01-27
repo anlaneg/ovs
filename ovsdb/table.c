@@ -51,11 +51,11 @@ ovsdb_table_schema_create(const char *name, bool mutable,
     ts->is_root = is_root;
 
     uuid = ovsdb_column_create("_uuid", false, true, &ovsdb_type_uuid);
-    add_column(ts, uuid);
+    add_column(ts, uuid);//加入uuid列
     ovs_assert(uuid->index == OVSDB_COL_UUID);
 
     version = ovsdb_column_create("_version", false, false, &ovsdb_type_uuid);
-    add_column(ts, version);
+    add_column(ts, version);//加入version列
     ovs_assert(version->index == OVSDB_COL_VERSION);
 
     ts->n_indexes = 0;
@@ -123,6 +123,7 @@ ovsdb_table_schema_destroy(struct ovsdb_table_schema *ts)
     free(ts);
 }
 
+//通过json串构造表模式
 struct ovsdb_error *
 ovsdb_table_schema_from_json(const struct json *json, const char *name,
                              struct ovsdb_table_schema **tsp)
@@ -175,6 +176,7 @@ ovsdb_table_schema_from_json(const struct json *json, const char *name,
                                   "table must have at least one column");
     }
 
+    //创建表模式（加入默认列）
     ts = ovsdb_table_schema_create(name,
                                    mutable ? json_boolean(mutable) : true,
                                    MIN(n_max_rows, UINT_MAX),
@@ -189,16 +191,21 @@ ovsdb_table_schema_from_json(const struct json *json, const char *name,
         } else if (!ovsdb_parser_is_id(node->name)) {//必须合乎id的有效定义
             error = ovsdb_syntax_error(json, NULL, "name must be a valid id");
         } else {
+        	//解释列json
             error = ovsdb_column_from_json(node->data, node->name, &column);
         }
         if (error) {
             goto error;
         }
 
-        add_column(ts, column);
+        add_column(ts, column);//将解析完成的列加入表模式
     }
 
     if (indexes) {
+    	/**
+    	 * 格式如下示：
+    	 *  "indexes": [["name"]]},
+    	 */
         size_t i;
 
         ts->indexes = xmalloc(indexes->u.array.n * sizeof *ts->indexes);
@@ -206,6 +213,7 @@ ovsdb_table_schema_from_json(const struct json *json, const char *name,
             struct ovsdb_column_set *index = &ts->indexes[i];
             size_t j;
 
+            //构造索引列表（遍历每个json数组类型）
             error = ovsdb_column_set_from_json(indexes->u.array.elems[i],
                                                ts, index);
             if (error) {
@@ -218,9 +226,11 @@ ovsdb_table_schema_from_json(const struct json *json, const char *name,
             }
             ts->n_indexes++;
 
+            //对索引列进行检查
             for (j = 0; j < index->n_columns; j++) {
                 const struct ovsdb_column *column = index->columns[j];
 
+                //临时列不支持索引
                 if (!column->persistent) {
                     error = ovsdb_syntax_error(json, NULL, "ephemeral columns "
                                                "(such as %s) may not be "
@@ -340,6 +350,7 @@ ovsdb_table_destroy(struct ovsdb_table *table)
     }
 }
 
+//从表中查找指定行,如果找到，返回对应的行，如果找不到，返回NULL
 const struct ovsdb_row *
 ovsdb_table_get_row(const struct ovsdb_table *table, const struct uuid *uuid)
 {

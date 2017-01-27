@@ -44,6 +44,7 @@ ovsdb_parser_init(struct ovsdb_parser *parser, const struct json *json,
 }
 
 bool
+//检查是否由字每数字，下划线组成（只能以字每，下划线开头）
 ovsdb_parser_is_id(const char *string)
 {
     unsigned char c;

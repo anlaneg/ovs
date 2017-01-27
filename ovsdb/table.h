@@ -26,13 +26,13 @@ struct uuid;
 
 /* Schema for a database table. */
 struct ovsdb_table_schema {
-    char *name;
+    char *name;//表名称
     bool mutable;
     bool is_root;               /* Part of garbage collection root set? */
-    unsigned int max_rows;      /* Maximum number of rows. */
+    unsigned int max_rows;      /* Maximum number of rows. */ //最多多少行
     struct shash columns;       /* Contains "struct ovsdb_column *"s. */ //表包含哪些列
-    struct ovsdb_column_set *indexes;
-    size_t n_indexes;
+    struct ovsdb_column_set *indexes;//需要几组索引，每组索引索引哪些列
+    size_t n_indexes;//几组索引
 };
 
 struct ovsdb_table_schema *ovsdb_table_schema_create(
@@ -55,7 +55,9 @@ const struct ovsdb_column *ovsdb_table_schema_get_column(
 
 struct ovsdb_table {
     struct ovsdb_table_schema *schema;
+    //表事务（用于记录在一个事务中，当前表的变化）
     struct ovsdb_txn_table *txn_table; /* Only if table is in a transaction. */
+    //保存每行数据
     struct hmap rows;           /* Contains "struct ovsdb_row"s. */
 
     /* An array of schema->n_indexes hmaps, each of which contains "struct

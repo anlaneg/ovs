@@ -134,6 +134,7 @@ ovsdb_file_open_log(const char *file_name, enum ovsdb_log_open_mode open_mode,
         goto error;
     }
 
+    //自日志文件中读取log
     error = ovsdb_log_read(log, &json);
     if (error) {
         goto error;
@@ -144,6 +145,7 @@ ovsdb_file_open_log(const char *file_name, enum ovsdb_log_open_mode open_mode,
     }
 
     if (schemap) {
+    	//如果需要返回模式，则解析db模式
         error = ovsdb_schema_from_json(json, &schema);
         if (error) {
             error = ovsdb_wrap_error(error,
@@ -225,6 +227,7 @@ ovsdb_file_open__(const char *file_name,
         }
 
         n_transactions++;
+        //成功处理了一个事务，提交事务
         error = ovsdb_txn_commit(txn, false);
         if (error) {
             ovsdb_log_unread(log);
@@ -235,6 +238,8 @@ ovsdb_file_open__(const char *file_name,
             snapshot_size = ovsdb_log_get_offset(log);
         }
     }
+
+    //如果是出错退出
     if (error) {
         /* Log error but otherwise ignore it.  Probably the database just got
          * truncated due to power failure etc. and we should use its current
@@ -274,6 +279,7 @@ error:
     return error;
 }
 
+//更新行数据
 static struct ovsdb_error *
 ovsdb_file_update_row_from_json(struct ovsdb_row *row, bool converting,
                                 const struct json *json)
@@ -286,13 +292,22 @@ ovsdb_file_update_row_from_json(struct ovsdb_row *row, bool converting,
         return ovsdb_syntax_error(json, NULL, "row must be JSON object");
     }
 
+    /**
+     * 格式：按列名，指出哪些需要更新
+     * {
+     * 		'a':2,
+     * 		'b':'cd'
+     * }
+     */
     SHASH_FOR_EACH (node, json_object(json)) {
         const char *column_name = node->name;
         const struct ovsdb_column *column;
         struct ovsdb_datum datum;
 
+        //通过列名称，查找对应的列
         column = ovsdb_table_schema_get_column(schema, column_name);
         if (!column) {
+        	//列不存在。
             if (converting) {
                 continue;
             }
@@ -301,10 +316,12 @@ ovsdb_file_update_row_from_json(struct ovsdb_row *row, bool converting,
                                       column_name, schema->name);
         }
 
+        //转换成列对应的数据
         error = ovsdb_datum_from_json(&datum, &column->type, node->data, NULL);
         if (error) {
             return error;
         }
+        //替换列数据
         ovsdb_datum_swap(&row->fields[column->index], &datum);
         ovsdb_datum_destroy(&datum, &column->type);
     }
@@ -312,33 +329,42 @@ ovsdb_file_update_row_from_json(struct ovsdb_row *row, bool converting,
     return NULL;
 }
 
+//行事务处理
+//对应到数据库，实际上只有行的增删改。本函数采用copy的方式，在备份上进行修改（增处理为空行上修改;
+//删除处理为修改为空行），故只有一种操作，即为修改。当提交时，只需要将旧的数据释放掉就可以了。
 static struct ovsdb_error *
 ovsdb_file_txn_row_from_json(struct ovsdb_txn *txn, struct ovsdb_table *table,
                              bool converting,
                              const struct uuid *row_uuid, struct json *json)
 {
     const struct ovsdb_row *row = ovsdb_table_get_row(table, row_uuid);
-    if (json->type == JSON_NULL) {
+    if (json->type == JSON_NULL) {//标明为删除操作
         if (!row) {
+        	//数据库出错
             return ovsdb_syntax_error(NULL, NULL, "transaction deletes "
                                       "row "UUID_FMT" that does not exist",
                                       UUID_ARGS(row_uuid));
         }
+        //删除指定行数据
         ovsdb_txn_row_delete(txn, row);
         return NULL;
     } else if (row) {
+    	//更新指定行数据
         return ovsdb_file_update_row_from_json(ovsdb_txn_row_modify(txn, row),
                                                converting, json);
     } else {
+    	//插入指定行
         struct ovsdb_error *error;
         struct ovsdb_row *new;
 
+        //创建一个空行，为其设置uuid,并调用更新函数处理
         new = ovsdb_row_create(table);
         *ovsdb_row_get_uuid_rw(new) = *row_uuid;
         error = ovsdb_file_update_row_from_json(new, converting, json);
         if (error) {
             ovsdb_row_destroy(new);
         } else {
+        	//将更新好的行，加入到事务中
             ovsdb_txn_row_insert(txn, new);
         }
         return error;
@@ -352,21 +378,31 @@ ovsdb_file_txn_table_from_json(struct ovsdb_txn *txn,
 {
     struct shash_node *node;
 
+    //需要是object类型
     if (json->type != JSON_OBJECT) {
         return ovsdb_syntax_error(json, NULL, "object expected");
     }
 
+    /**
+     * 格式为：
+     * {
+     * 		'00000000-1111-1111-2222-222233333333':{...},
+     * 		'00000000-1211-1111-2222-222233333334':{...},
+     * }
+     */
     SHASH_FOR_EACH (node, json->u.object) {
         const char *uuid_string = node->name;
         struct json *txn_row_json = node->data;
         struct ovsdb_error *error;
         struct uuid row_uuid;
 
+        //字符串转uuid类型
         if (!uuid_from_string(&row_uuid, uuid_string)) {
             return ovsdb_syntax_error(json, NULL, "\"%s\" is not a valid UUID",
                                       uuid_string);
         }
 
+        //解析指定行数据
         error = ovsdb_file_txn_row_from_json(txn, table, converting,
                                              &row_uuid, txn_row_json);
         if (error) {
@@ -393,22 +429,35 @@ ovsdb_file_txn_from_json(struct ovsdb *db, const struct json *json,
 
     *txnp = NULL;
 
+    //日志是object类型
     if (json->type != JSON_OBJECT) {
         return ovsdb_syntax_error(json, NULL, "object expected");
     }
 
+    /**
+     * 格式：
+     * {
+     *   '表名称1':{},
+     * 	 '表名称2':{}，
+     * 	 '_date':'string',
+     * 	 '_comment':'string'
+     * 	}
+     */
     txn = ovsdb_txn_create(db);
     SHASH_FOR_EACH (node, json->u.object) {
         const char *table_name = node->name;
         struct json *node_json = node->data;
         struct ovsdb_table *table;
 
+        //找出对应的表
         table = shash_find_data(&db->tables, table_name);
         if (!table) {
+        	//忽略_date属性
             if (!strcmp(table_name, "_date")
                 && node_json->type == JSON_INTEGER) {
                 continue;
             } else if (!strcmp(table_name, "_comment") || converting) {
+            	//忽略_comment属性
                 continue;
             }
 
@@ -417,6 +466,7 @@ ovsdb_file_txn_from_json(struct ovsdb *db, const struct json *json,
             goto error;
         }
 
+        //处理指定table的数据
         error = ovsdb_file_txn_table_from_json(txn, table, converting,
                                                node_json);
         if (error) {
@@ -427,6 +477,7 @@ ovsdb_file_txn_from_json(struct ovsdb *db, const struct json *json,
     return NULL;
 
 error:
+    //强制中断事务
     ovsdb_txn_abort(txn);
     return error;
 }

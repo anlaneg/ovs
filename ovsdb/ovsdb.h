@@ -30,9 +30,10 @@ struct uuid;
 
 /* Database schema. */
 struct ovsdb_schema {
-    char *name;
-    char *version;
+    char *name;//db名称
+    char *version;//db版本
     char *cksum;
+    //db中的所有表模式
     struct shash tables;        /* Contains "struct ovsdb_table_schema *"s. */
 };
 

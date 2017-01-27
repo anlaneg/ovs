@@ -227,6 +227,7 @@ ovsdb_atom_hash(const union ovsdb_atom *atom, enum ovsdb_atomic_type type,
 
 /* Compares 'a' and 'b', which both have type 'type', and returns a
  * strcmp()-like result. */
+//按类型type解释a,b,对a,b进行大小比对。
 int
 ovsdb_atom_compare_3way(const union ovsdb_atom *a,
                         const union ovsdb_atom *b,
@@ -261,11 +262,11 @@ static struct ovsdb_error *
 unwrap_json(const struct json *json, const char *name,
             enum json_type value_type, const struct json **value)
 {
-    if (json->type != JSON_ARRAY
-        || json->u.array.n != 2
-        || json->u.array.elems[0]->type != JSON_STRING
-        || (name && strcmp(json->u.array.elems[0]->u.string, name))
-        || json->u.array.elems[1]->type != value_type)
+    if (json->type != JSON_ARRAY //json不是数组类型
+        || json->u.array.n != 2 //成员数不为2
+        || json->u.array.elems[0]->type != JSON_STRING //成员0不是字符串
+        || (name && strcmp(json->u.array.elems[0]->u.string, name)) //有name，但与name不相同
+        || json->u.array.elems[1]->type != value_type)//成员1类型与value类型不一致
     {
         *value = NULL;
         return ovsdb_syntax_error(json, NULL, "expected [\"%s\", <%s>]", name,
@@ -363,6 +364,7 @@ ovsdb_atom_parse_uuid(struct uuid *uuid, const struct json *json,
     return error0;
 }
 
+//依据base类型，将json的数据提取出来，并赋值给atom
 static struct ovsdb_error * OVS_WARN_UNUSED_RESULT
 ovsdb_atom_from_json__(union ovsdb_atom *atom,
                        const struct ovsdb_base_type *base,
@@ -432,6 +434,8 @@ ovsdb_atom_from_json__(union ovsdb_atom *atom,
  * RFC 7047 for information about this, and for the syntax that this function
  * accepts.  If 'base' is a reference and a symbol is parsed, then the symbol's
  * 'strong_ref' or 'weak_ref' member is set to true, as appropriate. */
+//按类型base解析json,并将结果填充到atom中，同时依据base校验atom中的值
+//例如取值范围，枚举值。
 struct ovsdb_error *
 ovsdb_atom_from_json(union ovsdb_atom *atom,
                      const struct ovsdb_base_type *base,
@@ -440,6 +444,9 @@ ovsdb_atom_from_json(union ovsdb_atom *atom,
 {
     struct ovsdb_error *error;
 
+    //json串中有类型，但base是我们期待的类型，按照我们期待的类型去理解json串
+    //比如我们期待real,但json串是integer，则这两个类型是兼容的，可以实现赋值
+    //如果类型不一致，则报错,atom将握有这些转换后的值。
     error = ovsdb_atom_from_json__(atom, base, json, symtab);
     if (error) {
         return error;
@@ -790,12 +797,14 @@ check_string_constraints(const char *s,
  *
  * Checking UUID constraints is deferred to transaction commit time, so this
  * function does nothing for UUID constraints. */
+//校验取值
 struct ovsdb_error *
 ovsdb_atom_check_constraints(const union ovsdb_atom *atom,
                              const struct ovsdb_base_type *base)
 {
     if (base->enum_
         && ovsdb_datum_find_key(base->enum_, atom, base->type) == UINT_MAX) {
+    	//枚举，且atom没有找到，说明atom现取的是不合法的值，报错
         struct ovsdb_error *error;
         struct ds actual = DS_EMPTY_INITIALIZER;
         struct ds valid = DS_EMPTY_INITIALIZER;
@@ -1217,19 +1226,27 @@ ovsdb_datum_from_json__(struct ovsdb_datum *datum,
 {
     struct ovsdb_error *error;
 
+    //map类型或set类型处理
     if (ovsdb_type_is_map(type)
         || (json->type == JSON_ARRAY
-            && json->u.array.n > 0
-            && json->u.array.elems[0]->type == JSON_STRING
-            && !strcmp(json->u.array.elems[0]->u.string, "set"))) {
+            && json->u.array.n > 0 //多个成员
+            && json->u.array.elems[0]->type == JSON_STRING //成员类型为字符串
+            && !strcmp(json->u.array.elems[0]->u.string, "set"))) { //成员0的值为'set'
         bool is_map = ovsdb_type_is_map(type);
         const char *class = is_map ? "map" : "set";
         const struct json *inner;
         unsigned int i;
         size_t n;
 
+        /**
+         * 类似于
+         * ['set',[1,2,3,4,5]]
+         * ['set',["apple","balan"]]
+         * ['map',[['key1','value1'],['key2','value2']]]
+         * 校验并取出内部的数组，将其存放在inner变量中
+         */
         error = unwrap_json(json, class, JSON_ARRAY, &inner);
-        if (error) {
+        if (error) {//格式有误
             return error;
         }
 
@@ -1249,14 +1266,18 @@ ovsdb_datum_from_json__(struct ovsdb_datum *datum,
             const struct json *value = NULL;
 
             if (!is_map) {
+            	//非map情况，数组中的值，即为key,无value
                 key = element;
             } else {
+            	//map情况，数组中的key,value需要解析(成员是一个2长度的数组）
                 error = parse_json_pair(element, &key, &value);
                 if (error) {
                     goto error;
                 }
             }
 
+            //我们已解析到key,但key仍是json格式，需要将key按type->key指定的类型
+            //进行解析，并存放。校验。
             error = ovsdb_atom_from_json(&datum->keys[i], &type->key,
                                          key, symtab);
             if (error) {
@@ -1264,6 +1285,7 @@ ovsdb_datum_from_json__(struct ovsdb_datum *datum,
             }
 
             if (is_map) {
+            	//对value也进行解析，存放，校验。
                 error = ovsdb_atom_from_json(&datum->values[i],
                                              &type->value, value, symtab);
                 if (error) {
@@ -1272,7 +1294,7 @@ ovsdb_datum_from_json__(struct ovsdb_datum *datum,
                 }
             }
 
-            datum->n++;
+            datum->n++;//下一组。
         }
         return NULL;
 
@@ -1280,6 +1302,7 @@ ovsdb_datum_from_json__(struct ovsdb_datum *datum,
         ovsdb_datum_destroy(datum, type);
         return error;
     } else {
+    	//普通类型的值，非枚举
         datum->n = 1;
         datum->keys = xmalloc(sizeof *datum->keys);
         datum->values = NULL;
@@ -1311,12 +1334,13 @@ ovsdb_datum_from_json(struct ovsdb_datum *datum,
 {
     struct ovsdb_error *error;
 
+    //自json中解析data union map
     error = ovsdb_datum_from_json__(datum, type, json, symtab);
     if (error) {
         return error;
     }
 
-    error = ovsdb_datum_sort(datum, type->key.type);
+    error = ovsdb_datum_sort(datum, type->key.type);//保证key有序
     if (error) {
         ovsdb_datum_destroy(datum, type);
     }
@@ -1709,6 +1733,9 @@ ovsdb_datum_compare_3way(const struct ovsdb_datum *a,
  * otherwise UINT_MAX.  'key.type' must be the type of the atoms stored in the
  * 'keys' array in 'datum'.
  */
+//datum中的key已按大小排序，这里按2分法查找，确定key的位置
+//key-type指明了key的类型，按此类型来解释理解key内的数据
+//如果key不存在，则返回uint_max
 unsigned int
 ovsdb_datum_find_key(const struct ovsdb_datum *datum,
                      const union ovsdb_atom *key,

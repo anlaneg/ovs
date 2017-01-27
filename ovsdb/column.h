@@ -29,7 +29,7 @@ struct ovsdb_column {
     char *name;//列名称
 
     bool mutable;//是否可变
-    bool persistent;
+    bool persistent;//是否持久列
     struct ovsdb_type type;//列类型
 };
 

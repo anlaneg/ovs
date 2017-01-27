@@ -49,36 +49,39 @@ enum ovsdb_ref_type {
     OVSDB_REF_WEAK              /* Delete reference if target disappears. */
 };
 
+//标记类型，并指明各类型的取值范围
 struct ovsdb_base_type {
-    enum ovsdb_atomic_type type;
+    enum ovsdb_atomic_type type;//标记union使用哪个字段
 
     /* If nonnull, a datum with keys of type 'type' that expresses all the
      * valid values for this base_type. */
-    struct ovsdb_datum *enum_;
+    struct ovsdb_datum *enum_;//枚举类型
 
     union {
         struct ovsdb_integer_constraints {
             int64_t min;        /* minInteger or INT64_MIN. */
             int64_t max;        /* maxInteger or INT64_MAX. */
-        } integer;
+        } integer;//OVSDB_TYPE_INTEGER类型
 
         struct ovsdb_real_constraints {
             double min;         /* minReal or -DBL_MAX. */
             double max;         /* minReal or DBL_MAX. */
-        } real;
+        } real;//OVSDB_TYPE_REAL类型
 
         /* No constraints for Boolean types. */
 
         struct ovsdb_string_constraints {
             unsigned int minLen; /* minLength or 0. */
             unsigned int maxLen; /* maxLength or UINT_MAX. */
-        } string;
+        } string;//OVSDB_TYPE_STRING类型
 
         struct ovsdb_uuid_constraints {
+        	//引用的表名
             char *refTableName; /* Name of referenced table, or NULL. */
             struct ovsdb_table *refTable; /* Referenced table, if available. */
+            //引用的类型（强，弱）
             enum ovsdb_ref_type refType;  /* Reference type. */
-        } uuid;
+        } uuid;//OVSDB_TYPE_UUID类型
     } u;
 };
 
@@ -132,7 +135,8 @@ static inline bool ovsdb_base_type_is_weak_ref(const struct ovsdb_base_type *);
  */
 struct ovsdb_type {
     struct ovsdb_base_type key;
-    struct ovsdb_base_type value;
+    struct ovsdb_base_type value;//如果没有value,则value取值为OVSDB_TYPE_VOID
+    //min,max合起来表示，‘单个’，‘多个，且最多容许多少个','可选，容许0个，但也容许不超过n_max‘
     unsigned int n_min;
     unsigned int n_max;         /* UINT_MAX stands in for "unlimited". */
 };
@@ -173,12 +177,14 @@ ovsdb_atomic_type_is_valid(enum ovsdb_atomic_type atomic_type)
     return (int) atomic_type >= 0 && atomic_type < OVSDB_N_TYPES;
 }
 
+//是否有引用
 static inline bool
 ovsdb_base_type_is_ref(const struct ovsdb_base_type *base)
 {
     return base->type == OVSDB_TYPE_UUID && base->u.uuid.refTableName;
 }
 
+//是否为强引用
 static inline bool
 ovsdb_base_type_is_strong_ref(const struct ovsdb_base_type *base)
 {
