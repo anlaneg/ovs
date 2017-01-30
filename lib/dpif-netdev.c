@@ -2708,7 +2708,7 @@ dpif_netdev_execute(struct dpif *dpif, struct dpif_execute *execute)
                                flow_hash_5tuple(execute->flow, 0));
     }
 
-    packet_batch_init_packet(&pp, execute->packet);
+    dp_packet_batch_init_packet(&pp, execute->packet);
     dp_netdev_execute_actions(pmd, &pp, false, execute->flow,
                               execute->actions, execute->actions_len,
                               time_msec());
@@ -4123,7 +4123,8 @@ dp_netdev_queue_batches(struct dp_packet *pkt,
  * initialized by this function using 'port_no'.
  */
 static inline size_t
-emc_processing(struct dp_netdev_pmd_thread *pmd, struct dp_packet_batch *packets_,
+emc_processing(struct dp_netdev_pmd_thread *pmd,
+               struct dp_packet_batch *packets_,
                struct netdev_flow_key *keys,
                struct packet_batch_per_flow batches[], size_t *n_batches,
                bool md_is_valid, odp_port_t port_no)
@@ -4131,13 +4132,13 @@ emc_processing(struct dp_netdev_pmd_thread *pmd, struct dp_packet_batch *packets
     struct emc_cache *flow_cache = &pmd->flow_cache;
     struct netdev_flow_key *key = &keys[0];
     //n_dropped为丢掉的报文数
-    size_t i, n_missed = 0, n_dropped = 0;
-    struct dp_packet **packets = packets_->packets;
-    int cnt = packets_->count;
+    size_t n_missed = 0, n_dropped = 0;
+    struct dp_packet *packet;
+    const size_t size = dp_packet_batch_size(packets_);
+    int i;
 
-    for (i = 0; i < cnt; i++) {
+    DP_PACKET_BATCH_REFILL_FOR_EACH (i, size, packet, packets_) {
         struct dp_netdev_flow *flow;
-        struct dp_packet *packet = packets[i];
 
         if (OVS_UNLIKELY(dp_packet_size(packet) < ETH_HEADER_LEN)) {//比标准以太头还要小，丢
             dp_packet_delete(packet);//buf释放
@@ -4145,7 +4146,9 @@ emc_processing(struct dp_netdev_pmd_thread *pmd, struct dp_packet_batch *packets
             continue;
         }
 
-        if (i != cnt - 1) {//如果不是最后一个，则预取下一个包
+        if (i != size - 1) {
+            //如果不是最后一个，则预取下一个包
+            struct dp_packet **packets = packets_->packets;
             /* Prefetch next packet data and metadata. */
             OVS_PREFETCH(dp_packet_data(packets[i+1]));//预取下一个报文的数据（64字节）
             pkt_metadata_prefetch_init(&packets[i+1]->md);//预取metadata中的部分数据
@@ -4164,8 +4167,8 @@ emc_processing(struct dp_netdev_pmd_thread *pmd, struct dp_packet_batch *packets
                                     n_batches);
         } else {
             /* Exact match cache missed. Group missed packets together at
-             * the beginning of the 'packets' array.  */
-            packets[n_missed] = packet;//重新从０开始编号
+             * the beginning of the 'packets' array. */
+            dp_packet_batch_refill(packets_, packet, i);
             /* 'key[n_missed]' contains the key of the current packet and it
              * must be returned to the caller. The next key should be extracted
              * to 'keys[n_missed + 1]'. */
@@ -4173,9 +4176,10 @@ emc_processing(struct dp_netdev_pmd_thread *pmd, struct dp_packet_batch *packets
         }
     }
 
-    dp_netdev_count_packet(pmd, DP_STAT_EXACT_HIT, cnt - n_dropped - n_missed);//记录exact匹配命中数
+    //记录exact匹配命中数
+    dp_netdev_count_packet(pmd, DP_STAT_EXACT_HIT, size - n_dropped - n_missed);
 
-    return n_missed;
+    return dp_packet_batch_size(packets_);
 }
 
 static inline void
@@ -4220,7 +4224,7 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet,
     /* We can't allow the packet batching in the next loop to execute
      * the actions.  Otherwise, if there are any slow path actions,
      * we'll send the packet up twice. */
-    packet_batch_init_packet(&b, packet);
+    dp_packet_batch_init_packet(&b, packet);
     dp_netdev_execute_actions(pmd, &b, true, &match.flow,
                               actions->data, actions->size, now);//执行动作（执行的是actions中的动作）
 
@@ -4375,15 +4379,15 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
     OVS_ALIGNED_VAR(CACHE_LINE_SIZE) struct netdev_flow_key keys[PKT_ARRAY_SIZE];
     struct packet_batch_per_flow batches[PKT_ARRAY_SIZE];//报文在emc处理时将填充在batches中
     long long now = time_msec();
-    size_t newcnt, n_batches, i;
+    size_t n_batches;
     odp_port_t in_port;
 
-    n_batches = 0;//填充到多少个了
+    //填充到多少个了
+    n_batches = 0;
     //进行l1查询
-    newcnt = emc_processing(pmd, packets, keys, batches, &n_batches,
+    emc_processing(pmd, packets, keys, batches, &n_batches,
                             md_is_valid, port_no);
-    if (OVS_UNLIKELY(newcnt)) {//l1未命中的
-        packets->count = newcnt;//更改待处理的packet计数
+    if (!dp_packet_batch_is_empty(packets)) {
         /* Get ingress port from first packet's metadata. */
         in_port = packets->packets[0]->md.in_port.odp_port;
         fast_path_processing(pmd, packets, keys, batches, &n_batches, in_port, now);//执行l2,l3查询
@@ -4398,6 +4402,7 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
      * already its own batches[k] still waiting to be served.  So if its
      * ‘batch’ member is not reset, the recirculated packet would be wrongly
      * appended to batches[k] of the 1st call to dp_netdev_input__(). */
+    size_t i;
     for (i = 0; i < n_batches; i++) {
         batches[i].flow->batch = NULL;
     }
@@ -4577,7 +4582,7 @@ dp_execute_userspace_action(struct dp_netdev_pmd_thread *pmd,
                              DPIF_UC_ACTION, userdata, actions,
                              NULL);//走上送流程
     if (!error || error == ENOSPC) {
-        packet_batch_init_packet(&b, packet);
+        dp_packet_batch_init_packet(&b, packet);
         dp_netdev_execute_actions(pmd, &b, may_steal, flow,
                                   actions->data, actions->size, now);
     } else if (may_steal) {
@@ -4651,7 +4656,6 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             p = pmd_tnl_port_cache_lookup(pmd, portno);
             if (p) {
                 struct dp_packet_batch tnl_pkt;
-                int i;
 
                 if (!may_steal) {
                     dp_packet_batch_clone(&tnl_pkt, packets_);
@@ -4662,12 +4666,13 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 dp_packet_batch_apply_cutlen(packets_);
 
                 netdev_pop_header(p->port->netdev, packets_);
-                if (!packets_->count) {
+                if (dp_packet_batch_is_empty(packets_)) {
                     return;
                 }
 
-                for (i = 0; i < packets_->count; i++) {
-                    packets_->packets[i]->md.in_port.odp_port = portno;
+                struct dp_packet *packet;
+                DP_PACKET_BATCH_FOR_EACH (packet, packets_) {
+                    packet->md.in_port.odp_port = portno;
                 }
 
                 (*depth)++;
@@ -4681,14 +4686,12 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
     case OVS_ACTION_ATTR_USERSPACE:
         if (!fat_rwlock_tryrdlock(&dp->upcall_rwlock)) {
             struct dp_packet_batch *orig_packets_ = packets_;
-            struct dp_packet **packets = packets_->packets;
             const struct nlattr *userdata;
             struct dp_packet_batch usr_pkt;
             struct ofpbuf actions;
             struct flow flow;
             ovs_u128 ufid;
             bool clone = false;
-            int i;
 
             userdata = nl_attr_find_nested(a, OVS_USERSPACE_ATTR_USERDATA);
             ofpbuf_init(&actions, 0);
@@ -4697,7 +4700,6 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 if (!may_steal) {
                     dp_packet_batch_clone(&usr_pkt, packets_);
                     packets_ = &usr_pkt;
-                    packets = packets_->packets;
                     clone = true;
                     dp_packet_batch_reset_cutlen(orig_packets_);
                 }
@@ -4705,10 +4707,11 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 dp_packet_batch_apply_cutlen(packets_);
             }
 
-            for (i = 0; i < packets_->count; i++) {
-                flow_extract(packets[i], &flow);
+            struct dp_packet *packet;
+            DP_PACKET_BATCH_FOR_EACH (packet, packets_) {
+                flow_extract(packet, &flow);
                 dpif_flow_hash(dp->dpif, &flow, sizeof flow, &ufid);
-                dp_execute_userspace_action(pmd, packets[i], may_steal, &flow,
+                dp_execute_userspace_action(pmd, packet, may_steal, &flow,
                                             &ufid, &actions, userdata, now);
             }
 
@@ -4726,15 +4729,15 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
     case OVS_ACTION_ATTR_RECIRC://规则要求跳表
         if (*depth < MAX_RECIRC_DEPTH) {
             struct dp_packet_batch recirc_pkts;
-            int i;
 
             if (!may_steal) {
                dp_packet_batch_clone(&recirc_pkts, packets_);
                packets_ = &recirc_pkts;
             }
 
-            for (i = 0; i < packets_->count; i++) {
-                packets_->packets[i]->md.recirc_id = nl_attr_get_u32(a);
+            struct dp_packet *packet;
+            DP_PACKET_BATCH_FOR_EACH (packet, packets_) {
+                packet->md.recirc_id = nl_attr_get_u32(a);
             }
 
             (*depth)++;

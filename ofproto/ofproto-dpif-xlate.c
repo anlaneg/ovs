@@ -2910,7 +2910,7 @@ tnl_route_lookup_flow(const struct flow *oflow,
     struct in6_addr dst;
 
     dst = flow_tnl_dst(&oflow->tunnel);
-    if (!ovs_router_lookup(&dst, out_dev, src, &gw)) {
+    if (!ovs_router_lookup(oflow->pkt_mark, &dst, out_dev, src, &gw)) {
         return -ENOENT;
     }
 
@@ -3879,7 +3879,7 @@ execute_controller_action(struct xlate_ctx *ctx, int len,
     }
 
     packet = dp_packet_clone(ctx->xin->packet);
-    packet_batch_init_packet(&batch, packet);
+    dp_packet_batch_init_packet(&batch, packet);
     odp_execute_actions(NULL, &batch, false,
                         ctx->odp_actions->data, ctx->odp_actions->size, NULL);//执行转换动作
 

@@ -256,7 +256,23 @@ check_connection_completion(int fd)//等待可写，如果发生错误，错误�
         retval = poll(&pfd, 1, 0);//立即返回
     } while (retval < 0 && errno == EINTR);//失败且被信号中断时，继续此循环
 #else
-    retval = WSAPoll(&pfd, 1, 0);
+    fd_set wrset, exset;
+    FD_ZERO(&wrset);
+    FD_ZERO(&exset);
+    FD_SET(fd, &exset);
+    FD_SET(fd, &wrset);
+    pfd.revents = 0;
+    struct timeval tv = { 0, 0 };
+    /* WSAPoll is broken on Windows, instead do a select */
+    retval = select(0, NULL, &wrset, &exset, &tv);
+    if (retval == 1) {
+        if (FD_ISSET(fd, &wrset)) {
+            pfd.revents |= pfd.events;
+        }
+        if (FD_ISSET(fd, &exset)) {
+            pfd.revents |= POLLERR;
+        }
+    }
 #endif
     if (retval == 1) {//此fd有事件发生
         if (pfd.revents & POLLERR) {//此fd发生了错误
