@@ -373,6 +373,7 @@ transact(bool read_only, int argc, char *argv[])
     check_ovsdb_error(ovsdb_file_open(db_file_name, read_only, &db, NULL));
 
     request = parse_json(transaction);
+    //执行请求
     result = ovsdb_execute(db, NULL, request, false, 0, NULL);
     json_destroy(request);
 
@@ -389,6 +390,7 @@ do_query(struct ovs_cmdl_context *ctx)
 static void
 do_transact(struct ovs_cmdl_context *ctx)
 {
+	//非只读模式打开数据库文件
     transact(false, ctx->argc, ctx->argv);
 }
 

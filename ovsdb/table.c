@@ -303,6 +303,7 @@ ovsdb_table_schema_to_json(const struct ovsdb_table_schema *ts,
     return json;
 }
 
+//给出列名称，取列
 const struct ovsdb_column *
 ovsdb_table_schema_get_column(const struct ovsdb_table_schema *ts,
                               const char *name)

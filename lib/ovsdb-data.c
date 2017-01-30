@@ -1976,6 +1976,7 @@ ovsdb_symbol_table_destroy(struct ovsdb_symbol_table *symtab)
     }
 }
 
+//自符号表中查找name对应的符号信息
 struct ovsdb_symbol *
 ovsdb_symbol_table_get(const struct ovsdb_symbol_table *symtab,
                        const char *name)
@@ -1983,12 +1984,14 @@ ovsdb_symbol_table_get(const struct ovsdb_symbol_table *symtab,
     return shash_find_data(&symtab->sh, name);
 }
 
+//向symtab中添加symbol
 struct ovsdb_symbol *
 ovsdb_symbol_table_put(struct ovsdb_symbol_table *symtab, const char *name,
                        const struct uuid *uuid, bool created)
 {
     struct ovsdb_symbol *symbol;
 
+    //一定不存在，此符号
     ovs_assert(!ovsdb_symbol_table_get(symtab, name));
     symbol = xmalloc(sizeof *symbol);
     symbol->uuid = *uuid;
@@ -1999,6 +2002,7 @@ ovsdb_symbol_table_put(struct ovsdb_symbol_table *symtab, const char *name,
     return symbol;
 }
 
+//向symtab中加入符号name
 struct ovsdb_symbol *
 ovsdb_symbol_table_insert(struct ovsdb_symbol_table *symtab,
                           const char *name)
@@ -2009,7 +2013,7 @@ ovsdb_symbol_table_insert(struct ovsdb_symbol_table *symtab,
     if (!symbol) {
         struct uuid uuid;
 
-        uuid_generate(&uuid);
+        uuid_generate(&uuid);//生成符号对应的uuid
         symbol = ovsdb_symbol_table_put(symtab, name, &uuid, false);
     }
     return symbol;

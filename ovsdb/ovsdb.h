@@ -58,6 +58,7 @@ bool ovsdb_schema_equal(const struct ovsdb_schema *,
 struct ovsdb {
     struct ovsdb_schema *schema;
     struct ovs_list replicas;   /* Contains "struct ovsdb_replica"s. */
+    //所有table
     struct shash tables;        /* Contains "struct ovsdb_table *"s. */
 
     /* Triggers. */

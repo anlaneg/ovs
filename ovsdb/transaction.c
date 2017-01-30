@@ -71,6 +71,7 @@ struct ovsdb_txn_row {
     struct hmap_node hmap_node; /* In ovsdb_txn_table's txn_rows hmap. */
     struct ovsdb_row *old;      /* The old row. */
     struct ovsdb_row *new;      /* The new row. */
+    //事务行的引用，创建时，此值来源于old中对应的n_refs
     size_t n_refs;              /* Number of remaining references. */
 
     /* These members are the same as the corresponding members of 'old' or
@@ -262,10 +263,11 @@ ovsdb_txn_adjust_row_refs(struct ovsdb_txn *txn, const struct ovsdb_row *r,
     const struct ovsdb_datum *field = &r->fields[column->index];//取出列数据
     struct ovsdb_error *error;
 
+    //所有key引用的行，引用计数更新
     error = ovsdb_txn_adjust_atom_refs(txn, r, column, &column->type.key,
                                        field->keys, field->n, delta);
     if (!error) {
-    	//如果有value,则减少
+    	//如果有value,则其引用的行，引用计数也需要更新
         error = ovsdb_txn_adjust_atom_refs(txn, r, column, &column->type.value,
                                            field->values, field->n, delta);
     }
@@ -388,6 +390,7 @@ delete_garbage_row(struct ovsdb_txn *txn, struct ovsdb_txn_row *txn_row)
         const struct ovsdb_datum *field = &row->fields[column->index];
         struct ovsdb_error *error;
 
+        //这行需要删除，则这行如果引用了其它行，则相应的引用计数需要减少。
         //移除key计数
         error = delete_row_refs(txn, row,
                                 &column->type.key, field->keys, field->n);
@@ -438,19 +441,21 @@ ovsdb_txn_row_commit(struct ovsdb_txn *txn OVS_UNUSED,
     size_t n_indexes = txn_row->table->schema->n_indexes;
 
     if (txn_row->old) {
+    	//之前就有
         size_t i;
 
         for (i = 0; i < n_indexes; i++) {
             struct hmap_node *node = ovsdb_row_get_index_node(txn_row->old, i);
-            hmap_remove(&txn_row->table->indexes[i], node);
+            hmap_remove(&txn_row->table->indexes[i], node);//旧的自索引中移除
         }
     }
     if (txn_row->new) {
+    	//事务后存在
         size_t i;
 
         for (i = 0; i < n_indexes; i++) {
             struct hmap_node *node = ovsdb_row_get_index_node(txn_row->new, i);
-            hmap_insert(&txn_row->table->indexes[i], node, node->hash);
+            hmap_insert(&txn_row->table->indexes[i], node, node->hash);//新的向索引中添加
         }
     }
 
@@ -1090,6 +1095,7 @@ ovsdb_txn_get_comment(const struct ovsdb_txn *txn)
     return txn->comment.length ? ds_cstr_ro(&txn->comment) : NULL;
 }
 
+//移除事务行，移除对事务行的引用
 static void
 ovsdb_txn_row_prefree(struct ovsdb_txn_row *txn_row)
 {

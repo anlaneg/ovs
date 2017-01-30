@@ -67,6 +67,7 @@ static const struct ctl_table_class *ctl_classes;
 static const struct ovsdb_idl_table_class *idl_classes;
 static size_t n_classes;
 
+//加入所有ovs-ctl的命令
 static struct shash all_commands = SHASH_INITIALIZER(&all_commands);
 static const struct ovsdb_idl_table_class *get_table(const char *table_name);
 static void set_column(const struct ovsdb_idl_table_class *,
@@ -2048,6 +2049,7 @@ static const struct ctl_command_syntax db_ctl_commands[] = {
     {NULL, 0, 0, NULL, NULL, NULL, NULL, NULL, RO},
 };
 
+//注册所有命令
 static void
 ctl_register_command(const struct ctl_command_syntax *command)
 {
@@ -2057,6 +2059,7 @@ ctl_register_command(const struct ctl_command_syntax *command)
 /* Registers commands represented by 'struct ctl_command_syntax's to
  * 'all_commands'.  The last element of 'commands' must be an all-NULL
  * element. */
+//注册多个命令
 void
 ctl_register_commands(const struct ctl_command_syntax *commands)
 {

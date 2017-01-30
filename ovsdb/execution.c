@@ -69,6 +69,7 @@ lookup_executor(const char *name, bool *read_only)
         ovsdb_operation_executor *executor;
     };
 
+    //注册的操作回调
     static const struct ovsdb_operation operations[] = {
         { "insert", false, ovsdb_execute_insert },
         { "select", true, ovsdb_execute_select },
@@ -84,6 +85,7 @@ lookup_executor(const char *name, bool *read_only)
 
     size_t i;
 
+    //通过操作名称配置不同的数组项
     for (i = 0; i < ARRAY_SIZE(operations); i++) {
         const struct ovsdb_operation *c = &operations[i];
         if (!strcmp(c->name, name)) {
@@ -105,6 +107,7 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
     size_t n_operations;
     size_t i;
 
+    //必须是数组类型，且需要有数据，第一个成员必须为字符串，且为数据库名称
     if (params->type != JSON_ARRAY
         || !params->u.array.n
         || params->u.array.elems[0]->type != JSON_STRING
@@ -133,6 +136,7 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
     results = json_array_create_empty();
     n_operations = params->u.array.n - 1;
     error = NULL;
+    //逐个处理这一事务中的所有操作
     for (i = 1; i <= n_operations; i++) {
         struct json *operation = params->u.array.elems[i];
         struct ovsdb_error *parse_error;
@@ -143,17 +147,26 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
         bool ro = false;
 
         /* Parse and execute operation. */
+        /**
+         * 格式如下示：
+         * {
+         * 	'op':'insert/update/select/...',
+         * 	....
+         * }
+         */
         ovsdb_parser_init(&parser, operation,
                           "ovsdb operation %"PRIuSIZE" of %"PRIuSIZE, i,
                           n_operations);
         op = ovsdb_parser_member(&parser, "op", OP_ID);
         result = json_object_create();
         if (op) {
+            //通过操作名称，查找出对应的操作回调，并执行它
             op_name = json_string(op);
             ovsdb_operation_executor *executor = lookup_executor(op_name, &ro);
             if (executor) {
                 error = executor(&x, &parser, result);
             } else {
+            	//此操作无对应回调
                 ovsdb_parser_raise_error(&parser, "No operation \"%s\"",
                                          op_name);
             }
@@ -238,6 +251,7 @@ ovsdb_execute_abort(struct ovsdb_execution *x OVS_UNUSED,
     return ovsdb_error("aborted", "aborted by request");
 }
 
+//解析出table名称，并通过table名称查找出ovsdb_table
 static struct ovsdb_table *
 parse_table(struct ovsdb_execution *x,
             struct ovsdb_parser *parser, const char *member)
@@ -254,6 +268,7 @@ parse_table(struct ovsdb_execution *x,
 
     table = shash_find_data(&x->db->tables, table_name);
     if (!table) {
+    	//查找不到table
         ovsdb_parser_raise_error(parser, "No table named %s.", table_name);
     }
     return table;
@@ -276,13 +291,15 @@ parse_row(const struct json *json, const struct ovsdb_table *table,
         return OVSDB_BUG("null row");
     }
 
+    //构造行
     row = ovsdb_row_create(table);
+    //填充行
     error = ovsdb_row_from_json(row, json, symtab, columns);
     if (error) {
         ovsdb_row_destroy(row);
         return error;
     } else {
-        *rowp = row;
+        *rowp = row;//设置行
         return NULL;
     }
 }
@@ -296,8 +313,17 @@ ovsdb_execute_insert(struct ovsdb_execution *x, struct ovsdb_parser *parser,
     const struct json *uuid_name, *row_json;
     struct ovsdb_error *error;
     struct uuid row_uuid;
-
-    table = parse_table(x, parser, "table");
+    /**
+     * 格式如下示：
+     * {
+     * 	'op':'insert/update/select/...',
+     * 	‘table':'table_name',
+     * 	'uuid-name':'uuid-value',
+     * 	'row':
+     * 	....
+     * }
+     */
+    table = parse_table(x, parser, "table");//解析table名称
     uuid_name = ovsdb_parser_member(parser, "uuid-name", OP_ID | OP_OPTIONAL);
     row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
     error = ovsdb_parser_get_error(parser);
@@ -310,17 +336,20 @@ ovsdb_execute_insert(struct ovsdb_execution *x, struct ovsdb_parser *parser,
 
         symbol = ovsdb_symbol_table_insert(x->symtab, json_string(uuid_name));
         if (symbol->created) {
+        	//如果symbol的created为true
             return ovsdb_syntax_error(uuid_name, "duplicate uuid-name",
                                       "This \"uuid-name\" appeared on an "
                                       "earlier \"insert\" operation.");
         }
         row_uuid = symbol->uuid;
-        symbol->created = true;
+        symbol->created = true;//指明创建成功
     } else {
+    	//未给定uuid,生成uuid
         uuid_generate(&row_uuid);
     }
 
     if (!error) {
+    	//解析row_json，获得row
         error = parse_row(row_json, table, x->symtab, &row, NULL);
     }
     if (!error) {

@@ -626,11 +626,12 @@ static struct ovsdb_error *
 execute_insert(struct ovsdb_txn *txn, const struct uuid *row_uuid,
                struct ovsdb_table *table, struct json *json_row)
 {
+	//创建row,并解析json串填充row
     struct ovsdb_row *row = ovsdb_row_create(table);
     struct ovsdb_error *error = ovsdb_row_from_json(row, json_row, NULL, NULL);
     if (!error) {
-        *ovsdb_row_get_uuid_rw(row) = *row_uuid;
-        ovsdb_txn_row_insert(txn, row);
+        *ovsdb_row_get_uuid_rw(row) = *row_uuid;//设置行号
+        ovsdb_txn_row_insert(txn, row);//加入事务行
     } else {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
         VLOG_WARN_RL(&rl, "cannot add existing row "UUID_FMT" to table %s",
