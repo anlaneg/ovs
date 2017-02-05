@@ -504,12 +504,14 @@ pstream_open(const char *name, struct pstream **pstreamp, uint8_t dscp)
     COVERAGE_INC(pstream_open);
 
     /* Look up the class. */
+    //确定采用哪类pstream
     error = pstream_lookup_class(name, &class);
     if (!class) {
         goto error;
     }
 
     /* Call class's "open" function. */
+    //调用listen进行pstream创建
     suffix_copy = xstrdup(strchr(name, ':') + 1);
     error = class->listen(name, suffix_copy, &pstream, dscp);
     free(suffix_copy);
@@ -708,6 +710,7 @@ pstream_open_with_default_port(const char *name_,
 
     if ((!strncmp(name_, "ptcp:", 5) || !strncmp(name_, "pssl:", 5))
         && count_fields(name_) < 2) {
+    	//未指明host,及端口的，仅补全端口（这也是为什么没有看到冒号的原因）
         name = xasprintf("%s%d", name_, default_port);
     } else {
         name = xstrdup(name_);

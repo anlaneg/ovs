@@ -104,6 +104,7 @@ setsockopt_tcp_nodelay(int fd)//设置tcp为不延迟
 /* Sets the DSCP value of socket 'fd' to 'dscp', which must be 63 or less.
  * 'family' must indicate the socket's address family (AF_INET or AF_INET6, to
  * do anything useful). */
+//设置tos值
 int
 set_dscp(int fd, int family, uint8_t dscp)
 {
@@ -345,24 +346,27 @@ parse_bracketed_token(char **pp)
     char *p = *pp;
 
     if (p == NULL) {
+    	//空处理
         return NULL;
     } else if (*p == '\0') {
+    	//空串处理
         *pp = NULL;
         return p;
     } else if (*p == '[') {
         char *start = p + 1;
+        //strcspn：从start开始检查，如果"]"串中的所有字符均不能匹配遇到的字符，则一直向后移动。
         char *end = start + strcspn(start, "]");
         *pp = (*end == '\0' ? NULL
                : end[1] == ':' ? end + 2
                : end + 1);
         *end = '\0';
-        return start;
+        return start;//提取[xxxx]中被'[]'包起来的部分
     } else {
         char *start = p;
         char *end = start + strcspn(start, ":");
         *pp = *end == '\0' ? NULL : end + 1;
         *end = '\0';
-        return start;
+        return start;//提取:前部分
     }
 }
 

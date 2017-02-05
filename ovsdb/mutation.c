@@ -84,6 +84,7 @@ ovsdb_mutation_from_json(const struct ovsdb_table_schema *ts,
     const char *mutator_name;
     const char *column_name;
 
+    //类型检查
     if (json->type != JSON_ARRAY
         || json->u.array.n != 3
         || json->u.array.elems[0]->type != JSON_STRING
@@ -94,11 +95,13 @@ ovsdb_mutation_from_json(const struct ovsdb_table_schema *ts,
 
     column_name = json_string(array->elems[0]);
     m->column = ovsdb_table_schema_get_column(ts, column_name);
+    //列名有误
     if (!m->column) {
         return ovsdb_syntax_error(json, "unknown column",
                                   "No column %s in table %s.",
                                   column_name, ts->name);
     }
+    //列不容许变化
     if (!m->column->mutable) {
         return ovsdb_syntax_error(json, "constraint violation",
                                   "Cannot mutate immutable column %s in "
@@ -107,6 +110,7 @@ ovsdb_mutation_from_json(const struct ovsdb_table_schema *ts,
 
     ovsdb_type_clone(&m->type, &m->column->type);
 
+    //解析变化操作符 += , *= , -= , /= , insert , delete
     mutator_name = json_string(array->elems[1]);
     error = ovsdb_mutator_from_string(mutator_name, &m->mutator);
     if (error) {
@@ -114,12 +118,14 @@ ovsdb_mutation_from_json(const struct ovsdb_table_schema *ts,
     }
 
     /* Type-check and relax restrictions on 'type' if appropriate.  */
+    //语义检查
     switch (m->mutator) {
     case OVSDB_M_ADD:
     case OVSDB_M_SUB:
     case OVSDB_M_MUL:
     case OVSDB_M_DIV:
     case OVSDB_M_MOD:
+    	// 加，减，乘，除　只有integer,real支持，mode只有integer支持
         if ((!ovsdb_type_is_scalar(&m->type) && !ovsdb_type_is_set(&m->type))
             || (m->type.key.type != OVSDB_TYPE_INTEGER
                 && m->type.key.type != OVSDB_TYPE_REAL)
@@ -135,6 +141,7 @@ ovsdb_mutation_from_json(const struct ovsdb_table_schema *ts,
 
     case OVSDB_M_INSERT:
     case OVSDB_M_DELETE:
+    	//增，减　只有 set　和　map　类型支持
         if (!ovsdb_type_is_set(&m->type) && !ovsdb_type_is_map(&m->type)) {
             return type_mismatch(m, json);
         }
@@ -180,6 +187,7 @@ ovsdb_mutation_set_from_json(const struct ovsdb_table_schema *ts,
     const struct json_array *array = json_array(json);
     size_t i;
 
+    //mutations是一个数组类型，格式为　<列，操作,参数>
     set->mutations = xmalloc(array->n * sizeof *set->mutations);
     set->n_mutations = 0;
     for (i = 0; i < array->n; i++) {
@@ -285,6 +293,7 @@ mutate_scalar(const struct ovsdb_type *dst_type, struct ovsdb_datum *dst,
     struct ovsdb_error *error;
     unsigned int i;
 
+    //integer类型
     if (base->type == OVSDB_TYPE_INTEGER) {
         int64_t y = arg->integer;
         for (i = 0; i < dst->n; i++) {
@@ -351,6 +360,7 @@ ovsdb_mutation_set_execute(struct ovsdb_row *row,
 {
     size_t i;
 
+    //遍历执行每个变换
     for (i = 0; i < set->n_mutations; i++) {
         const struct ovsdb_mutation *m = &set->mutations[i];
         struct ovsdb_datum *dst = &row->fields[m->column->index];
@@ -359,6 +369,7 @@ ovsdb_mutation_set_execute(struct ovsdb_row *row,
         const struct ovsdb_type *arg_type = &m->type;
         struct ovsdb_error *error;
 
+        //针对每个操作，传入其对应的变幻函数（仅实现了 i+=10，这样的函数）
         switch (m->mutator) {
         case OVSDB_M_ADD:
             error = mutate_scalar(dst_type, dst, &arg->keys[0], &add_mutation);

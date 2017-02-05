@@ -635,6 +635,7 @@ ovsdb_file_commit(struct ovsdb_replica *replica,
     struct ovsdb_error *error;
 
     ovsdb_file_txn_init(&ftxn);
+    //构造日志json串
     ovsdb_txn_for_each_change(txn, ovsdb_file_change_cb, &ftxn);
     if (!ftxn.json) {
         /* Nothing to commit. */
@@ -825,7 +826,7 @@ ovsdb_file_destroy(struct ovsdb_replica *replica)
 }
 
 static const struct ovsdb_replica_class ovsdb_file_class = {
-    ovsdb_file_commit,
+    ovsdb_file_commit,//日志文件写
     ovsdb_file_destroy
 };
 
@@ -914,6 +915,7 @@ ovsdb_file_txn_commit(struct json *json, const char *comment,
     }
 
     if (durable) {
+    	//强制落盘
         error = ovsdb_log_commit(log);
         if (error) {
             return ovsdb_wrap_error(error, "committing transaction failed");

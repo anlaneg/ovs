@@ -48,7 +48,7 @@ struct ovsdb_execution {
 typedef struct ovsdb_error *ovsdb_operation_executor(struct ovsdb_execution *,
                                                      struct ovsdb_parser *,
                                                      struct json *result);
-
+//gcc 支持这种写法？。。。。呵呵
 static ovsdb_operation_executor ovsdb_execute_insert;
 static ovsdb_operation_executor ovsdb_execute_select;
 static ovsdb_operation_executor ovsdb_execute_update;
@@ -80,7 +80,7 @@ lookup_executor(const char *name, bool *read_only)
         { "commit", false, ovsdb_execute_commit },
         { "abort", true, ovsdb_execute_abort },
         { "comment", true, ovsdb_execute_comment },
-        { "assert", true, ovsdb_execute_assert },
+        { "assert", true, ovsdb_execute_assert },//确认是否掌握有锁
     };
 
     size_t i;
@@ -164,6 +164,7 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
             op_name = json_string(op);
             ovsdb_operation_executor *executor = lookup_executor(op_name, &ro);
             if (executor) {
+            	//执行操作
                 error = executor(&x, &parser, result);
             } else {
             	//此操作无对应回调
@@ -211,6 +212,7 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
     }
 
     if (!error) {
+    	//用户主动调用commit命令时x.durable为True
         error = ovsdb_txn_commit(x.txn, x.durable);
         if (error) {
             json_array_add(results, ovsdb_error_to_json(error));
@@ -304,6 +306,7 @@ parse_row(const struct json *json, const struct ovsdb_table *table,
     }
 }
 
+//ovsdb插入操作执行
 static struct ovsdb_error *
 ovsdb_execute_insert(struct ovsdb_execution *x, struct ovsdb_parser *parser,
                      struct json *result)
@@ -379,6 +382,7 @@ ovsdb_execute_insert(struct ovsdb_execution *x, struct ovsdb_parser *parser,
     }
     if (!error) {
         *ovsdb_row_get_uuid_rw(row) = row_uuid;
+        //行插入
         ovsdb_txn_row_insert(x->txn, row);
         json_object_put(result, "uuid",
                         ovsdb_datum_to_json(&row->fields[OVSDB_COL_UUID],
@@ -387,6 +391,7 @@ ovsdb_execute_insert(struct ovsdb_execution *x, struct ovsdb_parser *parser,
     return error;
 }
 
+//选择操作，麻烦，主要是去重，排序，选择
 static struct ovsdb_error *
 ovsdb_execute_select(struct ovsdb_execution *x, struct ovsdb_parser *parser,
                      struct json *result)
@@ -398,6 +403,14 @@ ovsdb_execute_select(struct ovsdb_execution *x, struct ovsdb_parser *parser,
     struct ovsdb_column_set sort = OVSDB_COLUMN_SET_INITIALIZER;
     struct ovsdb_error *error;
 
+    /**
+     * 格式：
+     * {
+     * "table":'xxxxx',
+     * 'where':[xxxx],
+     * 'columns':[],
+     * 'sort':[]
+     */
     table = parse_table(x, parser, "table");
     where = ovsdb_parser_member(parser, "where", OP_ARRAY);
     columns_json = ovsdb_parser_member(parser, "columns",
@@ -417,12 +430,13 @@ ovsdb_execute_select(struct ovsdb_execution *x, struct ovsdb_parser *parser,
         error = ovsdb_column_set_from_json(sort_json, table->schema, &sort);
     }
     if (!error) {
+    	//构造一个临时表rows
         struct ovsdb_row_set rows = OVSDB_ROW_SET_INITIALIZER;
 
         ovsdb_query_distinct(table, &condition, &columns, &rows);
-        ovsdb_row_set_sort(&rows, &sort);
+        ovsdb_row_set_sort(&rows, &sort);//排序
         json_object_put(result, "rows",
-                        ovsdb_row_set_to_json(&rows, &columns));
+                        ovsdb_row_set_to_json(&rows, &columns));//仅考虑显示列
 
         ovsdb_row_set_destroy(&rows);
     }
@@ -441,6 +455,7 @@ struct update_row_cbdata {
     const struct ovsdb_column_set *columns;
 };
 
+//更新回调
 static bool
 update_row_cb(const struct ovsdb_row *row, void *ur_)
 {
@@ -448,6 +463,7 @@ update_row_cb(const struct ovsdb_row *row, void *ur_)
 
     ur->n_matches++;
     if (!ovsdb_row_equal_columns(row, ur->row, ur->columns)) {
+    	//如果新列与旧列存在一些不相等，则需要更新
         ovsdb_row_update_columns(ovsdb_txn_row_modify(ur->txn, row),
                                  ur->row, ur->columns);
     }
@@ -455,6 +471,7 @@ update_row_cb(const struct ovsdb_row *row, void *ur_)
     return true;
 }
 
+//更新操作（如果指定uuid,则采用索引查找，否则按表扫描方式过滤）
 static struct ovsdb_error *
 ovsdb_execute_update(struct ovsdb_execution *x, struct ovsdb_parser *parser,
                      struct json *result)
@@ -467,11 +484,18 @@ ovsdb_execute_update(struct ovsdb_execution *x, struct ovsdb_parser *parser,
     struct update_row_cbdata ur;
     struct ovsdb_error *error;
 
+    /**
+     * 格式：
+     * "table":"xxxx",
+     * "where":[],　//where子句间是并操作
+     * "row":{}
+     */
     table = parse_table(x, parser, "table");
     where = ovsdb_parser_member(parser, "where", OP_ARRAY);
     row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
     error = ovsdb_parser_get_error(parser);
     if (!error) {
+    	//解析对应的列
         error = parse_row(row_json, table, x->symtab, &row, &columns);
     }
     if (!error) {
@@ -480,6 +504,7 @@ ovsdb_execute_update(struct ovsdb_execution *x, struct ovsdb_parser *parser,
         for (i = 0; i < columns.n_columns; i++) {
             const struct ovsdb_column *column = columns.columns[i];
 
+            //不容许更新
             if (!column->mutable) {
                 error = ovsdb_syntax_error(parser->json,
                                            "constraint violation",
@@ -491,6 +516,7 @@ ovsdb_execute_update(struct ovsdb_execution *x, struct ovsdb_parser *parser,
         }
     }
     if (!error) {
+    	//解析condition
         error = ovsdb_condition_from_json(table->schema, where, x->symtab,
                                           &condition);
     }
@@ -503,6 +529,7 @@ ovsdb_execute_update(struct ovsdb_execution *x, struct ovsdb_parser *parser,
         json_object_put(result, "count", json_integer_create(ur.n_matches));
     }
 
+    //旧行丢弃
     ovsdb_row_destroy(row);
     ovsdb_column_set_destroy(&columns);
     ovsdb_condition_destroy(&condition);
@@ -541,11 +568,13 @@ ovsdb_execute_mutate(struct ovsdb_execution *x, struct ovsdb_parser *parser,
     struct mutate_row_cbdata mr;
     struct ovsdb_error *error;
 
+    //格式：table,where,mutations
     table = parse_table(x, parser, "table");
     where = ovsdb_parser_member(parser, "where", OP_ARRAY);
     mutations_json = ovsdb_parser_member(parser, "mutations", OP_ARRAY);
     error = ovsdb_parser_get_error(parser);
     if (!error) {
+    	//解析变换 set
         error = ovsdb_mutation_set_from_json(table->schema, mutations_json,
                                              x->symtab, &mutations);
     }
@@ -559,6 +588,7 @@ ovsdb_execute_mutate(struct ovsdb_execution *x, struct ovsdb_parser *parser,
         mr.mutations = &mutations;
         mr.error = &error;
         ovsdb_query(table, &condition, mutate_row_cb, &mr);
+        //返回更改了多少行。
         json_object_put(result, "count", json_integer_create(mr.n_matches));
     }
 
@@ -575,6 +605,7 @@ struct delete_row_cbdata {
     struct ovsdb_txn *txn;
 };
 
+//删除回调
 static bool
 delete_row_cb(const struct ovsdb_row *row, void *dr_)
 {
@@ -660,6 +691,7 @@ ovsdb_execute_wait(struct ovsdb_execution *x, struct ovsdb_parser *parser,
     where = ovsdb_parser_member(parser, "where", OP_ARRAY);
     columns_json = ovsdb_parser_member(parser, "columns",
                                        OP_ARRAY | OP_OPTIONAL);
+    //只能取'==','!='
     until = ovsdb_parser_member(parser, "until", OP_STRING);
     rows = ovsdb_parser_member(parser, "rows", OP_ARRAY);
     table = parse_table(x, parser, "table");
@@ -698,7 +730,9 @@ ovsdb_execute_wait(struct ovsdb_execution *x, struct ovsdb_parser *parser,
         for (i = 0; i < rows->u.array.n; i++) {
             struct ovsdb_row *row;
 
+            //依据table创建行
             row = ovsdb_row_create(table);
+            //解析行数据
             error = ovsdb_row_from_json(row, rows->u.array.elems[i], x->symtab,
                                         NULL);
             if (error) {
@@ -706,6 +740,7 @@ ovsdb_execute_wait(struct ovsdb_execution *x, struct ovsdb_parser *parser,
                 break;
             }
 
+            //插入期待行
             if (!ovsdb_row_hash_insert(&expected, row)) {
                 /* XXX Perhaps we should abort with an error or log a
                  * warning. */
@@ -719,9 +754,10 @@ ovsdb_execute_wait(struct ovsdb_execution *x, struct ovsdb_parser *parser,
         ovsdb_row_hash_init(&actual, &columns);
         aux.actual = &actual;
         aux.expected = &expected;
-        aux.equal = &equal;
+        aux.equal = &equal;//默认给true
         ovsdb_query(table, &condition, ovsdb_execute_wait_query_cb, &aux);
         if (equal) {
+        	//不存在，未期待的行
             /* We know that every row in 'actual' is also in 'expected'.  We
              * also know that all of the rows in 'actual' are distinct and that
              * all of the rows in 'expected' are distinct.  Therefore, if
@@ -729,10 +765,15 @@ ovsdb_execute_wait(struct ovsdb_execution *x, struct ovsdb_parser *parser,
              * have the same content. */
             size_t n_actual = ovsdb_row_hash_count(&actual);
             size_t n_expected = ovsdb_row_hash_count(&expected);
+            //检查实际是否与期待的行数相等
             equal = n_actual == n_expected;
         }
+
+        //条件检查失配
         if (!strcmp(json_string(until), "==") != equal) {
+        	//必须配置timeout
             if (timeout && x->elapsed_msec >= timeout_msec) {
+            	//且超时
                 if (x->elapsed_msec) {
                     error = ovsdb_error("timed out",
                                         "\"wait\" timed out after %lld ms",
@@ -742,6 +783,7 @@ ovsdb_execute_wait(struct ovsdb_execution *x, struct ovsdb_parser *parser,
                                         "\"where\" clause test failed");
                 }
             } else {
+            	//没有配置timeout,也没有超时，当前不支持。
                 /* ovsdb_execute() will change this, if triggers really are
                  * supported. */
                 error = ovsdb_error("not supported", "triggers not supported");

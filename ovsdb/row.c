@@ -195,7 +195,7 @@ ovsdb_row_columns_to_string(const struct ovsdb_row *row,
     }
 }
 
-//从json中解析出row
+//从json中解析出row，included参数用于返回哪些列被赋了值。
 struct ovsdb_error *
 ovsdb_row_from_json(struct ovsdb_row *row, const struct json *json,
                     struct ovsdb_symbol_table *symtab,

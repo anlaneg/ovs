@@ -56,6 +56,7 @@ ovsdb_function_to_string(enum ovsdb_function function)
     return NULL;
 }
 
+//解析单个condition子句
 static struct ovsdb_error *
 ovsdb_clause_from_json(const struct ovsdb_table_schema *ts,
                        const struct json *json,
@@ -69,6 +70,7 @@ ovsdb_clause_from_json(const struct ovsdb_table_schema *ts,
     struct ovsdb_type type;
 
     if (json->type == JSON_TRUE || json->type == JSON_FALSE) {
+    	//恒假，恒真子句
         clause->function =
             json->type == JSON_TRUE ? OVSDB_F_TRUE : OVSDB_F_FALSE;
 
@@ -80,6 +82,10 @@ ovsdb_clause_from_json(const struct ovsdb_table_schema *ts,
         return NULL;
     }
 
+    /**
+     * 格式：
+     * 　　[["$column_name","<","$compre_column"],[...],]
+     */
     if (json->type != JSON_ARRAY
         || json->u.array.n != 3
         || json->u.array.elems[0]->type != JSON_STRING
@@ -106,12 +112,14 @@ ovsdb_clause_from_json(const struct ovsdb_table_schema *ts,
 
     /* Type-check and relax restrictions on 'type' if appropriate.  */
     switch (clause->function) {
-    case OVSDB_F_LT:
-    case OVSDB_F_LE:
-    case OVSDB_F_GT:
-    case OVSDB_F_GE:
+    case OVSDB_F_LT:// <
+    case OVSDB_F_LE:// <=
+    case OVSDB_F_GT:// >
+    case OVSDB_F_GE:// >=
         /* Allow these operators for types with n_min == 0, n_max == 1.
          * (They will always be "false" if the value is missing.) */
+
+    	//只有interger,real两种标量类型支持这四个操作
         if (!(ovsdb_type_is_scalar(&type)
             || ovsdb_type_is_optional_scalar(&type))
             || (type.key.type != OVSDB_TYPE_INTEGER
@@ -126,11 +134,12 @@ ovsdb_clause_from_json(const struct ovsdb_table_schema *ts,
             return error;
         }
         break;
-    case OVSDB_F_EQ:
-    case OVSDB_F_NE:
+    case OVSDB_F_EQ:// ==
+    case OVSDB_F_NE:// !=
         break;
 
     case OVSDB_F_EXCLUDES:
+    	//excludes 标量不支持
         if (!ovsdb_type_is_scalar(&type)) {
             type.n_min = 0;
             type.n_max = UINT_MAX;
@@ -138,6 +147,7 @@ ovsdb_clause_from_json(const struct ovsdb_table_schema *ts,
         break;
 
     case OVSDB_F_INCLUDES:
+    	//includes 标量不支持
         if (!ovsdb_type_is_scalar(&type)) {
             type.n_min = 0;
         }
@@ -146,6 +156,7 @@ ovsdb_clause_from_json(const struct ovsdb_table_schema *ts,
     case OVSDB_F_FALSE:
         OVS_NOT_REACHED();
     }
+    //按type解析array->elems[2]
     return ovsdb_datum_from_json(&clause->arg, &type, array->elems[2], symtab);
 }
 
@@ -176,6 +187,7 @@ compare_clauses_3way(const void *a_, const void *b_)
             return a->column->index < b->column->index ? -1 : 1;
         } else {
             /* Order clauses predictably to make testing easier. */
+        	//此时就比对名称了，因为列号相同
             return strcmp(a->column->name, b->column->name);
         }
     } else {
@@ -191,6 +203,7 @@ compare_clauses_3way_with_data(const void *a_, const void *b_)
     int res;
 
     res = compare_clauses_3way(a, b);
+    //如果相等，还要比对参数
     return res ? res : ovsdb_datum_compare_3way(&a->arg,
                                                 &b->arg,
                                                 &a->column->type);
@@ -259,6 +272,7 @@ ovsdb_condition_optimize_destroy(struct ovsdb_condition *cnd)
      shash_destroy(&cnd->o_columns);
 }
 
+//自json串解析condition,json串一定是一个数组类型
 struct ovsdb_error *
 ovsdb_condition_from_json(const struct ovsdb_table_schema *ts,
                           const struct json *json,
@@ -273,6 +287,7 @@ ovsdb_condition_from_json(const struct ovsdb_table_schema *ts,
 
     for (i = 0; i < array->n; i++) {
         struct ovsdb_error *error;
+        //逐个子句进行解析
         error = ovsdb_clause_from_json(ts, array->elems[i], symtab,
                                        &cnd->clauses[i]);
         if (error) {
@@ -282,12 +297,15 @@ ovsdb_condition_from_json(const struct ovsdb_table_schema *ts,
             return error;
         }
         cnd->n_clauses++;
+        //当前仅true,false,== 三个操作，可优化
         if (cnd->clauses[i].function > OVSDB_F_EQ) {
             cnd->optimized = false;
         }
     }
 
     /* A real database would have a query optimizer here. */
+    //一个真正的数据在这一步会有查询优化操作。
+    //对子句进行排序
     qsort(cnd->clauses, cnd->n_clauses, sizeof *cnd->clauses,
           compare_clauses_3way_with_data);
 
@@ -334,10 +352,12 @@ ovsdb_clause_evaluate(const struct ovsdb_datum *fields,
     const struct ovsdb_datum *arg = &c->arg;
     const struct ovsdb_type *type = &c->column->type;
 
+    //true,或者false返回
     if (c->function == OVSDB_F_TRUE ||
         c->function == OVSDB_F_FALSE) {
         return c->function == OVSDB_F_TRUE;
     }
+    //行内的此列不存在值
     if (ovsdb_type_is_optional_scalar(type) && field->n == 0) {
         switch (c->function) {
             case OVSDB_F_LT:
@@ -346,7 +366,7 @@ ovsdb_clause_evaluate(const struct ovsdb_datum *fields,
             case OVSDB_F_GE:
             case OVSDB_F_GT:
             case OVSDB_F_INCLUDES:
-                return false;
+                return false;//以上返false
             case OVSDB_F_NE:
             case OVSDB_F_EXCLUDES:
                 return true;
@@ -356,6 +376,7 @@ ovsdb_clause_evaluate(const struct ovsdb_datum *fields,
         }
     } else if (ovsdb_type_is_scalar(type)
                || ovsdb_type_is_optional_scalar(type)) {
+    	//标量，且存在值，则与参数比对
         int cmp = ovsdb_atom_compare_3way(&field->keys[0], &arg->keys[0],
                                           type->key.type);
         switch (c->function) {
@@ -378,6 +399,7 @@ ovsdb_clause_evaluate(const struct ovsdb_datum *fields,
             OVS_NOT_REACHED();
         }
     } else {
+    	//非标量比较
         switch (c->function) {
         case OVSDB_F_EQ:
             return ovsdb_datum_equals(field, arg, type);
@@ -416,6 +438,7 @@ ovsdb_condition_match_every_clause(const struct ovsdb_row *row,
 {
     size_t i;
 
+    //从这里可以看出，where子句中的从句是并操作
     for (i = 0; i < cnd->n_clauses; i++) {
         if (!ovsdb_clause_evaluate(row->fields, &cnd->clauses[i], NULL)) {
             return false;

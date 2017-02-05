@@ -34,6 +34,7 @@ ovsdb_query(struct ovsdb_table *table, const struct ovsdb_condition *cnd,
         const struct ovsdb_row *row;
 
         row = ovsdb_table_get_row(table, &cnd->clauses[0].arg.keys[0].uuid);
+        //单行如果命中，则调用回调
         if (row && row->table == table &&
             ovsdb_condition_match_every_clause(row, cnd)) {
             output_row(row, aux);
@@ -42,6 +43,7 @@ ovsdb_query(struct ovsdb_table *table, const struct ovsdb_condition *cnd,
         /* Linear scan. */
         const struct ovsdb_row *row, *next;
 
+        //表扫描
         HMAP_FOR_EACH_SAFE (row, next, hmap_node, &table->rows) {
             if (ovsdb_condition_match_every_clause(row, cnd) &&
                 !output_row(row, aux)) {
@@ -51,10 +53,12 @@ ovsdb_query(struct ovsdb_table *table, const struct ovsdb_condition *cnd,
     }
 }
 
+//查询回调
 static bool
 query_row_set_cb(const struct ovsdb_row *row, void *results_)
 {
     struct ovsdb_row_set *results = results_;
+    //copy一份直接插入
     ovsdb_row_set_add_row(results, row);
     return true;
 }
@@ -67,6 +71,7 @@ ovsdb_query_row_set(struct ovsdb_table *table,
     ovsdb_query(table, condition, query_row_set_cb, results);
 }
 
+//防重复回调
 static bool
 query_distinct_cb(const struct ovsdb_row *row, void *hash_)
 {
@@ -81,6 +86,7 @@ ovsdb_query_distinct(struct ovsdb_table *table,
                      const struct ovsdb_column_set *columns,
                      struct ovsdb_row_set *results)
 {
+	//所有列，或者要求显示的列中有_uuid列，则一定不会重复
     if (!columns || ovsdb_column_set_contains(columns, OVSDB_COL_UUID)) {
         /* All the result rows are guaranteed to be distinct anyway. */
         ovsdb_query_row_set(table, condition, results);
@@ -91,6 +97,7 @@ ovsdb_query_distinct(struct ovsdb_table *table,
         struct ovsdb_row_hash hash;
 
         ovsdb_row_hash_init(&hash, columns);
+        //查询并采用显示列比对，检查是否冲突，如果冲突（即有相同的），则不再加入
         ovsdb_query(table, condition, query_distinct_cb, &hash);
         HMAP_FOR_EACH (node, hmap_node, &hash.rows) {
             ovsdb_row_set_add_row(results, node->row);

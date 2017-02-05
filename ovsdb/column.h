@@ -28,7 +28,8 @@ struct ovsdb_column {
     unsigned int index;//列在表中的编号
     char *name;//列名称
 
-    bool mutable;//是否可变
+    //是否可变，false时，不容许更新
+    bool mutable;
     bool persistent;//是否持久列
     struct ovsdb_type type;//列类型
 };

@@ -42,6 +42,7 @@
 VLOG_DEFINE_THIS_MODULE(ovsdb_monitor);
 
 static const struct ovsdb_replica_class ovsdb_jsonrpc_replica_class;
+//注册要监控的table,column以及监控的条件
 static struct hmap ovsdb_monitors = HMAP_INITIALIZER(&ovsdb_monitors);
 
 /* Keep state of session's conditions */
@@ -68,6 +69,7 @@ struct ovsdb_monitor_table_condition {
 /* A collection of tables being monitored. */
 struct ovsdb_monitor {
     struct ovsdb_replica replica;
+    //monitor哪些表
     struct shash tables;     /* Holds "struct ovsdb_monitor_table"s. */
     struct ovs_list jsonrpc_monitors;  /* Contains "jsonrpc_monitor_node"s. */
     struct ovsdb *db;
@@ -101,7 +103,9 @@ struct ovsdb_monitor_column {
 struct ovsdb_monitor_row {
     struct hmap_node hmap_node; /* In ovsdb_jsonrpc_monitor_table.changes. */
     struct uuid uuid;           /* UUID of row that changed. */
+    //旧版本
     struct ovsdb_datum *old;    /* Old data, NULL for an inserted row. */
+    //新版本
     struct ovsdb_datum *new;    /* New data, NULL for a deleted row. */
 };
 
@@ -119,6 +123,7 @@ struct ovsdb_monitor_changes {
     struct hmap_node hmap_node;  /* Element in ovsdb_monitor_tables' changes
                                     hmap.  */
     struct ovsdb_monitor_table *mt;
+    //发生变更的行
     struct hmap rows;
     int n_refs;
     uint64_t transaction;
@@ -381,6 +386,7 @@ ovsdb_monitor_create(struct ovsdb *db,
 
     dbmon = xzalloc(sizeof *dbmon);
 
+    //注册复本
     ovsdb_replica_init(&dbmon->replica, &ovsdb_jsonrpc_replica_class);
     ovsdb_add_replica(db, &dbmon->replica);
     ovs_list_init(&dbmon->jsonrpc_monitors);
@@ -977,6 +983,7 @@ ovsdb_monitor_compose_row_update2(
     return row_update2;
 }
 
+//所有被monitor的表的最大列数
 static size_t
 ovsdb_monitor_max_columns(struct ovsdb_monitor *dbmon)
 {
@@ -1031,22 +1038,26 @@ ovsdb_monitor_compose_update(
     unsigned long int *changed = xmalloc(bitmap_n_bytes(max_columns));
 
     json = NULL;
+    //遍历每个monitor表
     SHASH_FOR_EACH (node, &dbmon->tables) {
         struct ovsdb_monitor_table *mt = node->data;
         struct ovsdb_monitor_row *row, *next;
         struct ovsdb_monitor_changes *changes;
         struct json *table_json = NULL;
 
+        //获得mt表在transaction时对应的changes
         changes = ovsdb_monitor_table_find_changes(mt, transaction);
         if (!changes) {
             continue;
         }
 
+        //遍历此changes对应的所有行
         HMAP_FOR_EACH_SAFE (row, next, hmap_node, &changes->rows) {
             struct json *row_json;
             row_json = (*row_update)(mt, condition, OVSDB_MONITOR_ROW, row,
                                      initial, changed);
             if (row_json) {
+            	//加入json串对应的row,准备返回
                 ovsdb_monitor_add_json_row(&json, mt->table->schema->name,
                                            &table_json, row_json,
                                            &row->uuid);
@@ -1246,13 +1257,16 @@ ovsdb_monitor_changes_update(const struct ovsdb_row *old,
     change = ovsdb_monitor_changes_row_find(changes, uuid);
     if (!change) {
         change = xzalloc(sizeof *change);
+        //change表中没有这条记录，记录这条记录
         hmap_insert(&changes->rows, &change->hmap_node, uuid_hash(uuid));
         change->uuid = *uuid;
         change->old = clone_monitor_row_data(mt, old);
         change->new = clone_monitor_row_data(mt, new);
     } else {
+    	//之前就有
         if (new) {
             if (!change->new) {
+            	//之前我们没有记录new,现在需要记录
                 /* Reinsert the row that was just deleted.
                  *
                  * This path won't be hit without replication.  Whenever OVSDB
@@ -1290,12 +1304,15 @@ ovsdb_monitor_changes_update(const struct ovsdb_row *old,
                  */
                 change->new = clone_monitor_row_data(mt, new);
             } else {
+            	//需要对change->new进行变更（参照当前的new)
                 update_monitor_row_data(mt, new, change->new);
             }
         } else {
+        	//如果change->new有值，则释放
             free_monitor_row_data(mt, change->new);
             change->new = NULL;
 
+            //处理先添加，然后再删除情况
             if (!change->old) {
                 /* This row was added then deleted.  Forget about it. */
                 hmap_remove(&changes->rows, &change->hmap_node);
@@ -1358,9 +1375,11 @@ ovsdb_monitor_change_cb(const struct ovsdb_row *old,
     struct ovsdb_monitor_table *mt;
     struct ovsdb_monitor_changes *changes;
 
+    //同一张表或者mt已指明需要关心时，不再检查
     if (!aux->mt || table != aux->mt->table) {
         aux->mt = shash_find_data(&m->tables, table->schema->name);
         if (!aux->mt) {
+        	//我们不关心这张表，跳过
             /* We don't care about rows in this table at all.  Tell the caller
              * to skip it.  */
             return false;
@@ -1373,8 +1392,9 @@ ovsdb_monitor_change_cb(const struct ovsdb_row *old,
     enum ovsdb_monitor_changes_efficacy efficacy =
         ovsdb_monitor_changes_classify(type, mt, changed);
 
+    //mt->changes是按事务索引的，也就是说，每个索引的changes均需要知道此变化
     HMAP_FOR_EACH(changes, hmap_node, &mt->changes) {
-        if (efficacy > OVSDB_CHANGES_NO_EFFECT) {
+        if (efficacy > OVSDB_CHANGES_NO_EFFECT) {//这句检查需要移到外边
             ovsdb_monitor_changes_update(old, new, mt, changes);
         }
     }
@@ -1382,6 +1402,7 @@ ovsdb_monitor_change_cb(const struct ovsdb_row *old,
         aux->efficacy = efficacy;
     }
 
+    //这张表我们关心，返回true
     return true;
 }
 

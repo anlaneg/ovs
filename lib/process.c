@@ -221,6 +221,7 @@ get_max_fds(void)
  * Returns 0 if successful, otherwise a positive errno value indicating the
  * error.  If successful, '*pp' is assigned a new struct process that may be
  * used to query the process's status.  On failure, '*pp' is set to NULL. */
+//创建子进程并运行命令，pp结构体将被父进程返回，子进程运行结束后主动退出。
 int
 process_start(char **argv, struct process **pp)
 {
@@ -244,6 +245,7 @@ process_start(char **argv, struct process **pp)
         VLOG_WARN("fork failed: %s", ovs_strerror(errno));
         error = errno;
     } else if (pid) {
+    	//父进程情况注册
         /* Running in parent process. */
         *pp = process_register(argv[0], pid);
         error = 0;

@@ -33,7 +33,7 @@
 struct ovsdb_txn {
     struct ovsdb *db;
     struct ovs_list txn_tables; /* Contains "struct ovsdb_txn_table"s. */
-    struct ds comment;
+    struct ds comment;//事务的注释信息
 };
 
 /* A table modified by a transaction. */
@@ -908,6 +908,7 @@ ovsdb_txn_commit_(struct ovsdb_txn *txn, bool durable)
     }
 
     /* Send the commit to each replica. */
+    //发送给所有的副本（目前有两种：１。文件;2.monitor)
     LIST_FOR_EACH (replica, node, &txn->db->replicas) {
         error = (replica->class->commit)(replica, txn, durable);
         if (error) {
@@ -938,6 +939,7 @@ ovsdb_txn_commit(struct ovsdb_txn *txn, bool durable)
    return err;
 }
 
+//遍历每个事务表的每个事务行，针对旧数据，新数据调用回调
 void
 ovsdb_txn_for_each_change(const struct ovsdb_txn *txn,
                           ovsdb_txn_row_cb_func *cb, void *aux)
@@ -1086,6 +1088,7 @@ ovsdb_txn_add_comment(struct ovsdb_txn *txn, const char *s)
     if (txn->comment.length) {
         ds_put_char(&txn->comment, '\n');
     }
+    //修改事务的注释
     ds_put_cstr(&txn->comment, s);
 }
 

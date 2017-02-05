@@ -221,11 +221,14 @@ ovsdb_jsonrpc_server_set_remotes(struct ovsdb_jsonrpc_server *svr,
 {
     struct shash_node *node, *next;
 
+    //删除掉无remotes
     SHASH_FOR_EACH_SAFE (node, next, &svr->remotes) {
         struct ovsdb_jsonrpc_remote *remote = node->data;
         struct ovsdb_jsonrpc_options *options
             = shash_find_data(new_remotes, node->name);
 
+        //new_remotes内不包含，需要删除掉
+        //new_remotes内包含，但dscp不相等的，也需要删除掉
         if (!options) {
             VLOG_INFO("%s: remote deconfigured", node->name);
             ovsdb_jsonrpc_server_del_remote(node);
@@ -233,11 +236,13 @@ ovsdb_jsonrpc_server_set_remotes(struct ovsdb_jsonrpc_server *svr,
             ovsdb_jsonrpc_server_del_remote(node);
          }
     }
+    //更新及添加
     SHASH_FOR_EACH (node, new_remotes) {
         const struct ovsdb_jsonrpc_options *options = node->data;
         struct ovsdb_jsonrpc_remote *remote;
 
         remote = shash_find_data(&svr->remotes, node->name);
+        //需要添加的
         if (!remote) {
             remote = ovsdb_jsonrpc_server_add_remote(svr, node->name, options);
             if (!remote) {
@@ -245,6 +250,7 @@ ovsdb_jsonrpc_server_set_remotes(struct ovsdb_jsonrpc_server *svr,
             }
         }
 
+        //需要更新的
         ovsdb_jsonrpc_session_set_all_options(remote, options);
     }
 }
@@ -258,6 +264,7 @@ ovsdb_jsonrpc_server_add_remote(struct ovsdb_jsonrpc_server *svr,
     struct pstream *listener;
     int error;
 
+    //监听指定ip,指定端口
     error = jsonrpc_pstream_open(name, &listener, options->dscp);
     if (error && error != EAFNOSUPPORT) {
         VLOG_ERR_RL(&rl, "%s: listen failed: %s", name, ovs_strerror(error));
@@ -363,11 +370,13 @@ ovsdb_jsonrpc_server_run(struct ovsdb_jsonrpc_server *svr)
             struct stream *stream;
             int error;
 
+            //接入远程请求
             error = pstream_accept(remote->listener, &stream);
             if (!error) {
                 struct jsonrpc_session *js;
                 js = jsonrpc_session_open_unreliably(jsonrpc_open(stream),
                                                      remote->dscp);
+                //将接入的stream加入到remote中
                 ovsdb_jsonrpc_session_create(remote, js, svr->read_only ||
                                                          remote->read_only);
             } else if (error != EAGAIN) {
@@ -377,6 +386,7 @@ ovsdb_jsonrpc_server_run(struct ovsdb_jsonrpc_server *svr)
             }
         }
 
+        //集中运行
         ovsdb_jsonrpc_session_run_all(remote);
     }
 }
@@ -421,6 +431,7 @@ struct ovsdb_jsonrpc_session {
     struct ovsdb_jsonrpc_remote *remote;
 
     /* Triggers. */
+    //事务处理
     struct hmap triggers;       /* Hmap of "struct ovsdb_jsonrpc_trigger"s. */
 
     /* Monitors. */
@@ -501,11 +512,14 @@ ovsdb_jsonrpc_session_run(struct ovsdb_jsonrpc_session *s)
 
         ovsdb_jsonrpc_monitor_flush_all(s);
 
+        //收取信息
         msg = jsonrpc_session_recv(s->js);
         if (msg) {
             if (msg->type == JSONRPC_REQUEST) {
+            	//请求消息处理
                 ovsdb_jsonrpc_session_got_request(s, msg);
             } else if (msg->type == JSONRPC_NOTIFY) {
+            	//响应消息处理
                 ovsdb_jsonrpc_session_got_notify(s, msg);
             } else {
                 VLOG_WARN("%s: received unexpected %s message",
@@ -695,6 +709,7 @@ ovsdb_jsonrpc_session_get_status(const struct ovsdb_jsonrpc_session *session,
  *
  *    - If no such database exists, returns NULL and sets '*replyp' to an
  *      appropriate JSON-RPC error reply, owned by the caller. */
+//自request中取出关联的database
 static struct ovsdb *
 ovsdb_jsonrpc_lookup_db(const struct ovsdb_jsonrpc_session *s,
                         const struct jsonrpc_msg *request,
@@ -886,6 +901,7 @@ error:
     return reply;
 }
 
+//将请求构成trigger,挂在session->trigger链上。
 static struct jsonrpc_msg *
 execute_transaction(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
                     struct jsonrpc_msg *request)
@@ -906,6 +922,7 @@ ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
     if (!strcmp(request->method, "transact")) {
         struct ovsdb *db = ovsdb_jsonrpc_lookup_db(s, request, &reply);
         if (!reply) {
+        	//找出请求指定的database,执行事务（构造trigger方式）
             reply = execute_transaction(s, db, request);
         }
     } else if (!strcmp(request->method, "monitor") ||
@@ -916,22 +933,27 @@ ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
             int l = strlen(request->method) - strlen("monitor");
             enum ovsdb_monitor_version version = l ? OVSDB_MONITOR_V2
                                                    : OVSDB_MONITOR_V1;
+            //将monitor信息加入到表中后返回
             reply = ovsdb_jsonrpc_monitor_create(s, db, request->params,
                                                  version, request->id);
         }
     } else if (!strcmp(request->method, "monitor_cond_change")) {
+    	//monitor信息条件更新
         reply = ovsdb_jsonrpc_monitor_cond_change(s, request->params,
                                                   request->id);
     } else if (!strcmp(request->method, "monitor_cancel")) {
+    	//移除monitor信息
         reply = ovsdb_jsonrpc_monitor_cancel(s, json_array(request->params),
                                              request->id);
     } else if (!strcmp(request->method, "get_schema")) {
         struct ovsdb *db = ovsdb_jsonrpc_lookup_db(s, request, &reply);
         if (!reply) {
+        	//返回db的模式
             reply = jsonrpc_create_reply(ovsdb_schema_to_json(db->schema),
                                          request->id);
         }
     } else if (!strcmp(request->method, "list_dbs")) {
+    	//返回当前server上的所有db名称
         size_t n_dbs = shash_count(&s->up.server->dbs);
         struct shash_node *node;
         struct json **dbs;
@@ -951,6 +973,7 @@ ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
     } else if (!strcmp(request->method, "unlock")) {
         reply = ovsdb_jsonrpc_session_unlock(s, request);
     } else if (!strcmp(request->method, "echo")) {
+    	//echo 响应
         reply = jsonrpc_create_reply(json_clone(request->params), request->id);
     } else {
         reply = jsonrpc_create_error(json_string_create("unknown method"),
@@ -983,6 +1006,7 @@ ovsdb_jsonrpc_session_got_notify(struct ovsdb_jsonrpc_session *s,
                                  struct jsonrpc_msg *request)
 {
     if (!strcmp(request->method, "cancel")) {
+    	//取消trigger
         execute_cancel(s, request);
     }
     jsonrpc_msg_destroy(request);
@@ -1015,6 +1039,7 @@ ovsdb_jsonrpc_trigger_create(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
     size_t hash;
 
     /* Check for duplicate ID. */
+    //防重复请求
     hash = json_hash(id, 0);
     t = ovsdb_jsonrpc_trigger_find(s, id, hash);
     if (t) {
@@ -1029,6 +1054,7 @@ ovsdb_jsonrpc_trigger_create(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
     }
 
     /* Insert into trigger table. */
+    //构造t,并将t加入到db->triggers链表中
     t = xmalloc(sizeof *t);
     ovsdb_trigger_init(&s->up, db, &t->trigger, params, time_msec(),
                        s->read_only);
@@ -1036,6 +1062,7 @@ ovsdb_jsonrpc_trigger_create(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
     hmap_insert(&s->triggers, &t->hmap_node, hash);
 
     /* Complete early if possible. */
+    //如果触发已完成，则进行响应
     if (ovsdb_trigger_is_complete(&t->trigger)) {
         ovsdb_jsonrpc_trigger_complete(t);
     }
@@ -1069,11 +1096,14 @@ ovsdb_jsonrpc_trigger_complete(struct ovsdb_jsonrpc_trigger *t)
 
         result = ovsdb_trigger_steal_result(&t->trigger);
         if (result) {
+        	//已有结果，构造成功响应
             reply = jsonrpc_create_reply(result, t->id);
         } else {
+        	//构造错误响应
             reply = jsonrpc_create_error(json_string_create("canceled"),
                                          t->id);
         }
+        //发送响应
         ovsdb_jsonrpc_session_send(s, reply);
     }
 
@@ -1155,6 +1185,7 @@ ovsdb_jsonrpc_parse_monitor_request(
 
     ovsdb_parser_init(&parser, monitor_request, "table %s", ts->name);
     if (cond) {
+    	//取出where子句
         where = ovsdb_parser_member(&parser, "where", OP_ARRAY | OP_OPTIONAL);
     }
     columns = ovsdb_parser_member(&parser, "columns", OP_ARRAY | OP_OPTIONAL);
@@ -1271,6 +1302,7 @@ ovsdb_jsonrpc_monitor_create(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
         goto error;
     }
 
+    //防重复
     if (ovsdb_jsonrpc_monitor_find(s, monitor_id)) {
         error = ovsdb_syntax_error(monitor_id, NULL, "duplicate monitor ID");
         goto error;
@@ -1285,14 +1317,17 @@ ovsdb_jsonrpc_monitor_create(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
     }
     m->unflushed = 0;
     m->version = version;
+    //monitor插入
     hmap_insert(&s->monitors, &m->node, json_hash(monitor_id, 0));
     m->monitor_id = json_clone(monitor_id);
 
+    //针对每个monitor_reques请求
     SHASH_FOR_EACH (node, json_object(monitor_requests)) {
         const struct ovsdb_table *table;
         const struct json *mr_value;
         size_t i;
 
+        //取出对应的table
         table = ovsdb_get_table(m->db, node->name);
         if (!table) {
             error = ovsdb_syntax_error(NULL, NULL,
@@ -1300,11 +1335,13 @@ ovsdb_jsonrpc_monitor_create(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
             goto error;
         }
 
+        //向m->dbmon中加入table
         ovsdb_monitor_add_table(m->dbmon, table);
 
         /* Parse columns. */
         mr_value = node->data;
         if (mr_value->type == JSON_ARRAY) {
+        	//多个情况
             const struct json_array *array = &mr_value->u.array;
 
             for (i = 0; i < array->n; i++) {
@@ -1317,6 +1354,7 @@ ovsdb_jsonrpc_monitor_create(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
                 }
             }
         } else {
+        	//单个时情况处理
             error = ovsdb_jsonrpc_parse_monitor_request(m->dbmon,
                                                         table,
                                                         m->condition,
@@ -1327,6 +1365,7 @@ ovsdb_jsonrpc_monitor_create(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
         }
     }
 
+    //将monitor信息加入到表中
     dbmon = ovsdb_monitor_add(m->dbmon);
     if (dbmon != m->dbmon) {
         /* Found an exisiting dbmon, reuse the current one. */
@@ -1583,6 +1622,7 @@ ovsdb_jsonrpc_monitor_flush_all(struct ovsdb_jsonrpc_session *s)
     HMAP_FOR_EACH (m, node, &s->monitors) {
         struct json *json;
 
+        //响应monitor关注的行变化信息
         json = ovsdb_jsonrpc_monitor_compose_update(m, false);
         if (json) {
             struct jsonrpc_msg *msg;

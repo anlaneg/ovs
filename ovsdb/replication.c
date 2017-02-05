@@ -352,11 +352,14 @@ set_blacklist_tables(const char *blacklist, bool dryrun)
             blacklist_tables_clear();
         }
 
+        //blacklist由逗号分割，将其parse并加入到set中
         sset_from_delimited_string(&set, blacklist, " ,");
         SSET_FOR_EACH (longname, &set) {
             char *database = xstrdup(longname), *table = NULL;
+            //数据库名称及表名称通过‘：’分隔
             strtok_r(database, ":", &table);
             if (table && !dryrun) {
+            	//加入黑名单
                 blacklist_tables_add(database, table);
             }
 
@@ -429,6 +432,7 @@ blacklist_tables_add(const char *database, const char *table)
 {
     struct sset *tables = shash_find_data(&blacklist_tables, database);
 
+    //还没有为database建立blacklist table
     if (!tables) {
         tables = xmalloc(sizeof *tables);
         sset_init(tables);

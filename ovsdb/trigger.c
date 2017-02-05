@@ -112,10 +112,12 @@ ovsdb_trigger_wait(struct ovsdb *db, long long int now)
 static bool
 ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
 {
+	//事务执行
     t->result = ovsdb_execute(t->db, t->session,
                               t->request, t->read_only,
                               now - t->created, &t->timeout_msec);
     if (t->result) {
+    	//存入已完成列表
         ovsdb_trigger_complete(t);
         return true;
     } else {

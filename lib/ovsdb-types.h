@@ -199,17 +199,20 @@ ovsdb_base_type_is_weak_ref(const struct ovsdb_base_type *base)
             && base->u.uuid.refType == OVSDB_REF_WEAK);
 }
 
+//检查类型是否为标量，标量的定义：仅单个值，type->value为空
 static inline bool ovsdb_type_is_scalar(const struct ovsdb_type *type)
 {
     return (type->value.type == OVSDB_TYPE_VOID
             && type->n_min == 1 && type->n_max == 1);
 }
 
+//此类型可以不赋值
 static inline bool ovsdb_type_is_optional(const struct ovsdb_type *type)
 {
     return type->n_min == 0;
 }
 
+//检查类型是否为可选的标量（即容许０或１个值）
 static inline bool ovsdb_type_is_optional_scalar(
     const struct ovsdb_type *type)
 {
@@ -217,17 +220,20 @@ static inline bool ovsdb_type_is_optional_scalar(
             && type->n_min == 0 && type->n_max == 1);
 }
 
+//容许有多个
 static inline bool ovsdb_type_is_composite(const struct ovsdb_type *type)
 {
     return type->n_max > 1;
 }
 
+//集合（容许有０到多个值）
 static inline bool ovsdb_type_is_set(const struct ovsdb_type *type)
 {
     return (type->value.type == OVSDB_TYPE_VOID
             && (type->n_min != 1 || type->n_max != 1));
 }
 
+//map类型
 static inline bool ovsdb_type_is_map(const struct ovsdb_type *type)
 {
     return type->value.type != OVSDB_TYPE_VOID;

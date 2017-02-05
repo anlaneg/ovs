@@ -94,10 +94,14 @@ static unixctl_cb_func ovsdb_server_get_sync_status;
 
 struct server_config {
     struct sset *remotes;
-    struct shash *all_dbs;//db类型，保存已打开的所有数据库
+    //db类型，保存已打开的所有数据库
+    struct shash *all_dbs;
     FILE *config_tmpfile;
+    //自谁同步
     char **sync_from;
+    //不同步的表
     char **sync_exclude;
+    //是否为备
     bool *is_backup;
     struct ovsdb_jsonrpc_server *jsonrpc;
 };
@@ -149,6 +153,7 @@ ovsdb_replication_init(const char *sync_from, const char *exclude,
     }
 }
 
+//ovsdb-server的主循环
 static void
 main_loop(struct ovsdb_jsonrpc_server *jsonrpc, struct shash *all_dbs,
           struct unixctl_server *unixctl, struct sset *remotes,
@@ -194,6 +199,7 @@ main_loop(struct ovsdb_jsonrpc_server *jsonrpc, struct shash *all_dbs,
             reconfigure_remotes(jsonrpc, all_dbs, remotes),
             &remotes_error);
         report_error_if_changed(reconfigure_ssl(all_dbs), &ssl_error);
+        //jsonrpc服务器运行（收jsonrpc,发jsonrpc,读取原端数据）
         ovsdb_jsonrpc_server_run(jsonrpc);
 
         if (*is_backup) {
@@ -206,6 +212,7 @@ main_loop(struct ovsdb_jsonrpc_server *jsonrpc, struct shash *all_dbs,
 
         SHASH_FOR_EACH(node, all_dbs) {
             struct db *db = node->data;
+            //事务执行（增删改查操作）
             ovsdb_trigger_run(db->db, time_msec());
         }
         if (run_process) {
@@ -275,9 +282,12 @@ main(int argc, char *argv[])
     fatal_ignore_sigpipe();
     process_init();
 
+    //如果--active参数指定时，此值为true
+    //如果--sync-from参数指定时，标明是备
     bool active = false;
     parse_options(&argc, &argv, &remotes, &unixctl_path, &run_command,
                   &sync_from, &sync_exclude, &active);
+    //只有active没有指定，且--sync-from指定时，才为备
     is_backup = sync_from && !active;
 
     daemon_become_new_user(false);
@@ -287,22 +297,26 @@ main(int argc, char *argv[])
      * configuration to it.  When --monitor is used, this preserves the effects
      * of ovs-appctl commands such as ovsdb-server/add-remote (which saves the
      * new configuration) across crashes. */
-    config_tmpfile = tmpfile();//创建临时文件
+    //创建临时文件
+    config_tmpfile = tmpfile();
     if (!config_tmpfile) {
         ovs_fatal(errno, "failed to create temporary file");
     }
 
     sset_init(&db_filenames);
-    if (argc > 0) {//参数指明了多个db_filename
+    if (argc > 0) {
+    	//参数指明了多个db_filename
         for (i = 0; i < argc; i++) {
             sset_add(&db_filenames, argv[i]);
          }
-    } else {//未指明，载入默认配置文件
+    } else {
+    	//未指明，载入默认配置文件
         char *default_db = xasprintf("%s/conf.db", ovs_dbdir());
         sset_add(&db_filenames, default_db);
         free(default_db);
     }
 
+    //remotes由多个--remote参数指定
     server_config.remotes = &remotes;
     server_config.config_tmpfile = config_tmpfile;
 
@@ -339,6 +353,7 @@ main(int argc, char *argv[])
         }
     }
 
+    //listen接口
     error = reconfigure_remotes(jsonrpc, &all_dbs, &remotes);
     if (!error) {
         error = reconfigure_ssl(&all_dbs);
@@ -431,6 +446,7 @@ main(int argc, char *argv[])
         ovsdb_replication_init(sync_from, sync_exclude, &all_dbs);
     }
 
+    //主循环
     main_loop(jsonrpc, &all_dbs, unixctl, &remotes, run_process, &exiting,
               &is_backup);
 
@@ -518,16 +534,20 @@ open_db(struct server_config *config, const char *filename)
     db = xzalloc(sizeof *db);
     db->filename = xstrdup(filename);
 
+    //打开db
     db_error = ovsdb_file_open(db->filename, false, &db->db, &db->file);
     if (db_error) {
         error = ovsdb_error_to_string(db_error);
     } else if (!ovsdb_jsonrpc_server_add_db(config->jsonrpc, db->db)) {
+    	//加入db到jsonrpc时失败
         error = xasprintf("%s: duplicate database name", db->db->schema->name);
     } else {
+    	//成功打开，返回
         shash_add_assert(config->all_dbs, db->db->schema->name, db);
         return NULL;
     }
 
+    //错误处理
     ovsdb_error_destroy(db_error);
     close_db(db);
     return error;
@@ -566,34 +586,41 @@ parse_db_column__(const struct shash *all_dbs,
     *tablep = NULL;
     *columnp = NULL;
 
+    //name取'db',比如格式db:a,b,c 则name取db,tokens0取a,tokens1取b,tokens2取c
     strtok_r(name, ":", &save_ptr); /* "db:" */
     tokens[0] = strtok_r(NULL, ",", &save_ptr);
     tokens[1] = strtok_r(NULL, ",", &save_ptr);
     tokens[2] = strtok_r(NULL, ",", &save_ptr);
     if (!tokens[0] || !tokens[1] || !tokens[2]) {
+    	//格式无效
         return xasprintf("\"%s\": invalid syntax", name_);
     }
 
+    //库名称，表名称，列名称
     db_name = tokens[0];
     table_name = tokens[1];
     column_name = tokens[2];
 
+    //找到库
     db = find_db(all_dbs, tokens[0]);
     if (!db) {
         return xasprintf("\"%s\": no database named %s", name_, db_name);
     }
 
+    //找到表
     table = ovsdb_get_table(db->db, table_name);
     if (!table) {
         return xasprintf("\"%s\": no table named %s", name_, table_name);
     }
 
+    //找到列
     column = ovsdb_table_schema_get_column(table->schema, column_name);
     if (!column) {
         return xasprintf("\"%s\": table \"%s\" has no column \"%s\"",
                          name_, table_name, column_name);
     }
 
+    //返回库，表，列
     *dbp = db;
     *columnp = column;
     *tablep = table;
@@ -609,6 +636,7 @@ parse_db_column(const struct shash *all_dbs,
                 const struct ovsdb_table **tablep,
                 const struct ovsdb_column **columnp)
 {
+	//分析是具有破坏性的，故copy一份name，用于显示
     char *name = xstrdup(name_);
     char *retval = parse_db_column__(all_dbs, name_, name,
                                      dbp, tablep, columnp);
@@ -778,6 +806,7 @@ read_integer_column(const struct ovsdb_row *row, const char *column_name,
     return atom != NULL;
 }
 
+//按string类型读指定列
 static bool
 read_string_column(const struct ovsdb_row *row, const char *column_name,
                    const char **stringp)
@@ -871,12 +900,14 @@ add_manager_options(struct shash *remotes, const struct ovsdb_row *row)
     bool read_only;
     const char *target, *dscp_string;
 
+    //读被引用表的target列
     if (!read_string_column(row, "target", &target) || !target) {
         VLOG_INFO_RL(&rl, "Table `%s' has missing or invalid `target' column",
                      row->table->schema->name);
         return;
     }
 
+    //设置target选项
     options = add_remote(remotes, target);
     if (read_integer_column(row, "max_backoff", &max_backoff)) {
         options->max_backoff = max_backoff;
@@ -888,6 +919,7 @@ add_manager_options(struct shash *remotes, const struct ovsdb_row *row)
         options->read_only = read_only;
     }
 
+    //可选字段dscp
     options->dscp = DSCP_DEFAULT;
     dscp_string = read_map_string_column(row, "other_config", "dscp");
     if (dscp_string) {
@@ -908,6 +940,7 @@ query_db_remotes(const char *name, const struct shash *all_dbs,
     const struct db *db;
     char *retval;
 
+    //分析name串，获知指指明的db,table,column 格式:'db:$dbname,$tablename,$columnname'
     retval = parse_db_column(all_dbs, name, &db, &table, &column);
     if (retval) {
         ds_put_format(errors, "%s\n", retval);
@@ -915,8 +948,10 @@ query_db_remotes(const char *name, const struct shash *all_dbs,
         return;
     }
 
+    //如果列类型为string，且没有type.value
     if (column->type.key.type == OVSDB_TYPE_STRING
         && column->type.value.type == OVSDB_TYPE_VOID) {
+    	//遍历表的所有数据，针对具体的列，提取数据，并加入到remotes内
         HMAP_FOR_EACH (row, hmap_node, &table->rows) {
             const struct ovsdb_datum *datum;
             size_t i;
@@ -929,6 +964,7 @@ query_db_remotes(const char *name, const struct shash *all_dbs,
     } else if (column->type.key.type == OVSDB_TYPE_UUID
                && column->type.key.u.uuid.refTable
                && column->type.value.type == OVSDB_TYPE_VOID) {
+    	//如果列的类型为uuid,且没有type.value,且为外链
         const struct ovsdb_table *ref_table = column->type.key.u.uuid.refTable;
         HMAP_FOR_EACH (row, hmap_node, &table->rows) {
             const struct ovsdb_datum *datum;
@@ -938,6 +974,7 @@ query_db_remotes(const char *name, const struct shash *all_dbs,
             for (i = 0; i < datum->n; i++) {
                 const struct ovsdb_row *ref_row;
 
+                //获取引用行
                 ref_row = ovsdb_table_get_row(ref_table, &datum->keys[i].uuid);
                 if (ref_row) {
                     add_manager_options(remotes, ref_row);
@@ -1088,6 +1125,7 @@ update_remote_status(const struct ovsdb_jsonrpc_server *jsonrpc,
 }
 
 /* Reconfigures ovsdb-server's remotes based on information in the database. */
+//重新配置对外接口
 static char *
 reconfigure_remotes(struct ovsdb_jsonrpc_server *jsonrpc,
                     const struct shash *all_dbs, struct sset *remotes)
@@ -1100,8 +1138,10 @@ reconfigure_remotes(struct ovsdb_jsonrpc_server *jsonrpc,
     shash_init(&resolved_remotes);
     SSET_FOR_EACH (name, remotes) {
         if (!strncmp(name, "db:", 3)) {
+        	//自数据库中读取remotes信息及其配置
             query_db_remotes(name, all_dbs, &resolved_remotes, &errors);
         } else {
+        	//字符串类型的remote
             add_remote(&resolved_remotes, name);
         }
     }
