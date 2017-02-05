@@ -693,6 +693,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
 
         case OVS_ACTION_ATTR_SAMPLE:
+            //采样
             DP_PACKET_BATCH_FOR_EACH (packet, batch) {
                 odp_execute_sample(dp, packet, steal && last_action, a,
                                    dp_execute_action);

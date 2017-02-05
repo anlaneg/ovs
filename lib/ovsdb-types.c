@@ -75,6 +75,7 @@ ovsdb_atomic_type_to_json(enum ovsdb_atomic_type type)
     return json_string_create(ovsdb_atomic_type_to_string(type));
 }
 
+//通过字符串映射atomic_type,解析成功时，返回true
 bool
 ovsdb_atomic_type_from_string(const char *string, enum ovsdb_atomic_type *type)
 {
@@ -93,21 +94,23 @@ ovsdb_atomic_type_from_string(const char *string, enum ovsdb_atomic_type *type)
     }
     return true;
 }
-
+//原子类型解析（获取类型）
 struct ovsdb_error *
 ovsdb_atomic_type_from_json(enum ovsdb_atomic_type *type,
                             const struct json *json)
 {
+	//json串必须是string类型
     if (json->type == JSON_STRING) {
+    	//解析原子类型名称
         if (ovsdb_atomic_type_from_string(json_string(json), type)) {
             return NULL;
-        } else {
+        } else {//解析失败，类型不是原子类型
             *type = OVSDB_TYPE_VOID;
             return ovsdb_syntax_error(json, NULL,
                                       "\"%s\" is not an atomic-type",
                                       json_string(json));
         }
-    } else {
+    } else {//json类型有误
         *type = OVSDB_TYPE_VOID;
         return ovsdb_syntax_error(json, NULL, "atomic-type expected");
     }
@@ -115,6 +118,7 @@ ovsdb_atomic_type_from_json(enum ovsdb_atomic_type *type,
 
 /* ovsdb_base_type */
 
+//基础数据类型初始化（主要是合法范围初始化）
 void
 ovsdb_base_type_init(struct ovsdb_base_type *base, enum ovsdb_atomic_type type)
 {
@@ -179,7 +183,7 @@ ovsdb_base_type_get_enum_type(enum ovsdb_atomic_type atomic_type)
 
         ovsthread_once_done(&once);
     }
-    return types[atomic_type];
+    return types[atomic_type];//各类型的枚举模板
 }
 
 void
@@ -339,6 +343,7 @@ parse_optional_uint(struct ovsdb_parser *parser, const char *member,
     return NULL;
 }
 
+//基础类型解析
 struct ovsdb_error *
 ovsdb_base_type_from_json(struct ovsdb_base_type *base,
                           const struct json *json)
@@ -348,6 +353,7 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
     const struct json *type, *enum_;
 
     if (json->type == JSON_STRING) {
+    	//json表明为原子类型
         error = ovsdb_atomic_type_from_json(&base->type, json);
         if (error) {
             return error;
@@ -356,6 +362,14 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
         return NULL;
     }
 
+    //采用json object方式详细说明的原子类型
+    /**
+     * {
+     * 	"type":[integer|real|uuid|boolean|string]，
+     * 	"enum":[见下层函数说明]
+     *  ... 不同的type有一组自已的约束方式。
+     * }
+     */
     ovsdb_parser_init(&parser, json, "ovsdb type");
     type = ovsdb_parser_member(&parser, "type", OP_STRING);
     if (ovsdb_parser_has_error(&parser)) {
@@ -373,14 +387,17 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
     enum_ = ovsdb_parser_member(&parser, "enum", OP_ANY | OP_OPTIONAL);
     if (enum_) {
         base->enum_ = xmalloc(sizeof *base->enum_);
+        //解析enum中约定的set或者map或者普通单值。
+        //枚举约束构造
         error = ovsdb_datum_from_json(
             base->enum_, ovsdb_base_type_get_enum_type(base->type),
             enum_, NULL);
-        if (error) {
+        if (error) {//解析有误
             free(base->enum_);
             base->enum_ = NULL;
         }
     } else if (base->type == OVSDB_TYPE_INTEGER) {
+    	//整数类型的约束
         const struct json *min, *max;
 
         min = ovsdb_parser_member(&parser, "minInteger",
@@ -394,6 +411,7 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
                                        "minInteger exceeds maxInteger");
         }
     } else if (base->type == OVSDB_TYPE_REAL) {
+    	//real类型的约束构造
         const struct json *min, *max;
 
         min = ovsdb_parser_member(&parser, "minReal", OP_NUMBER | OP_OPTIONAL);
@@ -404,6 +422,7 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
             error = ovsdb_syntax_error(json, NULL, "minReal exceeds maxReal");
         }
     } else if (base->type == OVSDB_TYPE_STRING) {
+    	//string类型的约束构造
         if (!error) {
             error = parse_optional_uint(&parser, "minLength",
                                         &base->u.string.minLen);
@@ -417,6 +436,7 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
                                        "minLength exceeds maxLength");
         }
     } else if (base->type == OVSDB_TYPE_UUID) {
+    	//uuid类型的约束构造
         const struct json *refTable;
 
         refTable = ovsdb_parser_member(&parser, "refTable",
@@ -426,6 +446,7 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
 
             base->u.uuid.refTableName = xstrdup(refTable->u.string);
 
+            //这里没法设置refTable，原因是可能在解析之中，表还没有完全载入。
             /* We can't set base->u.uuid.refTable here because we don't have
              * enough context (we might not even be running in ovsdb-server).
              * ovsdb_create() will set refTable later. */
@@ -435,8 +456,10 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
             if (refType) {
                 const char *refType_s = json_string(refType);
                 if (!strcmp(refType_s, "strong")) {
+                	//强引用
                     base->u.uuid.refType = OVSDB_REF_STRONG;
                 } else if (!strcmp(refType_s, "weak")) {
+                	//弱引用
                     base->u.uuid.refType = OVSDB_REF_WEAK;
                 } else {
                     error = ovsdb_syntax_error(json, NULL, "refType must be "
@@ -444,6 +467,7 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
                                                "\"%s\")", refType_s);
                 }
             } else {
+            	//默认为:强引用
                 base->u.uuid.refType = OVSDB_REF_STRONG;
             }
         }
@@ -563,6 +587,11 @@ ovsdb_type_destroy(struct ovsdb_type *type)
 bool
 ovsdb_type_is_valid(const struct ovsdb_type *type)
 {
+	//1.key的type一定不能为void,
+	//2.type必须为基础类型，integer,real,boolean,string,uuid,void
+	//3.value必须为基础类型，。。。
+	//4.n_min必须小于等于1,即取值仅有0,1
+	//5.n_max,必须大于等于1。
     return (type->key.type != OVSDB_TYPE_VOID
             && ovsdb_base_type_is_valid(&type->key)
             && ovsdb_base_type_is_valid(&type->value)
@@ -623,12 +652,23 @@ ovsdb_type_from_json(struct ovsdb_type *type, const struct json *json)
     type->n_max = 1;
 
     if (json->type == JSON_STRING) {
+    	//json为字符串类型
         return ovsdb_base_type_from_json(&type->key, json);
     } else if (json->type == JSON_OBJECT) {
+    	//json为object类型
         const struct json *key, *value, *min, *max;
         struct ovsdb_error *error;
         struct ovsdb_parser parser;
 
+        /**
+         * 格式：
+         * {
+         * 	   'key':string|object,
+         * 	   'value':string|object,
+         * 	   'min':integer,
+         * 	   'max':integer
+         * 	}
+         */
         ovsdb_parser_init(&parser, json, "ovsdb type");
         key = ovsdb_parser_member(&parser, "key", OP_STRING | OP_OBJECT);
         value = ovsdb_parser_member(&parser, "value",
@@ -641,12 +681,14 @@ ovsdb_type_from_json(struct ovsdb_type *type, const struct json *json)
             return error;
         }
 
+        //解析key
         error = ovsdb_base_type_from_json(&type->key, key);
         if (error) {
             return error;
         }
 
         if (value) {
+        	//解析value
             error = ovsdb_base_type_from_json(&type->value, value);
             if (error) {
                 return error;
@@ -658,10 +700,12 @@ ovsdb_type_from_json(struct ovsdb_type *type, const struct json *json)
             return error;
         }
 
+        //采用字符串说明max
         if (max && max->type == JSON_STRING
             && !strcmp(max->u.string, "unlimited")) {
             type->n_max = UINT_MAX;
         } else {
+        	//采用整数说明max
             error = n_from_json(max, &type->n_max);
             if (error) {
                 return error;

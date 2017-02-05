@@ -3306,6 +3306,9 @@ reconfigure_datapath(struct dp_netdev *dp)
     /* We only reconfigure the ports that we determined above, because they're
      * not being used by any pmd thread at the moment.  If a port fails to
      * reconfigure we remove it from the datapath. */
+    //重新配置datapath上所有port（当低层需要重新初始队列来完成配置时
+    //通过netdev_request_reconfigure来通知上层，上层自此进入，先销毁
+    //queue,再重新构建来完成配置
     HMAP_FOR_EACH (port, node, &dp->ports) {
         int err;
 
@@ -3920,6 +3923,7 @@ dp_netdev_del_rxq_from_pmd(struct dp_netdev_pmd_thread *pmd,
 
 /* Add 'port' to the tx port cache of 'pmd', which must be reloaded for the
  * changes to take effect. */
+//将此port加入到pmd的转发port
 static void
 dp_netdev_add_port_tx_to_pmd(struct dp_netdev_pmd_thread *pmd,
                              struct dp_netdev_port *port)//将此port加入到pmd的转发port
@@ -4150,6 +4154,7 @@ emc_processing(struct dp_netdev_pmd_thread *pmd,
 
         //如果不是最后一个，则预取下一个包
         if (i != size - 1) {
+            //如果不是最后一个，则预取下一个包
             struct dp_packet **packets = packets_->packets;
             /* Prefetch next packet data and metadata. */
             OVS_PREFETCH(dp_packet_data(packets[i+1]));//预取下一个报文的数据（64字节）
@@ -4556,6 +4561,7 @@ push_tnl_action(const struct dp_netdev_pmd_thread *pmd,
 
     //搞清楚从那个netdev发送隧道报文
     tun_port = pmd_tnl_port_cache_lookup(pmd, u32_to_odp(data->tnl_port));
+    //隧道接口已被删除
     if (!tun_port) {
         //隧道接口已被删除
         err = -EINVAL;

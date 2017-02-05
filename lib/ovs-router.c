@@ -346,6 +346,7 @@ ovs_router_add(struct unixctl_conn *conn, int argc,
             //转换gw　ip地址
             if (!ovs_scan(argv[3], "pkt_mark=%"SCNi32, &mark) &&
                 !ip_parse(argv[3], &gw)) {
+                //转换gw　ip地址
                 unixctl_command_reply_error(conn, "Invalid pkt_mark or gateway");
                 return;
             }
@@ -356,6 +357,7 @@ ovs_router_add(struct unixctl_conn *conn, int argc,
         }
         plen += 96;
     } else if (scan_ipv6_route(argv[1], &ip6, &plen)) {
+        //解析ipv6
         if (argc > 3) {
             if (!ovs_scan(argv[3], "pkt_mark=%"SCNi32, &mark) &&
                 !ipv6_parse(argv[3], &gw6)) {

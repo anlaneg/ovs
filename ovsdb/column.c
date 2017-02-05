@@ -93,11 +93,13 @@ ovsdb_column_from_json(const struct json *json, const char *name,
         return error;
     }
 
+    //解析列类型
     error = ovsdb_type_from_json(&type, type_json);
     if (error) {
         return error;
     }
 
+    //如果无mutable属性，则为True
     bool mutable = !mutable_json || json_boolean(mutable_json);
     if (!mutable
         && (ovsdb_base_type_is_weak_ref(&type.key) ||
@@ -108,6 +110,7 @@ ovsdb_column_from_json(const struct json *json, const char *name,
     }
 
     bool persistent = ephemeral ? !json_boolean(ephemeral) : true;
+    //构造列类型
     *columnp = ovsdb_column_create(name, mutable, persistent, &type);
 
     ovsdb_type_destroy(&type);
@@ -151,15 +154,17 @@ ovsdb_column_set_clone(struct ovsdb_column_set *new,
     new->n_columns = new->allocated_columns = old->n_columns;
 }
 
+//将json中的列名称，构造成列集合
 struct ovsdb_error *
 ovsdb_column_set_from_json(const struct json *json,
                            const struct ovsdb_table_schema *schema,
                            struct ovsdb_column_set *set)
 {
     ovsdb_column_set_init(set);
-    if (!json) {
+    if (!json) {//如果json为空，则全列为索引
         struct shash_node *node;
 
+        //构造column表
         SHASH_FOR_EACH (node, &schema->columns) {
             const struct ovsdb_column *column = node->data;
             ovsdb_column_set_add(set, column);
@@ -170,6 +175,7 @@ ovsdb_column_set_from_json(const struct json *json,
         struct ovsdb_error *error = NULL;
         size_t i;
 
+        //必须为数组类型
         if (json->type != JSON_ARRAY) {
             goto error;
         }
@@ -184,6 +190,7 @@ ovsdb_column_set_from_json(const struct json *json,
             }
 
             s = json->u.array.elems[i]->u.string;
+            //通过名称找到列
             column = shash_find_data(&schema->columns, s);
             if (!column) {
                 error = ovsdb_syntax_error(json, NULL, "%s is not a valid "
@@ -192,6 +199,7 @@ ovsdb_column_set_from_json(const struct json *json,
             } else if (ovsdb_column_set_contains(set, column->index)) {
                 goto error;
             }
+            //把列加入到set中
             ovsdb_column_set_add(set, column);
         }
         return NULL;

@@ -127,6 +127,7 @@ struct ovsdb_error *ovsdb_atom_check_constraints(
 struct ovsdb_datum {
     unsigned int n;             /* Number of 'keys' and 'values'. */
     union ovsdb_atom *keys;     /* Each of the ovsdb_type's 'key_type'. */
+    //map时，values有值
     union ovsdb_atom *values;   /* Each of the ovsdb_type's 'value_type'. */
 };
 #define OVSDB_DATUM_INITIALIZER { 0, NULL, NULL }

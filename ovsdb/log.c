@@ -39,8 +39,8 @@ enum ovsdb_log_mode {
 };
 
 struct ovsdb_log {
-    off_t prev_offset;
-    off_t offset;
+    off_t prev_offset;//记录前一次的offset
+    off_t offset;//记录本次的offset
     char *name;
     struct lockfile *lockfile;
     FILE *stream;
@@ -57,6 +57,7 @@ struct ovsdb_log {
  * use true to lock it, false not to lock it, or -1 to lock it only if
  * 'open_mode' is a mode that allows writing.
  */
+//打开数据库日志文件
 struct ovsdb_error *
 ovsdb_log_open(const char *name, enum ovsdb_log_open_mode open_mode,
                int locking, struct ovsdb_log **filep)
@@ -166,6 +167,7 @@ ovsdb_log_close(struct ovsdb_log *file)
 
 static const char magic[] = "OVSDB JSON ";
 
+//检查是否为合法的header,如果合法，返回length,返回sha1
 static bool
 parse_header(char *header, unsigned long int *length,
              uint8_t sha1[SHA1_DIGEST_SIZE])
@@ -173,11 +175,13 @@ parse_header(char *header, unsigned long int *length,
     char *p;
 
     /* 'header' must consist of a magic string... */
+    //必须包含指定头部
     if (strncmp(header, magic, strlen(magic))) {
         return false;
     }
 
     /* ...followed by a length in bytes... */
+    //后面是字节长度
     *length = strtoul(header + strlen(magic), &p, 10);
     if (!*length || *length == ULONG_MAX || *p != ' ') {
         return false;
@@ -185,12 +189,14 @@ parse_header(char *header, unsigned long int *length,
     p++;
 
     /* ...followed by a SHA-1 hash... */
+    //然后是sha-1
     if (!sha1_from_hex(sha1, p)) {
         return false;
     }
     p += SHA1_HEX_DIGEST_LEN;
 
     /* ...and ended by a new-line. */
+    //然后是换行符
     if (*p != '\n') {
         return false;
     }
@@ -214,6 +220,7 @@ parse_body(struct ovsdb_log *file, off_t offset, unsigned long int length,
 
         chunk = MIN(length, sizeof input);
         if (fread(input, 1, chunk, file->stream) != chunk) {
+        	//未读够，说明文件有误
             json_parser_abort(parser);
             return ovsdb_io_error(ferror(file->stream) ? errno : EOF,
                                   "%s: error reading %lu bytes "
@@ -225,11 +232,12 @@ parse_body(struct ovsdb_log *file, off_t offset, unsigned long int length,
         length -= chunk;
     }
 
-    sha1_final(&ctx, sha1);
-    *jsonp = json_parser_finish(parser);
+    sha1_final(&ctx, sha1);//给出计算出来的sha1
+    *jsonp = json_parser_finish(parser);//解析出来的json串
     return NULL;
 }
 
+//读取数据库的json串(格式为：header+json,header由标识字符串与sha1，json串长度组成)
 struct ovsdb_error *
 ovsdb_log_read(struct ovsdb_log *file, struct json **jsonp)
 {
@@ -249,6 +257,7 @@ ovsdb_log_read(struct ovsdb_log *file, struct json **jsonp)
         return OVSDB_BUG("reading file in write mode");
     }
 
+    //先读一行
     if (!fgets(header, sizeof header, file->stream)) {
         if (feof(file->stream)) {
             error = NULL;
@@ -266,12 +275,14 @@ ovsdb_log_read(struct ovsdb_log *file, struct json **jsonp)
         goto error;
     }
 
+    //读取data_length字节，并解析其对应的json串
     data_offset = file->offset + strlen(header);
     error = parse_body(file, data_offset, data_length, actual_sha1, &json);
     if (error) {
         goto error;
     }
 
+    //sha需要一致
     if (memcmp(expected_sha1, actual_sha1, SHA1_DIGEST_SIZE)) {
         error = ovsdb_syntax_error(NULL, NULL, "%s: %lu bytes starting at "
                                    "offset %lld have SHA-1 hash "SHA1_FMT" "
@@ -283,6 +294,7 @@ ovsdb_log_read(struct ovsdb_log *file, struct json **jsonp)
         goto error;
     }
 
+    //类型不能是string
     if (json->type == JSON_STRING) {
         error = ovsdb_syntax_error(NULL, NULL, "%s: %lu bytes starting at "
                                    "offset %lld are not valid JSON (%s)",

@@ -27,6 +27,7 @@
 #include "table.h"
 #include "util.h"
 
+//依据表创建行
 static struct ovsdb_row *
 allocate_row(const struct ovsdb_table *table)
 {
@@ -53,6 +54,7 @@ ovsdb_row_create(const struct ovsdb_table *table)
     row = allocate_row(table);
     SHASH_FOR_EACH (node, &table->schema->columns) {
         const struct ovsdb_column *column = node->data;
+        //设置默认值
         ovsdb_datum_init_default(&row->fields[column->index], &column->type);
     }
     return row;
@@ -193,6 +195,7 @@ ovsdb_row_columns_to_string(const struct ovsdb_row *row,
     }
 }
 
+//从json中解析出row
 struct ovsdb_error *
 ovsdb_row_from_json(struct ovsdb_row *row, const struct json *json,
                     struct ovsdb_symbol_table *symtab,
@@ -206,6 +209,7 @@ ovsdb_row_from_json(struct ovsdb_row *row, const struct json *json,
         return ovsdb_syntax_error(json, NULL, "row must be JSON object");
     }
 
+    //遍历json对象，每个节点,名称和它的值。
     SHASH_FOR_EACH (node, json_object(json)) {
         const char *column_name = node->name;
         const struct ovsdb_column *column;
@@ -218,15 +222,16 @@ ovsdb_row_from_json(struct ovsdb_row *row, const struct json *json,
                                       column_name, schema->name);
         }
 
+        //解析这一列的值
         error = ovsdb_datum_from_json(&datum, &column->type, node->data,
                                       symtab);
         if (error) {
             return error;
         }
-        ovsdb_datum_swap(&row->fields[column->index], &datum);
-        ovsdb_datum_destroy(&datum, &column->type);
+        ovsdb_datum_swap(&row->fields[column->index], &datum);//设置字段值
+        ovsdb_datum_destroy(&datum, &column->type);//销毁旧行数据，如果有的话。
         if (included) {
-            ovsdb_column_set_add(included, column);
+            ovsdb_column_set_add(included, column);//加入列，此列被赋值了
         }
     }
 

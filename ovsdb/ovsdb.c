@@ -75,7 +75,7 @@ ovsdb_schema_destroy(struct ovsdb_schema *schema)
     free(schema);
 }
 
-//读取文件file_name,并构造schemap
+//读取文件file_name,并构造数据库schemap
 struct ovsdb_error *
 ovsdb_schema_from_file(const char *file_name, struct ovsdb_schema **schemap)
 {
@@ -92,7 +92,7 @@ ovsdb_schema_from_file(const char *file_name, struct ovsdb_schema **schemap)
         json_destroy(json);
         return error;
     }
-
+    //构造数据库模式
     error = ovsdb_schema_from_json(json, &schema);
     json_destroy(json);
     if (error) {
@@ -113,18 +113,22 @@ ovsdb_schema_check_ref_table(struct ovsdb_column *column,
 {
     struct ovsdb_table_schema *refTable;
 
+    //列必须是uuid类型，且列的refTableName被赋了值
     if (base->type != OVSDB_TYPE_UUID || !base->u.uuid.refTableName) {
         return NULL;
     }
 
+    //检查refTableName指定的名称是否存在
     refTable = shash_find_data(tables, base->u.uuid.refTableName);
     if (!refTable) {
+    	//不存在，报错
         return ovsdb_syntax_error(NULL, NULL,
                                   "column %s %s refers to undefined table %s",
                                   column->name, base_name,
                                   base->u.uuid.refTableName);
     }
 
+    //没明白怎么回事，看起来和数据库时志恢复有关。
     if (ovsdb_base_type_is_strong_ref(base) && !refTable->is_root) {
         /* We cannot allow a strong reference to a non-root table to be
          * ephemeral: if it is the only reference to a row, then replaying the
@@ -162,7 +166,7 @@ root_set_size(const struct ovsdb_schema *schema)
     return n_root;
 }
 
-//通过json对象，构造模式
+//通过json对象，构造数据库模式
 struct ovsdb_error *
 ovsdb_schema_from_json(struct json *json, struct ovsdb_schema **schemap)
 {
@@ -228,6 +232,7 @@ ovsdb_schema_from_json(struct json *json, struct ovsdb_schema **schemap)
             return error;
         }
 
+        //将构造出来的表，加入到db模式中
         shash_add(&schema->tables, table->name, table);
     }
 
@@ -235,6 +240,7 @@ ovsdb_schema_from_json(struct json *json, struct ovsdb_schema **schemap)
      * added, there was no support for garbage collection.  So, for backward
      * compatibility, if the root set is empty then assume that every table is
      * in the root set. */
+    //前向兼容处理，认为每个表都是根表
     if (root_set_size(schema) == 0) {
         SHASH_FOR_EACH (node, &schema->tables) {
             struct ovsdb_table_schema *table = node->data;
@@ -248,16 +254,21 @@ ovsdb_schema_from_json(struct json *json, struct ovsdb_schema **schemap)
      * Also force certain columns to be persistent, as explained in
      * ovsdb_schema_check_ref_table().  This requires 'is_root' to be known, so
      * this must follow the loop updating 'is_root' above. */
+    //确定是否所有被引有的表名都存在。
+    //遍历所有表
     SHASH_FOR_EACH (node, &schema->tables) {
         struct ovsdb_table_schema *table = node->data;
         struct shash_node *node2;
 
+        //遍历所有列
         SHASH_FOR_EACH (node2, &table->columns) {
             struct ovsdb_column *column = node2->data;
 
+            //确保key引用存在
             error = ovsdb_schema_check_ref_table(column, &schema->tables,
                                                  &column->type.key, "key");
             if (!error) {
+            	//确保value引用存在
                 error = ovsdb_schema_check_ref_table(column, &schema->tables,
                                                      &column->type.value,
                                                      "value");
@@ -336,6 +347,7 @@ ovsdb_set_ref_table(const struct shash *tables,
     }
 }
 
+//初始化ovsdb
 struct ovsdb *
 ovsdb_create(struct ovsdb_schema *schema)
 {
@@ -355,6 +367,7 @@ ovsdb_create(struct ovsdb_schema *schema)
     }
 
     /* Set all the refTables. */
+    //设置模式中的关联表
     SHASH_FOR_EACH (node, &schema->tables) {
         struct ovsdb_table_schema *table = node->data;
         struct shash_node *node2;

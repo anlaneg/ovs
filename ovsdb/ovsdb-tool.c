@@ -192,6 +192,7 @@ check_ovsdb_error(struct ovsdb_error *error)
     }
 }
 
+//创建db,对应的操作是，读取模式文件构造成db模式，然后将db模式再构造成json串，写入数据库日志文件。
 static void
 do_create(struct ovs_cmdl_context *ctx)
 {
@@ -204,10 +205,12 @@ do_create(struct ovs_cmdl_context *ctx)
     /* Read schema from file and convert to JSON. */
     //读模式文件名称，如果失败，则显示失败信息并退出
     check_ovsdb_error(ovsdb_schema_from_file(schema_file_name, &schema));
+    //将模式打成json字符串
     json = ovsdb_schema_to_json(schema);
     ovsdb_schema_destroy(schema);
 
     /* Create database file. */
+    //创建数据库日志文件，写入表模式，并提交。
     check_ovsdb_error(ovsdb_log_open(db_file_name, OVSDB_LOG_CREATE,
                                      -1, &log));
     check_ovsdb_error(ovsdb_log_write(log, json));
@@ -370,6 +373,7 @@ transact(bool read_only, int argc, char *argv[])
     check_ovsdb_error(ovsdb_file_open(db_file_name, read_only, &db, NULL));
 
     request = parse_json(transaction);
+    //执行请求
     result = ovsdb_execute(db, NULL, request, false, 0, NULL);
     json_destroy(request);
 
@@ -386,6 +390,7 @@ do_query(struct ovs_cmdl_context *ctx)
 static void
 do_transact(struct ovs_cmdl_context *ctx)
 {
+	//非只读模式打开数据库文件
     transact(false, ctx->argc, ctx->argv);
 }
 
@@ -396,19 +401,20 @@ print_db_changes(struct shash *tables, struct shash *names,
     struct shash_node *n1;
 
     SHASH_FOR_EACH (n1, tables) {
-        const char *table = n1->name;
+        const char *table = n1->name;//表名
         struct ovsdb_table_schema *table_schema;
-        struct json *rows = n1->data;
+        struct json *rows = n1->data;//表对应的列
         struct shash_node *n2;
 
+        //跳过以'_'开头的列
         if (n1->name[0] == '_' || rows->type != JSON_OBJECT) {
             continue;
         }
 
         table_schema = shash_find_data(&schema->tables, table);
         SHASH_FOR_EACH (n2, json_object(rows)) {
-            const char *row_uuid = n2->name;
-            struct json *columns = n2->data;
+            const char *row_uuid = n2->name;//列编号
+            struct json *columns = n2->data;//列
             struct shash_node *n3;
             char *old_name, *new_name;
             bool free_new_name = false;
@@ -510,6 +516,7 @@ do_show_log(struct ovs_cmdl_context *ctx)
     struct ovsdb_schema *schema;
     unsigned int i;
 
+    //打开日志文件
     check_ovsdb_error(ovsdb_log_open(db_file_name, OVSDB_LOG_READ_ONLY,
                                      -1, &log));
     shash_init(&names);
@@ -517,25 +524,28 @@ do_show_log(struct ovs_cmdl_context *ctx)
     for (i = 0; ; i++) {
         struct json *json;
 
-        check_ovsdb_error(ovsdb_log_read(log, &json));
+        check_ovsdb_error(ovsdb_log_read(log, &json));//读日志文件
         if (!json) {
             break;
         }
 
         printf("record %u:", i);
         if (i == 0) {
+        	//第一条，构造数据库模式，显示数据库名称，版本，checksum
             check_ovsdb_error(ovsdb_schema_from_json(json, &schema));
             printf(" \"%s\" schema, version=\"%s\", cksum=\"%s\"\n",
                    schema->name, schema->version, schema->cksum);
         } else if (json->type == JSON_OBJECT) {
+        	//读其它记录
             struct json *date, *comment;
-
+            //json的object类型,取'_date'属性
             date = shash_find_data(json_object(json), "_date");
             if (date && date->type == JSON_INTEGER) {
                 long long int t = json_integer(date);
                 char *s;
 
                 if (t < INT32_MAX) {
+                	//旧版本是按seconds写入的，换算成毫秒
                     /* Older versions of ovsdb wrote timestamps in seconds. */
                     t *= 1000;
                 }
@@ -545,6 +555,7 @@ do_show_log(struct ovs_cmdl_context *ctx)
                 free(s);
             }
 
+            //显示注释
             comment = shash_find_data(json_object(json), "_comment");
             if (comment && comment->type == JSON_STRING) {
                 printf(" \"%s\"", json_string(comment));
@@ -561,7 +572,7 @@ do_show_log(struct ovs_cmdl_context *ctx)
 
     ovsdb_log_close(log);
     ovsdb_schema_destroy(schema);
-    /* XXX free 'names'. */
+    /* XXX free 'names'. */ //这里为什么不需要释放names?这里有泄露
 }
 
 static void
@@ -577,7 +588,7 @@ do_list_commands(struct ovs_cmdl_context *ctx OVS_UNUSED)
 }
 
 static const struct ovs_cmdl_command all_commands[] = {
-    { "create", "[db [schema]]", 0, 2, do_create, OVS_RW },
+    { "create", "[db [schema]]", 0, 2, do_create, OVS_RW },//创建db
     { "compact", "[db [dst]]", 0, 2, do_compact, OVS_RW },
     { "convert", "[db [schema [dst]]]", 0, 3, do_convert, OVS_RW },
     { "needs-conversion", NULL, 0, 2, do_needs_conversion, OVS_RO },
