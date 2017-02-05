@@ -89,6 +89,7 @@ struct ovsdb_idl {
     const struct ovsdb_idl_class *class;
     struct jsonrpc_session *session;
     struct uuid uuid;
+    //通过名称查table
     struct shash table_by_name; /* Contains "struct ovsdb_idl_table *"s.*/
     struct ovsdb_idl_table *tables; /* Array of ->class->n_tables elements. */
     unsigned int change_seqno;
@@ -411,6 +412,7 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
             idl->request_id = NULL;
             ovsdb_idl_txn_abort_all(idl);
 
+            //请求数据库模式
             ovsdb_idl_send_schema_request(idl);
             idl->state = IDL_S_SCHEMA_REQUESTED;
             if (idl->lock_name) {
@@ -506,6 +508,7 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
                 /* Fall back to using "monitor" method.  */
                 json_destroy(idl->request_id);
                 idl->request_id = NULL;
+                //发送monitor请求
                 ovsdb_idl_send_monitor_request(idl);
                 idl->state = IDL_S_MONITOR_REQUESTED;
             }
@@ -1377,6 +1380,7 @@ ovsdb_idl_track_clear(const struct ovsdb_idl *idl)
 }
 
 
+//向数据库请求模式
 static void
 ovsdb_idl_send_schema_request(struct ovsdb_idl *idl)
 {
@@ -3834,6 +3838,7 @@ ovsdb_idl_set_lock(struct ovsdb_idl *idl, const char *lock_name)
 
     if (idl->lock_name && (!lock_name || strcmp(lock_name, idl->lock_name))) {
         /* Release previous lock. */
+    	//send unlock　请求
         ovsdb_idl_send_unlock_request(idl);
         free(idl->lock_name);
         idl->lock_name = NULL;
@@ -3843,6 +3848,7 @@ ovsdb_idl_set_lock(struct ovsdb_idl *idl, const char *lock_name)
     if (lock_name && !idl->lock_name) {
         /* Acquire new lock. */
         idl->lock_name = xstrdup(lock_name);
+        //发送lock请求
         ovsdb_idl_send_lock_request(idl);
     }
 }

@@ -1051,6 +1051,7 @@ jsonrpc_session_recv(struct jsonrpc_session *s)
 
         if (msg) {
             if (msg->type == JSONRPC_REQUEST && !strcmp(msg->method, "echo")) {
+            	//响应数据库发送过来的echo消息
                 /* Echo request.  Send reply. */
                 struct jsonrpc_msg *reply;
 
