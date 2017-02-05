@@ -192,6 +192,7 @@ Luigi Rizzo                     rizzo@iet.unipi.it
 Luis E. P.                      l31g@hotmail.com
 Lukasz Rzasik                   lukasz.rzasik@gmail.com
 Madhu Challa                    challa@noironetworks.com
+Marcin Mirecki                  mmirecki@redhat.com
 Mario Cabrera                   mario.cabrera@hpe.com
 Mark D. Gray                    mark.d.gray@intel.com
 Mark Hamilton                   mhamilton@nicira.com
@@ -243,6 +244,7 @@ Rishi Bamba                     rishi.bamba@tcs.com
 Rob Adams                       readams@readams.net
 Robert Åkerblom-Andersson       Robert.nr1@gmail.com
 Rob Hoes                        rob.hoes@citrix.com
+Roi Dayan                       roid@mellanox.com
 Romain Lenglet                  romain.lenglet@berabera.info
 Russell Bryant                  russell@ovn.org
 RYAN D. MOATS                   rmoats@us.ibm.com
@@ -258,6 +260,7 @@ Saurabh Shrivastava             saurabh.shrivastava@nuagenetworks.net
 Scott Lowe                      scott.lowe@scottlowe.org
 Scott Mann                      sdmnix@gmail.com
 Selvamuthukumar                 smkumar@merunetworks.com
+Sha Zhang                       zhangsha.zhang@huawei.com
 Shad Ansari                     shad.ansari@hpe.com
 Shan Wei                        davidshan@tencent.com
 Shashank Ram                    rams@vmware.com
@@ -430,6 +433,7 @@ Konstantin Khorenko             khorenko@openvz.org
 Kris zhang                      zhang.kris@gmail.com
 Krishna Miriyala                krishna@nicira.com
 Krishna Mohan Elluru            elluru.kri.mohan@hpe.com
+László Sürü                     laszlo.suru@ericsson.com
 Len Gao                         leng@vmware.com
 Logan Rosen                     logatronico@gmail.com
 Luca Falavigna                  dktrkranz@debian.org

@@ -233,6 +233,9 @@ class Stream(object):
             self.socket.close()
         if self.pipe is not None:
             if self._server:
+                # Flush the pipe to allow the client to read the pipe
+                # before disconnecting.
+                win32pipe.FlushFileBuffers(self.pipe)
                 win32pipe.DisconnectNamedPipe(self.pipe)
             winutils.close_handle(self.pipe, vlog.warn)
             winutils.close_handle(self._read.hEvent, vlog.warn)
@@ -809,7 +812,9 @@ class SSLStream(Stream):
                 buf = buf.encode('utf-8')
             return super(SSLStream, self).send(buf)
         except SSL.WantWriteError:
-            return errno.EAGAIN
+            return -errno.EAGAIN
+        except SSL.SysCallError as e:
+            return -ovs.socket_util.get_exception_errno(e)
 
 
 if SSL:

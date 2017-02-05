@@ -89,6 +89,8 @@ struct netdev_tunnel_config {//tunnel配置结构体
     struct in6_addr ipv6_dst;//设置的ipv6目的地址（ipv4地址也在其中）
 
     uint32_t exts;
+    bool set_egress_pkt_mark;
+    uint32_t egress_pkt_mark;
 
     uint8_t ttl;//ttl设置值
     bool ttl_inherit;//是否使用原流中的ttl，如果为Fasle,则采用"ttl设置值“
@@ -109,6 +111,7 @@ bool netdev_is_reserved_name(const char *name);
 int netdev_n_txq(const struct netdev *netdev);
 int netdev_n_rxq(const struct netdev *netdev);
 bool netdev_is_pmd(const struct netdev *netdev);
+bool netdev_has_tunnel_push_pop(const struct netdev *netdev);
 
 /* Open and close. */
 int netdev_open(const char *name, const char *type, struct netdev **netdevp);

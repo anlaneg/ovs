@@ -921,7 +921,7 @@ dpif_probe_feature(struct dpif *dpif, const char *name,
      * previous run are still present in the datapath. */
     error = dpif_flow_put(dpif, DPIF_FP_CREATE | DPIF_FP_MODIFY | DPIF_FP_PROBE,
                           key->data, key->size, NULL, 0, NULL, 0,
-                          ufid, PMD_ID_NULL, NULL);
+                          ufid, NON_PMD_CORE_ID, NULL);
     if (error) {
         if (error != EINVAL) {
             VLOG_WARN("%s: %s flow probe failed (%s)",
@@ -932,7 +932,7 @@ dpif_probe_feature(struct dpif *dpif, const char *name,
 
     ofpbuf_use_stack(&reply, &stub, sizeof stub);
     error = dpif_flow_get(dpif, key->data, key->size, ufid,
-                          PMD_ID_NULL, &reply, &flow);
+                          NON_PMD_CORE_ID, &reply, &flow);
     if (!error
         && (!ufid || (flow.ufid_present
                       && ovs_u128_equals(*ufid, flow.ufid)))) {
@@ -940,7 +940,7 @@ dpif_probe_feature(struct dpif *dpif, const char *name,
     }
 
     error = dpif_flow_del(dpif, key->data, key->size, ufid,
-                          PMD_ID_NULL, NULL);
+                          NON_PMD_CORE_ID, NULL);
     if (error) {
         VLOG_WARN("%s: failed to delete %s feature probe flow",
                   dpif_name(dpif), name);
@@ -1196,6 +1196,7 @@ dpif_execute_helper_cb(void *aux_, struct dp_packet_batch *packets_,
     case OVS_ACTION_ATTR_SET_MASKED:
     case OVS_ACTION_ATTR_SAMPLE:
     case OVS_ACTION_ATTR_TRUNC:
+    case OVS_ACTION_ATTR_CLONE:
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
         OVS_NOT_REACHED();
@@ -1215,7 +1216,7 @@ dpif_execute_with_help(struct dpif *dpif, struct dpif_execute *execute)
 
     COVERAGE_INC(dpif_execute_with_help);
 
-    packet_batch_init_packet(&pb, execute->packet);
+    dp_packet_batch_init_packet(&pb, execute->packet);
     odp_execute_actions(&aux, &pb, false, execute->actions,
                         execute->actions_len, dpif_execute_helper_cb);
     return aux.error;
@@ -1454,18 +1455,17 @@ dpif_print_packet(struct dpif *dpif, struct dpif_upcall *upcall)
     }
 }
 
-/* If 'dpif' creates its own I/O polling threads, refreshes poll threads
- * configuration. */
+/* Pass custom configuration to the datapath implementation.  Some of the
+ * changes can be postponed until dpif_run() is called. */
 int
-dpif_poll_threads_set(struct dpif *dpif, const char *cmask)
+dpif_set_config(struct dpif *dpif, const struct smap *cfg)
 {
     int error = 0;
 
-    //重新设置cmask
-    if (dpif->dpif_class->poll_threads_set) {
-        error = dpif->dpif_class->poll_threads_set(dpif, cmask);
+    if (dpif->dpif_class->set_config) {
+        error = dpif->dpif_class->set_config(dpif, cfg);
         if (error) {
-            log_operation(dpif, "poll_threads_set", error);
+            log_operation(dpif, "set_config", error);
         }
     }
 

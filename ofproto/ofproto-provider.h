@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016 Nicira, Inc.
+ * Copyright (c) 2009-2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,6 +59,8 @@ struct bfd_cfg;
 struct meter;
 struct ofoperation;
 struct ofproto_packet_out;
+struct vl_mff_map;
+struct smap;
 
 extern struct ovs_mutex ofproto_mutex;
 
@@ -128,6 +130,10 @@ struct ofproto {//openflow 交换机
 
      /* Tunnel TLV mapping table. */
      OVSRCU_TYPE(struct tun_table *) metadata_tab;
+
+    /* Variable length mf_field mapping. Stores all configured variable length
+     * meta-flow fields (struct mf_field) in a switch. */
+    struct vl_mff_map vl_mff_map;
 };
 
 void ofproto_init_tables(struct ofproto *, int n_tables);
@@ -512,9 +518,6 @@ extern unsigned ofproto_max_idle;
 /* Number of upcall handler and revalidator threads. Only affects the
  * ofproto-dpif implementation. */
 extern size_t n_handlers, n_revalidators;
-
-/* Cpu mask for pmd threads. */
-extern char *pmd_cpu_mask;
 
 static inline struct rule *rule_from_cls_rule(const struct cls_rule *);
 
@@ -1818,6 +1821,13 @@ struct ofproto_class {
      * This function should be NULL if an implementation does not support it.
      */
     const char *(*get_datapath_version)(const struct ofproto *);
+
+    /* Pass custom configuration options to the 'type' datapath.
+     *
+     * This function should be NULL if an implementation does not support it.
+     */
+    void (*type_set_config)(const char *type,
+                            const struct smap *other_config);
 
 /* ## ------------------- ## */
 /* ## Connection tracking ## */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1154,6 +1154,9 @@ cmd_add_br(struct ctl_context *ctx)
     int vlan;
 
     br_name = ctx->argv[1];
+    if (!br_name[0]) {
+        ctl_fatal("bridge name must not be empty string");
+    }
     if (ctx->argc == 2) {
         parent_name = NULL;
         vlan = 0;
@@ -1502,6 +1505,15 @@ add_port(struct ctl_context *ctx,
     struct ovsrec_interface **ifaces;
     struct ovsrec_port *port;
     size_t i;
+
+    if (!port_name[0]) {
+        ctl_fatal("port name must not be empty string");
+    }
+    for (i = 0; i < n_ifaces; i++) {
+        if (!iface_names[i][0]) {
+            ctl_fatal("interface name must not be empty string");
+        }
+    }
 
     vsctl_context_populate_cache(ctx);
     if (may_exist) {
@@ -2277,84 +2289,58 @@ cmd_get_aa_mapping(struct ctl_context *ctx)
 }
 
 
-static const struct ctl_table_class tables[] = {
-    {&ovsrec_table_bridge,
-     {{&ovsrec_table_bridge, &ovsrec_bridge_col_name, NULL},
-      {&ovsrec_table_flow_sample_collector_set, NULL,
-       &ovsrec_flow_sample_collector_set_col_bridge}}},
+static const struct ctl_table_class tables[OVSREC_N_TABLES] = {
+    [OVSREC_TABLE_BRIDGE].row_ids = {
+        {&ovsrec_table_bridge, &ovsrec_bridge_col_name, NULL},
+        {&ovsrec_table_flow_sample_collector_set, NULL,
+         &ovsrec_flow_sample_collector_set_col_bridge}},
 
-    {&ovsrec_table_controller,
-     {{&ovsrec_table_bridge,
-       &ovsrec_bridge_col_name,
-       &ovsrec_bridge_col_controller}}},
+    [OVSREC_TABLE_CONTROLLER].row_ids[0]
+    = {&ovsrec_table_bridge, &ovsrec_bridge_col_name,
+       &ovsrec_bridge_col_controller},
 
-    {&ovsrec_table_interface,
-     {{&ovsrec_table_interface, &ovsrec_interface_col_name, NULL},
-      {NULL, NULL, NULL}}},
+    [OVSREC_TABLE_INTERFACE].row_ids[0]
+    = {&ovsrec_table_interface, &ovsrec_interface_col_name, NULL},
 
-    {&ovsrec_table_mirror,
-     {{&ovsrec_table_mirror, &ovsrec_mirror_col_name, NULL},
-      {NULL, NULL, NULL}}},
+    [OVSREC_TABLE_MIRROR].row_ids[0]
+    = {&ovsrec_table_mirror, &ovsrec_mirror_col_name, NULL},
 
-    {&ovsrec_table_manager,
-     {{&ovsrec_table_manager, &ovsrec_manager_col_target, NULL},
-      {NULL, NULL, NULL}}},
+    [OVSREC_TABLE_MANAGER].row_ids[0]
+    = {&ovsrec_table_manager, &ovsrec_manager_col_target, NULL},
 
-    {&ovsrec_table_netflow,
-     {{&ovsrec_table_bridge,
-       &ovsrec_bridge_col_name,
+    [OVSREC_TABLE_NETFLOW].row_ids[0]
+    = {&ovsrec_table_bridge, &ovsrec_bridge_col_name,
        &ovsrec_bridge_col_netflow},
-      {NULL, NULL, NULL}}},
 
-    {&ovsrec_table_open_vswitch,
-     {{&ovsrec_table_open_vswitch, NULL, NULL},
-      {NULL, NULL, NULL}}},
+    [OVSREC_TABLE_PORT].row_ids[0]
+    = {&ovsrec_table_port, &ovsrec_port_col_name, NULL},
 
-    {&ovsrec_table_port,
-     {{&ovsrec_table_port, &ovsrec_port_col_name, NULL},
-      {NULL, NULL, NULL}}},
+    [OVSREC_TABLE_QOS].row_ids[0]
+    = {&ovsrec_table_port, &ovsrec_port_col_name, &ovsrec_port_col_qos},
 
-    {&ovsrec_table_qos,
-     {{&ovsrec_table_port, &ovsrec_port_col_name, &ovsrec_port_col_qos},
-      {NULL, NULL, NULL}}},
+    [OVSREC_TABLE_SSL].row_ids[0]
+    = {&ovsrec_table_open_vswitch, NULL, &ovsrec_open_vswitch_col_ssl},
 
-    {&ovsrec_table_queue,
-     {{NULL, NULL, NULL},
-      {NULL, NULL, NULL}}},
-
-    {&ovsrec_table_ssl,
-     {{&ovsrec_table_open_vswitch, NULL, &ovsrec_open_vswitch_col_ssl}}},
-
-    {&ovsrec_table_sflow,
-     {{&ovsrec_table_bridge,
-       &ovsrec_bridge_col_name,
+    [OVSREC_TABLE_SFLOW].row_ids[0]
+    = {&ovsrec_table_bridge, &ovsrec_bridge_col_name,
        &ovsrec_bridge_col_sflow},
-      {NULL, NULL, NULL}}},
 
-    {&ovsrec_table_flow_table,
-     {{&ovsrec_table_flow_table, &ovsrec_flow_table_col_name, NULL},
-      {NULL, NULL, NULL}}},
+    [OVSREC_TABLE_FLOW_TABLE].row_ids[0]
+    = {&ovsrec_table_flow_table, &ovsrec_flow_table_col_name, NULL},
 
-    {&ovsrec_table_ipfix,
-     {{&ovsrec_table_bridge,
-       &ovsrec_bridge_col_name,
-       &ovsrec_bridge_col_ipfix},
-      {&ovsrec_table_flow_sample_collector_set, NULL,
-       &ovsrec_flow_sample_collector_set_col_ipfix}}},
+    [OVSREC_TABLE_IPFIX].row_ids = {
+     {&ovsrec_table_bridge, &ovsrec_bridge_col_name, &ovsrec_bridge_col_ipfix},
+     {&ovsrec_table_flow_sample_collector_set, NULL,
+      &ovsrec_flow_sample_collector_set_col_ipfix}},
 
-    {&ovsrec_table_autoattach,
-     {{&ovsrec_table_bridge,
-       &ovsrec_bridge_col_name,
+    [OVSREC_TABLE_AUTOATTACH].row_ids[0]
+    = {&ovsrec_table_bridge, &ovsrec_bridge_col_name,
        &ovsrec_bridge_col_auto_attach},
-      {NULL, NULL, NULL}}},
 
-    {&ovsrec_table_flow_sample_collector_set,
-     {{&ovsrec_table_flow_sample_collector_set,
+    [OVSREC_TABLE_FLOW_SAMPLE_COLLECTOR_SET].row_ids[0]
+    = {&ovsrec_table_flow_sample_collector_set,
        &ovsrec_flow_sample_collector_set_col_id,
        NULL},
-      {NULL, NULL, NULL}}},
-
-    {NULL, {{NULL, NULL, NULL}, {NULL, NULL, NULL}}}
 };
 
 static void
@@ -2831,6 +2817,6 @@ static const struct ctl_command_syntax vsctl_commands[] = {
 static void
 vsctl_cmd_init(void)
 {
-    ctl_init(tables, cmd_show_tables, vsctl_exit);
+    ctl_init(ovsrec_table_classes, tables, cmd_show_tables, vsctl_exit);
     ctl_register_commands(vsctl_commands);
 }

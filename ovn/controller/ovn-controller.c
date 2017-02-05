@@ -163,6 +163,10 @@ update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
         sbrec_port_binding_add_clause_options(&pb, OVSDB_F_INCLUDES, &l2);
         const struct smap l3 = SMAP_CONST1(&l3, "l3gateway-chassis", id);
         sbrec_port_binding_add_clause_options(&pb, OVSDB_F_INCLUDES, &l3);
+        const struct smap redirect = SMAP_CONST1(&redirect,
+                                                 "redirect-chassis", id);
+        sbrec_port_binding_add_clause_options(&pb, OVSDB_F_INCLUDES,
+                                              &redirect);
     }
     if (local_ifaces) {
         const char *name;
@@ -319,10 +323,8 @@ update_ct_zones(struct sset *lports, const struct hmap *local_datapaths,
     /* Local patched datapath (gateway routers) need zones assigned. */
     const struct local_datapath *ld;
     HMAP_FOR_EACH (ld, hmap_node, local_datapaths) {
-        if (!ld->has_local_l3gateway) {
-            continue;
-        }
-
+        /* XXX Add method to limit zone assignment to logical router
+         * datapaths with NAT */
         char *dnat = alloc_nat_zone_key(&ld->datapath->header_.uuid, "dnat");
         char *snat = alloc_nat_zone_key(&ld->datapath->header_.uuid, "snat");
         sset_add(&all_users, dnat);
@@ -621,8 +623,9 @@ main(int argc, char *argv[])
                 commit_ct_zones(br_int, &pending_ct_zones);
 
                 struct hmap flow_table = HMAP_INITIALIZER(&flow_table);
-                lflow_run(&ctx, &lports, &mcgroups, &local_datapaths,
-                          &group_table, &ct_zones, &addr_sets, &flow_table);
+                lflow_run(&ctx, chassis, &lports, &mcgroups,
+                          &local_datapaths, &group_table, &ct_zones,
+                          &addr_sets, &flow_table);
 
                 physical_run(&ctx, mff_ovn_geneve,
                              br_int, chassis, &ct_zones, &lports,

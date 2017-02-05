@@ -165,6 +165,7 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         OPT_LOCAL,
         OPT_COMMANDS,
         OPT_OPTIONS,
+        OPT_BOOTSTRAP_CA_CERT,
         VLOG_OPTION_ENUMS,
         TABLE_OPTION_ENUMS,
         SSL_OPTION_ENUMS,
@@ -183,6 +184,7 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         {"version", no_argument, NULL, 'V'},
         VLOG_LONG_OPTIONS,
         STREAM_SSL_LONG_OPTIONS,
+        {"bootstrap-ca-cert", required_argument, NULL, OPT_BOOTSTRAP_CA_CERT},
         TABLE_LONG_OPTIONS,
         {NULL, 0, NULL, 0},
     };
@@ -286,6 +288,10 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         TABLE_OPTION_HANDLERS(&table_style)
         STREAM_SSL_OPTION_HANDLERS
 
+        case OPT_BOOTSTRAP_CA_CERT:
+            stream_ssl_set_ca_cert_file(optarg, true);
+            break;
+
         case '?':
             exit(EXIT_FAILURE);
 
@@ -384,7 +390,7 @@ Route commands:\n\
   lr-route-list ROUTER      print routes for ROUTER\n\
 \n\
 NAT commands:\n\
-  lr-nat-add ROUTER TYPE EXTERNAL_IP LOGICAL_IP\n\
+  lr-nat-add ROUTER TYPE EXTERNAL_IP LOGICAL_IP [LOGICAL_PORT EXTERNAL_MAC]\n\
                             add a NAT to ROUTER\n\
   lr-nat-del ROUTER [TYPE [IP]]\n\
                             remove NATs from ROUTER\n\
@@ -987,6 +993,7 @@ nbctl_lsp_set_addresses(struct ctl_context *ctx)
         struct eth_addr ea;
 
         if (strcmp(ctx->argv[i], "unknown") && strcmp(ctx->argv[i], "dynamic")
+            && strcmp(ctx->argv[i], "router")
             && !ovs_scan(ctx->argv[i], ETH_ADDR_SCAN_FMT,
                          ETH_ADDR_SCAN_ARGS(ea))) {
             ctl_fatal("%s: Invalid address format. See ovn-nb(5). "
@@ -1311,6 +1318,18 @@ nbctl_acl_add(struct ctl_context *ctx)
     nbrec_acl_set_action(acl, action);
     if (shash_find(&ctx->options, "--log") != NULL) {
         nbrec_acl_set_log(acl, true);
+    }
+
+    /* Check if same acl already exists for the ls */
+    for (size_t i = 0; i < ls->n_acls; i++) {
+        if (!acl_cmp(&ls->acls[i], &acl)) {
+            bool may_exist = shash_find(&ctx->options, "--may-exist") != NULL;
+            if (!may_exist) {
+                ctl_fatal("Same ACL already existed on the ls %s.",
+                          ctx->argv[1]);
+            }
+            return;
+        }
     }
 
     /* Insert the acl into the logical switch. */
@@ -2232,6 +2251,30 @@ nbctl_lr_nat_add(struct ctl_context *ctx)
         new_logical_ip = normalize_ipv4_prefix(ipv4, plen);
     }
 
+    const char *logical_port;
+    const char *external_mac;
+    if (ctx->argc == 6) {
+        ctl_fatal("lr-nat-add with logical_port "
+                  "must also specify external_mac.");
+    } else if (ctx->argc == 7) {
+        if (strcmp(nat_type, "dnat_and_snat")) {
+            ctl_fatal("logical_port and external_mac are only valid when "
+                      "type is \"dnat_and_snat\".");
+        }
+
+        logical_port = ctx->argv[5];
+        lsp_by_name_or_uuid(ctx, logical_port, true);
+
+        external_mac = ctx->argv[6];
+        struct eth_addr ea;
+        if (!eth_addr_from_string(external_mac, &ea)) {
+            ctl_fatal("invalid mac address %s.", external_mac);
+        }
+    } else {
+        logical_port = NULL;
+        external_mac = NULL;
+    }
+
     bool may_exist = shash_find(&ctx->options, "--may-exist") != NULL;
     int is_snat = !strcmp("snat", nat_type);
     for (size_t i = 0; i < lr->n_nat; i++) {
@@ -2242,6 +2285,10 @@ nbctl_lr_nat_add(struct ctl_context *ctx)
                 if (!strcmp(is_snat ? external_ip : new_logical_ip,
                             is_snat ? nat->external_ip : nat->logical_ip)) {
                         if (may_exist) {
+                            nbrec_nat_verify_logical_port(nat);
+                            nbrec_nat_verify_external_mac(nat);
+                            nbrec_nat_set_logical_port(nat, logical_port);
+                            nbrec_nat_set_external_mac(nat, external_mac);
                             free(new_logical_ip);
                             return;
                         }
@@ -2264,6 +2311,10 @@ nbctl_lr_nat_add(struct ctl_context *ctx)
     nbrec_nat_set_type(nat, nat_type);
     nbrec_nat_set_external_ip(nat, external_ip);
     nbrec_nat_set_logical_ip(nat, new_logical_ip);
+    if (logical_port && external_mac) {
+        nbrec_nat_set_logical_port(nat, logical_port);
+        nbrec_nat_set_external_mac(nat, external_mac);
+    }
     free(new_logical_ip);
 
     /* Insert the NAT into the logical router. */
@@ -2346,17 +2397,24 @@ nbctl_lr_nat_list(struct ctl_context *ctx)
     struct smap lr_nats = SMAP_INITIALIZER(&lr_nats);
     for (size_t i = 0; i < lr->n_nat; i++) {
         const struct nbrec_nat *nat = lr->nat[i];
-        smap_add_format(&lr_nats, nat->type, "%-19.15s%s",
-                        nat->external_ip, nat->logical_ip);
+        const char *key = xasprintf("%-17.13s%s", nat->type, nat->external_ip);
+        if (nat->external_mac && nat->logical_port) {
+            smap_add_format(&lr_nats, key, "%-22.18s%-21.17s%s",
+                            nat->logical_ip, nat->external_mac,
+                            nat->logical_port);
+        } else {
+            smap_add_format(&lr_nats, key, "%s", nat->logical_ip);
+        }
     }
 
     const struct smap_node **nodes = smap_sort(&lr_nats);
     if (nodes) {
-        ds_put_format(&ctx->output, "%-17.13s%-19.15s%s\n",
-                "TYPE", "EXTERNAL_IP", "LOGICAL_IP");
+        ds_put_format(&ctx->output, "%-17.13s%-19.15s%-22.18s%-21.17s%s\n",
+                "TYPE", "EXTERNAL_IP", "LOGICAL_IP", "EXTERNAL_MAC",
+                "LOGICAL_PORT");
         for (size_t i = 0; i < smap_count(&lr_nats); i++) {
             const struct smap_node *node = nodes[i];
-            ds_put_format(&ctx->output, "%-17.13s%s\n",
+            ds_put_format(&ctx->output, "%-36.32s%s\n",
                     node->key, node->value);
         }
         free(nodes);
@@ -2970,69 +3028,26 @@ cmd_set_ssl(struct ctl_context *ctx)
     nbrec_nb_global_set_ssl(nb_global, ssl);
 }
 
-static const struct ctl_table_class tables[] = {
-    {&nbrec_table_nb_global,
-     {{&nbrec_table_nb_global, NULL, NULL},
-      {NULL, NULL, NULL}}},
+static const struct ctl_table_class tables[NBREC_N_TABLES] = {
+    [NBREC_TABLE_LOGICAL_SWITCH].row_ids[0]
+    = {&nbrec_table_logical_switch, &nbrec_logical_switch_col_name, NULL},
 
-    {&nbrec_table_logical_switch,
-     {{&nbrec_table_logical_switch, &nbrec_logical_switch_col_name, NULL},
-      {NULL, NULL, NULL}}},
-
-    {&nbrec_table_logical_switch_port,
-     {{&nbrec_table_logical_switch_port, &nbrec_logical_switch_port_col_name,
+    [NBREC_TABLE_LOGICAL_SWITCH_PORT].row_ids[0]
+    = {&nbrec_table_logical_switch_port, &nbrec_logical_switch_port_col_name,
        NULL},
-      {NULL, NULL, NULL}}},
 
-    {&nbrec_table_acl,
-     {{NULL, NULL, NULL},
-      {NULL, NULL, NULL}}},
+    [NBREC_TABLE_LOGICAL_ROUTER].row_ids[0]
+    = {&nbrec_table_logical_router, &nbrec_logical_router_col_name, NULL},
 
-    {&nbrec_table_load_balancer,
-     {{NULL, NULL, NULL},
-      {NULL, NULL, NULL}}},
-
-    {&nbrec_table_logical_router,
-     {{&nbrec_table_logical_router, &nbrec_logical_router_col_name, NULL},
-      {NULL, NULL, NULL}}},
-
-    {&nbrec_table_logical_router_port,
-     {{&nbrec_table_logical_router_port, &nbrec_logical_router_port_col_name,
+    [NBREC_TABLE_LOGICAL_ROUTER_PORT].row_ids[0]
+    = {&nbrec_table_logical_router_port, &nbrec_logical_router_port_col_name,
        NULL},
-      {NULL, NULL, NULL}}},
 
-    {&nbrec_table_logical_router_static_route,
-     {{&nbrec_table_logical_router_static_route, NULL,
-       NULL},
-      {NULL, NULL, NULL}}},
+    [NBREC_TABLE_ADDRESS_SET].row_ids[0]
+    = {&nbrec_table_address_set, &nbrec_address_set_col_name, NULL},
 
-    {&nbrec_table_nat,
-     {{&nbrec_table_nat, NULL,
-       NULL},
-      {NULL, NULL, NULL}}},
-
-    {&nbrec_table_address_set,
-     {{&nbrec_table_address_set, &nbrec_address_set_col_name, NULL},
-      {NULL, NULL, NULL}}},
-
-    {&nbrec_table_dhcp_options,
-     {{&nbrec_table_dhcp_options, NULL,
-       NULL},
-      {NULL, NULL, NULL}}},
-
-    {&nbrec_table_qos,
-     {{&nbrec_table_qos, NULL,
-       NULL},
-      {NULL, NULL, NULL}}},
-
-    {&nbrec_table_connection,
-     {{&nbrec_table_connection, NULL, NULL},
-      {NULL, NULL, NULL}}},
-
-    {&nbrec_table_ssl,
-     {{&nbrec_table_nb_global, NULL, &nbrec_nb_global_col_ssl}}},
-
-    {NULL, {{NULL, NULL, NULL}, {NULL, NULL, NULL}}}
+    [NBREC_TABLE_SSL].row_ids[0]
+    = {&nbrec_table_nb_global, NULL, &nbrec_nb_global_col_ssl},
 };
 
 static void
@@ -3286,7 +3301,7 @@ static const struct ctl_command_syntax nbctl_commands[] = {
 
     /* acl commands. */
     { "acl-add", 5, 5, "SWITCH DIRECTION PRIORITY MATCH ACTION", NULL,
-      nbctl_acl_add, NULL, "--log", RW },
+      nbctl_acl_add, NULL, "--log,--may-exist", RW },
     { "acl-del", 1, 4, "SWITCH [DIRECTION [PRIORITY MATCH]]", NULL,
       nbctl_acl_del, NULL, "", RW },
     { "acl-list", 1, 1, "SWITCH", NULL, nbctl_acl_list, NULL, "", RO },
@@ -3350,7 +3365,8 @@ static const struct ctl_command_syntax nbctl_commands[] = {
       "", RO },
 
     /* NAT commands. */
-    { "lr-nat-add", 4, 4, "ROUTER TYPE EXTERNAL_IP LOGICAL_IP", NULL,
+    { "lr-nat-add", 4, 6,
+      "ROUTER TYPE EXTERNAL_IP LOGICAL_IP [LOGICAL_PORT EXTERNAL_MAC]", NULL,
       nbctl_lr_nat_add, NULL, "--may-exist", RW },
     { "lr-nat-del", 1, 3, "ROUTER [TYPE [IP]]", NULL,
         nbctl_lr_nat_del, NULL, "--if-exists", RW },
@@ -3405,6 +3421,6 @@ static const struct ctl_command_syntax nbctl_commands[] = {
 static void
 nbctl_cmd_init(void)
 {
-    ctl_init(tables, NULL, nbctl_exit);
+    ctl_init(nbrec_table_classes, tables, NULL, nbctl_exit);
     ctl_register_commands(nbctl_commands);
 }

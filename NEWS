@@ -1,4 +1,10 @@
-Post-v2.6.0
+Post-v2.7.0
+---------------------
+   - Tunnels:
+     * Added support to set packet mark for tunnel endpoint using
+       `egress_pkt_mark` OVSDB option.
+
+v2.7.0 - xx xxx xxxx
 ---------------------
    - Utilities and daemons that support SSL now allow protocols and
      ciphers to be configured with --ssl-protocols and --ssl-ciphers.
