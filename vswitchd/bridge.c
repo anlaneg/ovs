@@ -2936,11 +2936,12 @@ bridge_run(void)
 
     ovsrec_open_vswitch_init(&null_cfg);
 
-    ovsdb_idl_run(idl);//数据库里的消息处理
+    ovsdb_idl_run(idl);//数据库里的消息处理（监听db变化）
 
     if_notifier_run();//来自kernel的信息
 
-    if (ovsdb_idl_is_lock_contended(idl)) {//当前进程需要停止
+    if (ovsdb_idl_is_lock_contended(idl)) {
+    	//我们没有拿到锁
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
         struct bridge *br, *next_br;
 
@@ -2958,13 +2959,16 @@ bridge_run(void)
         return;
     } else if (!ovsdb_idl_has_lock(idl)
                || !ovsdb_idl_has_ever_connected(idl)) {
+    	//没有拿到锁或者没有连接上。
         /* Returns if not holding the lock or not done retrieving db
          * contents. */
         return;
     }
+    //实际上内容调用的是：ovsdb_idl_first_row
     cfg = ovsrec_open_vswitch_first(idl);
 
     if (cfg) {
+    	//dpdk配置
         dpdk_init(&cfg->other_config);
     }
 

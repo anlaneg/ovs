@@ -904,6 +904,7 @@ void
 jsonrpc_session_run(struct jsonrpc_session *s)
 {
     if (s->pstream) {
+    	//服务端处理
         struct stream *stream;
         int error;
 
@@ -918,6 +919,7 @@ jsonrpc_session_run(struct jsonrpc_session *s)
             reconnect_connected(s->reconnect, time_msec());
             s->rpc = jsonrpc_open(stream);
         } else if (error != EAGAIN) {
+        	//发生错误，关闭pstream
             reconnect_listen_error(s->reconnect, time_msec(), error);
             pstream_close(s->pstream);
             s->pstream = NULL;
@@ -929,6 +931,7 @@ jsonrpc_session_run(struct jsonrpc_session *s)
         int error;
 
         backlog = jsonrpc_get_backlog(s->rpc);
+        //如果有output,则向外发送
         jsonrpc_run(s->rpc);
         if (jsonrpc_get_backlog(s->rpc) < backlog) {
             /* Data previously caught in a queue was successfully sent (or
@@ -1031,6 +1034,7 @@ jsonrpc_session_send(struct jsonrpc_session *s, struct jsonrpc_msg *msg)
     }
 }
 
+//尝试着从s上收取rpc message
 struct jsonrpc_msg *
 jsonrpc_session_recv(struct jsonrpc_session *s)
 {
@@ -1041,6 +1045,7 @@ jsonrpc_session_recv(struct jsonrpc_session *s)
         received_bytes = jsonrpc_get_received_bytes(s->rpc);
         jsonrpc_recv(s->rpc, &msg);
         if (received_bytes != jsonrpc_get_received_bytes(s->rpc)) {
+        	//收到了一些数据，标记connect是活跃的
             /* Data was successfully received.
              *
              * Previously we only counted receiving a full message as activity,
@@ -1061,6 +1066,7 @@ jsonrpc_session_recv(struct jsonrpc_session *s)
                        && msg->id && msg->id->type == JSON_STRING
                        && !strcmp(msg->id->u.string, "echo")) {
                 /* It's a reply to our echo request.  Suppress it. */
+            	//处理数据响应的echo消息
             } else {
                 return msg;
             }
@@ -1086,6 +1092,7 @@ jsonrpc_session_is_alive(const struct jsonrpc_session *s)
 }
 
 /* Returns true if 's' is currently connected. */
+//检查jsonrpc session是否已连接
 bool
 jsonrpc_session_is_connected(const struct jsonrpc_session *s)
 {

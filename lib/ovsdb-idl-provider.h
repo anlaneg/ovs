@@ -94,10 +94,10 @@ struct ovsdb_idl_column {
 };
 
 struct ovsdb_idl_table_class {
-    char *name;
+    char *name;//表名称
     bool is_root;
     const struct ovsdb_idl_column *columns;
-    size_t n_columns;
+    size_t n_columns;//有多少列
     size_t allocation_size;
     void (*row_init)(struct ovsdb_idl_row *);
 };
@@ -112,7 +112,9 @@ struct ovsdb_idl_table {
     struct ovsdb_idl *idl;   /* Containing idl. */
     unsigned int change_seqno[OVSDB_IDL_CHANGE_MAX];
     struct ovs_list track_list; /* Tracked rows (ovsdb_idl_row.track_node). */
+    //monitor条件
     struct ovsdb_idl_condition condition;
+    //monitor条件有变更
     bool cond_changed;
 };
 

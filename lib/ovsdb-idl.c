@@ -77,12 +77,12 @@ struct ovsdb_idl_arc {
 };
 
 enum ovsdb_idl_state {
-    IDL_S_SCHEMA_REQUESTED,
+    IDL_S_SCHEMA_REQUESTED,//发送了数据库模式请求
     IDL_S_MONITOR_REQUESTED,
     IDL_S_MONITORING,
-    IDL_S_MONITOR_COND_REQUESTED,
+    IDL_S_MONITOR_COND_REQUESTED,//构造并发送monitor_cond请求
     IDL_S_MONITORING_COND,
-    IDL_S_NO_SCHEMA
+    IDL_S_NO_SCHEMA//标记为无schema
 };
 
 struct ovsdb_idl {
@@ -91,6 +91,7 @@ struct ovsdb_idl {
     struct uuid uuid;
     //通过名称查table
     struct shash table_by_name; /* Contains "struct ovsdb_idl_table *"s.*/
+    //各表信息
     struct ovsdb_idl_table *tables; /* Array of ->class->n_tables elements. */
     unsigned int change_seqno;
     bool verify_write_only;
@@ -98,13 +99,18 @@ struct ovsdb_idl {
     /* Session state. */
     unsigned int state_seqno;
     enum ovsdb_idl_state state;
+    //rpc请求id
     struct json *request_id;
+    //记录响应的schema
     struct json *schema;
 
     /* Database locking. */
+    //数据库锁名称
     char *lock_name;            /* Name of lock we need, NULL if none. */
+    //标记是否拥有锁？
     bool has_lock;              /* Has db server told us we have the lock? */
     bool is_lock_contended;     /* Has db server told us we can't get lock? */
+    //锁请求id
     struct json *lock_request_id; /* JSON-RPC ID of in-flight lock request. */
 
     /* Transaction support. */
@@ -112,6 +118,7 @@ struct ovsdb_idl {
     struct hmap outstanding_txns;
 
     /* Conditional monitoring. */
+    //monitor条件是否有变动
     bool cond_changed;
     unsigned int cond_seqno;   /* Keep track of condition clauses changes
                                   over a single conditional monitoring session.
@@ -391,6 +398,8 @@ ovsdb_idl_clear(struct ovsdb_idl *idl)
 /* Processes a batch of messages from the database server on 'idl'.  This may
  * cause the IDL's contents to change.  The client may check for that with
  * ovsdb_idl_get_seqno(). */
+//通过向ovsdb-server下发monitor_cond命令尝试获得ovsdb在发生变更时的通知，通过接收通知变更
+//维护自身的idl表
 void
 ovsdb_idl_run(struct ovsdb_idl *idl)
 {
@@ -398,14 +407,17 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
 
     ovs_assert(!idl->txn);
 
+    //如果monitor condition有变动，则发送相应请求
     ovsdb_idl_send_cond_change(idl);
 
+    //如果有需要发送的内容，在此处发送。
     jsonrpc_session_run(idl->session);
     for (i = 0; jsonrpc_session_is_connected(idl->session) && i < 50; i++) {
         struct jsonrpc_msg *msg;
         unsigned int seqno;
 
         seqno = jsonrpc_session_get_seqno(idl->session);
+        //序列不一致，需要重连
         if (idl->state_seqno != seqno) {
             idl->state_seqno = seqno;
             json_destroy(idl->request_id);
@@ -415,6 +427,7 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
             //请求数据库模式
             ovsdb_idl_send_schema_request(idl);
             idl->state = IDL_S_SCHEMA_REQUESTED;
+            //如果需要锁，则发送请求数据库锁
             if (idl->lock_name) {
                 ovsdb_idl_send_lock_request(idl);
             }
@@ -422,6 +435,7 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
 
         msg = jsonrpc_session_recv(idl->session);
         if (!msg) {
+        	//idl没有消息过来，处理结束
             break;
         }
 
@@ -430,18 +444,24 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
             && msg->params->type == JSON_ARRAY
             && msg->params->u.array.n == 2
             && msg->params->u.array.elems[0]->type == JSON_STRING) {
+        	//收到数据库内容变更通知，变更为update2方式
             /* Database contents changed. */
+        	//update2数据库变更通知处理
             ovsdb_idl_parse_update(idl, msg->params->u.array.elems[1],
                                    OVSDB_UPDATE2);
         } else if (msg->type == JSONRPC_REPLY
                    && idl->request_id
                    && json_equal(idl->request_id, msg->id)) {
+        	//对请求进行了响应
             json_destroy(idl->request_id);
+            //标明：未绝请求为空
             idl->request_id = NULL;
 
             switch (idl->state) {
             case IDL_S_SCHEMA_REQUESTED:
+            	//是对db schema的响应
                 /* Reply to our "get_schema" request. */
+            	//记录响应的schema，并发送monitor_cond请求
                 idl->schema = json_clone(msg->result);
                 ovsdb_idl_send_monitor_cond_request(idl);
                 idl->state = IDL_S_MONITOR_COND_REQUESTED;
@@ -456,6 +476,7 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
                     idl->state = IDL_S_MONITORING;
                     ovsdb_idl_parse_update(idl, msg->result, OVSDB_UPDATE);
                 } else { /* IDL_S_MONITOR_COND_REQUESTED. */
+                	//收到monitor_cond请求的响应，处理通知
                     idl->state = IDL_S_MONITORING_COND;
                     ovsdb_idl_parse_update(idl, msg->result, OVSDB_UPDATE2);
                 }
@@ -469,6 +490,7 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
             case IDL_S_MONITORING_COND:
                 /* Conditional monitor clauses were updated. Send out
                  * the next condition changes, in any, immediately. */
+            	//如果处于montioring_cond状态，但收到了响应，则检查是否需要发送condition change
                 ovsdb_idl_send_cond_change(idl);
                 idl->cond_seqno++;
                 break;
@@ -484,31 +506,37 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
                    && msg->params->u.array.n == 2
                    && msg->params->u.array.elems[0]->type == JSON_STRING) {
             /* Database contents changed. */
+        	//处理版本１的更新通知
             ovsdb_idl_parse_update(idl, msg->params->u.array.elems[1],
                                    OVSDB_UPDATE);
         } else if (msg->type == JSONRPC_REPLY
                    && idl->lock_request_id
                    && json_equal(idl->lock_request_id, msg->id)) {
             /* Reply to our "lock" request. */
+        	//响应报文，我们请求了lock,响应消息与lock请求id相等，则说明
+        	//收到我们的lock请求响应
             ovsdb_idl_parse_lock_reply(idl, msg->result);
         } else if (msg->type == JSONRPC_NOTIFY
                    && !strcmp(msg->method, "locked")) {
             /* We got our lock. */
+        	//收到锁通知
             ovsdb_idl_parse_lock_notify(idl, msg->params, true);
         } else if (msg->type == JSONRPC_NOTIFY
                    && !strcmp(msg->method, "stolen")) {
             /* Someone else stole our lock. */
+        	//收到锁被抢通知
             ovsdb_idl_parse_lock_notify(idl, msg->params, false);
         } else if (msg->type == JSONRPC_ERROR
                    && idl->state == IDL_S_MONITOR_COND_REQUESTED
                    && idl->request_id
                    && json_equal(idl->request_id, msg->id)) {
+        	//收到monitor_cond请求错误通知，ovsdb-server不支持monitor_cond
             if (msg->error && !strcmp(json_string(msg->error),
                                       "unknown method")) {
                 /* Fall back to using "monitor" method.  */
                 json_destroy(idl->request_id);
                 idl->request_id = NULL;
-                //发送monitor请求
+                //尝试发送monitor请求
                 ovsdb_idl_send_monitor_request(idl);
                 idl->state = IDL_S_MONITOR_REQUESTED;
             }
@@ -516,6 +544,7 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
                    && idl->state == IDL_S_MONITORING_COND
                    && idl->request_id
                    && json_equal(idl->request_id, msg->id)) {
+        	//发送我们重发的change消息更新失败
             json_destroy(idl->request_id);
             idl->request_id = NULL;
             VLOG_ERR("%s: conditional monitor update failed",
@@ -1126,6 +1155,7 @@ ovsdb_idl_condition_to_json(const struct ovsdb_idl_condition *cnd)
     return json_array_create(clauses, n);
 }
 
+//构造monitor条件变更请求
 static struct json *
 ovsdb_idl_create_cond_change_req(struct ovsdb_idl_table *table)
 {
@@ -1138,6 +1168,7 @@ ovsdb_idl_create_cond_change_req(struct ovsdb_idl_table *table)
     return monitor_cond_change_request;
 }
 
+//向ovsdb-server发送condition变更请求
 static void
 ovsdb_idl_send_cond_change(struct ovsdb_idl *idl)
 {
@@ -1149,6 +1180,7 @@ ovsdb_idl_send_cond_change(struct ovsdb_idl *idl)
     /* When 'idl-request_id' is not NULL, there is an outstanding
      * conditional monitoring update request that we have not heard
      * from the server yet. Don't generate another request in this case.  */
+    //无变化，或者没有链接上，或者状态不对，或者已有请求发出（还未响应），则不处理
     if (!idl->cond_changed || !jsonrpc_session_is_connected(idl->session) ||
         idl->state != IDL_S_MONITORING_COND || idl->request_id) {
         return;
@@ -1156,24 +1188,29 @@ ovsdb_idl_send_cond_change(struct ovsdb_idl *idl)
 
     struct json *monitor_cond_change_requests = NULL;
 
+    //构造monitor条件变更请求
     for (i = 0; i < idl->class->n_tables; i++) {
         struct ovsdb_idl_table *table = &idl->tables[i];
 
         if (table->cond_changed) {
+        	//条件有变更，构造条件变更请求
             struct json *req = ovsdb_idl_create_cond_change_req(table);
             if (req) {
                 if (!monitor_cond_change_requests) {
                     monitor_cond_change_requests = json_object_create();
                 }
+                //请求此表的条件变更
                 json_object_put(monitor_cond_change_requests,
                              table->class->name,
                              json_array_create_1(req));
             }
+            //已请求，故认为无变化
             table->cond_changed = false;
         }
     }
 
     /* Send request if not empty. */
+    //发送monitor_cond_change请求
     if (monitor_cond_change_requests) {
         snprintf(uuid, sizeof uuid, UUID_FMT,
                  UUID_ARGS(&idl->uuid));
@@ -1478,6 +1515,7 @@ parse_schema(const struct json *schema_json)
     return schema;
 }
 
+//构造并发送monitor请求(请求方法为method)
 static void
 ovsdb_idl_send_monitor_request__(struct ovsdb_idl *idl,
                                  const char *method)
@@ -1490,6 +1528,7 @@ ovsdb_idl_send_monitor_request__(struct ovsdb_idl *idl,
 
     schema = parse_schema(idl->schema);
     monitor_requests = json_object_create();
+    //遍历每个表，对表进行monitor操作
     for (i = 0; i < idl->class->n_tables; i++) {
         struct ovsdb_idl_table *table = &idl->tables[i];
         const struct ovsdb_idl_table_class *tc = table->class;
@@ -1497,13 +1536,16 @@ ovsdb_idl_send_monitor_request__(struct ovsdb_idl *idl,
         const struct sset *table_schema;
         size_t j;
 
+        //取出当前表的模式
         table_schema = (schema
                         ? shash_find_data(schema, table->class->name)
                         : NULL);
 
         columns = table->need_table ? json_array_create_empty() : NULL;
+        //添加列的monitor
         for (j = 0; j < tc->n_columns; j++) {
             const struct ovsdb_idl_column *column = &tc->columns[j];
+            //检查是否monitor此列
             if (table->modes[j] & OVSDB_IDL_MONITOR) {
                 if (table_schema
                     && !sset_contains(table_schema, column->name)) {
@@ -1533,6 +1575,7 @@ ovsdb_idl_send_monitor_request__(struct ovsdb_idl *idl,
             json_object_put(monitor_request, "columns", columns);
             if (!strcmp(method, "monitor_cond")
                 && !ovsdb_idl_condition_is_true(&table->condition)) {
+            	//添加where子句
                 where = ovsdb_idl_condition_to_json(&table->condition);
                 json_object_put(monitor_request, "where", where);
                 table->cond_changed = false;
@@ -1571,6 +1614,7 @@ log_parse_update_error(struct ovsdb_error *error)
         ovsdb_error_destroy(error);
 }
 
+//发送monitor cond请求
 static void
 ovsdb_idl_send_monitor_cond_request(struct ovsdb_idl *idl)
 {
@@ -1588,6 +1632,7 @@ ovsdb_idl_parse_update(struct ovsdb_idl *idl, const struct json *table_updates,
     }
 }
 
+//完成idl更新（完成对数据库变更的解析）
 static struct ovsdb_error *
 ovsdb_idl_parse_update__(struct ovsdb_idl *idl,
                          const struct json *table_updates,
@@ -1598,17 +1643,20 @@ ovsdb_idl_parse_update__(struct ovsdb_idl *idl,
     const char *table_update_name = table_update_names[version];
     const char *row_update_name = row_update_names[version];
 
+    //必须是object类型
     if (table_updates->type != JSON_OBJECT) {
         return ovsdb_syntax_error(table_updates, NULL,
                                   "<%s> is not an object",
                                   table_updates_name);
     }
 
+    //遍历table_updates每个成员
     SHASH_FOR_EACH (tables_node, json_object(table_updates)) {
         const struct json *table_update = tables_node->data;
         const struct shash_node *table_node;
         struct ovsdb_idl_table *table;
 
+        //通过表名查找表
         table = shash_find_data(&idl->table_by_name, tables_node->name);
         if (!table) {
             return ovsdb_syntax_error(
@@ -1618,6 +1666,7 @@ ovsdb_idl_parse_update__(struct ovsdb_idl *idl,
                 tables_node->name);
         }
 
+        //每个表的描述信息也需要是object类型
         if (table_update->type != JSON_OBJECT) {
             return ovsdb_syntax_error(table_update, NULL,
                                       "<%s> for table \"%s\" is "
@@ -1625,11 +1674,14 @@ ovsdb_idl_parse_update__(struct ovsdb_idl *idl,
                                       table_update_name,
                                       table->class->name);
         }
+
+        //遍历当前表的变化情况
         SHASH_FOR_EACH (table_node, json_object(table_update)) {
             const struct json *row_update = table_node->data;
             const struct json *old_json, *new_json;
             struct uuid uuid;
 
+            //key是uuid类型
             if (!uuid_from_string(&uuid, table_node->name)) {
                 return ovsdb_syntax_error(table_update, NULL,
                                           "<%s> for table \"%s\" "
@@ -1639,6 +1691,7 @@ ovsdb_idl_parse_update__(struct ovsdb_idl *idl,
                                           table->class->name,
                                           table_node->name);
             }
+            //value必须是object类型
             if (row_update->type != JSON_OBJECT) {
                 return ovsdb_syntax_error(row_update, NULL,
                                           "<%s> for table \"%s\" "
@@ -1651,7 +1704,12 @@ ovsdb_idl_parse_update__(struct ovsdb_idl *idl,
             }
 
             switch(version) {
+            //版本１处理
             case OVSDB_UPDATE:
+            	/**
+            	 * old,new分别是一个object对象，其保存了某行旧的及新的数据。
+            	 * new或者old可以不存在，比如执行了删除操作，或者执行了插入操作
+            	 */
                 old_json = shash_find_data(json_object(row_update), "old");
                 new_json = shash_find_data(json_object(row_update), "new");
                 if (old_json && old_json->type != JSON_OBJECT) {
@@ -1671,6 +1729,7 @@ ovsdb_idl_parse_update__(struct ovsdb_idl *idl,
                                               "and \"new\" members");
                 }
 
+                //处理更新
                 if (ovsdb_idl_process_update(table, &uuid, old_json,
                                              new_json)) {
                     idl->change_seqno++;
@@ -1683,20 +1742,25 @@ ovsdb_idl_parse_update__(struct ovsdb_idl *idl,
                 const struct json *row;
                 int i;
 
+                //这种解析办法太慢了
                 for (i = 0; i < ARRAY_SIZE(ops); i++) {
                     operation = ops[i];
+                    //获取指定操作的行
                     row = shash_find_data(json_object(row_update), operation);
 
                     if (row)  {
+                    	//有指定操作的行，更新table
                         if (ovsdb_idl_process_update2(table, &uuid, operation,
                                                       row)) {
                             idl->change_seqno++;
                         }
+                        //完成此行更新
                         break;
                     }
                 }
 
                 /* row_update2 should contain one of the objects */
+                //i必须在ops中找到一个。
                 if (i == ARRAY_SIZE(ops)) {
                     return ovsdb_syntax_error(row_update, NULL,
                                               "<row_update2> includes unknown "
@@ -1714,6 +1778,7 @@ ovsdb_idl_parse_update__(struct ovsdb_idl *idl,
     return NULL;
 }
 
+//给定uuid,获取对应的ovsdb_idl_row
 static struct ovsdb_idl_row *
 ovsdb_idl_get_row(struct ovsdb_idl_table *table, const struct uuid *uuid)
 {
@@ -1729,6 +1794,7 @@ ovsdb_idl_get_row(struct ovsdb_idl_table *table, const struct uuid *uuid)
 
 /* Returns true if a column with mode OVSDB_IDL_MODE_RW changed, false
  * otherwise. */
+//通过update操作，更新本端的ovsdb_idl_table
 static bool
 ovsdb_idl_process_update(struct ovsdb_idl_table *table,
                          const struct uuid *uuid, const struct json *old,
@@ -1738,17 +1804,21 @@ ovsdb_idl_process_update(struct ovsdb_idl_table *table,
 
     row = ovsdb_idl_get_row(table, uuid);
     if (!new) {
+    	//new节点不存在，说明执行了delete操作
         /* Delete row. */
         if (row && !ovsdb_idl_row_is_orphan(row)) {
             /* XXX perhaps we should check the 'old' values? */
+        	//数据库已删除此行数据，这里删除掉
             ovsdb_idl_delete_row(row);
         } else {
+        	//实现有误，报错
             VLOG_WARN_RL(&semantic_rl, "cannot delete missing row "UUID_FMT" "
                          "from table %s",
                          UUID_ARGS(uuid), table->class->name);
             return false;
         }
     } else if (!old) {
+    	//new节点有，old节点没有，insert操作
         /* Insert row. */
         if (!row) {
             ovsdb_idl_insert_row(ovsdb_idl_row_create(table, uuid), new);
@@ -1761,6 +1831,7 @@ ovsdb_idl_process_update(struct ovsdb_idl_table *table,
         }
     } else {
         /* Modify row. */
+    	//只能是更新操作了
         if (row) {
             /* XXX perhaps we should check the 'old' values? */
             if (!ovsdb_idl_row_is_orphan(row)) {
@@ -1769,6 +1840,7 @@ ovsdb_idl_process_update(struct ovsdb_idl_table *table,
                 VLOG_WARN_RL(&semantic_rl, "cannot modify missing but "
                              "referenced row "UUID_FMT" in table %s",
                              UUID_ARGS(uuid), table->class->name);
+                //实现有误，但可以恢复
                 ovsdb_idl_insert_row(row, new);
             }
         } else {
@@ -1793,6 +1865,7 @@ ovsdb_idl_process_update2(struct ovsdb_idl_table *table,
 
     row = ovsdb_idl_get_row(table, uuid);
     if (!strcmp(operation, "delete")) {
+    	//删除操作（可以考虑可上面的函数合并）
         /* Delete row. */
         if (row && !ovsdb_idl_row_is_orphan(row)) {
             ovsdb_idl_delete_row(row);
@@ -1803,6 +1876,7 @@ ovsdb_idl_process_update2(struct ovsdb_idl_table *table,
             return false;
         }
     } else if (!strcmp(operation, "insert") || !strcmp(operation, "initial")) {
+    	//插入操作（可以考虑抽取函数并合并）
         /* Insert row. */
         if (!row) {
             ovsdb_idl_insert_row(ovsdb_idl_row_create(table, uuid), json_row);
@@ -1815,6 +1889,7 @@ ovsdb_idl_process_update2(struct ovsdb_idl_table *table,
             ovsdb_idl_insert_row(row, json_row);
         }
     } else if (!strcmp(operation, "modify")) {
+    	//修改操作
         /* Modify row. */
         if (row) {
             if (!ovsdb_idl_row_is_orphan(row)) {
@@ -2345,6 +2420,7 @@ ovsdb_idl_get_row_for_uuid(const struct ovsdb_idl *idl,
     return ovsdb_idl_get_row(ovsdb_idl_table_from_class(idl, tc), uuid);
 }
 
+//我们用update更新了table中的rows,现在我们返回首个rows
 static struct ovsdb_idl_row *
 next_real_row(struct ovsdb_idl_table *table, struct hmap_node *node)
 {
@@ -3890,15 +3966,18 @@ ovsdb_idl_update_has_lock(struct ovsdb_idl *idl, bool new_has_lock)
     idl->has_lock = new_has_lock;
 }
 
+//发送锁请求
 static void
 ovsdb_idl_send_lock_request__(struct ovsdb_idl *idl, const char *method,
                               struct json **idp)
 {
+	//标记未拿到锁
     ovsdb_idl_update_has_lock(idl, false);
 
     json_destroy(idl->lock_request_id);
     idl->lock_request_id = NULL;
 
+    //如果已连接，则发送method请求
     if (jsonrpc_session_is_connected(idl->session)) {
         struct json *params;
 
@@ -3908,12 +3987,14 @@ ovsdb_idl_send_lock_request__(struct ovsdb_idl *idl, const char *method,
     }
 }
 
+//请求锁
 static void
 ovsdb_idl_send_lock_request(struct ovsdb_idl *idl)
 {
     ovsdb_idl_send_lock_request__(idl, "lock", &idl->lock_request_id);
 }
 
+//请求解锁
 static void
 ovsdb_idl_send_unlock_request(struct ovsdb_idl *idl)
 {
@@ -3939,6 +4020,7 @@ ovsdb_idl_parse_lock_reply(struct ovsdb_idl *idl, const struct json *result)
 
     ovsdb_idl_update_has_lock(idl, got_lock);
     if (!got_lock) {
+    	//我们没有拿到锁，锁有竞争
         idl->is_lock_contended = true;
     }
 }

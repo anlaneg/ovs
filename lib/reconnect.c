@@ -58,6 +58,7 @@ struct reconnect {
     enum state state;
     long long int state_entered;
     int backoff;
+    //最后一次发现活跃的时间
     long long int last_activity;
     long long int last_connected;
     long long int last_disconnected;
