@@ -1379,6 +1379,7 @@ ovsdb_jsonrpc_monitor_create(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
         ovsdb_monitor_condition_bind(m->dbmon, m->condition);
     }
 
+    //对首个加入的，会将所有的表内容添加到change上，并组装成json串，发回给client
     ovsdb_monitor_get_initial(m->dbmon);
     json = ovsdb_jsonrpc_monitor_compose_update(m, true);
     json = json ? json : json_object_create();

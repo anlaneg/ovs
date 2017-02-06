@@ -1148,6 +1148,7 @@ ovsdb_monitor_get_update(
     if (cache_node) {
         json = cache_node->json ? json_clone(cache_node->json) : NULL;
     } else {
+    	//没有找到缓存
         if (version == OVSDB_MONITOR_V1) {
             json =
                ovsdb_monitor_compose_update(dbmon, initial, unflushed,
@@ -1418,8 +1419,10 @@ ovsdb_monitor_get_initial(const struct ovsdb_monitor *dbmon)
             struct ovsdb_row *row;
             struct ovsdb_monitor_changes *changes;
 
+            //先找transaction=0的变更
             changes = ovsdb_monitor_table_find_changes(mt, 0);
             if (!changes) {
+            	//加入０的变更，并将当前表的所有行都加入
                 changes = ovsdb_monitor_table_add_changes(mt, 0);
                 HMAP_FOR_EACH (row, hmap_node, &mt->table->rows) {
                     ovsdb_monitor_changes_update(NULL, row, mt, changes);
