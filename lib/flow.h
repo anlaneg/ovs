@@ -495,7 +495,9 @@ flowmap_next_index(struct flowmap_aux *aux, size_t *idx)
  * A miniflow is always dynamically allocated so that the maps are followed by
  * at least as many elements as there are 1-bits in maps. */
 struct miniflow {
+	//这个是索引（不连续）
     struct flowmap map;//1.节省内存;2.按cache line抽象，优先内存访问;3.如果mask空出来一段（特指８个字节的空），则可以节省时间
+    //后面各索引号对应的值（连续）
     /* Followed by:
      *     uint64_t values[n];
      * where 'n' is miniflow_n_values(miniflow). */

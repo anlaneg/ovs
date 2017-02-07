@@ -83,6 +83,7 @@ struct ofproto {//openflow 交换机
     char *hw_desc;              /* Hardware (NULL for default). */
     char *sw_desc;              /* Software version (NULL for default). */
     char *serial_desc;          /* Serial number (NULL for default). */
+    //描述信息（来源于数据库配置）
     char *dp_desc;              /* Datapath description (NULL for default). */
     enum ofputil_frag_handling frag_handling;
 
@@ -104,6 +105,7 @@ struct ofproto {//openflow 交换机
                                     * table lookups. */
 
     /* Rules indexed on their cookie values, in all flow tables. */
+    //按流cookie值索引的rule
     struct hindex cookies OVS_GUARDED_BY(ofproto_mutex);
     struct hmap learned_cookies OVS_GUARDED_BY(ofproto_mutex);
 
@@ -116,15 +118,18 @@ struct ofproto {//openflow 交换机
      * pointer in the array un-used, and index directly with the OpenFlow
      * meter_id. */
     struct ofputil_meter_features meter_features;
+    //按meter id进行索引的meter表
     struct meter **meters; /* 'meter_features.max_meter' + 1 pointers. */
 
     /* OpenFlow connections. */
+    //管理openflow的连接
     struct connmgr *connmgr;
 
     int min_mtu;                    /* Current MTU of non-internal ports. */
 
     /* Groups. */
-    struct cmap groups;               /* Contains "struct ofgroup"s. */ //保存所有组，保存ofgroup结构体
+    //保存所有组，保存ofgroup结构体（按组id索引）
+    struct cmap groups;               /* Contains "struct ofgroup"s. */
     uint32_t n_groups[4] OVS_GUARDED; /* # of existing groups of each type. */
     struct ofputil_group_features ogf;
 
@@ -148,10 +153,12 @@ struct ofport *ofproto_get_port(const struct ofproto *, ofp_port_t ofp_port);
  *
  * With few exceptions, ofproto implementations may look at these fields but
  * should not modify them. */
-struct ofport {//openflow交换机上对应的port
+//openflow交换机上对应的port
+struct ofport {
     struct hmap_node hmap_node; /* In struct ofproto's "ports" hmap. */
     struct ofproto *ofproto;    /* The ofproto that contains this port. */ //属于哪个交换机
     struct netdev *netdev;
+    //物理接口
     struct ofputil_phy_port pp;
     ofp_port_t ofp_port;        /* OpenFlow port number. */
     uint64_t change_seq;
@@ -354,11 +361,13 @@ enum OVS_PACKED_ENUM rule_state {
 //流表规则
 struct rule {
     /* Where this rule resides in an OpenFlow switch.
-     *
      * These are immutable once the rule is constructed, hence 'const'. */
-    struct ofproto *const ofproto; /* The ofproto that contains this rule. */ //哪个openvswitch交换机包含了这条规则
+	//哪个openvswitch交换机包含了这条规则
+    struct ofproto *const ofproto; /* The ofproto that contains this rule. */
+    //classifier上挂这个，用于指出rule的mask,value,以及优先级
     const struct cls_rule cr;      /* In owning ofproto's classifier. */
-    const uint8_t table_id;        /* Index in ofproto's 'tables' array. */ //表编号
+    //属于哪个表
+    const uint8_t table_id;        /* Index in ofproto's 'tables' array. */
 
     enum rule_state state;//标记规则的处理状态（未插入，插入，已删除）
 
@@ -399,6 +408,7 @@ struct rule {
      * 'eviction_group' is this rule's eviction group, or NULL if it is not in
      * any eviction group.  When 'eviction_group' is nonnull, 'evg_node' is in
      * the ->eviction_group->rules hmap. */
+    //规则所属的驱逐组
     struct eviction_group *eviction_group OVS_GUARDED_BY(ofproto_mutex);
     struct heap_node evg_node OVS_GUARDED_BY(ofproto_mutex);
 
@@ -407,6 +417,7 @@ struct rule {
     const struct rule_actions * const actions;//规则的动作
 
     /* In owning meter's 'rules' list.  An empty list if there is no meter. */
+    //用于串入meter表的节点
     struct ovs_list meter_list_node OVS_GUARDED_BY(ofproto_mutex);
 
     /* Flow monitors (e.g. for NXST_FLOW_MONITOR, related to struct ofmonitor).
@@ -457,11 +468,14 @@ struct rule_actions {
      *
      * 'has_learn_with_delete' is true if 'ofpacts' contains an OFPACT_LEARN
      * action whose flags include NX_LEARN_F_DELETE_LEARNED. */
+	//是否含有meter
     bool has_meter;
     bool has_learn_with_delete;
+    //标记是否有组
     bool has_groups;
 
     /* Actions. */
+    //ofpacts长度
     uint32_t ofpacts_len;         /* Size of 'ofpacts', in bytes. */
     struct ofpact ofpacts[];      /* Sequence of "struct ofpacts". */
 };
@@ -569,6 +583,7 @@ struct ofgroup {
 
     const struct ofputil_group_props props;
 
+    //指出用此group做为action的规则
     struct rule_collection rules OVS_GUARDED;   /* Referring rules. */
 };
 

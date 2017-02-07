@@ -4824,6 +4824,8 @@ ofputil_put_switch_features_port(const struct ofputil_phy_port *pp,
 {
     const struct ofp_header *oh = b->data;
 
+    //在openflow 1.3的版本之后，删除了在功能响应消息中包含port信息的规定
+    //故这里如此检查
     if (oh->version < OFP13_VERSION) {
         /* Try adding a port description to the message, but drop it again if
          * the buffer overflows.  (This possibility for overflow is why

@@ -28,6 +28,7 @@ struct object_collection {
     void *stub[5];              /* Preallocated array to avoid malloc(). */
 };
 
+//初始化，采用stub做为起始大小
 void object_collection_init(struct object_collection *);
 void object_collection_add(struct object_collection *, void *);
 void object_collection_remove(struct object_collection *, void *);
@@ -39,6 +40,7 @@ void object_collection_destroy(struct object_collection *);
 /* Macro for declaring type-safe pointer collections.  'TYPE' is the pointer
  * type which are collected, 'NAME' is the name for the type to be used in the
  * function names. */
+//见注释
 
 #define DECL_OBJECT_COLLECTION(TYPE, NAME)                              \
 struct NAME##_collection {                                              \

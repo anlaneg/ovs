@@ -49,6 +49,7 @@ struct sset;
  * connections.  There is no inherent reason for this, but it reflects the
  * common case.
  */
+//上面的注释说明了，primary和service的区别
 enum ofconn_type {
     OFCONN_PRIMARY,             /* An ordinary OpenFlow controller. */
     OFCONN_SERVICE              /* A service connection, e.g. "ovs-ofctl". */

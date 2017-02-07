@@ -4623,6 +4623,7 @@ nxt_resume(struct ofproto *ofproto_,
 
 /* NetFlow. */
 
+//设置netflow
 static int
 set_netflow(struct ofproto *ofproto_,
             const struct netflow_options *netflow_options)
@@ -4630,12 +4631,14 @@ set_netflow(struct ofproto *ofproto_,
     struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofproto_);
 
     if (netflow_options) {
+    	//如果有netflow配置，如下示
         if (!ofproto->netflow) {
             ofproto->netflow = netflow_create();
             ofproto->backer->need_revalidate = REV_RECONFIGURE;
         }
         return netflow_set_options(ofproto->netflow, netflow_options);
     } else if (ofproto->netflow) {
+    	//没有netflow配置，则清空
         ofproto->backer->need_revalidate = REV_RECONFIGURE;
         netflow_unref(ofproto->netflow);
         ofproto->netflow = NULL;

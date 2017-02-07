@@ -536,6 +536,7 @@ classifier_replace(struct classifier *cls, const struct cls_rule *rule,
     new = cls_match_alloc(rule, version, conjs, n_conjs);
     ovsrcu_set(&CONST_CAST(struct cls_rule *, rule)->cls_match, new);//指明规则从属于cls_match
 
+    //查找此rule应从属于哪个子表
     subtable = find_subtable(cls, rule->match.mask);
     if (!subtable) {
         subtable = insert_subtable(cls, rule->match.mask);//创建一张新的子表插入
@@ -545,9 +546,11 @@ classifier_replace(struct classifier *cls, const struct cls_rule *rule,
     basis = 0;
     mask_offset = 0;
     for (i = 0; i < subtable->n_indices; i++) {
+    	//当前用了subtable->n_indices级索引，故计算这么多hash
         ihash[i] = minimatch_hash_range(&rule->match, subtable->index_maps[i],
                                         &mask_offset, &basis);
     }
+    //计算hash
     hash = minimatch_hash_range(&rule->match, subtable->index_maps[i],
                                 &mask_offset, &basis);//最后一个index_maps的hash
 
@@ -1171,6 +1174,7 @@ classifier_lookup(const struct classifier *cls, ovs_version_t version,
  * matching criteria as 'target', and that is visible in 'version'.
  * Only one such rule may ever exist.  Returns a null pointer if 'cls' doesn't
  * contain an exact match. */
+//检查target指定的规则是否存在
 const struct cls_rule *
 classifier_find_rule_exactly(const struct classifier *cls,
                              const struct cls_rule *target,
@@ -1179,6 +1183,7 @@ classifier_find_rule_exactly(const struct classifier *cls,
     const struct cls_match *head, *rule;
     const struct cls_subtable *subtable;
 
+    //找此规则对应的mask
     subtable = find_subtable(cls, target->match.mask);
     if (!subtable) {
         return NULL;
@@ -1187,9 +1192,12 @@ classifier_find_rule_exactly(const struct classifier *cls,
     head = find_equal(subtable, target->match.flow,
                       miniflow_hash_in_minimask(target->match.flow,
                                                 target->match.mask, 0));
+    //没有发现与target相等的miniflow
     if (!head) {
         return NULL;
     }
+
+    //发现对应的rule，如果与target优先级相等，且可见，则可以返回
     CLS_MATCH_FOR_EACH (rule, head) {
         if (rule->priority < target->priority) {
             break; /* Not found. */
@@ -1236,17 +1244,20 @@ classifier_rule_overlaps(const struct classifier *cls,
     struct cls_subtable *subtable;
 
     /* Iterate subtables in the descending max priority order. */
+    //遍历subtable{过滤掉优先级均小于targer->priority的stubtable}
     PVECTOR_FOR_EACH_PRIORITY (subtable, target->priority, 2,
                                sizeof(struct cls_subtable), &cls->subtables) {
         struct {
-            struct minimask mask;
-            uint64_t storage[FLOW_U64S];
+            struct minimask mask;//索引
+            uint64_t storage[FLOW_U64S];//各字段对应的取值与target的与运算
         } m;
         const struct cls_rule *rule;
 
+        //计算当前子表与target的mask的交集值的交集
         minimask_combine(&m.mask, target->match.mask, &subtable->mask,
                          m.storage);
 
+        //检查是否会冲突(冲突的前提是两个flow按位与不相等时，对应的key恰好为０）
         RCULIST_FOR_EACH (rule, node, &subtable->rules_list) {
             if (rule->priority == target->priority
                 && miniflow_equal_in_minimask(target->match.flow,

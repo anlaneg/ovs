@@ -173,6 +173,7 @@ float_up(struct heap *heap, size_t i)
 
     for (; i > 1; i = parent) {
         parent = heap_parent__(i);
+        //优先级越大，越靠近堆顶
         if (heap->array[parent]->priority >= heap->array[i]->priority) {
             break;
         }

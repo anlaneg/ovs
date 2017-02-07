@@ -527,6 +527,7 @@ enum ofpraw ofpraw_stats_request_to_reply(enum ofpraw, uint8_t version);
  * each followed by a period. */
 enum ofptype {
     /* Immutable messages. */
+	//hello消息
     OFPTYPE_HELLO,               /* OFPRAW_OFPT_HELLO. */
     OFPTYPE_ERROR,               /* OFPRAW_OFPT_ERROR. */
     OFPTYPE_ECHO_REQUEST,        /* OFPRAW_OFPT_ECHO_REQUEST. */

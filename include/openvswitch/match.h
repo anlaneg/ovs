@@ -190,11 +190,12 @@ void match_print(const struct match *);
  *     'mask' have the same part of "struct flow" at the same offset into
  *     'values', which makes minimatch_matches_flow() faster.
  */
+//报文中的信息记为P,则 P & mask == flow时即为命中
 struct minimatch {
     union {
         struct {
-            struct miniflow *flow;
-            struct minimask *mask;
+            struct miniflow *flow;//对应值(miniflow)
+            struct minimask *mask;//mask值
         };
         struct miniflow *flows[2];
     };

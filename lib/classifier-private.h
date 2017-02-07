@@ -41,7 +41,8 @@ struct cls_subtable {
      * following data structures. */
 
     /* These fields are accessed by readers who care about wildcarding. */
-    const uint8_t n_indices;                   /* How many indices to use. */ //指出index_maps数据的有效长度
+    //指出采用几级索引，即index_maps的最大下标
+    const uint8_t n_indices;                   /* How many indices to use. */
     const struct flowmap index_maps[CLS_MAX_INDICES + 1]; /* Stage maps. */ //将mask分成不同的段，每个段存在一个下标里，下标从0开始，用于计算hash
     unsigned int trie_plen[CLS_MAX_TRIES];  /* Trie prefix length in 'mask'
                                              * (runtime configurable). */ //由于有多棵trie树，这个时trie树可匹配的长度
@@ -51,6 +52,7 @@ struct cls_subtable {
     rcu_trie_ptr ports_trie;                /* NULL if none. */
 
     /* These fields are accessed by all readers. */
+    //指出在某mask情况下报文应具有的特征
     struct cmap rules;                      /* Contains 'cls_match'es. */ //规则链，对应的是struct cls_match类型
     const struct minimask mask;             /* Wildcards for fields. */ //子表对应的mask
     /* 'mask' must be the last field. */

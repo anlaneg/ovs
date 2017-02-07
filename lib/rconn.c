@@ -630,6 +630,7 @@ rconn_run(struct rconn *rc)
     if (rc->vconn) {
         int error;
 
+        //握手或者设置活跃及维护
         vconn_run(rc->vconn);
 
         error = vconn_get_status(rc->vconn);

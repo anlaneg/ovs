@@ -116,6 +116,7 @@ static void oftable_configure_eviction(struct oftable *,
 struct eviction_group {
     struct hmap_node id_node;   /* In oftable's "eviction_groups_by_id". */
     struct heap_node size_node; /* In oftable's "eviction_groups_by_size". */
+    //此驱逐组所属的所有规则（可以认为按过期时间先后进行排序）
     struct heap rules;          /* Contains "struct rule"s. */
 };
 
@@ -796,6 +797,7 @@ ofproto_set_snoops(struct ofproto *ofproto, const struct sset *snoops)
     return connmgr_set_snoops(ofproto->connmgr, snoops);
 }
 
+//配置netflow
 int
 ofproto_set_netflow(struct ofproto *ofproto,
                     const struct netflow_options *nf_options)
@@ -811,6 +813,7 @@ ofproto_set_netflow(struct ofproto *ofproto,
     }
 }
 
+//配置sflow
 int
 ofproto_set_sflow(struct ofproto *ofproto,
                   const struct ofproto_sflow_options *oso)
@@ -1823,6 +1826,7 @@ ofproto_run(struct ofproto *p)
         p->change_seq = new_seq;
     }
 
+    //处理openflow的增删改
     connmgr_run(p->connmgr, handle_openflow);
 
     return error;
@@ -3398,6 +3402,7 @@ handle_set_config(struct ofconn *ofconn, const struct ofp_header *oh)
  * 0.
  *
  * The log message mentions 'msg_type'. */
+//检查当前controller是否为salve controller
 static enum ofperr
 reject_slave_controller(struct ofconn *ofconn)
 {
@@ -3535,6 +3540,12 @@ ofproto_packet_out_finish(struct ofproto *ofproto,
     ofproto->ofproto_class->packet_execute(ofproto, opo);
 }
 
+/**
+ * 从openflow控制器向openflow交换机发送的消息，是包含数据包发送命令的消息
+ * 若交换机的缓存中已存在数据包，而controller发出“packet-out"命令时，此消息指定了
+ * 表示相应数据包的buffer-id
+ * 使用packet-out消息还可以将controller上创建好的数据包发送给交换机，此时buffer_id置为-1
+ */
 static enum ofperr
 handle_packet_out(struct ofconn *ofconn, const struct ofp_header *oh)
     OVS_EXCLUDED(ofproto_mutex)
@@ -4775,6 +4786,7 @@ add_flow_start(struct ofproto *ofproto, struct ofproto_flow_mod *ofm)
     enum ofperr error;
 
     /* Must check actions while holding ofproto_mutex to avoid a race. */
+    //合法性检查
     error = ofproto_check_ofpacts(ofproto, actions->ofpacts,
                                   actions->ofpacts_len);
     if (error) {
@@ -4788,6 +4800,7 @@ add_flow_start(struct ofproto *ofproto, struct ofproto_flow_mod *ofm)
                                                                ofm->version));
     if (!old_rule) {
         /* Check for overlap, if requested. */
+    	//如果要求检查overlap就检查
         if (new_rule->flags & OFPUTIL_FF_CHECK_OVERLAP
             && classifier_rule_overlaps(&table->cls, &new_rule->cr,
                                         ofm->version)) {
@@ -4796,9 +4809,11 @@ add_flow_start(struct ofproto *ofproto, struct ofproto_flow_mod *ofm)
 
         /* If necessary, evict an existing rule to clear out space. */
         if (table->n_flows >= table->max_flows) {
+        	//如果不容驱逐，就会返回表为满
             if (!choose_rule_to_evict(table, &old_rule)) {
                 return OFPERR_OFPFMFC_TABLE_FULL;
             }
+            //移除掉选出来的规则
             eviction_group_remove_rule(old_rule);
             /* Marks 'old_rule' as an evicted rule rather than replaced rule.
              */
@@ -5112,6 +5127,7 @@ replace_rule_start(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
 
     /* 'old_rule' may be either an evicted rule or replaced rule. */
     if (old_rule) {
+    	//旧规则
         /* Copy values from old rule for modify semantics. */
         if (old_rule->removed_reason != OFPRR_EVICTION) {
             bool change_cookie = (ofm->modify_cookie
@@ -5139,13 +5155,14 @@ replace_rule_start(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
         cls_rule_make_invisible_in_version(&old_rule->cr, ofm->version);
 
         /* Remove the old rule from data structures. */
-        ofproto_rule_remove__(ofproto, old_rule);
+        ofproto_rule_remove__(ofproto, old_rule);//规则移除
     } else {
         table->n_flows++;
     }
     /* Insert flow to ofproto data structures, so that later flow_mods may
      * relate to it.  This is reversible, in case later errors require this to
      * be reverted. */
+    //完成规则插入
     ofproto_rule_insert__(ofproto, new_rule);
     /* Make the new rule visible for classifier lookups only from the next
      * version. */
@@ -5742,6 +5759,7 @@ handle_flow_mod(struct ofconn *ofconn, const struct ofp_header *oh)
                                     u16_to_ofp(ofproto->max_ports),
                                     ofproto->n_tables);
     if (!error) {
+    	//解析完成，实现流修改
         struct openflow_mod_requester req = { ofconn, oh };
         error = handle_flow_mod__(ofproto, &fm, &req);
     }
@@ -6182,10 +6200,12 @@ get_provider_meter_id(const struct ofproto *ofproto, uint32_t of_meter_id)
 
 /* Finds the meter invoked by 'rule''s actions and adds 'rule' to the meter's
  * list of rules. */
+//插入meter表
 static void
 meter_insert_rule(struct rule *rule)
 {
     const struct rule_actions *a = rule_get_actions(rule);
+    //取出存在action中的meter_id
     uint32_t meter_id = ofpacts_get_meter(a->ofpacts, a->ofpacts_len);
     struct meter *meter = rule->ofproto->meters[meter_id];
 
@@ -7848,16 +7868,24 @@ handle_openflow__(struct ofconn *ofconn, const struct ofpbuf *msg)
 
     switch (type) {
         /* OpenFlow requests. */
+    	//依据rfc规定，tcp协议的keep alive报文发送间隔，默认需要大于２小时
+        //故需要提供echo方式进行通断检测
     case OFPTYPE_ECHO_REQUEST:
+    	//echo 处理
         return handle_echo_request(ofconn, oh);
 
     case OFPTYPE_FEATURES_REQUEST:
+    	//当通过hello报文建立起通道后，会执行controller与ovs间的握手
+    	//握手信息由controller向ovs发送features_request,由ovs通过
+    	//features_replay进行应答
         return handle_features_request(ofconn, oh);
 
     case OFPTYPE_GET_CONFIG_REQUEST:
+    	//关于分片，无效ttl,最大字节数的配置信息请求
         return handle_get_config_request(ofconn, oh);
 
     case OFPTYPE_SET_CONFIG:
+    	//对分片，无效ttl,去向controller的最大字节数的配置
         return handle_set_config(ofconn, oh);
 
     case OFPTYPE_PACKET_OUT:
@@ -7867,6 +7895,7 @@ handle_openflow__(struct ofconn *ofconn, const struct ofpbuf *msg)
         return handle_port_mod(ofconn, oh);
 
     case OFPTYPE_FLOW_MOD:
+    	//流修改消息
         return handle_flow_mod(ofconn, oh);
 
     case OFPTYPE_GROUP_MOD:
@@ -8086,6 +8115,7 @@ choose_rule_to_evict(struct oftable *table, struct rule **rulep)
     struct eviction_group *evg;
 
     *rulep = NULL;
+    //不容许，驱逐，返回false
     if (!table->eviction) {
         return false;
     }
@@ -8102,6 +8132,7 @@ choose_rule_to_evict(struct oftable *table, struct rule **rulep)
      *
      *   - The outer loop can exit only if table's 'max_flows' is all filled up
      *     by unevictable rules. */
+    //规则越多的组，被换出的概率越大
     HEAP_FOR_EACH (evg, size_node, &table->eviction_groups_by_size) {
         struct rule *rule;
 
@@ -8132,6 +8163,7 @@ static void
 eviction_group_resized(struct oftable *table, struct eviction_group *evg)
     OVS_REQUIRES(ofproto_mutex)
 {
+	//调整env组在堆中的位置
     heap_change(&table->eviction_groups_by_size, &evg->size_node,
                 eviction_group_priority(heap_count(&evg->rules)));
 }
@@ -8295,6 +8327,7 @@ rule_eviction_priority(struct ofproto *ofproto, struct rule *rule)
  * own).
  *
  * The caller must ensure that 'rule' is not already in an eviction group. */
+//将规则加入驱逐组
 static void
 eviction_group_add_rule(struct rule *rule)
     OVS_REQUIRES(ofproto_mutex)
@@ -8437,8 +8470,9 @@ oftable_configure_eviction(struct oftable *table, unsigned int eviction,
 
 /* Inserts 'rule' from the ofproto data structures BEFORE caller has inserted
  * it to the classifier. */
+//规则插入
 static void
-ofproto_rule_insert__(struct ofproto *ofproto, struct rule *rule)//规则插入
+ofproto_rule_insert__(struct ofproto *ofproto, struct rule *rule)
     OVS_REQUIRES(ofproto_mutex)
 {
     const struct rule_actions *actions = rule_get_actions(rule);
@@ -8457,8 +8491,10 @@ ofproto_rule_insert__(struct ofproto *ofproto, struct rule *rule)//规则插入
     if (actions->has_meter) {
         meter_insert_rule(rule);
     }
+    //action有组
     if (actions->has_groups) {
         const struct ofpact_group *a;
+        //遍历action中包含的组
         OFPACT_FOR_EACH_TYPE_FLATTENED (a, GROUP, actions->ofpacts,
                                         actions->ofpacts_len) {
             struct ofgroup *group;
@@ -8470,6 +8506,7 @@ ofproto_rule_insert__(struct ofproto *ofproto, struct rule *rule)//规则插入
         }
     }
 
+    //标记为插入完成
     rule->state = RULE_INSERTED;
 }
 

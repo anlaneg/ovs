@@ -48,6 +48,7 @@ struct collectors {
  * added.  Thus, even on a failure return, it is possible that '*collectorsp'
  * is nonnull, and even on a successful return, it is possible that
  * '*collectorsp' is null, if 'target's is an empty sset. */
+//创建udp报文对应的sockets
 int
 collectors_create(const struct sset *targets, uint16_t default_port,
                   struct collectors **collectorsp)

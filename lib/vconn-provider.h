@@ -34,7 +34,9 @@ struct vconn {
 
     /* OpenFlow versions. */
     uint32_t allowed_versions;  /* Bitmap of versions we will accept. */
+    //对端版本号
     uint32_t peer_versions;     /* Peer's bitmap of versions it will accept. */
+    //最终协商版本
     enum ofp_version version;   /* Negotiated version (or 0). */
     bool recv_any_version;      /* True to receive a message of any version. */
 

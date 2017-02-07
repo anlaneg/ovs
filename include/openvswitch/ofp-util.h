@@ -546,13 +546,16 @@ bool ofputil_frag_handling_from_string(const char *,
 /* Abstract struct ofp_switch_config. */
 struct ofputil_switch_config {
     /* Fragment handling. */
+	//分片处理方式
     enum ofputil_frag_handling frag;
 
+    //对无效ttl的处理
     /* 0: Do not send packet to controller when decrementing invalid IP TTL.
      * 1: Do send packet to controller when decrementing invalid IP TTL.
      * -1: Unspecified (only OpenFlow 1.1 and 1.2 support this setting. */
     int invalid_ttl_to_controller;
 
+    //miss时可发送给controller的报文最大字节数
     /* Maximum bytes of packet to send to controller on miss. */
     uint16_t miss_send_len;
 };
@@ -596,16 +599,23 @@ enum ofputil_port_state {
 
 /* Abstract ofp10_phy_port or ofp11_port. */
 struct ofputil_phy_port {
+	//物理接口号
     ofp_port_t port_no;
+    //物理接口使用的以太网地址
     struct eth_addr hw_addr;
+    //接口名称
     char name[OFP_MAX_PORT_NAME_LEN];
     enum ofputil_port_config config;
     enum ofputil_port_state state;
 
     /* NETDEV_F_* feature bitmasks. */
+    //当前生效的功能
     enum netdev_features curr;       /* Current features. */
+    //接口公布的功能
     enum netdev_features advertised; /* Features advertised by the port. */
+    //接口支持的功能
     enum netdev_features supported;  /* Features supported by the port. */
+    //对端接口所公布的功能
     enum netdev_features peer;       /* Features advertised by peer. */
 
     /* Speed. */
@@ -642,7 +652,9 @@ enum ofputil_capabilities {
 /* Abstract ofp_switch_features. */
 struct ofputil_switch_features {
     uint64_t datapath_id;       /* Datapath unique ID. */
+    //交换机最多一次可缓存多少个包
     uint32_t n_buffers;         /* Max packets buffered at once. */
+    //当前支持的流表数目
     uint8_t n_tables;           /* Number of tables supported by datapath. */
     uint8_t auxiliary_id;       /* Identify auxiliary connections */
     enum ofputil_capabilities capabilities;

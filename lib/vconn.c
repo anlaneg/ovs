@@ -60,8 +60,8 @@ enum vconn_state {
 };
 
 static const struct vconn_class *vconn_classes[] = {
-    &tcp_vconn_class,
-    &unix_vconn_class,
+    &tcp_vconn_class,//tcp
+    &unix_vconn_class,//unix
 #ifdef HAVE_OPENSSL
     &ssl_vconn_class,
 #endif
@@ -176,6 +176,7 @@ vconn_usage(bool active, bool passive, bool bootstrap OVS_UNUSED)
  * named "TYPE" into '*classp' and returns 0.  Returns EAFNOSUPPORT and stores
  * a null pointer into '*classp' if 'name' is in the wrong form or if no such
  * class exists. */
+//通过vconn进行匹配(client端）
 static int
 vconn_lookup_class(const char *name, const struct vconn_class **classp)
 {
@@ -272,6 +273,7 @@ vconn_run(struct vconn *vconn)
         vconn_connect(vconn);
     }
 
+    //对链上挂的数据进行收，发
     if (vconn->vclass->run) {
         (vconn->vclass->run)(vconn);
     }
@@ -391,9 +393,11 @@ vconn_set_recv_any_version(struct vconn *vconn)
     vconn->recv_any_version = true;
 }
 
+//向controller发起连接
 static void
 vcs_connecting(struct vconn *vconn)
 {
+	//见vconn-stream.c
     int retval = (vconn->vclass->connect)(vconn);
     ovs_assert(retval != EINPROGRESS);
     if (!retval) {
@@ -404,6 +408,7 @@ vcs_connecting(struct vconn *vconn)
     }
 }
 
+//向controller发送hello报文
 static void
 vcs_send_hello(struct vconn *vconn)
 {
@@ -474,12 +479,14 @@ vcs_recv_hello(struct vconn *vconn)
             peer_s = version_bitmap_to_string(vconn->peer_versions);
 
             common_versions = vconn->peer_versions & vconn->allowed_versions;
+            //无公共版本
             if (!common_versions) {
                 vconn->version = leftmost_1bit_idx(vconn->peer_versions);
                 VLOG_WARN_RL(&bad_ofmsg_rl,
                              "%s: version negotiation failed (we support "
                              "%s, peer supports %s)",
                              vconn->name, local_s, peer_s);
+                //协商不成功，进入error状态
                 vconn->state = VCS_SEND_ERROR;
             } else {
                 vconn->version = leftmost_1bit_idx(common_versions);
@@ -495,6 +502,7 @@ vcs_recv_hello(struct vconn *vconn)
             ofpbuf_delete(b);
             return;
         } else {
+        	//收到格式不正确的消息
             char *s = ofp_to_string(b->data, b->size, 1);
             VLOG_WARN_RL(&bad_ofmsg_rl,
                          "%s: received message while expecting hello: %s",
@@ -541,6 +549,7 @@ vcs_send_error(struct vconn *vconn)
  * complete, returns 0 if the connection was successful or a positive errno
  * value if it failed.  If the connection is still in progress, returns
  * EAGAIN. */
+//实现与controller间的连接建立及版本协商
 int
 vconn_connect(struct vconn *vconn)
 {
@@ -550,14 +559,17 @@ vconn_connect(struct vconn *vconn)
         last_state = vconn->state;
         switch (vconn->state) {
         case VCS_CONNECTING:
+        	//发起连接connect
             vcs_connecting(vconn);
             break;
 
         case VCS_SEND_HELLO:
+        	//发送hello报文
             vcs_send_hello(vconn);
             break;
 
         case VCS_RECV_HELLO:
+        	//收到hello,获得协商好的版本号
             vcs_recv_hello(vconn);
             break;
 
@@ -565,6 +577,7 @@ vconn_connect(struct vconn *vconn)
             return 0;
 
         case VCS_SEND_ERROR:
+        	//协商不成功处理
             vcs_send_error(vconn);
             break;
 
@@ -1308,6 +1321,7 @@ vconn_send_wait(struct vconn *vconn)
  * named "TYPE" into '*classp' and returns 0.  Returns EAFNOSUPPORT and stores
  * a null pointer into '*classp' if 'name' is in the wrong form or if no such
  * class exists. */
+//服务端匹配（这个函数可以与vconn_lookup_class相互整合）
 static int
 pvconn_lookup_class(const char *name, const struct pvconn_class **classp)
 {

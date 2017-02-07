@@ -358,6 +358,7 @@ struct cls_rule {
     //指明规则从属于那个cls_match
     OVSRCU_TYPE(struct cls_match *) cls_match;  /* NULL if not in a
                                                  * classifier. */
+    //匹配项
     const struct minimatch match; /* Matching rule. */
 };
 

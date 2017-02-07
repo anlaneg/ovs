@@ -370,6 +370,7 @@ parse_bracketed_token(char **pp)
     }
 }
 
+//填充ss,分辨协议，解析ip地址及port
 static bool
 parse_sockaddr_components(struct sockaddr_storage *ss,
                           const char *host_s,
@@ -381,25 +382,30 @@ parse_sockaddr_components(struct sockaddr_storage *ss,
 
     if (port_s && port_s[0]) {
         if (!str_to_int(port_s, 10, &port) || port < 0 || port > 65535) {
+        	//配置的port是错误的
             VLOG_ERR("%s: bad port number \"%s\"", s, port_s);
             goto exit;
         }
     } else {
+    	//没有配置port，采用default_port
         port = default_port;
     }
 
     memset(ss, 0, sizeof *ss);
     if (strchr(host_s, ':')) {
+    	//host_s中有':'说明是ipv6地址
         struct sockaddr_in6 *sin6
             = ALIGNED_CAST(struct sockaddr_in6 *, ss);
 
         sin6->sin6_family = AF_INET6;
         sin6->sin6_port = htons(port);
+        //解析ipv6地址，并填充
         if (!ipv6_parse(host_s, &sin6->sin6_addr)) {
             VLOG_ERR("%s: bad IPv6 address \"%s\"", s, host_s);
             goto exit;
         }
     } else {
+    	//ipv4地址
         sin->sin_family = AF_INET;
         sin->sin_port = htons(port);
         if (!ip_parse(host_s, &sin->sin_addr.s_addr)) {
@@ -422,6 +428,7 @@ exit:
  *
  * On success, returns true and stores the parsed remote address into '*ss'.
  * On failure, logs an error, stores zeros into '*ss', and returns false. */
+//解析target表示的internet地址{格式见上面的注释，说的很明白}
 bool
 inet_parse_active(const char *target_, uint16_t default_port,
                   struct sockaddr_storage *ss)
@@ -433,15 +440,19 @@ inet_parse_active(const char *target_, uint16_t default_port,
     bool ok;
 
     p = target;
-    host = parse_bracketed_token(&p);
-    port = parse_bracketed_token(&p);
+    host = parse_bracketed_token(&p);//提取host
+    port = parse_bracketed_token(&p);//提取port
     if (!host) {
+    	//没有给出host
         VLOG_ERR("%s: host must be specified", target_);
         ok = false;
     } else if (!port && !default_port) {
+    	//没有给出port且没有默认port
         VLOG_ERR("%s: port must be specified", target_);
         ok = false;
     } else {
+    	//解析出来host了，port，default_port两个至少有一个是存在的
+    	//如果解析成功返回true
         ok = parse_sockaddr_components(ss, host, port, default_port, target_);
     }
     if (!ok) {

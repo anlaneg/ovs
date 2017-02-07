@@ -2567,7 +2567,7 @@ miniflow_equal(const struct miniflow *a, const struct miniflow *b)
         return !memcmp(ap, bp, miniflow_n_values(a) * sizeof *ap);
     } else {
         size_t idx;
-
+        //map不同，由于没给出的字段默认为０，故需要考虑对端是否给出的是０
         FLOWMAP_FOR_EACH_INDEX (idx, flowmap_or(a->map, b->map)) {
             if ((flowmap_is_set(&a->map, idx) ? *ap++ : 0)
                 != (flowmap_is_set(&b->map, idx) ? *bp++ : 0)) {

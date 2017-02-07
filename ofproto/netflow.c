@@ -360,6 +360,7 @@ netflow_set_options(struct netflow *nf,
     nf->add_id_to_iface = nf_options->add_id_to_iface;
 
     collectors_destroy(nf->collectors);
+    //开启多个socket
     collectors_create(&nf_options->collectors, 0, &nf->collectors);
 
     old_timeout = nf->active_timeout;

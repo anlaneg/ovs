@@ -200,7 +200,9 @@ struct connmgr {
     char *local_port_name;
 
     /* OpenFlow connections. */
+    //记录controller,存放struct ofconn类型（主动连接）
     struct hmap controllers;     /* All OFCONN_PRIMARY controllers. */
+    //和所有controller之间的连接
     struct ovs_list all_conns;   /* All controllers.  All modifications are
                                     protected by ofproto_mutex, so that any
                                     traversals from other threads can be made
@@ -210,17 +212,23 @@ struct connmgr {
     bool master_election_id_defined;
 
     /* OpenFlow listeners. */
+    //可监听的controller
     struct hmap services;       /* Contains "struct ofservice"s. */
+    //snooping数组，以下其大小
     struct pvconn **snoops;
     size_t n_snoops;
 
     /* Fail open. */
     struct fail_open *fail_open;
+    //连系不上controller时的处理方式
     enum ofproto_fail_mode fail_mode;
 
     /* In-band control. */
+    //带内控制
     struct in_band *in_band;
+    //带内控制数组
     struct sockaddr_in *extra_in_band_remotes;
+    //多少个remotes
     size_t n_extra_remotes;
     int in_band_queue;
 
@@ -236,6 +244,7 @@ static void ofmonitor_wait(struct connmgr *);
  * a name for the ofproto suitable for using in log messages.
  * 'local_port_name' is the name of the local port (OFPP_LOCAL) within
  * 'ofproto'. */
+//创建openflow交换机对应的openflow连接的管理器。传入的参数：交换机，交换机名称，本地端口名称
 struct connmgr *
 connmgr_create(struct ofproto *ofproto,
                const char *name, const char *local_port_name)
@@ -359,6 +368,8 @@ connmgr_run(struct connmgr *mgr,
         }
     }
 
+    //遍历每个连接，从每个连接处收取消息，并进行处理
+    //处理与每个controller间的收报文
     LIST_FOR_EACH_SAFE (ofconn, next_ofconn, node, &mgr->all_conns) {
         ofconn_run(ofconn, handle_openflow);
     }
@@ -370,6 +381,7 @@ connmgr_run(struct connmgr *mgr,
         fail_open_run(mgr->fail_open);
     }
 
+    //处理service间收报文
     HMAP_FOR_EACH (ofservice, node, &mgr->services) {
         struct vconn *vconn;
         int retval;
@@ -576,6 +588,7 @@ connmgr_free_controller_info(struct shash *info)
 
 /* Changes 'mgr''s set of controllers to the 'n_controllers' controllers in
  * 'controllers'. */
+//设置controller
 void
 connmgr_set_controllers(struct connmgr *mgr,
                         const struct ofproto_controller *controllers,
@@ -595,12 +608,15 @@ connmgr_set_controllers(struct connmgr *mgr,
     /* Create newly configured controllers and services.
      * Create a name to ofproto_controller mapping in 'new_controllers'. */
     shash_init(&new_controllers);
+    //先处理新建
     for (i = 0; i < n_controllers; i++) {
         const struct ofproto_controller *c = &controllers[i];
 
+        //通过target的前缀，匹配其对应的class,如果可以命中返回0
         if (!vconn_verify_name(c->target)) {
             bool add = false;
             ofconn = find_controller_by_target(mgr, c->target);
+            //需要添加ofconn
             if (!ofconn) {
                 VLOG_INFO("%s: added primary controller \"%s\"",
                           mgr->name, c->target);
@@ -616,6 +632,7 @@ connmgr_set_controllers(struct connmgr *mgr,
                 add_controller(mgr, c->target, c->dscp, allowed_versions);
             }
         } else if (!pvconn_verify_name(c->target)) {
+        	//采用c->target与vconnect进行匹配，按服务端匹配
             bool add = false;
             ofservice = ofservice_lookup(mgr, c->target);
             if (!ofservice) {
@@ -640,6 +657,8 @@ connmgr_set_controllers(struct connmgr *mgr,
         shash_add_once(&new_controllers, c->target, &controllers[i]);
     }
 
+    //处理删除
+
     /* Delete controllers that are no longer configured.
      * Update configuration of all now-existing controllers. */
     HMAP_FOR_EACH_SAFE (ofconn, next_ofconn, hmap_node, &mgr->controllers) {
@@ -652,6 +671,7 @@ connmgr_set_controllers(struct connmgr *mgr,
                       mgr->name, target);
             ofconn_destroy(ofconn);
         } else {
+        	//更新
             ofconn_reconfigure(ofconn, c);
         }
     }
@@ -668,6 +688,7 @@ connmgr_set_controllers(struct connmgr *mgr,
                       mgr->name, target);
             ofservice_destroy(mgr, ofservice);
         } else {
+        	//更新
             ofservice_reconfigure(ofservice, c);
         }
     }
@@ -676,8 +697,11 @@ connmgr_set_controllers(struct connmgr *mgr,
 
     ovs_mutex_unlock(&ofproto_mutex);
 
+    //这个更新会将原有的remotes删除掉
     update_in_band_remotes(mgr);
     update_fail_open(mgr);
+
+    //之前有，现在没有　或者　之前没有，现在有了，刷新flows(将原有的flow删除掉）
     if (had_controllers != connmgr_has_controllers(mgr)) {
         ofproto_flush_flows(mgr->ofproto);
     }
@@ -755,6 +779,7 @@ find_controller_by_target(struct connmgr *mgr, const char *target)
     return NULL;
 }
 
+//更新in_band的remotes
 static void
 update_in_band_remotes(struct connmgr *mgr)
 {
@@ -769,6 +794,7 @@ update_in_band_remotes(struct connmgr *mgr)
     n_addrs = 0;
 
     /* Add all the remotes. */
+    //先将controller表中的target解析后加入addrs
     HMAP_FOR_EACH (ofconn, hmap_node, &mgr->controllers) {
         const char *target = rconn_get_target(ofconn->rconn);
         union {
@@ -782,11 +808,13 @@ update_in_band_remotes(struct connmgr *mgr)
             addrs[n_addrs++] = sa.in;
         }
     }
+    //再将当前生效的remotes加入addrs
     for (i = 0; i < mgr->n_extra_remotes; i++) {
         addrs[n_addrs++] = mgr->extra_in_band_remotes[i];
     }
 
     /* Create or update or destroy in-band. */
+    //创建或者更新in-band,并设置remotes信息
     if (n_addrs) {
         if (!mgr->in_band) {
             in_band_create(mgr->ofproto, mgr->local_port_name, &mgr->in_band);
@@ -1411,10 +1439,12 @@ ofconn_run(struct ofconn *ofconn,
         do_send_packet_ins(ofconn, &txq);
     }
 
+    //建立及维护与controller间的连接
     rconn_run(ofconn->rconn);
 
     /* Limit the number of iterations to avoid starving other tasks. */
     for (i = 0; i < 50 && ofconn_may_recv(ofconn); i++) {
+    	//从controller连接收取消息
         struct ofpbuf *of_msg = rconn_recv(ofconn->rconn);
         if (!of_msg) {
             break;
@@ -1424,6 +1454,7 @@ ofconn_run(struct ofconn *ofconn,
             fail_open_maybe_recover(mgr->fail_open);
         }
 
+        //处理openflow消息
         handle_openflow(ofconn, of_msg);
         ofpbuf_delete(of_msg);
     }
@@ -1873,6 +1904,7 @@ connmgr_set_extra_in_band_remotes(struct connmgr *mgr,
         return;
     }
 
+    //删除掉以前的，并更新
     free(mgr->extra_in_band_remotes);
     mgr->n_extra_remotes = n;
     mgr->extra_in_band_remotes = xmemdup(extras, n * sizeof *extras);
@@ -1892,6 +1924,7 @@ connmgr_set_in_band_queue(struct connmgr *mgr, int queue_id)
     }
 }
 
+//检查地址或端口配置是否发生了变化,变化返回true,否则返回false
 static bool
 any_extras_changed(const struct connmgr *mgr,
                    const struct sockaddr_in *extras, size_t n)

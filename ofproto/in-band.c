@@ -67,6 +67,7 @@ enum {
 
 /* Track one remote IP and next hop information. */
 struct in_band_remote {
+	//完端的ip地址及port
     struct sockaddr_in remote_addr;  /* IP address, in network byte order. */
     struct eth_addr remote_mac;      /* Next-hop MAC, all-zeros if unknown. */
     struct eth_addr last_remote_mac; /* Previous nonzero next-hop MAC. */
@@ -88,6 +89,7 @@ struct in_band_rule {
 };
 
 struct in_band {
+	//哪个交换机
     struct ofproto *ofproto;
     int queue_id;
 
@@ -99,6 +101,7 @@ struct in_band {
     /* Local information. */
     time_t next_local_refresh;       /* Refresh timer. */
     struct eth_addr local_mac;       /* Current MAC. */
+    //交换机的local接口
     struct netdev *local_netdev;     /* Local port's network device. */
 
     /* Flow tracking. */
@@ -417,6 +420,7 @@ in_band_wait(struct in_band *in_band)
     poll_timer_wait_until(wakeup * 1000);
 }
 
+//初始化in_band结构体
 int
 in_band_create(struct ofproto *ofproto, const char *local_name,
                struct in_band **in_bandp)
@@ -464,6 +468,7 @@ in_band_destroy(struct in_band *ib)
     }
 }
 
+//检查in_band内记录的address是否有变更
 static bool
 any_addresses_changed(struct in_band *ib,
                       const struct sockaddr_in *addresses, size_t n)
@@ -487,17 +492,20 @@ any_addresses_changed(struct in_band *ib,
     return false;
 }
 
+//设置远端的ip地址及端口
 void
 in_band_set_remotes(struct in_band *ib,
                     const struct sockaddr_in *addresses, size_t n)
 {
     size_t i;
 
+    //无变更，不处理
     if (!any_addresses_changed(ib, addresses, n)) {
         return;
     }
 
     /* Clear old remotes. */
+    //销毁所有remotes
     for (i = 0; i < ib->n_remotes; i++) {
         netdev_close(ib->remotes[i].remote_netdev);
     }

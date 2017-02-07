@@ -525,6 +525,10 @@ bridge_exit(void)
  * (Thus, only managers connected in-band and with non-loopback addresses
  * are collected.)
  */
+//在计算机领域，带外管理（Out-of-band management）是指使用独立管理通道进行设备维护。
+//它允许系统管理员远程监控和管理服务器和其他网络设备，无论这些设备是否处于开机状态。
+//相对的，带内管理是指使用常规数据通道（例如以太网）来管理设备
+//解析ovs_cfg中的mangers
 static void
 collect_in_band_managers(const struct ovsrec_open_vswitch *ovs_cfg,
                          struct sockaddr_in **managersp, size_t *n_managersp)
@@ -537,6 +541,7 @@ collect_in_band_managers(const struct ovsrec_open_vswitch *ovs_cfg,
     /* Collect all of the potential targets from the "targets" columns of the
      * rows pointed to by "manager_options", excluding any that are
      * out-of-band. */
+    //收集除'out-of-band'以外的所有target
     sset_init(&targets);
     for (i = 0; i < ovs_cfg->n_manager_options; i++) {
         struct ovsrec_manager *m = ovs_cfg->manager_options[i];
@@ -560,6 +565,7 @@ collect_in_band_managers(const struct ovsrec_open_vswitch *ovs_cfg,
             } sa;
 
             /* Ignore loopback. */
+            //解析target,并将解析结果填充进managers中（忽略掉ip地址是127.0.0.1的manager)
             if (stream_parse_target_with_default_port(target, OVSDB_PORT,
                                                       &sa.ss)
                 && sa.ss.ss_family == AF_INET
@@ -700,13 +706,17 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
         }
         bridge_configure_mirrors(br);
         bridge_configure_forward_bpdu(br);
+        //mac表属性配置
         bridge_configure_mac_table(br);
         bridge_configure_mcast_snooping(br);
+        //带外管理配置，controller配置
         bridge_configure_remotes(br, managers, n_managers);
         bridge_configure_netflow(br);
         bridge_configure_sflow(br, &sflow_bridge_number);
         bridge_configure_ipfix(br);
+        //生成树协议配置
         bridge_configure_spanning_tree(br);
+        //表属性配置
         bridge_configure_tables(br);
         bridge_configure_dp_desc(br);
         bridge_configure_aa(br);
@@ -1090,6 +1100,7 @@ bridge_configure_datapath_id(struct bridge *br)
 
 /* Returns a bitmap of "enum ofputil_protocol"s that are allowed for use with
  * 'br'. */
+//检查桥支持的版本
 static uint32_t
 bridge_get_allowed_versions(struct bridge *br)
 {
@@ -1102,6 +1113,7 @@ bridge_get_allowed_versions(struct bridge *br)
 }
 
 /* Set NetFlow configuration on 'br'. */
+//配置netflow
 static void
 bridge_configure_netflow(struct bridge *br)
 {
@@ -1156,6 +1168,7 @@ bridge_configure_netflow(struct bridge *br)
     sset_add_array(&opts.collectors, cfg->targets, cfg->n_targets);
 
     /* Configure. */
+    //配置netflow
     if (ofproto_set_netflow(br->ofproto, &opts)) {
         VLOG_ERR("bridge %s: problem setting netflow collectors", br->name);
     }
@@ -3354,6 +3367,7 @@ bridge_unixctl_reconnect(struct unixctl_conn *conn, int argc,
     unixctl_command_reply(conn, NULL);
 }
 
+//取配置中的controller信息
 static size_t
 bridge_get_controllers(const struct bridge *br,
                        struct ovsrec_controller ***controllersp)
@@ -3364,6 +3378,7 @@ bridge_get_controllers(const struct bridge *br,
     controllers = br->cfg->controller;
     n_controllers = br->cfg->n_controller;
 
+    //无controllers的情况（配置说明）
     if (n_controllers == 1 && !strcmp(controllers[0]->target, "none")) {
         controllers = NULL;
         n_controllers = 0;
@@ -3512,6 +3527,7 @@ bridge_ofproto_controller_from_ovsrec(const struct ovsrec_controller *c,
 
 /* Configures the IP stack for 'br''s local interface properly according to the
  * configuration in 'c'.  */
+//为local接口配置ip地址及添加默认路由，up起来local接口
 static void
 bridge_configure_local_iface_netdev(struct bridge *br,
                                     struct ovsrec_controller *c)
@@ -3523,6 +3539,8 @@ bridge_configure_local_iface_netdev(struct bridge *br,
     struct in_addr ip;
 
     /* If there's no local interface or no IP address, give up. */
+    //local_iface不存在，或者controller的本地ip不存在或者controller的本地ip格式有误
+    //则不处理
     local_iface = iface_from_ofp_port(br, OFPP_LOCAL);
     if (!local_iface || !c->local_ip || !ip_parse(c->local_ip, &ip.s_addr)) {
         return;
@@ -3530,20 +3548,24 @@ bridge_configure_local_iface_netdev(struct bridge *br,
 
     /* Bring up the local interface. */
     netdev = local_iface->netdev;
+    //置local_iface为up状态
     netdev_turn_flags_on(netdev, NETDEV_UP, NULL);
 
     /* Configure the IP address and netmask. */
+    //掩码解析
     if (!c->local_netmask
         || !ip_parse(c->local_netmask, &mask.s_addr)
         || !mask.s_addr) {
         mask.s_addr = guess_netmask(ip.s_addr);
     }
+    //配置ip地址及掩码
     if (!netdev_set_in4(netdev, ip, mask)) {
         VLOG_INFO("bridge %s: configured IP address "IP_FMT", netmask "IP_FMT,
                   br->name, IP_ARGS(ip.s_addr), IP_ARGS(mask.s_addr));
     }
 
     /* Configure the default gateway. */
+    //添加默认路由
     if (c->local_gateway
         && ip_parse(c->local_gateway, &gateway.s_addr)
         && gateway.s_addr) {
@@ -3584,6 +3606,7 @@ equal_pathnames(const char *a, const char *b, size_t b_stoplen)
     }
 }
 
+//配置远程mangers
 static void
 bridge_configure_remotes(struct bridge *br,
                          const struct sockaddr_in *managers, size_t n_managers)
@@ -3600,6 +3623,7 @@ bridge_configure_remotes(struct bridge *br,
     size_t i;
 
     /* Check if we should disable in-band control on this bridge. */
+    //获取disable-in-band
     disable_in_band = smap_get_bool(&br->cfg->other_config, "disable-in-band",
                                     false);
 
@@ -3609,16 +3633,19 @@ bridge_configure_remotes(struct bridge *br,
                                            "in-band-queue", -1));
 
     if (disable_in_band) {
+    	//禁用了带内管理，故直接传入NULL
         ofproto_set_extra_in_band_remotes(br->ofproto, NULL, 0);
     } else {
         ofproto_set_extra_in_band_remotes(br->ofproto, managers, n_managers);
     }
 
+    //获取controller配置
     n_controllers = bridge_get_controllers(br, &controllers);
 
     ocs = xmalloc((n_controllers + 1) * sizeof *ocs);
     n_ocs = 0;
 
+    //controller结构体初始化
     bridge_ofproto_controller_for_mgmt(br, &ocs[n_ocs++]);
     for (i = 0; i < n_controllers; i++) {
         struct ovsrec_controller *c = controllers[i];
@@ -3629,6 +3656,7 @@ bridge_configure_remotes(struct bridge *br,
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
             char *whitelist;
 
+            //当前c->target等于punix:
             if (!strncmp(c->target, "unix:", 5)) {
                 /* Connect to a listening socket */
                 whitelist = xasprintf("unix:%s/", ovs_rundir());
@@ -3673,6 +3701,7 @@ bridge_configure_remotes(struct bridge *br,
         }
 
         bridge_configure_local_iface_netdev(br, c);
+        //填充ocs
         bridge_ofproto_controller_from_ovsrec(c, &ocs[n_ocs]);
         if (disable_in_band) {
             ocs[n_ocs].band = OFPROTO_OUT_OF_BAND;
@@ -3725,6 +3754,7 @@ bridge_configure_tables(struct bridge *br)
         s.n_prefix_fields = 0;
         memset(s.prefix_fields, ~0, sizeof(s.prefix_fields));
 
+        //br->cfg->key_flow_tables中对当前表i进行了配置
         if (j < br->cfg->n_flow_tables && i == br->cfg->key_flow_tables[j]) {
             struct ovsrec_flow_table *cfg = br->cfg->value_flow_tables[j++];
 
@@ -3809,6 +3839,7 @@ bridge_configure_tables(struct bridge *br)
             ds_destroy(&ds);
         }
 
+        //表属性配置
         ofproto_configure_table(br->ofproto, i, &s);
 
         free(s.groups);

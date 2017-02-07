@@ -715,9 +715,10 @@ ofpraw_put_stats_reply(const struct ofp_header *request, struct ofpbuf *buf)
     ofpraw_put__(raw, request->version, request->xid, 0, buf);
 }
 
+//按不同的raw,version填充不同的消息头
 static void
 ofpraw_put__(enum ofpraw raw, uint8_t version, ovs_be32 xid,
-             size_t extra_tailroom, struct ofpbuf *buf)//按不同的raw,version填充不同的消息头
+             size_t extra_tailroom, struct ofpbuf *buf)
 {
     const struct raw_info *info = raw_info_get(raw);
     const struct raw_instance *instance = raw_instance_get(info, version);

@@ -78,6 +78,8 @@ vconn_stream_open(const char *name, uint32_t allowed_versions,
     struct stream *stream;
     int error;
 
+    //IANA在2013-07-18为openflow分配了6653端口，但在之前openflow还使用过6633端口
+    //这里我们向controller发起连接
     error = stream_open_with_default_port(name, OFP_PORT, &stream, dscp);
     if (!error) {
         error = stream_connect(stream);
