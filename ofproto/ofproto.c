@@ -7428,6 +7428,7 @@ ofproto_flow_mod_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
     return error;
 }
 
+//处理flow操作
 static enum ofperr
 ofproto_flow_mod_start(struct ofproto *ofproto, struct ofproto_flow_mod *ofm)
     OVS_REQUIRES(ofproto_mutex)
@@ -7908,9 +7909,11 @@ handle_openflow__(struct ofconn *ofconn, const struct ofpbuf *msg)
         return handle_meter_mod(ofconn, oh);
 
     case OFPTYPE_BARRIER_REQUEST:
+    	//barrier请求
         return handle_barrier_request(ofconn, oh);
 
     case OFPTYPE_ROLE_REQUEST:
+    	//barrier响应
         return handle_role_request(ofconn, oh);
 
         /* OpenFlow replies. */
