@@ -86,7 +86,7 @@ cls_conjunction_set_alloc(struct cls_match *match,
 //申请并构造cls_match
 static struct cls_match *
 cls_match_alloc(const struct cls_rule *rule, ovs_version_t version,
-                const struct cls_conjunction coxznj[], size_t n)
+                const struct cls_conjunction conj[], size_t n)
 {
     size_t count = miniflow_n_values(rule->match.flow);
 

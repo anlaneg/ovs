@@ -5048,7 +5048,8 @@ dpif_dummy_register(enum dummy_level level)
 /* A set of rules that all have the same fields wildcarded. */
 struct dpcls_subtable {
     /* The fields are only used by writers. */
-    struct cmap_node cmap_node OVS_GUARDED; /* Within dpcls 'subtables_map'. */　//此节点用于挂载subtables_map表，用于加快规则的增删改查
+    //此节点用于挂载subtables_map表，用于加快规则的增删改查
+    struct cmap_node cmap_node OVS_GUARDED; /* Within dpcls 'subtables_map'. */
 
     /* These fields are accessed by readers. */
     struct cmap rules;           /* Contains "struct dpcls_rule"s. */ //规则挂在这个hash表上

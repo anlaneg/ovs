@@ -131,7 +131,7 @@ struct bridge {
     struct hmap iface_by_name;  /* "struct iface"s indexed by name. */ //通过名称查找iface
 
     /* Port mirroring. */
-    struct hmap mirrors;        /* "struct mirror" indexed by UUID. */　//mirrors信息
+    struct hmap mirrors;        /* "struct mirror" indexed by UUID. */ //mirrors信息
 
     /* Auto Attach */
     struct hmap mappings;       /* "struct" indexed by UUID */

@@ -95,7 +95,7 @@ static struct fat_rwlock rwlock;
 
 /* The three possibilities (see above) for vport ip_src matches. */
 enum ip_src_type {
-    IP_SRC_CFG,             /* ip_src must equal configured address. */　//src需要用配置的值
+    IP_SRC_CFG,             /* ip_src must equal configured address. */ //src需要用配置的值
     IP_SRC_ANY,             /* Any ip_src is acceptable. */ //任意的src都是可接受的
     IP_SRC_FLOW             /* ip_src is handled in flow table. */ //src受flow表控制
 };

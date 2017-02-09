@@ -150,7 +150,7 @@ struct udpif {
      * threads to wait on 'pause_barrier' at the beginning of the next
      * revalidation round. */
     bool pause;                        /* Set by leader on 'pause_latch. */
-    struct latch pause_latch;          /* Set to force revalidators pause. */　//用于暂停revalidators
+    struct latch pause_latch;          /* Set to force revalidators pause. */ //用于暂停revalidators
     struct ovs_barrier pause_barrier;  /* Barrier used to pause all */
                                        /* revalidators by main thread. */
 
