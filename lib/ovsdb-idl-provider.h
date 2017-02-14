@@ -93,6 +93,7 @@ struct ovsdb_idl_column {
     void (*unparse)(struct ovsdb_idl_row *);
 };
 
+//idl = Interface Definition Language
 struct ovsdb_idl_table_class {
     char *name;//表名称
     bool is_root;

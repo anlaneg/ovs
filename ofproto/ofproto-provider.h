@@ -70,7 +70,7 @@ extern struct ovs_mutex ofproto_mutex;
  * should not modify them. */
 struct ofproto {//openflow 交换机
     struct hmap_node hmap_node; /* In global 'all_ofprotos' hmap. */ //持接点，用于挂接在all_ofprotos上
-    const struct ofproto_class *ofproto_class;//交换机类（当前默认为ofproto_dpif_class类型）
+    const struct ofproto_class *ofproto_class;//交换机类
     char *type;                 /* Datapath type. */ //datapath类型，例如system,netdev
     char *name;                 /* Datapath name. */ //datapath名称
 

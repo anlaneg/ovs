@@ -484,7 +484,8 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     *ofprotop = NULL;
 
     datapath_type = ofproto_normalize_type(datapath_type);
-    class = ofproto_class_find__(datapath_type);//目前仅可以返回ofproto_dpif_class（目前仅支持system,netdev)
+    //目前仅可以返回ofproto_dpif_class（目前仅支持system,netdev)
+    class = ofproto_class_find__(datapath_type);
     if (!class) {
         VLOG_WARN("could not create datapath %s of unknown type %s",
                   datapath_name, datapath_type);
