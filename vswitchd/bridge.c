@@ -3254,8 +3254,10 @@ qos_unixctl_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
 }
 
 /* Bridge reconfiguration functions. */
+//桥的创建,利用数据库中的类型ovsrec_bridge生成vswitchd进程的bridge
+//数据库提供的是全集，到bridge就可以区分出来是新境还是删除。
 static void
-bridge_create(const struct ovsrec_bridge *br_cfg)//桥的创建
+bridge_create(const struct ovsrec_bridge *br_cfg)
 {
     struct bridge *br;
 

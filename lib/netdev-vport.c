@@ -120,14 +120,16 @@ netdev_vport_class_get_dpif_port(const struct netdev_class *class)
     return is_vport_class(class) ? vport_class_cast(class)->dpif_port : NULL;
 }
 
+//返回dpif_port名称
 const char *
-netdev_vport_get_dpif_port(const struct netdev *netdev,//返回dpif_port名称
+netdev_vport_get_dpif_port(const struct netdev *netdev,
                            char namebuf[], size_t bufsize)
 {
     const struct netdev_class *class = netdev_get_class(netdev);
     const char *dpif_port = netdev_vport_class_get_dpif_port(class);
 
-    if (!dpif_port) {//没有dpif_port，返回设备名称
+    if (!dpif_port) {
+    	//非vport_class没有dpif_port，返回设备名称
         return netdev_get_name(netdev);
     }
 

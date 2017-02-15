@@ -287,7 +287,8 @@ static void meter_insert_rule(struct rule *);
 static void ofproto_unixctl_init(void);
 
 /* All registered ofproto classes, in probe order. */
-static const struct ofproto_class **ofproto_classes;//记录所有注册的openflow交换机class(当前仅有一个ofproto_dpif_class）
+//记录所有注册的openflow交换机class(当前仅有一个ofproto_dpif_class）
+static const struct ofproto_class **ofproto_classes;
 static size_t n_ofproto_classes;//记录ofproto_classes数组的大小
 static size_t allocated_ofproto_classes;
 
@@ -327,14 +328,16 @@ ofproto_init(const struct shash *iface_hints)
     struct shash_node *node;
     size_t i;
 
-    ofproto_class_register(&ofproto_dpif_class);//注册ofproto dpif的class
+    //注册ofproto dpif的class
+    ofproto_class_register(&ofproto_dpif_class);
 
     /* Make a local copy, since we don't own 'iface_hints' elements. */
     //由于iface_hints出去后，会被销毁，故做一份copy
     SHASH_FOR_EACH(node, iface_hints) {
         const struct iface_hint *orig_hint = node->data;
         struct iface_hint *new_hint = xmalloc(sizeof *new_hint);
-        const char *br_type = ofproto_normalize_type(orig_hint->br_type);//默认是system类型
+        //默认是system类型
+        const char *br_type = ofproto_normalize_type(orig_hint->br_type);
 
         new_hint->br_name = xstrdup(orig_hint->br_name);
         new_hint->br_type = xstrdup(br_type);
@@ -381,8 +384,9 @@ ofproto_class_find__(const char *type)
 
 /* Registers a new ofproto class.  After successful registration, new ofprotos
  * of that type can be created using ofproto_create(). */
+//openflow交换机class注册
 int
-ofproto_class_register(const struct ofproto_class *new_class)//openflow交换机class注册
+ofproto_class_register(const struct ofproto_class *new_class)
 {
     size_t i;
 
@@ -405,6 +409,7 @@ ofproto_class_register(const struct ofproto_class *new_class)//openflow交换机
  * registered and not currently be in use by any ofprotos.  After
  * unregistration new datapaths of that type cannot be opened using
  * ofproto_create(). */
+//解注册ofproto_class
 int
 ofproto_class_unregister(const struct ofproto_class *class)
 {
@@ -462,6 +467,7 @@ ofproto_enumerate_names(const char *type, struct sset *names)
     return class ? class->enumerate_names(type, names) : EAFNOSUPPORT;
 }
 
+//增加版本号，设置表版本号
 static void
 ofproto_bump_tables_version(struct ofproto *ofproto)
 {
@@ -484,7 +490,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     *ofprotop = NULL;
 
     datapath_type = ofproto_normalize_type(datapath_type);
-    //目前仅可以返回ofproto_dpif_class（目前仅支持system,netdev)
+    //目前仅可以返回ofproto_class（目前仅支持system,netdev)
     class = ofproto_class_find__(datapath_type);
     if (!class) {
         VLOG_WARN("could not create datapath %s of unknown type %s",
@@ -1724,6 +1730,7 @@ ofproto_type_run(const char *datapath_type)
     return error;
 }
 
+//调用datapath_type对应的class的type_wait
 void
 ofproto_type_wait(const char *datapath_type)
 {
@@ -1737,6 +1744,7 @@ ofproto_type_wait(const char *datapath_type)
     }
 }
 
+//调用指定ofproto类型对应的run函数
 int
 ofproto_run(struct ofproto *p)
 {
@@ -1946,6 +1954,7 @@ ofproto_port_dump_start(struct ofproto_port_dump *dump,
  * The ofproto owns the data stored in 'port'.  It will remain valid until at
  * least the next time 'dump' is passed to ofproto_port_dump_next() or
  * ofproto_port_dump_done(). */
+//获取下一个port
 bool
 ofproto_port_dump_next(struct ofproto_port_dump *dump,
                        struct ofproto_port *port)
@@ -1968,6 +1977,7 @@ ofproto_port_dump_next(struct ofproto_port_dump *dump,
 /* Completes port table dump operation 'dump', which must have been created
  * with ofproto_port_dump_start().  Returns 0 if the dump operation was
  * error-free, otherwise a positive errno value describing the problem. */
+//完成port dump
 int
 ofproto_port_dump_done(struct ofproto_port_dump *dump)
 {
@@ -2050,6 +2060,7 @@ ofproto_port_add(struct ofproto *ofproto, struct netdev *netdev,
  *
  * The caller owns the data in 'ofproto_port' and must free it with
  * ofproto_port_destroy() when it is no longer needed. */
+//给一个名称，返回一个port
 int
 ofproto_port_query_by_name(const struct ofproto *ofproto, const char *devname,
                            struct ofproto_port *port)
@@ -2065,6 +2076,7 @@ ofproto_port_query_by_name(const struct ofproto *ofproto, const char *devname,
 
 /* Deletes port number 'ofp_port' from the datapath for 'ofproto'.
  * Returns 0 if successful, otherwise a positive errno. */
+//删除一个port
 int
 ofproto_port_del(struct ofproto *ofproto, ofp_port_t ofp_port)
 {
@@ -2094,6 +2106,7 @@ ofproto_port_del(struct ofproto *ofproto, ofp_port_t ofp_port)
 /* Refreshes datapath configuration of port number 'ofp_port' in 'ofproto'.
  *
  * This function has no effect if 'ofproto' does not have a port 'ofp_port'. */
+//配置port
 void
 ofproto_port_set_config(struct ofproto *ofproto, ofp_port_t ofp_port,
                         const struct smap *cfg)
@@ -2430,7 +2443,8 @@ ofport_install(struct ofproto *p,
     if (error) {
         goto error;
     }
-    connmgr_send_port_status(p->connmgr, NULL, pp, OFPPR_ADD);//告知controller,我们新加入了一个port
+    //告知controller,我们新加入了一个port
+    connmgr_send_port_status(p->connmgr, NULL, pp, OFPPR_ADD);
     return 0;
 
 error:
@@ -2548,8 +2562,9 @@ ofport_destroy(struct ofport *port, bool del)
      }
 }
 
+//指定交换机，及端口号获取ofport
 struct ofport *
-ofproto_get_port(const struct ofproto *ofproto, ofp_port_t ofp_port)//指定交换机，及端口号获取ofport
+ofproto_get_port(const struct ofproto *ofproto, ofp_port_t ofp_port)
 {
     struct ofport *port;
 
@@ -2709,6 +2724,7 @@ init_ports(struct ofproto *p)
                           ofp_to_u16(iface_hint->ofp_port));
             }
 
+            //创建port对应的netdev
             netdev = ofport_open(p, &ofproto_port, &pp);
             if (netdev) {
                 ofport_install(p, netdev, &pp);//创建对应port
@@ -8359,8 +8375,9 @@ eviction_group_add_rule(struct rule *rule)
 /* oftables. */
 
 /* Initializes 'table'. */
+//流表的初始化
 static void
-oftable_init(struct oftable *table)//流表的初始化
+oftable_init(struct oftable *table)
 {
     memset(table, 0, sizeof *table);
     classifier_init(&table->cls, flow_segment_u64s);//创建表对应的分类器
@@ -8400,12 +8417,14 @@ oftable_destroy(struct oftable *table)//流表销毁
  *
  * This only affects the name exposed for a table exposed through the OpenFlow
  * OFPST_TABLE (as printed by "ovs-ofctl dump-tables"). */
+//设置流表的名称
 static void
-oftable_set_name(struct oftable *table, const char *name)//设置流表的名称
+oftable_set_name(struct oftable *table, const char *name)
 {
     if (name && name[0]) {
         int len = strnlen(name, OFP_MAX_TABLE_NAME_LEN);
-        if (!table->name || strncmp(name, table->name, len)) {//无名称或者和原名称不相同
+        if (!table->name || strncmp(name, table->name, len)) {
+        	//无名称或者和原名称不相同
             free(table->name);
             table->name = xmemdup0(name, len);
         }

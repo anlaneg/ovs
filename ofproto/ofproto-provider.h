@@ -70,7 +70,7 @@ extern struct ovs_mutex ofproto_mutex;
  * should not modify them. */
 struct ofproto {//openflow 交换机
     struct hmap_node hmap_node; /* In global 'all_ofprotos' hmap. */ //持接点，用于挂接在all_ofprotos上
-    const struct ofproto_class *ofproto_class;//交换机类
+    const struct ofproto_class *ofproto_class;//交换机类，用于提供操作
     char *type;                 /* Datapath type. */ //datapath类型，例如system,netdev
     char *name;                 /* Datapath name. */ //datapath名称
 
@@ -155,13 +155,17 @@ struct ofport *ofproto_get_port(const struct ofproto *, ofp_port_t ofp_port);
  * should not modify them. */
 //openflow交换机上对应的port
 struct ofport {
+	//挂接节点，将存入ofproto.ports中
     struct hmap_node hmap_node; /* In struct ofproto's "ports" hmap. */
-    struct ofproto *ofproto;    /* The ofproto that contains this port. */ //属于哪个交换机
+    //属于哪个交换机
+    struct ofproto *ofproto;    /* The ofproto that contains this port. */
+    //对应哪个netdev
     struct netdev *netdev;
     //物理接口
     struct ofputil_phy_port pp;
     ofp_port_t ofp_port;        /* OpenFlow port number. */
     uint64_t change_seq;
+    //创建的时间
     long long int created;      /* Time created, in msec. */
     int mtu;
 };

@@ -264,6 +264,7 @@ struct ofproto_dpif {
 
     /* Ports. */
     struct sset ports;             /* Set of standard port names. */
+    //vport类型将被加入，则port_add函数
     struct sset ghost_ports;       /* Ports with no datapath port. */
     struct sset port_poll_set;     /* Queued names for port_poll() reply. */
     int port_poll_errno;           /* Last errno for port_poll() reply. */

@@ -3397,6 +3397,7 @@ port_query_by_name(const struct ofproto *ofproto_, const char *devname,
     return error;
 }
 
+//向ofproto中添加netdev
 static int
 port_add(struct ofproto *ofproto_, struct netdev *netdev)
 {
@@ -3405,7 +3406,8 @@ port_add(struct ofproto *ofproto_, struct netdev *netdev)
     char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
     const char *dp_port_name;
 
-    if (netdev_vport_is_patch(netdev)) {//如果是path口，加入ghost_ports即可
+    if (netdev_vport_is_patch(netdev)) {
+    	//如果是patch口，加入ghost_ports即可
         sset_add(&ofproto->ghost_ports, netdev_get_name(netdev));
         return 0;
     }
