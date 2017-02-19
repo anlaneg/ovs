@@ -639,8 +639,10 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      * We have to do all the deletions before we can do any additions, because
      * the ports to be added might require resources that will be freed up by
      * deletions (they might especially overlap in name). */
+    //删除掉bridge中已不存在，但ofproto还有的。
     bridge_delete_ofprotos();
-    HMAP_FOR_EACH (br, node, &all_bridges) {//检查所有交换机，如果它已有对应的ofproto，则检查它的port
+    HMAP_FOR_EACH (br, node, &all_bridges) {
+    	//检查所有交换机，如果它已有对应的ofproto，则检查它的port
         if (br->ofproto) {
             bridge_delete_or_reconfigure_ports(br);
         }
