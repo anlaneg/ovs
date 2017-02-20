@@ -41,6 +41,7 @@ typedef enum {
     memory_order_seq_cst
 } memory_order;
 
+//如果对象的sizeof小于sizeof(void*),则它是无锁的原子变量。
 #define IS_LOCKLESS_ATOMIC(OBJECT) (sizeof(OBJECT) <= sizeof(void *))
 
 #define ATOMIC_VAR_INIT(VALUE) VALUE
@@ -50,6 +51,7 @@ static inline void
 atomic_thread_fence(memory_order order)
 {
     if (order != memory_order_relaxed) {
+    	//内置函数，实现全内存屏障
         __sync_synchronize();
     }
 }
@@ -76,6 +78,7 @@ atomic_signal_fence(memory_order order)
 
 #define atomic_store(DST, SRC) \
     atomic_store_explicit(DST, SRC, memory_order_seq_cst)
+/*设置dst为src*/
 #define atomic_store_explicit(DST, SRC, ORDER)          \
     ({                                                  \
         typeof(DST) dst__ = (DST);                      \
@@ -92,6 +95,7 @@ atomic_signal_fence(memory_order order)
     })
 #define atomic_read(SRC, DST) \
     atomic_read_explicit(SRC, DST, memory_order_seq_cst)
+/*填充dst为src*/
 #define atomic_read_explicit(SRC, DST, ORDER)           \
     ({                                                  \
         typeof(DST) dst__ = (DST);                      \

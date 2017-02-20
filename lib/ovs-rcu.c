@@ -52,13 +52,16 @@ struct ovsrcu_perthread {
 
 static struct seq *global_seqno;
 
+//存储ovsrcu-thread的pthread-key
 static pthread_key_t perthread_key;
+//存储所有ovsrcu-thread
 static struct ovs_list ovsrcu_threads;
+//保护ovsrcu-threads锁
 static struct ovs_mutex ovsrcu_threads_mutex;
 
 //全局等待执行的cbsets，（在这个之前先在pthread中的cbset中保存）
 static struct guarded_list flushed_cbsets;
-//用于代表cbset是否有变更
+//用于代表flushed_cbsets是否有变更
 static struct seq *flushed_cbsets_seq;
 
 static void ovsrcu_init_module(void);
@@ -68,6 +71,7 @@ static void ovsrcu_unregister__(struct ovsrcu_perthread *);
 static bool ovsrcu_call_postponed(void);
 static void *ovsrcu_postpone_thread(void *arg OVS_UNUSED);
 
+//构造当前线程对应的ovsrcu-perthread
 static struct ovsrcu_perthread *
 ovsrcu_perthread_get(void)
 {
@@ -100,6 +104,7 @@ ovsrcu_perthread_get(void)
  *
  * Quiescent states don't stack or nest, so this always ends a quiescent state
  * even if ovsrcu_quiesce_start() was called multiple times in a row. */
+//获取perthread
 void
 ovsrcu_quiesce_end(void)
 {
@@ -147,6 +152,8 @@ ovsrcu_quiesce_start(void)
  *
  * Provides a full memory barrier via seq_change().
  */
+//更新当前perthread的序号，如果有cbset存在，则flush它
+//更新global_seqno
 void
 ovsrcu_quiesce(void)
 {
@@ -162,6 +169,8 @@ ovsrcu_quiesce(void)
     ovsrcu_quiesced();
 }
 
+//尝试加锁，并更新perthread->seqno,将perthread->cbset刷入到flushed_cbsets
+//更新global_seqno
 int
 ovsrcu_try_quiesce(void)
 {
@@ -173,7 +182,7 @@ ovsrcu_try_quiesce(void)
     if (!seq_try_lock()) {
         perthread->seqno = seq_read_protected(global_seqno);
         if (perthread->cbset) {
-        	//如果有，就刷
+        	//如果有回调集，就将其刷入到flushed_cbsets
             ovsrcu_flush_cbset__(perthread, true);
         }
         seq_change_protected(global_seqno);
@@ -184,6 +193,7 @@ ovsrcu_try_quiesce(void)
     return ret;
 }
 
+//检查ovsrcu_pthread是否为NULL
 bool
 ovsrcu_is_quiescent(void)
 {
@@ -191,6 +201,7 @@ ovsrcu_is_quiescent(void)
     return pthread_getspecific(perthread_key) == NULL;
 }
 
+//同步代码，等待所有seq满足，将其刷入
 void
 ovsrcu_synchronize(void)
 {
@@ -203,7 +214,7 @@ ovsrcu_synchronize(void)
     }
 
     target_seqno = seq_read(global_seqno);
-    ovsrcu_quiesce_start();
+    ovsrcu_quiesce_start();//将当前线程刷入，并销毁当前线程的记录
     start = time_msec();
 
     for (;;) {
@@ -264,6 +275,7 @@ ovsrcu_synchronize(void)
  * This function is more conveniently called through the ovsrcu_postpone()
  * macro, which provides a type-safe way to allow 'function''s parameter to be
  * any pointer type. */
+//向里面添加cbset
 void
 ovsrcu_postpone__(void (*function)(void *aux), void *aux)
 {
@@ -315,7 +327,7 @@ ovsrcu_call_postponed(void)
 
     return true;
 }
-
+//监控flushed_cbsets_seq,如果其发生变化，则执行相应回调
 static void *
 ovsrcu_postpone_thread(void *arg OVS_UNUSED)
 {
@@ -323,7 +335,9 @@ ovsrcu_postpone_thread(void *arg OVS_UNUSED)
 
     for (;;) {
         uint64_t seqno = seq_read(flushed_cbsets_seq);
+        //尝试执行所有flushed_cbsets
         if (!ovsrcu_call_postponed()) {
+        	//如果没有cbsets，则等待，直到flushed_cbsets_seq改变
             seq_wait(flushed_cbsets_seq, seqno);
             poll_block();
         }
@@ -380,6 +394,7 @@ ovsrcu_unregister__(struct ovsrcu_perthread *perthread)
 static void
 ovsrcu_thread_exit_cb(void *perthread)
 {
+	//释放perthread
     ovsrcu_unregister__(perthread);
 }
 
@@ -392,9 +407,11 @@ ovsrcu_thread_exit_cb(void *perthread)
 static void
 ovsrcu_cancel_thread_exit_cb(void *aux OVS_UNUSED)
 {
+	//清空perthread_key对应的值
     pthread_setspecific(perthread_key, NULL);
 }
 
+//模块初始化
 static void
 ovsrcu_init_module(void)
 {
