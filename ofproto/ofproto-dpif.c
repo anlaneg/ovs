@@ -205,6 +205,7 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
 /* Initial mappings of port to bridge mappings. */
 //dpif做init时，初始化了此类型，记录首次来自ovsdb的所有birdge的所有port配置
+//保存init时传入的port
 static struct shash init_ofp_ports = SHASH_INITIALIZER(&init_ofp_ports);
 
 /* Initialize 'ofm' for a learn action.  If the rule already existed, reference
@@ -260,13 +261,14 @@ init(const struct shash *iface_hints)
     udpif_init();
 }
 
+//枚举当前dp支持的types
 static void
-enumerate_types(struct sset *types)//枚举当前dp支持的types
+enumerate_types(struct sset *types)
 {
     dp_enumerate_types(types);
 }
 
-//枚举当前所有ofproto的名称
+//枚举当前所有指定类型的ofproto的名称
 static int
 enumerate_names(const char *type, struct sset *names)
 {
@@ -630,6 +632,7 @@ type_wait(const char *type)
 {
     struct dpif_backer *backer;
 
+    //在所有的backer中查找type,并调用wait函数
     backer = shash_find_data(&all_dpif_backers, type);
     if (!backer) {
         /* This is not necessarily a problem, since backers are only
@@ -1242,7 +1245,8 @@ construct(struct ofproto *ofproto_)//ofproto构造函数
     /* Tunnel module can get used right after the udpif threads are running. */
     ofproto_tunnel_init();
 
-    error = open_dpif_backer(ofproto->up.type, &ofproto->backer);//创建datapath 接口对应的后端，设置upcall
+    //创建datapath 接口对应的后端，设置upcall
+    error = open_dpif_backer(ofproto->up.type, &ofproto->backer);
     if (error) {
         return error;
     }
@@ -1277,9 +1281,11 @@ construct(struct ofproto *ofproto_)//ofproto构造函数
     SHASH_FOR_EACH_SAFE (node, next, &init_ofp_ports) {
         struct iface_hint *iface_hint = node->data;
 
-        if (!strcmp(iface_hint->br_name, ofproto->up.name)) {//是我们这个交换机的配置
+        if (!strcmp(iface_hint->br_name, ofproto->up.name)) {
+        	//是我们这个交换机的配置
             /* Check if the datapath already has this port. */
-            if (dpif_port_exists(ofproto->backer->dpif, node->name)) {//看这个接口是否在我们这个交换机上已存在
+            if (dpif_port_exists(ofproto->backer->dpif, node->name)) {
+            	//这个接口在我们这个交换机上已存在
                 sset_add(&ofproto->ports, node->name);
             }
 
@@ -1594,6 +1600,7 @@ flush(struct ofproto *ofproto_)
     }
 }
 
+//填充各表的match,miss计数
 static void
 query_tables(struct ofproto *ofproto,
              struct ofputil_table_features *features,
@@ -3249,6 +3256,7 @@ ofp_port_to_ofport(const struct ofproto_dpif *ofproto, ofp_port_t ofp_port)
     return ofport ? ofport_dpif_cast(ofport) : NULL;
 }
 
+//通过dpif_port填充ofproto_port
 static void
 ofproto_port_from_dpif_port(struct ofproto_dpif *ofproto,
                             struct ofproto_port *ofproto_port,
@@ -3368,7 +3376,9 @@ port_query_by_name(const struct ofproto *ofproto_, const char *devname,
     struct dpif_port dpif_port;
     int error;
 
+    //如果ghost_ports中含有此名称
     if (sset_contains(&ofproto->ghost_ports, devname)) {
+    	//先获取此netdev的名称
         const char *type = netdev_get_type_from_name(devname);
 
         /* We may be called before ofproto->up.port_by_name is populated with
@@ -3376,13 +3386,14 @@ port_query_by_name(const struct ofproto *ofproto_, const char *devname,
          * type from the netdev layer directly. */
         if (type) {
             const struct ofport *ofport;
-
+            //填充type,name,port-id
             ofport = shash_find_data(&ofproto->up.port_by_name, devname);
             ofproto_port->ofp_port = ofport ? ofport->ofp_port : OFPP_NONE;
             ofproto_port->name = xstrdup(devname);
             ofproto_port->type = xstrdup(type);
             return 0;
         }
+        //netdev还不存在
         return ENODEV;
     }
 
@@ -3407,7 +3418,7 @@ port_add(struct ofproto *ofproto_, struct netdev *netdev)
     const char *dp_port_name;
 
     if (netdev_vport_is_patch(netdev)) {
-    	//如果是patch口，加入ghost_ports即可
+    	//如果是patch口，加入ghost_ports即可，tunnel口，patch口
         sset_add(&ofproto->ghost_ports, netdev_get_name(netdev));
         return 0;
     }
@@ -3468,6 +3479,7 @@ port_set_config(const struct ofport *ofport_, const struct smap *cfg)
     struct ofport_dpif *ofport = ofport_dpif_cast(ofport_);
     struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofport->up.ofproto);
 
+    //逻辑的口，不支持配置
     if (sset_contains(&ofproto->ghost_ports,
                       netdev_get_name(ofport->up.netdev))) {
         return 0;
@@ -3535,9 +3547,10 @@ struct port_dump_state {
     bool ghost;
 
     struct ofproto_port port;
-    bool has_port;
+    bool has_port;//标明port有值
 };
 
+//遍历port时初始化statep,默认has_port,ghost为False
 static int
 port_dump_start(const struct ofproto *ofproto_ OVS_UNUSED, void **statep)
 {
@@ -3562,6 +3575,7 @@ port_dump_next(const struct ofproto *ofproto_, void *state_,
     while ((node = sset_at_position(sset, &state->pos))) {
         int error;
 
+        //在ofproto中查找名称为node->name的port
         error = port_query_by_name(ofproto_, node->name, &state->port);
         if (!error) {
             *port = state->port;
@@ -3572,6 +3586,7 @@ port_dump_next(const struct ofproto *ofproto_, void *state_,
         }
     }
 
+    //变更为ghost中的port
     if (!state->ghost) {
         state->ghost = true;
         memset(&state->pos, 0, sizeof state->pos);
@@ -5234,12 +5249,19 @@ ofproto_dpif_delete_internal_flow(struct ofproto_dpif *ofproto,
 
 const struct ofproto_class ofproto_dpif_class = {
     init,
-    enumerate_types,//所以ofproto的datapath对应的类型，目前有system,netdev
-    enumerate_names,//所有ofproto的实体名称收集
-    del,//删除ofproto
+	//所以ofproto的datapath对应的类型，目前有system,netdev
+    enumerate_types,
+	//所有ofproto的指定类型名称收集
+    enumerate_names,
+	//删除指定类型指定名称的ofproto
+    del,
+	//调用dpif_class的port_open_type
     port_open_type,
-    type_run,//各type自已的周期性事务（支持单个class实现多个type)
+	//各type自已的周期性事务
+    type_run,
+	//调用dpif_class中指定type的wait
     type_wait,
+	//为ofproto申请空间
     alloc,
     construct,
     destruct,
@@ -5251,6 +5273,7 @@ const struct ofproto_class ofproto_dpif_class = {
     flush,
     query_tables,
     set_tables_version,
+	//申请一个port内存
     port_alloc,
     port_construct,
     port_destruct,

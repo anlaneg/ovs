@@ -89,7 +89,7 @@ struct ofproto {//openflow 交换机
 
     /* Datapath. */
     struct hmap ports;          /* Contains "struct ofport"s. */ //交换上所有port
-    struct shash port_by_name;//hash表，以name为key的port表
+    struct shash port_by_name;//hash表，以name为key的port表(方便查找）
     struct simap ofp_requests;  /* OpenFlow port number requests. */
     uint16_t alloc_port_no;     /* Last allocated OpenFlow port number. */
     uint16_t max_ports;         /* Max possible OpenFlow port num, plus one. */ //最大接口数
@@ -633,9 +633,9 @@ DECL_OFPROTO_COLLECTION (struct ofgroup *, group)
  *
  *   - "struct ofport", which represents a port within an ofproto. openflow交换机对应的接口
  *
- *   - "struct rule", which represents an OpenFlow flow within an ofproto.
+ *   - "struct rule", which represents an OpenFlow flow within an ofproto. 规则
  *
- *   - "struct ofgroup", which represents an OpenFlow 1.1+ group within an
+ *   - "struct ofgroup", which represents an OpenFlow 1.1+ group within an openflow组
  *     ofproto.
  *
  * Each of these data structures contains all of the implementation-independent

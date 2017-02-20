@@ -144,19 +144,22 @@ dp_register_provider__(const struct dpif_class *new_class)//dpif_class注册
     struct registered_dpif_class *registered_class;
     int error;
 
+    //类型不能在blacklist中
     if (sset_contains(&dpif_blacklist, new_class->type)) {
         VLOG_DBG("attempted to register blacklisted provider: %s",
                  new_class->type);
         return EINVAL;
     }
 
+    //不能是已注册的
     if (shash_find(&dpif_classes, new_class->type)) {
         VLOG_WARN("attempted to register duplicate datapath provider: %s",
                   new_class->type);
         return EEXIST;
     }
 
-    error = new_class->init ? new_class->init() : 0;//仅对class进行初始化
+    //对dpif_class进行初始化
+    error = new_class->init ? new_class->init() : 0;
     if (error) {
         VLOG_WARN("failed to initialize %s datapath class: %s",
                   new_class->type, ovs_strerror(error));
@@ -232,6 +235,7 @@ dp_unregister_provider(const char *type)
 
 /* Blacklists a provider.  Causes future calls of dp_register_provider() with
  * a dpif_class which implements 'type' to fail. */
+//向dpif_blacklist中添加type
 void
 dp_blacklist_provider(const char *type)
 {
@@ -248,12 +252,14 @@ dp_enumerate_types(struct sset *types)
 {
     struct shash_node *node;
 
-    dp_initialize();//如果未注册，尝试注册
+    //如果未注册，尝试注册
+    dp_initialize();
 
     ovs_mutex_lock(&dpif_mutex);
     SHASH_FOR_EACH(node, &dpif_classes) {
         const struct registered_dpif_class *registered_class = node->data;
-        sset_add(types, registered_class->dpif_class->type);//目前有netdev,system两种
+        //目前有netdev,system两种
+        sset_add(types, registered_class->dpif_class->type);
     }
     ovs_mutex_unlock(&dpif_mutex);
 }
@@ -350,13 +356,15 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)//�
 
     type = dpif_normalize_type(type);
     registered_class = dp_class_lookup(type);
-    if (!registered_class) {//如果此type没有注册
+    if (!registered_class) {
+    	//如果此type没有注册class，则无法执行操作，退出
         VLOG_WARN("could not create datapath %s of unknown type %s", name,
                   type);
         error = EAFNOSUPPORT;
         goto exit;
     }
 
+    //使用此类理的dpif_class
     error = registered_class->dpif_class->open(registered_class->dpif_class,
                                                name, create, &dpif);//创建datapath接口
     if (!error) {
@@ -515,6 +523,7 @@ dpif_get_dp_stats(const struct dpif *dpif, struct dpif_dp_stats *stats)
     return error;
 }
 
+//调用dpif_class的port_open_type
 const char *
 dpif_port_open_type(const char *datapath_type, const char *port_type)
 {
@@ -672,6 +681,7 @@ dpif_port_query_by_number(const struct dpif *dpif, odp_port_t port_no,
  *
  * The caller owns the data in 'port' and must free it with
  * dpif_port_destroy() when it is no longer needed. */
+//通过datapath if查询名称devname对应的port
 int
 dpif_port_query_by_name(const struct dpif *dpif, const char *devname,
                         struct dpif_port *port)

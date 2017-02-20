@@ -73,7 +73,8 @@ struct netdev_saved_flags {
 static struct ovs_mutex netdev_mutex = OVS_MUTEX_INITIALIZER;//保护netdev_shash
 
 /* All created network devices. */
-static struct shash netdev_shash OVS_GUARDED_BY(netdev_mutex)//用于挂接系统创建的所有netdev
+//用于挂接系统创建的所有netdev
+static struct shash netdev_shash OVS_GUARDED_BY(netdev_mutex)
     = SHASH_INITIALIZER(&netdev_shash);
 
 /* Mutual exclusion of */
@@ -1756,8 +1757,9 @@ netdev_get_class(const struct netdev *netdev)//获取netdev对应class
 /* Returns the netdev with 'name' or NULL if there is none.
  *
  * The caller must free the returned netdev with netdev_close(). */
+//通过名称获取对应netdev
 struct netdev *
-netdev_from_name(const char *name)//通过名称获取对应netdev
+netdev_from_name(const char *name)
     OVS_EXCLUDED(netdev_mutex)
 {
     struct netdev *netdev;
@@ -1835,7 +1837,7 @@ netdev_get_type_from_name(const char *name)//返回指定名称dev的类型
 {
     struct netdev *dev = netdev_from_name(name);
     const char *type = dev ? netdev_get_type(dev) : NULL;
-    netdev_close(dev);
+    netdev_close(dev);//刚才加了引用计数，现在减掉
     return type;
 }
 

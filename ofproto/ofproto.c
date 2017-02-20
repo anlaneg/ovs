@@ -2419,7 +2419,8 @@ ofport_install(struct ofproto *p,
     int error;
 
     /* Create ofport. */
-    ofport = p->ofproto_class->port_alloc();//申请port结构
+    //申请port结构
+    ofport = p->ofproto_class->port_alloc();
     if (!ofport) {
         error = ENOMEM;
         goto error;
@@ -2706,10 +2707,12 @@ init_ports(struct ofproto *p)
     struct ofproto_port ofproto_port;
     struct shash_node *node, *next;
 
-    OFPROTO_PORT_FOR_EACH (&ofproto_port, &dump, p) {//遍历交换机所有接口
+    //遍历交换机所有接口(数据信息来源于ghost_ports,ports)
+    OFPROTO_PORT_FOR_EACH (&ofproto_port, &dump, p) {
         const char *name = ofproto_port.name;
 
-        if (shash_find(&p->port_by_name, name)) {//查找此名称对应的port,且已存
+        //查找此名称对应的port,且已存
+        if (shash_find(&p->port_by_name, name)) {
             VLOG_WARN_RL(&rl, "%s: ignoring duplicate device %s in datapath",
                          p->name, name);
         } else {

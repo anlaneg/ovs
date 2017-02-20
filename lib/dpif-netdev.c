@@ -1121,7 +1121,8 @@ dpif_netdev_open(const struct dpif_class *class, const char *name,
     int error;
 
     ovs_mutex_lock(&dp_netdev_mutex);
-    dp = shash_find_data(&dp_netdevs, name);//检查此dev是否已创建
+    dp = shash_find_data(&dp_netdevs, name);
+    //检查此dev是否已创建
     if (!dp) {
         error = create ? create_dp_netdev(name, class, &dp) : ENODEV;//创建
     } else {
@@ -4910,6 +4911,7 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_port_del,
     dpif_netdev_port_set_config,
     dpif_netdev_port_query_by_number,
+	//通过名称查找datapath中的port
     dpif_netdev_port_query_by_name,
     NULL,                       /* port_get_pid */
     dpif_netdev_port_dump_start,//遍历port开始

@@ -162,7 +162,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         {"peer-ca-cert", required_argument, NULL, OPT_PEER_CA_CERT},
         {"bootstrap-ca-cert", required_argument, NULL, OPT_BOOTSTRAP_CA_CERT},
         {"enable-dummy", optional_argument, NULL, OPT_ENABLE_DUMMY},//是否需要开启dummy
-        {"disable-system", no_argument, NULL, OPT_DISABLE_SYSTEM},
+        {"disable-system", no_argument, NULL, OPT_DISABLE_SYSTEM},//禁止system类型的datapath
         {"dpdk", optional_argument, NULL, OPT_DPDK},
         {"dummy-numa", required_argument, NULL, OPT_DUMMY_NUMA},
         {NULL, 0, NULL, 0},
@@ -210,6 +210,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
             break;
 
         case OPT_DISABLE_SYSTEM:
+        	//禁用system类型
             dp_blacklist_provider("system");
             break;
 
