@@ -341,6 +341,7 @@ ovsthread_wrapper(void *aux_)
     /* The order of the following calls is important, because
      * ovsrcu_quiesce_end() saves a copy of the thread name. */
     char *subprogram_name = xasprintf("%s%u", aux.name, id);
+    //设置线程名称
     set_subprogram_name(subprogram_name);
     free(subprogram_name);
     ovsrcu_quiesce_end();
