@@ -45,6 +45,7 @@ struct ovsrcu_perthread {
 
     struct ovs_mutex mutex;
     uint64_t seqno;
+    //各线程提交的回调
     struct ovsrcu_cbset *cbset;
     char name[16];              /* This thread's name. */
 };
@@ -55,7 +56,9 @@ static pthread_key_t perthread_key;
 static struct ovs_list ovsrcu_threads;
 static struct ovs_mutex ovsrcu_threads_mutex;
 
+//全局等待执行的cbsets，（在这个之前先在pthread中的cbset中保存）
 static struct guarded_list flushed_cbsets;
+//用于代表cbset是否有变更
 static struct seq *flushed_cbsets_seq;
 
 static void ovsrcu_init_module(void);
@@ -103,6 +106,8 @@ ovsrcu_quiesce_end(void)
     ovsrcu_perthread_get();
 }
 
+//对单线程而言，再调一次postponed(刚才可能由thread->cbset刷入到flushed_cbset),可以直接执行
+//对多线程而言，需要保证postpone_thead线程已启动
 static void
 ovsrcu_quiesced(void)
 {
@@ -111,6 +116,7 @@ ovsrcu_quiesced(void)
     } else {
         static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
         if (ovsthread_once_start(&once)) {
+        	//创建urcu线程
             ovs_thread_create("urcu", ovsrcu_postpone_thread, NULL);
             ovsthread_once_done(&once);
         }
@@ -119,6 +125,8 @@ ovsrcu_quiesced(void)
 
 /* Indicates the beginning of a quiescent state.  See "Details" near the top of
  * ovs-rcu.h. */
+//如果自已有cbset,则将自已的cbset放入到flushed_cbset中，并将自身销毁
+//单线程尝试执行，多线程确保rcu回调线程存在
 void
 ovsrcu_quiesce_start(void)
 {
@@ -165,6 +173,7 @@ ovsrcu_try_quiesce(void)
     if (!seq_try_lock()) {
         perthread->seqno = seq_read_protected(global_seqno);
         if (perthread->cbset) {
+        	//如果有，就刷
             ovsrcu_flush_cbset__(perthread, true);
         }
         seq_change_protected(global_seqno);
@@ -204,6 +213,8 @@ ovsrcu_synchronize(void)
         unsigned int elapsed;
         bool done = true;
 
+        //加锁，检查是否所有线程的seqno是否都大于target_seqno,如果大于，则跳出此循环
+        //否则一直等。
         ovs_mutex_lock(&ovsrcu_threads_mutex);
         LIST_FOR_EACH (perthread, list_node, &ovsrcu_threads) {
             if (perthread->seqno <= target_seqno) {
@@ -219,6 +230,7 @@ ovsrcu_synchronize(void)
             break;
         }
 
+        //报警，指明等待超时
         elapsed = time_msec() - start;
         if (elapsed >= warning_threshold) {
             VLOG_WARN("blocked %u ms waiting for %s to quiesce",
@@ -255,6 +267,7 @@ ovsrcu_synchronize(void)
 void
 ovsrcu_postpone__(void (*function)(void *aux), void *aux)
 {
+	//将function加入到cbset中，如果cbset已满，则直接唤醒，要求执行
     struct ovsrcu_perthread *perthread = ovsrcu_perthread_get();
     struct ovsrcu_cbset *cbset;
     struct ovsrcu_cb *cb;
@@ -274,6 +287,7 @@ ovsrcu_postpone__(void (*function)(void *aux), void *aux)
     }
 }
 
+//执行所有回调集
 static bool
 ovsrcu_call_postponed(void)
 {
@@ -282,11 +296,14 @@ ovsrcu_call_postponed(void)
 
     guarded_list_pop_all(&flushed_cbsets, &cbsets);
     if (ovs_list_is_empty(&cbsets)) {
+    	//没有回调集，退
         return false;
     }
 
+    //阻塞等待执行条件满足
     ovsrcu_synchronize();
 
+    //执行所有回调集
     LIST_FOR_EACH_POP (cbset, list_node, &cbsets) {
         struct ovsrcu_cb *cb;
 
@@ -321,9 +338,11 @@ ovsrcu_flush_cbset__(struct ovsrcu_perthread *perthread, bool protected)
     struct ovsrcu_cbset *cbset = perthread->cbset;
 
     if (cbset) {
+    	//各线程将由mutex保护下，向flushed_cbsets中提交自已的cbset
         guarded_list_push_back(&flushed_cbsets, &cbset->list_node, SIZE_MAX);
         perthread->cbset = NULL;
 
+        //如果seq已被保护，则不需要再加锁
         if (protected) {
             seq_change_protected(flushed_cbsets_seq);
         } else {
@@ -332,16 +351,19 @@ ovsrcu_flush_cbset__(struct ovsrcu_perthread *perthread, bool protected)
     }
 }
 
+//向下刷cbset(flushed_cbsets_seq未保护）
 static void
 ovsrcu_flush_cbset(struct ovsrcu_perthread *perthread)
 {
     ovsrcu_flush_cbset__(perthread, false);
 }
 
+//释放perthread
 static void
 ovsrcu_unregister__(struct ovsrcu_perthread *perthread)
 {
     if (perthread->cbset) {
+    	//有回调集，刷下去
         ovsrcu_flush_cbset(perthread);
     }
 

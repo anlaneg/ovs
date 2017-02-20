@@ -80,6 +80,7 @@ guarded_list_pop_front(struct guarded_list *list)
     return node;
 }
 
+//将list中的值移到elements上去（实现move原语）
 size_t
 guarded_list_pop_all(struct guarded_list *list, struct ovs_list *elements)
 {
