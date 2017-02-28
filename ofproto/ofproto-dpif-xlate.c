@@ -90,7 +90,8 @@ VLOG_DEFINE_THIS_MODULE(ofproto_dpif_xlate);
 
 struct xbridge {
     struct hmap_node hmap_node;   /* Node in global 'xbridges' map. */
-    struct ofproto_dpif *ofproto; /* Key in global 'xbridges' map. */ //每个桥只有一个ofproto
+    //指明此桥对应的ofproto每个桥只有一个ofproto
+    struct ofproto_dpif *ofproto; /* Key in global 'xbridges' map. */
 
     struct ovs_list xbundles;     /* Owned xbundles. */
     struct hmap xports;           /* Indexed by ofp_port. */ //此交换机的所有接口
@@ -752,7 +753,7 @@ xlate_report_subfield(const struct xlate_ctx *ctx,
     }
 }
 
-//将桥xbridge加入到xcfg
+//初始化xbridge,并将桥xbridge加入到xcfg
 static void
 xlate_xbridge_init(struct xlate_cfg *xcfg, struct xbridge *xbridge)
 {
@@ -1017,7 +1018,7 @@ xlate_txn_commit(void)
     struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
 
     ovsrcu_set(&xcfgp, new_xcfg);//原子变换
-    ovsrcu_synchronize();
+    ovsrcu_synchronize();//强制等待rcu轮转
     xlate_xcfg_free(xcfg);//释放旧内存
     new_xcfg = NULL;//回归原始
 }
@@ -1087,7 +1088,8 @@ xlate_ofproto_set(struct ofproto_dpif *ofproto, const char *name,//ofproto,ofpro
     ovs_assert(new_xcfg);
 
     xbridge = xbridge_lookup(new_xcfg, ofproto);
-    if (!xbridge) {//xcfg中没有此ofproto,则创建并加入
+    if (!xbridge) {
+    	//xcfg中没有此ofproto,则创建并加入
         xbridge = xzalloc(sizeof *xbridge);
         xbridge->ofproto = ofproto;
 

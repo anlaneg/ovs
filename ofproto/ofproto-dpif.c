@@ -130,7 +130,9 @@ struct ofport_dpif {
     struct ofport up;
 
     odp_port_t odp_port;
+    //从属于哪个bundle
     struct ofbundle *bundle;    /* Bundle that contains this port, if any. */
+    //为了挂接在bundle的ports链上
     struct ovs_list bundle_node;/* In struct ofbundle's "ports" list. */
     struct cfm *cfm;            /* Connectivity Fault Management, if any. */
     struct bfd *bfd;            /* BFD, if any. */
@@ -183,11 +185,11 @@ COVERAGE_DEFINE(rev_mac_learning);
 COVERAGE_DEFINE(rev_mcast_snooping);
 
 /* All existing ofproto_backer instances, indexed by ofproto->up.type. */
-//按type索引的所有的ofproto后端实例
+//系统所有的ofproto后端实例，按type索引
 struct shash all_dpif_backers = SHASH_INITIALIZER(&all_dpif_backers);
 
 /* All existing ofproto_dpif instances, indexed by ->up.name. */
-//所有ofproto实例表，按datapath名称索引
+//系统所有ofproto实例表，按datapath名称索引
 struct hmap all_ofproto_dpifs = HMAP_INITIALIZER(&all_ofproto_dpifs);
 
 static bool ofproto_use_tnl_push_pop = true;
@@ -205,7 +207,7 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
 /* Initial mappings of port to bridge mappings. */
 //dpif做init时，初始化了此类型，记录首次来自ovsdb的所有birdge的所有port配置
-//保存init时传入的port
+//保存init时传入的port（init_ofp_ports本模有用，ofproto中也有一份副本）
 static struct shash init_ofp_ports = SHASH_INITIALIZER(&init_ofp_ports);
 
 /* Initialize 'ofm' for a learn action.  If the rule already existed, reference
@@ -253,10 +255,11 @@ init(const struct shash *iface_hints)
         new_hint->br_type = xstrdup(orig_hint->br_type);
         new_hint->ofp_port = orig_hint->ofp_port;
 
-        shash_add(&init_ofp_ports, node->name, new_hint);//将数据保存在init_ofp_ports上
+        shash_add(&init_ofp_ports, node->name, new_hint);
     }
 
-    ofproto_unixctl_init();//注册命令行
+    //注册命令行，这一层已支持fdb,mdb等，故直接调用初始化
+    ofproto_unixctl_init();
     ofproto_dpif_trace_init();
     udpif_init();
 }
@@ -441,14 +444,14 @@ type_run(const char *type)
         }
         backer->need_revalidate = 0;
 
-        //遍历每个ofproto(促使生成新的xlate_cfg)
-        //开启事务
+        //遍历每个ofproto(通过事务方式生成新的xlate_cfg)
         xlate_txn_start();
         HMAP_FOR_EACH (ofproto, all_ofproto_dpifs_node, &all_ofproto_dpifs) {
             struct ofport_dpif *ofport;
             struct ofbundle *bundle;
 
-            if (ofproto->backer != backer) {//类型不一致，不处理
+            if (ofproto->backer != backer) {
+            	//back与我们不同，不是我们负责的ofproto，跳过
                 continue;
             }
 
@@ -691,6 +694,7 @@ struct odp_garbage {
 static bool check_variable_length_userdata(struct dpif_backer *backer);
 static void check_support(struct dpif_backer *backer);
 
+//创建类型为type的dpif后端（每种类型仅有一个）
 static int
 open_dpif_backer(const char *type, struct dpif_backer **backerp)
 {
@@ -706,6 +710,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
     const char *name;
     int error;
 
+    //是否存在
     backer = shash_find_data(&all_dpif_backers, type);
     if (backer) {//如果找到，则仅增加引用计数
         backer->refcount++;
@@ -717,25 +722,31 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
 
     /* Remove any existing datapaths, since we assume we're the only
      * userspace controlling the datapath. */
+    //防止存在别人创建的交换机（我们这边正在创建第一个交换机)
     sset_init(&names);
     dp_enumerate_names(type, &names);
     SSET_FOR_EACH(name, &names) {
         struct dpif *old_dpif;
 
         /* Don't remove our backer if it exists. */
-        if (!strcmp(name, backer_name)) {//后端已存在，不处理
+        if (!strcmp(name, backer_name)) {
+        	//不能删除backer
             continue;
         }
 
-        if (dpif_open(name, type, &old_dpif)) {//尝试着去打开一个dpif
+        //删除datapath
+        if (dpif_open(name, type, &old_dpif)) {
+        	//尝试着去打开一个datapath，但失败了,报警
             VLOG_WARN("couldn't open old datapath %s to remove it", name);
-        } else {//刚刚我们创建了一个，这下好了，需要删除掉，这个处理看起来很怪异。
+        } else {
+        	//我们打开成功了，删除此datapath
             dpif_delete(old_dpif);
             dpif_close(old_dpif);
         }
     }
     sset_destroy(&names);
 
+    //创建backer
     backer = xmalloc(sizeof *backer);
 
     error = dpif_create_and_open(backer_name, type, &backer->dpif);//创建及打开后端
@@ -770,6 +781,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
     dpif_port_dump_start(&port_dump, backer->dpif);
     while (dpif_port_dump_next(&port_dump, &port)) {
         node = shash_find(&init_ofp_ports, port.name);
+        //移除掉所有init_ofp_ports中未指明的port,这些port可能是之前残存（或者其它ovswitchd创建的）的。
         if (!node && strcmp(port.name, dpif_base_name(backer->dpif))) {
             garbage = xmalloc(sizeof *garbage);
             garbage->odp_port = port.port_no;
@@ -778,6 +790,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
     }
     dpif_port_dump_done(&port_dump);
 
+    //遍历需要清除的port，则它们释放
     LIST_FOR_EACH_POP (garbage, list_node, &garbage_list) {
         dpif_port_del(backer->dpif, garbage->odp_port);
         free(garbage);
@@ -1278,6 +1291,9 @@ construct(struct ofproto *ofproto_)//ofproto构造函数
     ofproto->ams_seqno = seq_read(ofproto->ams_seq);
 
 
+    //我们在ofproto初始化时，传入了ovsdb中传来的首次port信息
+    //我们现在正在创建交换机，所以需要查看是否有这个交换机的port需要创建
+    //这个适用于在我们启动前ovsdb中已存在某一交换机的配置。
     SHASH_FOR_EACH_SAFE (node, next, &init_ofp_ports) {
         struct iface_hint *iface_hint = node->data;
 
@@ -1289,21 +1305,25 @@ construct(struct ofproto *ofproto_)//ofproto构造函数
                 sset_add(&ofproto->ports, node->name);
             }
 
+            //此节点init_ofp_ports已被我们初始化了，删除掉
+            //XXX 没有明白，这样做的意义
             free(iface_hint->br_name);
             free(iface_hint->br_type);
             free(iface_hint);
-            shash_delete(&init_ofp_ports, node);//此节点已被我们初始化了，删除掉
+            shash_delete(&init_ofp_ports, node);
         }
     }
 
+    //所有ofproto将被加入到all_ofproto_dpifs链，此链用于查找指定ofproto
     hmap_insert(&all_ofproto_dpifs, &ofproto->all_ofproto_dpifs_node,
-                hash_string(ofproto->up.name, 0));//加入all_ofproto_dpifs链，此链用于查找指定ofproto
+                hash_string(ofproto->up.name, 0));
     memset(&ofproto->stats, 0, sizeof ofproto->stats);//准备统计状态
 
     ofproto_init_tables(ofproto_, N_TABLES);//默认构造255个表
     error = add_internal_flows(ofproto);//加入内部流
 
-    ofproto->up.tables[TBL_INTERNAL].flags = OFTABLE_HIDDEN | OFTABLE_READONLY;//定义hidden,readonly
+    //将最后一个表定义hidden,readonly
+    ofproto->up.tables[TBL_INTERNAL].flags = OFTABLE_HIDDEN | OFTABLE_READONLY;
 
     return error;
 }
@@ -2730,6 +2750,7 @@ bundle_del_port(struct ofport_dpif *port)//bundle删除一个成员口
     bundle_update(bundle);
 }
 
+//向bundle中添加port
 static bool
 bundle_add_port(struct ofbundle *bundle, ofp_port_t ofp_port,
                 struct lacp_slave_settings *lacp)
@@ -2741,6 +2762,7 @@ bundle_add_port(struct ofbundle *bundle, ofp_port_t ofp_port,
         return false;
     }
 
+    //需要从原有bundle中移除
     if (port->bundle != bundle) {
         bundle->ofproto->backer->need_revalidate = REV_RECONFIGURE;
         if (port->bundle) {
@@ -2794,7 +2816,7 @@ bundle_destroy(struct ofbundle *bundle)//bundle口销毁
     free(bundle);
 }
 
-//bundle口成员添加
+//bundle口更新(增，删除，改）
 static int
 bundle_set(struct ofproto *ofproto_, void *aux,
            const struct ofproto_bundle_settings *s)
@@ -2839,6 +2861,7 @@ bundle_set(struct ofproto *ofproto_, void *aux,
         mbridge_register_bundle(ofproto->mbridge, bundle);
     }
 
+    //设置bundle名称
     if (!bundle->name || strcmp(s->name, bundle->name)) {
         free(bundle->name);
         bundle->name = xstrdup(s->name);
@@ -2858,13 +2881,16 @@ bundle_set(struct ofproto *ofproto_, void *aux,
     }
 
     /* Update set of ports. */
+    //更新bundle的成员port
     ok = true;
-    for (i = 0; i < s->n_slaves; i++) {//更新成员
+    for (i = 0; i < s->n_slaves; i++) {
         if (!bundle_add_port(bundle, s->slaves[i],
                              s->lacp ? &s->lacp_slaves[i] : NULL)) {
             ok = false;
         }
     }
+
+    //删除不存加入的成员
     if (!ok || ovs_list_size(&bundle->ports) != s->n_slaves) {
         struct ofport_dpif *next_port;
 
@@ -2881,6 +2907,7 @@ bundle_set(struct ofproto *ofproto_, void *aux,
     }
     ovs_assert(ovs_list_size(&bundle->ports) <= s->n_slaves);
 
+    //bundle成员为空，移除bundle
     if (ovs_list_is_empty(&bundle->ports)) {
         bundle_destroy(bundle);
         return EINVAL;
@@ -2984,8 +3011,9 @@ bundle_set(struct ofproto *ofproto_, void *aux,
     return 0;
 }
 
+//自bundle口中移除一个成员口
 static void
-bundle_remove(struct ofport *port_)//自channel口中移除一个成员口
+bundle_remove(struct ofport *port_)
 {
     struct ofport_dpif *port = ofport_dpif_cast(port_);
     struct ofbundle *bundle = port->bundle;
@@ -2994,7 +3022,7 @@ bundle_remove(struct ofport *port_)//自channel口中移除一个成员口
         bundle_del_port(port);
         if (ovs_list_is_empty(&bundle->ports)) {//一个成员也没有了
             bundle_destroy(bundle);
-        } else if (ovs_list_is_short(&bundle->ports)) {//保有一个成员了
+        } else if (ovs_list_is_short(&bundle->ports)) {//仅有一个成员了
             bond_unref(bundle->bond);
             bundle->bond = NULL;
         }
@@ -5263,10 +5291,11 @@ const struct ofproto_class ofproto_dpif_class = {
     type_wait,
 	//为ofproto申请空间
     alloc,
+	//构造ofproto
     construct,
     destruct,
     dealloc,
-    run,//各ofproto对应的周期事务
+    run,//各ofproto对应的周期事务,例如snooping表过期啊，什么的
     ofproto_dpif_wait,
     NULL,                       /* get_memory_usage. */
     type_get_memory_usage,
@@ -5333,8 +5362,8 @@ const struct ofproto_class ofproto_dpif_class = {
     set_rstp_port,
     get_rstp_port_status,
     set_queues,
-    bundle_set,
-    bundle_remove,
+    bundle_set,//bundle口更新(增，删除，改）
+    bundle_remove,//自bundle口中移除一个成员口
     mirror_set__,
     mirror_get_stats__,
     set_flood_vlans,

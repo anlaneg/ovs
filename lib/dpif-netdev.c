@@ -91,7 +91,7 @@ enum { MAX_FLOWS = 65536 };     /* Maximum number of flows in flow table. */
 static struct ovs_mutex dp_netdev_mutex = OVS_MUTEX_INITIALIZER;
 
 /* Contains all 'struct dp_netdev's. */
-//所有由netdev创建的datapath netdev
+//系统所有由netdev创建的datapath
 static struct shash dp_netdevs OVS_GUARDED_BY(dp_netdev_mutex)
     = SHASH_INITIALIZER(&dp_netdevs);
 
@@ -211,7 +211,7 @@ static bool dpcls_lookup(struct dpcls *cls,
  *    port_mutex
  *    non_pmd_mutex
  */
-struct dp_netdev {//datapath对应的netdev
+struct dp_netdev {
     const struct dpif_class *const class;
     const char *const name;
     struct dpif *dpif;//指向dpif，而dpif中也有指针指向dp_netdev
@@ -639,7 +639,7 @@ emc_cache_init(struct emc_cache *flow_cache)
     }
 }
 
-//删除emc缓存中所有内容
+//删除emc缓存中所有内容（采用rcu延迟释放）
 static void
 emc_cache_uninit(struct emc_cache *flow_cache)
 {
@@ -1071,6 +1071,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     dp->last_reconfigure_seq = seq_read(dp->reconfigure_seq);
 
     /* Disable upcalls by default. */
+    //禁止upcall
     dp_netdev_disable_upcall(dp);
     dp->upcall_aux = NULL;
     dp->upcall_cb = NULL;
@@ -1124,6 +1125,7 @@ dpif_netdev_open(const struct dpif_class *class, const char *name,
     dp = shash_find_data(&dp_netdevs, name);
     //检查此dev是否已创建
     if (!dp) {
+    	//创建dp_netdev
         error = create ? create_dp_netdev(name, class, &dp) : ENODEV;//创建
     } else {
         error = (dp->class != class ? EINVAL
@@ -1131,6 +1133,7 @@ dpif_netdev_open(const struct dpif_class *class, const char *name,
                  : 0);//如果是创建，则返回已创建
     }
     if (!error) {
+    	//创建dpif_netdev
         *dpifp = create_dpif_netdev(dp);
         dp->dpif = *dpifp;
     }
@@ -1580,6 +1583,7 @@ dp_netdev_flow_free(struct dp_netdev_flow *flow)
 static void dp_netdev_flow_unref(struct dp_netdev_flow *flow)
 {
     if (ovs_refcount_unref_relaxed(&flow->ref_cnt) == 1) {
+    	//延迟释放
         ovsrcu_postpone(dp_netdev_flow_free, flow);
     }
 }
@@ -3431,11 +3435,10 @@ dpif_netdev_run(struct dpif *dpif)
     if (non_pmd) {
         ovs_mutex_lock(&dp->non_pmd_mutex);
         HMAP_FOR_EACH (port, node, &dp->ports) {
-        	//维护非pmd的port
+        	//自非pmd上进行收发包处理
             if (!netdev_is_pmd(port->netdev)) {
                 int i;
 
-                //收取非pmd类型port的报文
                 for (i = 0; i < port->n_rxq; i++) {
                     dp_netdev_process_rxq_port(non_pmd, port->rxqs[i].rx,
                                                port->port_no);
@@ -4901,10 +4904,10 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_init,
     dpif_netdev_enumerate,//枚举由此class创建的netdev
     dpif_netdev_port_open_type,
-    dpif_netdev_open,
+    dpif_netdev_open,//netdev类型的open回调
     dpif_netdev_close,
     dpif_netdev_destroy,
-    dpif_netdev_run,
+    dpif_netdev_run,//netdev类型的周期性工作(run函数）
     dpif_netdev_wait,
     dpif_netdev_get_stats,
     dpif_netdev_port_add,//netdev类的port添加

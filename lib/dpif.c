@@ -345,8 +345,9 @@ dp_parse_name(const char *datapath_name_, char **name, char **type)
     }
 }
 
+//创建或者打开已存在的dpif（create为true时，容许创建）
 static int
-do_open(const char *name, const char *type, bool create, struct dpif **dpifp)//创建或者打开已存在的dpif
+do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
 {
     struct dpif *dpif = NULL;
     int error;
@@ -357,16 +358,16 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)//�
     type = dpif_normalize_type(type);
     registered_class = dp_class_lookup(type);
     if (!registered_class) {
-    	//如果此type没有注册class，则无法执行操作，退出
+    	//如果此type没有注册dp class，则无法执行操作，退出
         VLOG_WARN("could not create datapath %s of unknown type %s", name,
                   type);
         error = EAFNOSUPPORT;
         goto exit;
     }
 
-    //使用此类理的dpif_class
+    //使用此类理的dpif_class,创建dp
     error = registered_class->dpif_class->open(registered_class->dpif_class,
-                                               name, create, &dpif);//创建datapath接口
+                                               name, create, &dpif);
     if (!error) {
         ovs_assert(dpif->dpif_class == registered_class->dpif_class);
     } else {
@@ -411,8 +412,10 @@ dpif_create_and_open(const char *name, const char *type, struct dpif **dpifp)
 {
     int error;
 
-    error = dpif_create(name, type, dpifp);//创建后端对应的dpifp
-    if (error == EEXIST || error == EBUSY) {//如果已被创建，则败为接受打开结果
+    //创建后端对应的dpifp
+    error = dpif_create(name, type, dpifp);
+    if (error == EEXIST || error == EBUSY) {
+    	//如果已被创建，则失败，改为接受打开
         error = dpif_open(name, type, dpifp);
         if (error) {
             VLOG_WARN("datapath %s already exists but cannot be opened: %s",
@@ -619,7 +622,7 @@ dpif_port_destroy(struct dpif_port *dpif_port)
 
 /* Checks if port named 'devname' exists in 'dpif'.  If so, returns
  * true; otherwise, returns false. */
-//检查devname是否在datapath interface下存在
+//检查datapath下是有$devname下存在
 bool
 dpif_port_exists(const struct dpif *dpif, const char *devname)
 {

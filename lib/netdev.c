@@ -442,7 +442,8 @@ netdev_ref(const struct netdev *netdev_)//增加引用计数
  * or NULL if none are needed. */
 int
 //配置此dev（包括tunnel配置）
-netdev_set_config(struct netdev *netdev, const struct smap *args, char **errp)//调用set_config设置配置（netdev自已底层处理）
+//调用set_config设置配置（netdev自已底层处理）
+netdev_set_config(struct netdev *netdev, const struct smap *args, char **errp)
     OVS_EXCLUDED(netdev_mutex)
 {
     if (netdev->netdev_class->set_config) {

@@ -305,7 +305,8 @@ size_t n_handlers, n_revalidators;
 static struct hmap all_ofprotos = HMAP_INITIALIZER(&all_ofprotos);
 
 /* Initial mappings of port to OpenFlow number mappings. */
-static struct shash init_ofp_ports = SHASH_INITIALIZER(&init_ofp_ports);//所有交换机的所有接口信息
+//所有交换机的所有接口信息,初始化时用（本模块有用）
+static struct shash init_ofp_ports = SHASH_INITIALIZER(&init_ofp_ports);
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
@@ -328,11 +329,11 @@ ofproto_init(const struct shash *iface_hints)
     struct shash_node *node;
     size_t i;
 
-    //注册ofproto dpif的class
+    //注册ofproto dpif的class(有防止重复注册)
     ofproto_class_register(&ofproto_dpif_class);
 
     /* Make a local copy, since we don't own 'iface_hints' elements. */
-    //由于iface_hints出去后，会被销毁，故做一份copy
+    //由于iface_hints出去后，会被销毁，故做一份copy，将其存在init_ofp_ports中
     SHASH_FOR_EACH(node, iface_hints) {
         const struct iface_hint *orig_hint = node->data;
         struct iface_hint *new_hint = xmalloc(sizeof *new_hint);
@@ -343,11 +344,13 @@ ofproto_init(const struct shash *iface_hints)
         new_hint->br_type = xstrdup(br_type);
         new_hint->ofp_port = orig_hint->ofp_port;
 
-        shash_add(&init_ofp_ports, node->name, new_hint);//所有交换机及端口的配置
+        shash_add(&init_ofp_ports, node->name, new_hint);
     }
 
     //用这一份数据，初始化所有的ofproto_classes
     //当前仅进行了数据保存，未有其它处理
+    //针对每一种ofproto_classes,传入对应的init_ofp_ports
+    //故init_ofp_ports是共享的
     for (i = 0; i < n_ofproto_classes; i++) {
         ofproto_classes[i]->init(&init_ofp_ports);
     }
@@ -1358,9 +1361,10 @@ ofproto_port_get_lacp_stats(const struct ofport *port, struct lacp_slave_stats *
  *
  * Bundles only affect the NXAST_AUTOPATH action and output to the OFPP_NORMAL
  * port. */
+//设置bundle口更新
 int
 ofproto_bundle_register(struct ofproto *ofproto, void *aux,
-                        const struct ofproto_bundle_settings *s)//设置bundle口成员
+                        const struct ofproto_bundle_settings *s)
 {
     return (ofproto->ofproto_class->bundle_set
             ? ofproto->ofproto_class->bundle_set(ofproto, aux, s)
@@ -1751,6 +1755,7 @@ ofproto_run(struct ofproto *p)
     int error;
     uint64_t new_seq;
 
+    //执行各ofproto的run方法（像fdb表，igmp snooping表的过期维护等功作）
     error = p->ofproto_class->run(p);
     if (error && error != EAGAIN) {
         VLOG_ERR_RL(&rl, "%s: run failed (%s)", p->name, ovs_strerror(error));
@@ -1805,6 +1810,7 @@ ofproto_run(struct ofproto *p)
         }
     }
 
+    //如果port发生变化，则更新port
     new_seq = seq_read(connectivity_seq_get());
     if (new_seq != p->change_seq) {
         struct sset devnames;
@@ -2534,6 +2540,7 @@ ofproto_port_unregister(struct ofproto *ofproto, ofp_port_t ofp_port)
             port->ofproto->ofproto_class->set_cfm(port, NULL);
         }
         if (port->ofproto->ofproto_class->bundle_remove) {
+        	//将其看待为一个bundle的成员口，尝试删除
             port->ofproto->ofproto_class->bundle_remove(port);
         }
     }

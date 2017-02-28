@@ -160,6 +160,7 @@ ovsrcu_quiesce(void)
     struct ovsrcu_perthread *perthread;
 
     perthread = ovsrcu_perthread_get();
+    //系统变更seqno处（１）
     perthread->seqno = seq_read(global_seqno);
     if (perthread->cbset) {
         ovsrcu_flush_cbset(perthread);
@@ -180,6 +181,7 @@ ovsrcu_try_quiesce(void)
     ovs_assert(!single_threaded());
     perthread = ovsrcu_perthread_get();
     if (!seq_try_lock()) {
+        //系统变更seqno处（１）
         perthread->seqno = seq_read_protected(global_seqno);
         if (perthread->cbset) {
         	//如果有回调集，就将其刷入到flushed_cbsets
