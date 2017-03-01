@@ -79,7 +79,7 @@ port for traffic that was destined for that slave (see
 ``bond_enable_slave()``).  It also sends a "gratuitous learning packet",
 specifically a RARP, on the bond port (on the newly chosen slave) for each MAC
 address that the vswitch has learned on a port other than the bond (see
-``bond_send_learning_packets()``), to teach the physical switch that the new
+``bundle_send_learning_packets()``), to teach the physical switch that the new
 slave should be used in place of the one that is now disabled.  (This behavior
 probably makes sense only for a vswitch that has only one port (the bond)
 connected to a physical switch; vswitchd should probably provide a way to
@@ -114,7 +114,7 @@ exception does not match normal ARP replies.  It will match the learning
 packets sent on bond fail-over.)
 
 The active slave is simply the first slave to be enabled after the bond is
-created (see ``bond_choose_active_iface()``).  If the active slave is disabled,
+created (see ``bond_choose_active_slave()``).  If the active slave is disabled,
 then a new active slave is chosen among the slaves that remain active.
 Currently due to the way that configuration works, this tends to be the
 remaining slave whose interface name is first alphabetically, but this is by no
@@ -125,7 +125,7 @@ Bond Packet Output
 
 报文出去时，bond会通过src mac,vlan来选择一个接口
 When a packet is sent out a bond port, the bond slave actually used is selected
-based on the packet's source MAC and VLAN tag (see ``choose_output_iface()``).
+based on the packet's source MAC and VLAN tag (see ``bond_choose_output_slave()``).
 In particular, the source MAC and VLAN tag are hashed into one of 256 values,
 and that value is looked up in a hash table (the "bond hash") kept in the
 ``bond_hash`` member of struct port.  The hash table entry identifies a bond
@@ -134,7 +134,7 @@ vswitchd chooses one arbitrarily.
 
 vswitchd的负载控制，没看懂
 Every 10 seconds, vswitchd rebalances the bond slaves (see
-``bond_rebalance_port()``).  To rebalance, vswitchd examines the statistics for
+``bond_rebalance()``).  To rebalance, vswitchd examines the statistics for
 the number of bytes transmitted by each slave over approximately the past
 minute, with data sent more recently weighted more heavily than data sent less
 recently.  It considers each of the slaves in order from most-loaded to

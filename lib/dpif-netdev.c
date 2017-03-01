@@ -146,6 +146,11 @@ struct netdev_flow_key {
 #define EM_FLOW_HASH_MASK (EM_FLOW_HASH_ENTRIES - 1) //emc表hash表的mask
 #define EM_FLOW_HASH_SEGS 2 //最多冲突检查多少次
 
+/* Default EMC insert probability is 1 / DEFAULT_EM_FLOW_INSERT_INV_PROB */
+#define DEFAULT_EM_FLOW_INSERT_INV_PROB 100
+#define DEFAULT_EM_FLOW_INSERT_MIN (UINT32_MAX /                     \
+                                    DEFAULT_EM_FLOW_INSERT_INV_PROB)
+
 struct emc_entry {
     struct dp_netdev_flow *flow;
     struct netdev_flow_key key;   /* key.hash used for emc hash value. */
@@ -259,6 +264,9 @@ struct dp_netdev {
     uint64_t last_tnl_conf_seq;
 
     struct conntrack conntrack;//提供连接跟踪功能
+
+    /* Probability of EMC insertions is a factor of 'emc_insert_min'.*/
+    OVS_ALIGNED_VAR(CACHE_LINE_SIZE) atomic_uint32_t emc_insert_min;
 };
 
 static struct dp_netdev_port *dp_netdev_lookup_port(const struct dp_netdev *dp,
@@ -1077,6 +1085,8 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     dp->upcall_cb = NULL;
 
     conntrack_init(&dp->conntrack);
+
+    atomic_init(&dp->emc_insert_min, DEFAULT_EM_FLOW_INSERT_MIN);
 
     cmap_init(&dp->poll_threads);
     ovs_mutex_init_recursive(&dp->non_pmd_mutex);
@@ -1971,6 +1981,28 @@ emc_insert(struct emc_cache *cache, const struct netdev_flow_key *key,
 }
 
 //在ecm中查找
+static inline void
+emc_probabilistic_insert(struct dp_netdev_pmd_thread *pmd,
+                         const struct netdev_flow_key *key,
+                         struct dp_netdev_flow *flow)
+{
+    /* Insert an entry into the EMC based on probability value 'min'. By
+     * default the value is UINT32_MAX / 100 which yields an insertion
+     * probability of 1/100 ie. 1% */
+
+    uint32_t min;
+    atomic_read_relaxed(&pmd->dp->emc_insert_min, &min);
+
+#ifdef DPDK_NETDEV
+    if (min && (key->hash ^ (uint32_t) pmd->last_cycles) <= min) {
+#else
+    if (min && (key->hash ^ random_uint32()) <= min) {
+#endif
+        emc_insert(&pmd->flow_cache, key, flow);
+    }
+}
+
+>>>>>>> upstream/master
 static inline struct dp_netdev_flow *
 emc_lookup(struct emc_cache *cache, const struct netdev_flow_key *key)
 {
@@ -2762,11 +2794,33 @@ dpif_netdev_set_config(struct dpif *dpif, const struct smap *other_config)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
     const char *cmask = smap_get(other_config, "pmd-cpu-mask");
+    unsigned long long insert_prob =
+        smap_get_ullong(other_config, "emc-insert-inv-prob",
+                        DEFAULT_EM_FLOW_INSERT_INV_PROB);
+    uint32_t insert_min, cur_min;
 
     if (!nullable_string_is_equal(dp->pmd_cmask, cmask)) {
         free(dp->pmd_cmask);
         dp->pmd_cmask = nullable_xstrdup(cmask);
         dp_netdev_request_reconfigure(dp);//通知dp配置发生变化
+    }
+
+    atomic_read_relaxed(&dp->emc_insert_min, &cur_min);
+    if (insert_prob <= UINT32_MAX) {
+        insert_min = insert_prob == 0 ? 0 : UINT32_MAX / insert_prob;
+    } else {
+        insert_min = DEFAULT_EM_FLOW_INSERT_MIN;
+        insert_prob = DEFAULT_EM_FLOW_INSERT_INV_PROB;
+    }
+
+    if (insert_min != cur_min) {
+        atomic_store_relaxed(&dp->emc_insert_min, insert_min);
+        if (insert_min == 0) {
+            VLOG_INFO("EMC has been disabled");
+        } else {
+            VLOG_INFO("EMC insertion probability changed to 1/%llu (~%.2f%%)",
+                      insert_prob, (100 / (float)insert_prob));
+        }
     }
 
     return 0;
@@ -4258,8 +4312,7 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet,
                                              add_actions->size);//l2层cache维护入口(将此flow加入）
         }
         ovs_mutex_unlock(&pmd->flow_mutex);
-
-        emc_insert(&pmd->flow_cache, key, netdev_flow);//向flow缓存中加入
+        emc_probabilistic_insert(pmd, key, netdev_flow);//向flow缓存中加入
     }
 }
 
@@ -4283,7 +4336,6 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
     struct dpcls *cls;
     struct dpcls_rule *rules[PKT_ARRAY_SIZE];
     struct dp_netdev *dp = pmd->dp;
-    struct emc_cache *flow_cache = &pmd->flow_cache;
     int miss_cnt = 0, lost_cnt = 0;
     int lookup_cnt = 0, add_lookup_cnt;
     bool any_miss;
@@ -4360,7 +4412,8 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
 
         flow = dp_netdev_flow_cast(rules[i]);
 
-        emc_insert(flow_cache, &keys[i], flow);//2层缓冲，对１层缓存的维护入口（将我们刚找到的这些加入到flow_cache中）
+        //2层缓冲，对１层缓存的维护入口（将我们刚找到的这些加入到flow_cache中）
+        emc_probabilistic_insert(pmd, &keys[i], flow);
         dp_netdev_queue_batches(packet, flow, &keys[i].mf, batches, n_batches);//入队
     }
 

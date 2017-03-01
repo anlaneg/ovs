@@ -143,9 +143,9 @@ static void load_config(FILE *config_file, struct sset *remotes,
 
 static void
 ovsdb_replication_init(const char *sync_from, const char *exclude,
-                       struct shash *all_dbs)
+                       struct shash *all_dbs, const struct uuid *server_uuid)
 {
-    replication_init(sync_from, exclude);
+    replication_init(sync_from, exclude, server_uuid);
     struct shash_node *node;
     SHASH_FOR_EACH (node, all_dbs) {
         struct db *db = node->data;
@@ -205,8 +205,8 @@ main_loop(struct ovsdb_jsonrpc_server *jsonrpc, struct shash *all_dbs,
         if (*is_backup) {
             replication_run();
             if (!replication_is_alive()) {
-                int retval = replication_get_last_error();
-                ovs_fatal(retval, "replication connection failed");
+                disconnect_active_server();
+                *is_backup = false;
             }
         }
 
@@ -443,7 +443,9 @@ main(int argc, char *argv[])
                              ovsdb_server_disable_monitor_cond, jsonrpc);
 
     if (is_backup) {
-        ovsdb_replication_init(sync_from, sync_exclude, &all_dbs);
+        const struct uuid *server_uuid;
+        server_uuid = ovsdb_jsonrpc_server_get_uuid(jsonrpc);
+        ovsdb_replication_init(sync_from, sync_exclude, &all_dbs, server_uuid);
     }
 
     //主循环
@@ -1231,8 +1233,10 @@ ovsdb_server_connect_active_ovsdb_server(struct unixctl_conn *conn,
     if ( !*config->sync_from) {
         msg = "Unable to connect: active server is not specified.\n";
     } else {
+        const struct uuid *server_uuid;
+        server_uuid = ovsdb_jsonrpc_server_get_uuid(config->jsonrpc);
         ovsdb_replication_init(*config->sync_from, *config->sync_exclude,
-                               config->all_dbs);
+                               config->all_dbs, server_uuid);
         if (!*config->is_backup) {
             *config->is_backup = true;
             save_config(config);
@@ -1269,8 +1273,10 @@ ovsdb_server_set_sync_exclude_tables(struct unixctl_conn *conn,
         *config->sync_exclude = xstrdup(argv[1]);
         save_config(config);
         if (*config->is_backup) {
+            const struct uuid *server_uuid;
+            server_uuid = ovsdb_jsonrpc_server_get_uuid(config->jsonrpc);
             ovsdb_replication_init(*config->sync_from, *config->sync_exclude,
-                                   config->all_dbs);
+                                   config->all_dbs, server_uuid);
         }
         err = set_blacklist_tables(argv[1], false);
     }
@@ -1476,8 +1482,10 @@ ovsdb_server_add_database(struct unixctl_conn *conn, int argc OVS_UNUSED,
     if (!error) {
         save_config(config);
         if (*config->is_backup) {
+            const struct uuid *server_uuid;
+            server_uuid = ovsdb_jsonrpc_server_get_uuid(config->jsonrpc);
             ovsdb_replication_init(*config->sync_from, *config->sync_exclude,
-                                   config->all_dbs);
+                                   config->all_dbs, server_uuid);
         }
         unixctl_command_reply(conn, NULL);
     } else {
@@ -1510,8 +1518,10 @@ ovsdb_server_remove_database(struct unixctl_conn *conn, int argc OVS_UNUSED,
 
     save_config(config);
     if (*config->is_backup) {
+        const struct uuid *server_uuid;
+        server_uuid = ovsdb_jsonrpc_server_get_uuid(config->jsonrpc);
         ovsdb_replication_init(*config->sync_from, *config->sync_exclude,
-                               config->all_dbs);
+                               config->all_dbs, server_uuid);
     }
     unixctl_command_reply(conn, NULL);
 }
