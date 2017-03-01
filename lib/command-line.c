@@ -38,7 +38,7 @@ ovs_cmdl_long_options_to_short_options(const struct option options[])//长选项
     for (; options->name; options++) {
         const struct option *o = options;
         if (o->flag == NULL && o->val > 0 && o->val <= UCHAR_MAX) {
-            *p++ = o->val;//参数值
+            *p++ = o->val;//单参数名
             if (o->has_arg == required_argument) {//需要参数
                 *p++ = ':';
             } else if (o->has_arg == optional_argument) {//可选参数

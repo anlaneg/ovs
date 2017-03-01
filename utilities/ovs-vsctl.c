@@ -146,12 +146,15 @@ main(int argc, char *argv[])
     vsctl_cmd_init();
 
     /* Log our arguments.  This is often valuable for debugging systems. */
+    //args仅仅出于debug目的而构造
     args = process_escape_args(argv);
     VLOG(ctl_might_write_to_db(argv) ? VLL_INFO : VLL_DBG, "Called as %s", args);
 
     /* Parse command line. */
     shash_init(&local_options);
+    //解析选项ovs-ctrl注册的命令option参数均放在local_options中
     parse_options(argc, argv, &local_options);
+    //从argv＋optind这句可知，需要先写选项，再写命令
     commands = ctl_parse_commands(argc - optind, argv + optind, &local_options,
                                   &n_commands);
 
@@ -248,6 +251,7 @@ parse_options(int argc, char *argv[], struct shash *local_options)
     options = xmemdup(global_long_options, sizeof global_long_options);
     allocated_options = ARRAY_SIZE(global_long_options);
     n_options = n_global_long_options;
+    //将已注册的命令合入到全局选项中
     ctl_add_cmd_options(&options, &n_options, &allocated_options, OPT_LOCAL);
 
     for (;;) {
@@ -260,10 +264,11 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         }
 
         switch (c) {
+        //指明连接到那个db
         case OPT_DB:
             db = optarg;
             break;
-
+        //采用单行输出
         case OPT_ONELINE:
             oneline = true;
             break;
@@ -280,11 +285,14 @@ parse_options(int argc, char *argv[], struct shash *local_options)
             dry_run = true;
             break;
 
+        //此选项是所有注册命令的选项
         case OPT_LOCAL:
+        	//local_options用于标记选项是否已给出过。
             if (shash_find(local_options, options[idx].name)) {
                 ctl_fatal("'%s' option specified multiple times",
                             options[idx].name);
             }
+            //将选项已参数放入local_options（举个例子，这个是add-port 后面的"--may-exist"）
             shash_add_nocopy(local_options,
                              xasprintf("--%s", options[idx].name),
                              nullable_xstrdup(optarg));
@@ -339,6 +347,7 @@ parse_options(int argc, char *argv[], struct shash *local_options)
     free(short_options);
 
     if (!db) {
+    	//未设置db，采用默认db
         db = ctl_default_db();
     }
 
@@ -2546,6 +2555,7 @@ do_vsctl(const char *args, struct ctl_command *commands, size_t n_commands,
     for (c = commands; c < &commands[n_commands]; c++) {
         vsctl_context_init_command(&vsctl_ctx, c);
         if (c->syntax->run) {
+        	//执行命令的run回调
             (c->syntax->run)(&vsctl_ctx.base);
         }
         vsctl_context_done_command(&vsctl_ctx, c);
@@ -2814,6 +2824,7 @@ static const struct ctl_command_syntax vsctl_commands[] = {
 };
 
 /* Registers vsctl and common db commands. */
+//注册vsctl相关命令
 static void
 vsctl_cmd_init(void)
 {

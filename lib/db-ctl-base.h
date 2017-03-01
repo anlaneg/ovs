@@ -129,6 +129,7 @@ struct ctl_command_syntax {
 
     /* A comma-separated list of supported options, e.g. "--a,--b", or the
      * empty string if the command does not support any options. */
+    //命令对应的参数
     const char *options;
 
     enum { RO, RW } mode;   /* Does this command modify the database? */

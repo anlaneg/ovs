@@ -91,6 +91,8 @@ process_init(void)
 #endif
 }
 
+//将参数，合并为一个由空隔分隔的字符串，如果字符串中有
+//" \t\r\n\v\\\'\"" 符号，则将其采用双引号包含，并考虑对'"','\'符进行转义
 char *
 process_escape_args(char **argv)
 {
@@ -100,9 +102,10 @@ process_escape_args(char **argv)
         const char *arg = *argp;
         const char *p;
         if (argp != argv) {
-            ds_put_char(&ds, ' ');
+            ds_put_char(&ds, ' ');//自第二个参数加' '
         }
         if (arg[strcspn(arg, " \t\r\n\v\\\'\"")]) {
+        	//遇到了" \t\r\n\v\\\'\""
             ds_put_char(&ds, '"');
             for (p = arg; *p; p++) {
                 if (*p == '\\' || *p == '\"') {

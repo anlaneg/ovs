@@ -75,6 +75,7 @@ static void set_column(const struct ovsdb_idl_table_class *,
                        struct ovsdb_symbol_table *);
 
 
+//检查options中是否有name项
 static struct option *
 find_option(const char *name, struct option *options, size_t n_options)
 {
@@ -1525,6 +1526,7 @@ cmd_wait_until(struct ctl_context *ctx)
 }
 
 /* Parses one command. */
+//解析命令行
 static void
 parse_command(int argc, char *argv[], struct shash *local_options,
               struct ctl_command *command)
@@ -1536,6 +1538,7 @@ parse_command(int argc, char *argv[], struct shash *local_options,
 
     shash_init(&command->options);
     shash_swap(local_options, &command->options);
+    //考虑处理选项及value
     for (i = 0; i < argc; i++) {
         const char *option = argv[i];
         const char *equals;
@@ -1559,23 +1562,29 @@ parse_command(int argc, char *argv[], struct shash *local_options,
         }
         shash_add_nocopy(&command->options, key, value);
     }
+    //没有发现command串
     if (i == argc) {
         ctl_fatal("missing command name (use --help for help)");
     }
 
-    p = shash_find_data(&all_commands, argv[i]);//找到vs-ctl对应的命令处理
+    //找到vs-ctl对应的命令处理
+    p = shash_find_data(&all_commands, argv[i]);
     if (!p) {
         ctl_fatal("unknown command '%s'; use --help for help", argv[i]);
     }
 
+    //处理已识别的选项（格式检查）
     SHASH_FOR_EACH (node, &command->options) {
+    	//取出选项关键字
         const char *s = strstr(p->options, node->name);
-        int end = s ? s[strlen(node->name)] : EOF;
+        int end = s ? s[strlen(node->name)] : EOF;//关键字的最后一个参数
 
+        //关键字后，只能跟'=',',',' '和'\0'
         if (end != '=' && end != ',' && end != ' ' && end != '\0') {
             ctl_fatal("'%s' command has no '%s' option",
                       argv[i], node->name);
         }
+        //需要选项参数时没有给选项参数或者不需要选项参数时，给出了选项参数，报错
         if ((end == '=') != (node->data != NULL)) {
             if (end == '=') {
                 ctl_fatal("missing argument to '%s' option on '%s' "
@@ -1587,11 +1596,14 @@ parse_command(int argc, char *argv[], struct shash *local_options,
         }
     }
 
+    //命令名称后为命令自已的参数（通过min_args，max_args先检查一下）
     n_arg = argc - i - 1;
     if (n_arg < p->min_args) {
+    	//太少
         ctl_fatal("'%s' command requires at least %d arguments",
                   p->name, p->min_args);
     } else if (n_arg > p->max_args) {
+    	//太多
         int j;
 
         for (j = i + 1; j < argc; j++) {
@@ -1607,7 +1619,8 @@ parse_command(int argc, char *argv[], struct shash *local_options,
                   p->name, p->max_args);
     }
 
-    command->syntax = p;
+    //返回找到的command
+    command->syntax = p;//命令的原数据
     command->argc = n_arg + 1;
     command->argv = &argv[i];
 }
@@ -1829,6 +1842,7 @@ cmd_show(struct ctl_context *ctx)
  * 'allocated_options_p' and number of added options 'n_options_p',
  * adds all command options to the array.  Enlarges the array if
  * necessary. */
+//将已注册的所有命令合入到选项中
 void
 ctl_add_cmd_options(struct option **options_p, size_t *n_options_p,
                     size_t *allocated_options_p, int opt_val)
@@ -1851,9 +1865,11 @@ ctl_add_cmd_options(struct option **options_p, size_t *n_options_p,
                 char *equals;
                 int has_arg;
 
+                //必须为类似--a的格式
                 ovs_assert(name[0] == '-' && name[1] == '-' && name[2]);
                 name += 2;
 
+                //用'='号表示是需要取参数的，如果无‘＝’号，则表示不取参数
                 equals = strchr(name, '=');
                 if (equals) {
                     has_arg = required_argument;
@@ -1864,25 +1880,30 @@ ctl_add_cmd_options(struct option **options_p, size_t *n_options_p,
 
                 o = find_option(name, *options_p, *n_options_p);
                 if (o) {
+                	//找到的选项，必须是我们加入的，否则就和全局的冲突了，需要挂掉
+                	//但新加入的不能出现有的要参数，有的不要参数，需要保持一致的要求（是不同子命令间的复用）
                     ovs_assert(o - *options_p >= n_existing_options);
                     ovs_assert(o->has_arg == has_arg);
                 } else {
+                	//将这个选项加入
                     o = add_option(options_p, n_options_p, allocated_options_p);
                     o->name = xstrdup(name);
                     o->has_arg = has_arg;
                     o->flag = NULL;
-                    o->val = opt_val;
+                    o->val = opt_val;//这些选项的val都是opt_val
                 }
             }
 
             free(s);
         }
     }
+    //再未尾加上NULL,这样数据就具有自描述长度的性质了
     o = add_option(options_p, n_options_p, allocated_options_p);
     memset(o, 0, sizeof *o);
 }
 
 /* Parses command-line input for commands. */
+//返回解析出来的命令
 struct ctl_command *
 ctl_parse_commands(int argc, char *argv[], struct shash *local_options,
                    size_t *n_commandsp)
@@ -1895,8 +1916,11 @@ ctl_parse_commands(int argc, char *argv[], struct shash *local_options,
     n_commands = allocated_commands = 0;
 
     for (start = i = 0; i <= argc; i++) {
+    	//如果到达命令结尾或者遇到了'--'才开始分析（'--'之前的是命令）
+    	//多个命令间采用‘--'进行分隔
         if (i == argc || !strcmp(argv[i], "--")) {
             if (i > start) {
+            	//如果不足以存放command,则扩大commands数组
                 if (n_commands >= allocated_commands) {
                     struct ctl_command *c;
 
@@ -1906,9 +1930,11 @@ ctl_parse_commands(int argc, char *argv[], struct shash *local_options,
                         shash_moved(&c->options);
                     }
                 }
+                //从start位置开i位置是commands区，现在我们解析command
                 parse_command(i - start, &argv[start], local_options,
                               &commands[n_commands++]);
             } else if (!shash_is_empty(local_options)) {
+            	//没有出现command,直接出现‘--’且有local_options存在，报错，无效的命令
                 ctl_fatal("missing command name (use --help for help)");
             }
             start = i + 1;
