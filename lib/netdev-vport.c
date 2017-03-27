@@ -133,7 +133,7 @@ netdev_vport_get_dpif_port(const struct netdev *netdev,
         return netdev_get_name(netdev);
     }
 
-    if (netdev_vport_needs_dst_port(netdev)) {//需要配置目的端口
+    if (netdev_vport_needs_dst_port(netdev)) {//如果是tunnel口，创建指定名称（不用netdev->name)
         const struct netdev_vport *vport = netdev_vport_cast(netdev);
 
         /*
