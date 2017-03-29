@@ -4733,11 +4733,13 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
 
                 dp_packet_batch_apply_cutlen(packets_);
 
+                //调用pop弹出隧道头
                 netdev_pop_header(p->port->netdev, packets_);
                 if (dp_packet_batch_is_empty(packets_)) {
                     return;
                 }
 
+                //将报文的入接口更改为portno
                 struct dp_packet *packet;
                 DP_PACKET_BATCH_FOR_EACH (packet, packets_) {
                     packet->md.in_port.odp_port = portno;

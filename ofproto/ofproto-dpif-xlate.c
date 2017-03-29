@@ -3405,6 +3405,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
                 * int tunnel-port flow to avoid these checks completely. */
                 if (ofp_port == OFPP_LOCAL &&
                     ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {
+                	//如果ofp_port是本地口，且tunnel在本地处理，则检查此流是否可区配某tunnel口
 
                     odp_tnl_port = tnl_port_map_lookup(flow, wc);//查找此流是否对应某tunnel口
                 }
@@ -3412,7 +3413,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
                 if (odp_tnl_port != ODPP_NONE) {//找到了此流对应的tunnel口，添加隧道移除动作
                     nl_msg_put_odp_port(ctx->odp_actions,
                                         OVS_ACTION_ATTR_TUNNEL_POP,//添加隧道口移除动作
-                                        odp_tnl_port);
+                                        odp_tnl_port);//由这个隧道口处理解封装
                 } else {
                     /* Tunnel push-pop action is not compatible with
                      * IPFIX action. */
