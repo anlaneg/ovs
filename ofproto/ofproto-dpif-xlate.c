@@ -2993,6 +2993,14 @@ tnl_send_arp_request(struct xlate_ctx *ctx, const struct xport *out_dev,
     compose_arp(&packet, ARP_OP_REQUEST,
                 eth_src, eth_addr_zero, true, ip_src, ip_dst);
 
+    //实际使用时，我们发生了一个错误，arp请求导致组装好的arp包
+    //走函数compose_table_xlate->ofproto_dpif_execute_actions__
+    //->xlate_actions->do_xlate_actions->xlate_output_action->
+    //xlate_table_action->xlate_recursively->do_xlate_actions->
+    //xlate_output_action->xlate_normal->xlate_normal_flood->
+    //output_normal->compose_output_action->compose_output_action__->
+    //build_tunnel_send->tnl_send_arp_request->compose_table_xlate(已形成环）->
+    //ofproto_dpif_execute_actions__ 从而产生不断循环
     compose_table_xlate(ctx, out_dev, &packet);
     dp_packet_uninit(&packet);
 }
@@ -3044,6 +3052,7 @@ build_tunnel_send(struct xlate_ctx *ctx, const struct xport *xport,
                      "neighbor cache miss for %s on bridge %s, "
                      "sending %s request",
                      buf_dip6, out_dev->xbridge->name, d_ip ? "ARP" : "ND");
+
         if (d_ip) {//发送arp请求
             tnl_send_arp_request(ctx, out_dev, smac, s_ip, d_ip);
         } else {//发送nd请求
