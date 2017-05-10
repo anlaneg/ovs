@@ -370,7 +370,7 @@ struct netdev_dpdk {
      * so we remember the request and update them next time
      * netdev_dpdk*_reconfigure() is called */
     int requested_mtu;//含ethhdr,crc,vlan
-    int requested_n_txq;
+    int requested_n_txq;//请求将发送队列数量变更为多大（与当前生效的n_txq相关）
     int requested_n_rxq;
     int requested_rxq_size;
     int requested_txq_size;
@@ -1321,12 +1321,13 @@ netdev_dpdk_set_tx_multiq(struct netdev *netdev, unsigned int n_txq)
 
     ovs_mutex_lock(&dev->mutex);
 
+    //检查发送队列数量是否未发生变化，如果未变化，则不操作
     if (dev->requested_n_txq == n_txq) {
         goto out;
     }
 
     dev->requested_n_txq = n_txq;
-    netdev_request_reconfigure(netdev);
+    netdev_request_reconfigure(netdev);//不进行变更，仅通知发生变化
 
 out:
     ovs_mutex_unlock(&dev->mutex);
@@ -3120,6 +3121,7 @@ netdev_dpdk_reconfigure(struct netdev *netdev)
 
     ovs_mutex_lock(&dev->mutex);
 
+    //检查是否需要更改
     if (netdev->n_txq == dev->requested_n_txq
         && netdev->n_rxq == dev->requested_n_rxq
         && dev->mtu == dev->requested_mtu

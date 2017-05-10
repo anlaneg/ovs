@@ -397,7 +397,7 @@ ovs_thread_create(const char *name, void *(*start)(void *), void *arg)
 
     multithreaded = true;//标明进入多线程环境
     aux = xmalloc(sizeof *aux);
-    aux->start = start;
+    aux->start = start;//设置线程入口
     aux->arg = arg;
     ovs_strlcpy(aux->name, name, sizeof aux->name);
 

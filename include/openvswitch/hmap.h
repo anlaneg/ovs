@@ -27,8 +27,8 @@ extern "C" {
 
 /* A hash map node, to be embedded inside the data structure being mapped. */
 struct hmap_node {
-    size_t hash;                /* Hash value. */
-    struct hmap_node *next;     /* Next in linked list. */
+    size_t hash;                /* Hash value. */ //桶对应的hash值
+    struct hmap_node *next;     /* Next in linked list. *///桶里的下一个元素
 };
 
 /* Returns the hash value embedded in 'node'. */
@@ -366,6 +366,7 @@ hmap_next_with_hash(const struct hmap_node *node)
     return hmap_next_with_hash__(node->next, node->hash);
 }
 
+//从start索引开始，获得第一个非NULL的桶
 static inline struct hmap_node *
 hmap_next__(const struct hmap *hmap, size_t start)
 {
@@ -373,7 +374,7 @@ hmap_next__(const struct hmap *hmap, size_t start)
     for (i = start; i <= hmap->mask; i++) {
         struct hmap_node *node = hmap->buckets[i];
         if (node) {
-            return node;
+            return node;//非NULL就返回
         }
     }
     return NULL;
@@ -397,6 +398,7 @@ hmap_first(const struct hmap *hmap)
 static inline struct hmap_node *
 hmap_next(const struct hmap *hmap, const struct hmap_node *node)
 {
+	//如果桶没有遍历完，则继续遍历，否则遍历下一个桶
     return (node->next
             ? node->next
             : hmap_next__(hmap, (node->hash & hmap->mask) + 1));
