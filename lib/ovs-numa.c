@@ -74,7 +74,7 @@ struct cpu_core {
 };
 
 /* Contains all 'struct numa_node's. */
-//记录系统中已发现的所有nova节点
+//记录系统中已发现的所有numa节点
 static struct hmap all_numa_nodes = HMAP_INITIALIZER(&all_numa_nodes);
 /* Contains all 'struct cpu_core's. */
 //记录系统中已发现的所有cpu及core
@@ -395,6 +395,7 @@ ovs_numa_get_n_cores_on_numa(int numa_id)
     return OVS_CORE_UNSPEC;
 }
 
+//空的num_dump
 static struct ovs_numa_dump *
 ovs_numa_dump_create(void)
 {
@@ -448,6 +449,7 @@ ovs_numa_dump_cores_on_numa(int numa_id)
     return dump;
 }
 
+//通过cpu mask构造ovs_numa_dump数组
 struct ovs_numa_dump *
 ovs_numa_dump_cores_with_cmask(const char *cmask)
 {
@@ -461,21 +463,25 @@ ovs_numa_dump_cores_with_cmask(const char *cmask)
         end_idx = 2;
     }
 
+    //反序遍历'0x2ffe'
     for (int i = strlen(cmask) - 1; i >= end_idx; i--) {
         char hex = cmask[i];
         int bin;
 
         bin = hexit_value(hex);
         if (bin == -1) {
+        		//参数有误
             VLOG_WARN("Invalid cpu mask: %c", cmask[i]);
             bin = 0;
         }
 
+        //检查取到的这4位值，并配合core_id一起，确定core_id是否被指定
         for (int j = 0; j < 4; j++) {
             if ((bin >> j) & 0x1) {
                 struct cpu_core *core = get_core_by_core_id(core_id);
 
                 if (core) {
+                		//将core加入
                     ovs_numa_dump_add(dump,
                                       core->numa->numa_id,
                                       core->core_id);
@@ -489,18 +495,21 @@ ovs_numa_dump_cores_with_cmask(const char *cmask)
     return dump;
 }
 
+//自已发现的numa中找到前cores_per_numa个core
 struct ovs_numa_dump *
 ovs_numa_dump_n_cores_per_numa(int cores_per_numa)
 {
     struct ovs_numa_dump *dump = ovs_numa_dump_create();
     const struct numa_node *n;
 
+    //遍历每个numa节点
     HMAP_FOR_EACH (n, hmap_node, &all_numa_nodes) {
         const struct cpu_core *core;
         int i = 0;
 
+        //遍历当前numa中的每个core
         LIST_FOR_EACH (core, list_node, &n->cores) {
-            if (i++ >= cores_per_numa) {
+            if (i++ >= cores_per_numa) {//防止加入的core超限制
                 break;
             }
 
@@ -527,6 +536,7 @@ ovs_numa_dump_contains_core(const struct ovs_numa_dump *dump,
     return false;
 }
 
+//返回core数量
 size_t
 ovs_numa_dump_count(const struct ovs_numa_dump *dump)
 {

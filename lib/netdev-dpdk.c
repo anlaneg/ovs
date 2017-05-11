@@ -370,7 +370,7 @@ struct netdev_dpdk {
      * so we remember the request and update them next time
      * netdev_dpdk*_reconfigure() is called */
     int requested_mtu;//含ethhdr,crc,vlan
-    int requested_n_txq;
+    int requested_n_txq;//请求将发送队列数量变更为多大（与当前生效的n_txq相关）
     int requested_n_rxq;
     int requested_rxq_size;
     int requested_txq_size;
@@ -1321,12 +1321,13 @@ netdev_dpdk_set_tx_multiq(struct netdev *netdev, unsigned int n_txq)
 
     ovs_mutex_lock(&dev->mutex);
 
+    //检查发送队列数量是否未发生变化，如果未变化，则不操作
     if (dev->requested_n_txq == n_txq) {
         goto out;
     }
 
     dev->requested_n_txq = n_txq;
-    netdev_request_reconfigure(netdev);
+    netdev_request_reconfigure(netdev);//不进行变更，仅通知发生变化
 
 out:
     ovs_mutex_unlock(&dev->mutex);
@@ -1390,6 +1391,7 @@ netdev_dpdk_eth_tx_burst(struct netdev_dpdk *dev, int qid,
     while (nb_tx != cnt) {
         uint32_t ret;
 
+        //自指定队列中发出
         ret = rte_eth_tx_burst(dev->port_id, qid, pkts + nb_tx, cnt - nb_tx);
         if (!ret) {
             break;
@@ -1818,6 +1820,7 @@ netdev_dpdk_send__(struct netdev_dpdk *dev, int qid,
         return;
     }
 
+    //由于concurrent-txq为true,故需要对此队列加锁
     if (OVS_UNLIKELY(concurrent_txq)) {
         qid = qid % dev->up.n_txq;
         rte_spinlock_lock(&dev->tx_q[qid].tx_lock);
@@ -3120,6 +3123,7 @@ netdev_dpdk_reconfigure(struct netdev *netdev)
 
     ovs_mutex_lock(&dev->mutex);
 
+    //检查是否需要更改
     if (netdev->n_txq == dev->requested_n_txq
         && netdev->n_rxq == dev->requested_n_rxq
         && dev->mtu == dev->requested_mtu

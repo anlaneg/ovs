@@ -751,7 +751,7 @@ netdev_set_tx_multiq(struct netdev *netdev, unsigned int n_txq)//配置发队列
  * cases this function will always return EOPNOTSUPP. */
 int
 netdev_send(struct netdev *netdev, int qid, struct dp_packet_batch *batch,//报文发送
-            bool may_steal, bool concurrent_txq)
+            bool may_steal, bool concurrent_txq)//concurrent_txq为true时，需要加锁，非独占
 {
     int error = netdev->netdev_class->send(netdev, qid, batch, may_steal,
                                            concurrent_txq);
