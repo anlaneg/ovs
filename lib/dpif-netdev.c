@@ -308,7 +308,7 @@ struct dp_netdev_port {
     struct netdev *netdev;
     struct hmap_node node;      /* Node in dp_netdev's 'ports'. */
     struct netdev_saved_flags *sf;
-    struct dp_netdev_rxq *rxqs;
+    struct dp_netdev_rxq *rxqs;//此port上有哪些收队列
     unsigned n_rxq;             /* Number of elements in 'rxq' */
     bool dynamic_txqs;          /* If true XPS will be used. */
     unsigned *txq_used;         /* Number of threads that uses each tx queue. */
@@ -3436,7 +3436,7 @@ reconfigure_datapath(struct dp_netdev *dp)
 
             if (q->pmd) {
                 ovs_mutex_lock(&q->pmd->port_mutex);
-                dp_netdev_add_rxq_to_pmd(q->pmd, q);
+                dp_netdev_add_rxq_to_pmd(q->pmd, q);//将此队列加入到对应的pmd中，用于轮询
                 ovs_mutex_unlock(&q->pmd->port_mutex);
             }
         }
@@ -3944,6 +3944,7 @@ dp_netdev_pmd_clear_ports(struct dp_netdev_pmd_thread *pmd)
 }
 
 /* Adds rx queue to poll_list of PMD thread, if it's not there already. */
+//向pmd中添加相应轮询队列
 static void
 dp_netdev_add_rxq_to_pmd(struct dp_netdev_pmd_thread *pmd,
                          struct dp_netdev_rxq *rxq)
