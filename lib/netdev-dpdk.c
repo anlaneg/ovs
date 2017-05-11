@@ -1391,6 +1391,7 @@ netdev_dpdk_eth_tx_burst(struct netdev_dpdk *dev, int qid,
     while (nb_tx != cnt) {
         uint32_t ret;
 
+        //自指定队列中发出
         ret = rte_eth_tx_burst(dev->port_id, qid, pkts + nb_tx, cnt - nb_tx);
         if (!ret) {
             break;
@@ -1819,6 +1820,7 @@ netdev_dpdk_send__(struct netdev_dpdk *dev, int qid,
         return;
     }
 
+    //由于concurrent-txq为true,故需要对此队列加锁
     if (OVS_UNLIKELY(concurrent_txq)) {
         qid = qid % dev->up.n_txq;
         rte_spinlock_lock(&dev->tx_q[qid].tx_lock);

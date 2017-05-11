@@ -3589,17 +3589,20 @@ pmd_load_cached_ports(struct dp_netdev_pmd_thread *pmd)
 {
     struct tx_port *tx_port, *tx_port_cached;
 
+    //先将tnl_port_cache,send_port_cache清空
     pmd_free_cached_ports(pmd);
     hmap_shrink(&pmd->send_port_cache);
     hmap_shrink(&pmd->tnl_port_cache);
 
     HMAP_FOR_EACH (tx_port, node, &pmd->tx_ports) {
-        if (netdev_has_tunnel_push_pop(tx_port->port->netdev)) {
+        //将tx_ports中有push pop能力的netdev加入到tnl_port_cache
+    		if (netdev_has_tunnel_push_pop(tx_port->port->netdev)) {
             tx_port_cached = xmemdup(tx_port, sizeof *tx_port_cached);
             hmap_insert(&pmd->tnl_port_cache, &tx_port_cached->node,
                         hash_port_no(tx_port_cached->port->port_no));
         }
 
+    		//将tx_ports中有tx队列的port加入到send_port_cache
         if (netdev_n_txq(tx_port->port->netdev)) {
             tx_port_cached = xmemdup(tx_port, sizeof *tx_port_cached);
             hmap_insert(&pmd->send_port_cache, &tx_port_cached->node,
@@ -3620,6 +3623,7 @@ pmd_load_queues_and_ports(struct dp_netdev_pmd_thread *pmd,
     poll_list = xrealloc(poll_list, hmap_count(&pmd->poll_list)
                                     * sizeof *poll_list);
 
+    //收集当前pmd负责收取哪些队列
     i = 0;
     HMAP_FOR_EACH (poll, node, &pmd->poll_list) {
         poll_list[i].rx = poll->rxq->rx;
@@ -3674,7 +3678,7 @@ reload:
     //主循环，处理报文
     for (;;) {
         for (i = 0; i < poll_cnt; i++) {
-            //此port的收发包处理
+            //对我们负责的port进行收发包处理
             dp_netdev_process_rxq_port(pmd, poll_list[i].rx,
                                        poll_list[i].port_no);
         }
@@ -3699,6 +3703,7 @@ reload:
         }
     }
 
+    //重新加载收队列及发送port
     poll_cnt = pmd_load_queues_and_ports(pmd, &poll_list);
     exiting = latch_is_set(&pmd->exit_latch);
     /* Signal here to make sure the pmd finishes
@@ -4583,6 +4588,7 @@ dpif_netdev_xps_get_tx_qid(const struct dp_netdev_pmd_thread *pmd,
     interval = now - tx->last_used;
     tx->last_used = now;
 
+    //选定后，XPS_TIMEOUT_MS时间内有效
     if (OVS_LIKELY(tx->qid >= 0 && interval < XPS_TIMEOUT_MS)) {
         return tx->qid;
     }
@@ -4591,7 +4597,8 @@ dpif_netdev_xps_get_tx_qid(const struct dp_netdev_pmd_thread *pmd,
 
     ovs_mutex_lock(&port->txq_used_mutex);
     if (tx->qid >= 0) {
-        port->txq_used[tx->qid]--;
+        //使上次选择失效
+    		port->txq_used[tx->qid]--;
         tx->qid = -1;
     }
 
@@ -4704,6 +4711,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             int tx_qid;
             bool dynamic_txqs;
 
+            //取出自哪个队列发送，并自此队列发送
             dynamic_txqs = p->port->dynamic_txqs;
             if (dynamic_txqs) {
                 tx_qid = dpif_netdev_xps_get_tx_qid(pmd, p, now);
