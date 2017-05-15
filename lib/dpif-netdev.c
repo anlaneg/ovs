@@ -3668,8 +3668,8 @@ reload:
 
     if (!poll_cnt) {
         while (seq_read(pmd->reload_seq) == pmd->last_reload_seq) {
-        		//我们没有要负责的port,阻塞等待
-        		seq_wait(pmd->reload_seq, pmd->last_reload_seq);
+        	//我们没有要负责的port,阻塞等待
+        	seq_wait(pmd->reload_seq, pmd->last_reload_seq);
             poll_block();
         }
         lc = UINT_MAX;
