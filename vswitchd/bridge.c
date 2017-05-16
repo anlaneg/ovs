@@ -137,7 +137,7 @@ struct bridge {
     struct hmap mappings;       /* "struct" indexed by UUID */
 
     /* Used during reconfiguration. */
-    struct shash wanted_ports;//需要创建的port
+    struct shash wanted_ports;//配置指明需要创建的port
 
     /* Synthetic local port if necessary. */
     struct ovsrec_port synth_local_port;
@@ -631,9 +631,9 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      *
      * This is mostly an update to bridge data structures. Nothing is pushed
      * down to ofproto or lower layers. */
-    add_del_bridges(ovs_cfg);
+    add_del_bridges(ovs_cfg);//依据配置，增删除桥
     HMAP_FOR_EACH (br, node, &all_bridges) {
-        bridge_collect_wanted_ports(br, &br->wanted_ports);
+        bridge_collect_wanted_ports(br, &br->wanted_ports);//收集配置指明的所有口
         bridge_del_ports(br, &br->wanted_ports);//删除不需要的port,更新已存在的port的配置
     }
 
@@ -652,9 +652,9 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      * deletions (they might especially overlap in name). */
     //上面我们依据配置，将上层不需要的birdges,port已删除，这里我们检查all_bridges即可知道哪些
     //ofprotos需要删除。
-    bridge_delete_ofprotos();
+    bridge_delete_ofprotos();//删除不再需要的ofproto
     HMAP_FOR_EACH (br, node, &all_bridges) {
-    	//如果br有它对应的ofproto,则需要检查port的处理
+    	//如果br有它对应的ofproto,则需要检查ofproto中的port，并进行
     	//删除及更新
         if (br->ofproto) {
             bridge_delete_or_reconfigure_ports(br);
@@ -843,12 +843,12 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
         ofp_port_t requested_ofp_port;
         struct iface *iface;
 
-        sset_add(&ofproto_ports, ofproto_port.name);
+        sset_add(&ofproto_ports, ofproto_port.name);//记录接口名称
 
         //检查br中是否还存在此iface
         iface = iface_lookup(br, ofproto_port.name);
         if (!iface) {
-        	//配置中没有这个iface
+        	//br中没有这个iface
             /* No such iface is configured, so we should delete this
              * ofproto_port.
              *
@@ -972,6 +972,7 @@ bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
                 struct iface *iface = iface_lookup(br, iface_cfg->name);
 
                 if (!iface) {
+                	//做实际工作，创建iface
                     iface_create(br, iface_cfg, port_cfg);
                 }
             }
@@ -1826,17 +1827,18 @@ iface_do_create(const struct bridge *br,
     int error;
     const char *type;
 
-    if (netdev_is_reserved_name(iface_cfg->name)) {//检查要创建的接口名称是否已预留
+    if (netdev_is_reserved_name(iface_cfg->name)) {
+    	//检查要创建的接口名称是否已预留
         VLOG_WARN("could not create interface %s, name is reserved",
                   iface_cfg->name);
         error = EINVAL;
         goto error;
     }
 
-    //由datapath决定要创建的netdev类型
+    //由datapath决定要创建的netdev类型（例如dpdk？tap?等）
     type = ofproto_port_open_type(br->cfg->datapath_type,
                                   iface_get_type(iface_cfg, br->cfg));
-    error = netdev_open(iface_cfg->name, type, &netdev);//创建对应的设备
+    error = netdev_open(iface_cfg->name, type, &netdev);//创建对应type的设备
     if (error) {
         VLOG_WARN_BUF(errp, "could not open network device %s (%s)",
                       iface_cfg->name, ovs_strerror(error));
@@ -1851,6 +1853,7 @@ iface_do_create(const struct bridge *br,
     iface_set_netdev_mtu(iface_cfg, netdev);//配置mtu
 
     *ofp_portp = iface_pick_ofport(iface_cfg);//ofp_portp是来源于配置
+    //向ofproto内添加这个port
     error = ofproto_port_add(br->ofproto, netdev, ofp_portp);
     if (error) {
         VLOG_WARN_BUF(errp, "could not add network device %s to ofproto (%s)",
@@ -3438,7 +3441,7 @@ bridge_collect_wanted_ports(struct bridge *br,
 
     shash_init(wanted_ports);
 
-    //遍历桥配置的所有接口
+    //遍历桥配置中指明的所有接口
     for (i = 0; i < br->cfg->n_ports; i++) {
         const char *name = br->cfg->ports[i]->name;
         if (!shash_add_once(wanted_ports, name, br->cfg->ports[i])) {
@@ -3448,7 +3451,7 @@ bridge_collect_wanted_ports(struct bridge *br,
     }
 
     //检查此桥是否有controllers的控制
-    if (bridge_get_controllers(br, NULL)
+    if (bridge_get_controllers(br, NULL) //有controller接口
         && !shash_find(wanted_ports, br->name)) {
         VLOG_WARN("bridge %s: no port named %s, synthesizing one",
                   br->name, br->name);
@@ -3465,6 +3468,7 @@ bridge_collect_wanted_ports(struct bridge *br,
 
         br->synth_local_ifacep = &br->synth_local_iface;
 
+        //加入虚拟的本地port
         shash_add(wanted_ports, br->name, &br->synth_local_port);
     }
 }

@@ -1935,6 +1935,7 @@ ofproto_port_destroy(struct ofproto_port *ofproto_port)
 }
 
 /* Initializes 'dump' to begin dumping the ports in an ofproto.
+ * 初始化一个dump,用于遍历ofproto上的ports
  *
  * This function provides no status indication.  An error status for the entire
  * dump operation is provided when it is completed by calling
@@ -2052,6 +2053,7 @@ ofproto_port_add(struct ofproto *ofproto, struct netdev *netdev,
                                                netdev_get_name(netdev),
                                                &ofproto_port);
             if (!error) {
+            	//按传入参数，设置ofproto_port对应的ofp_port
                 *ofp_portp = ofproto_port.ofp_port;
                 ofproto_port_destroy(&ofproto_port);
             }

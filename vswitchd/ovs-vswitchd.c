@@ -78,7 +78,7 @@ main(int argc, char *argv[])
     set_program_name(argv[0]);//设置进程名称，进程版本号
 
     ovs_cmdl_proctitle_init(argc, argv);//非linux机器不做作何处理
-    service_start(&argc, &argv);//linux机器不做作何处理
+    service_start(&argc, &argv);//linux机器不做任何处理
     remote = parse_options(argc, argv, &unixctl_path);//解析命令行
     fatal_ignore_sigpipe();
 
