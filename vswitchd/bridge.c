@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016 Nicira, Inc.
+/* Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -509,14 +509,14 @@ bridge_init(const char *remote)//用database路径初始化桥
 }
 
 void
-bridge_exit(void)
+bridge_exit(bool delete_datapath)
 {
     struct bridge *br, *next_br;
 
     if_notifier_destroy(ifnotifier);
     seq_destroy(ifaces_changed);
     HMAP_FOR_EACH_SAFE (br, next_br, node, &all_bridges) {
-        bridge_destroy(br, false);
+        bridge_destroy(br, delete_datapath);
     }
     ovsdb_idl_destroy(idl);
 }
@@ -619,6 +619,8 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
                                         OFPROTO_FLOW_LIMIT_DEFAULT));
     ofproto_set_max_idle(smap_get_int(&ovs_cfg->other_config, "max-idle",
                                       OFPROTO_MAX_IDLE_DEFAULT));
+    ofproto_set_vlan_limit(smap_get_int(&ovs_cfg->other_config, "vlan-limit",
+                                       LEGACY_MAX_VLAN_HEADERS));
 
     ofproto_set_threads(
         smap_get_int(&ovs_cfg->other_config, "n-handler-threads", 0),
@@ -1020,6 +1022,11 @@ port_configure(struct port *port)
         s.trunks = vlan_bitmap_from_array(cfg->trunks, cfg->n_trunks);
     }
 
+    s.cvlans = NULL;
+    if (cfg->n_cvlans) {
+        s.cvlans = vlan_bitmap_from_array(cfg->cvlans, cfg->n_cvlans);
+    }
+
     /* Get VLAN mode. */
     if (cfg->vlan_mode) {
         if (!strcmp(cfg->vlan_mode, "access")) {
@@ -1030,6 +1037,8 @@ port_configure(struct port *port)
             s.vlan_mode = PORT_VLAN_NATIVE_TAGGED;
         } else if (!strcmp(cfg->vlan_mode, "native-untagged")) {
             s.vlan_mode = PORT_VLAN_NATIVE_UNTAGGED;
+        } else if (!strcmp(cfg->vlan_mode, "dot1q-tunnel")) {
+            s.vlan_mode = PORT_VLAN_DOT1Q_TUNNEL;
         } else {
             /* This "can't happen" because ovsdb-server should prevent it. */
             VLOG_WARN("port %s: unknown VLAN mode %s, falling "
@@ -1039,7 +1048,7 @@ port_configure(struct port *port)
     } else {
         if (s.vlan >= 0) {
             s.vlan_mode = PORT_VLAN_ACCESS;
-            if (cfg->n_trunks) {
+            if (cfg->n_trunks || cfg->n_cvlans) {
                 VLOG_WARN("port %s: ignoring trunks in favor of implicit vlan",
                           port->name);
             }
@@ -1047,6 +1056,12 @@ port_configure(struct port *port)
             s.vlan_mode = PORT_VLAN_TRUNK;
         }
     }
+
+    const char *qe = smap_get_def(&cfg->other_config, "qinq-ethtype", "");
+    s.qinq_ethtype = (!strcmp(qe, "802.1q")
+                      ? ETH_TYPE_VLAN_8021Q
+                      : ETH_TYPE_VLAN_8021AD);
+
     s.use_priority_tags = smap_get_bool(&cfg->other_config, "priority-tags",
                                         false);
 
@@ -1081,6 +1096,7 @@ port_configure(struct port *port)
     ofproto_bundle_register(port->bridge->ofproto, port, &s);
 
     /* Clean up. */
+    free(s.cvlans);
     free(s.slaves);
     free(s.trunks);
     free(s.lacp_slaves);
@@ -1585,7 +1601,7 @@ bridge_configure_stp(struct bridge *br, bool enable_stp)
                                           STP_DEFAULT_HELLO_TIME);
 
         br_s.max_age = smap_get_ullong(&br->cfg->other_config, "stp-max-age",
-                                       STP_DEFAULT_HELLO_TIME / 1000) * 1000;
+                                       STP_DEFAULT_MAX_AGE / 1000) * 1000;
         br_s.fwd_delay = smap_get_ullong(&br->cfg->other_config,
                                          "stp-forward-delay",
                                          STP_DEFAULT_FWD_DELAY / 1000) * 1000;
@@ -2527,7 +2543,7 @@ port_refresh_stp_status(struct port *port)
 
     /* Set Status column. */
     smap_init(&smap);
-    smap_add_format(&smap, "stp_port_id", STP_PORT_ID_FMT, status.port_id);
+    smap_add_format(&smap, "stp_port_id", "%d", status.port_id);
     smap_add(&smap, "stp_state", stp_state_name(status.state));
     smap_add_format(&smap, "stp_sec_in_state", "%u", status.sec_in_state);
     smap_add(&smap, "stp_role", stp_role_name(status.role));
@@ -2747,34 +2763,31 @@ static void
 refresh_controller_status(void)
 {
     struct bridge *br;
-    struct shash info;
-    const struct ovsrec_controller *cfg;
-
-    shash_init(&info);
 
     /* Accumulate status for controllers on all bridges. */
     HMAP_FOR_EACH (br, node, &all_bridges) {
+        struct shash info = SHASH_INITIALIZER(&info);
         ofproto_get_ofproto_controller_info(br->ofproto, &info);
-    }
 
-    /* Update each controller in the database with current status. */
-    OVSREC_CONTROLLER_FOR_EACH(cfg, idl) {
-        struct ofproto_controller_info *cinfo =
-            shash_find_data(&info, cfg->target);
+        /* Update each controller of the bridge in the database with
+         * current status. */
+        struct ovsrec_controller **controllers;
+        size_t n_controllers = bridge_get_controllers(br, &controllers);
+        size_t i;
+        for (i = 0; i < n_controllers; i++) {
+            struct ovsrec_controller *cfg = controllers[i];
+            struct ofproto_controller_info *cinfo =
+                shash_find_data(&info, cfg->target);
 
-        if (cinfo) {
+            ovs_assert(cinfo);
             ovsrec_controller_set_is_connected(cfg, cinfo->is_connected);
-            ovsrec_controller_set_role(cfg, ofp12_controller_role_to_str(
-                                           cinfo->role));
+            const char *role = ofp12_controller_role_to_str(cinfo->role);
+            ovsrec_controller_set_role(cfg, role);
             ovsrec_controller_set_status(cfg, &cinfo->pairs);
-        } else {
-            ovsrec_controller_set_is_connected(cfg, false);
-            ovsrec_controller_set_role(cfg, NULL);
-            ovsrec_controller_set_status(cfg, NULL);
         }
-    }
 
-    ofproto_free_ofproto_controller_info(&info);
+        ofproto_free_ofproto_controller_info(&info);
+    }
 }
 
 /* Update interface and mirror statistics if necessary. */
@@ -4409,6 +4422,9 @@ iface_destroy__(struct iface *iface)//iface销毁
     if (iface) {
         struct port *port = iface->port;
         struct bridge *br = port->bridge;
+
+        VLOG_INFO("bridge %s: deleted interface %s on port %d",
+                  br->name, iface->name, iface->ofp_port);
 
         if (br->ofproto && iface->ofp_port != OFPP_NONE) {
             ofproto_port_unregister(br->ofproto, iface->ofp_port);
