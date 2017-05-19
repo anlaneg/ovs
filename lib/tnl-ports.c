@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2015 Nicira, Inc.
+ * Copyright (c) 2014, 2015, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -140,7 +140,7 @@ map_insert(odp_port_t port, struct eth_addr mac, struct in6_addr *addr,
         } else {
             match.wc.masks.ipv6_dst = in6addr_exact;
         }
-        match.wc.masks.vlan_tci = OVS_BE16_MAX;
+        match.wc.masks.vlans[0].tci = OVS_BE16_MAX;
         memset(&match.wc.masks.dl_dst, 0xff, sizeof (struct eth_addr));
 
         //初始化规则
@@ -510,7 +510,7 @@ tnl_port_map_run(void)
         }
 
         /* Address changed. */
-        ovs_strlcpy(dev_name, ip_dev->dev_name, sizeof dev_name);
+        ovs_strlcpy_arrays(dev_name, ip_dev->dev_name);
         delete_ipdev(ip_dev);//删除它
         insert_ipdev(dev_name);//尝试着重新插入它，如果它没有ip地址了，将被删除掉
     }

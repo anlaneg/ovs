@@ -60,19 +60,25 @@ static unixctl_cb_func ovs_vswitchd_exit;
 static char *parse_options(int argc, char *argv[], char **unixctl_path);
 OVS_NO_RETURN static void usage(void);
 
+struct ovs_vswitchd_exit_args {
+    bool *exiting;
+    bool *cleanup;
+};
+
 int
 main(int argc, char *argv[])
 {
     char *unixctl_path = NULL;
     struct unixctl_server *unixctl;//unixctl服务器
     char *remote;
-    bool exiting;
+    bool exiting, cleanup;
+    struct ovs_vswitchd_exit_args exit_args = {&exiting, &cleanup};
     int retval;
 
     set_program_name(argv[0]);//设置进程名称，进程版本号
 
     ovs_cmdl_proctitle_init(argc, argv);//非linux机器不做作何处理
-    service_start(&argc, &argv);//linux机器不做作何处理
+    service_start(&argc, &argv);//linux机器不做任何处理
     remote = parse_options(argc, argv, &unixctl_path);//解析命令行
     fatal_ignore_sigpipe();
 
@@ -93,12 +99,14 @@ main(int argc, char *argv[])
     if (retval) {
         exit(EXIT_FAILURE);
     }
-    unixctl_command_register("exit", "", 0, 0, ovs_vswitchd_exit, &exiting);//注册退出命令
+    unixctl_command_register("exit", "[--cleanup]", 0, 1,
+                             ovs_vswitchd_exit, &exit_args);//注册退出命令
 
     bridge_init(remote);//命令及ovsdb连接初始化
     free(remote);
 
     exiting = false;
+    cleanup = false;
     while (!exiting) {
     	//run代码段
         memory_run();
@@ -127,7 +135,7 @@ main(int argc, char *argv[])
             exiting = true;
         }
     }
-    bridge_exit();
+    bridge_exit(cleanup);
     unixctl_server_destroy(unixctl);
     service_stop();
 
@@ -270,10 +278,11 @@ usage(void)//用法信息
 }
 
 static void
-ovs_vswitchd_exit(struct unixctl_conn *conn, int argc OVS_UNUSED,
-                  const char *argv[] OVS_UNUSED, void *exiting_)//vswitchd退出处理
+ovs_vswitchd_exit(struct unixctl_conn *conn, int argc,
+                  const char *argv[], void *exit_args_)//vswitchd退出处理
 {
-    bool *exiting = exiting_;
-    *exiting = true;
+    struct ovs_vswitchd_exit_args *exit_args = exit_args_;
+    *exit_args->exiting = true;
+    *exit_args->cleanup = argc == 2 && !strcmp(argv[1], "--cleanup");
     unixctl_command_reply(conn, NULL);
 }

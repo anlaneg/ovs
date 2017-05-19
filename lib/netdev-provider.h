@@ -42,6 +42,7 @@ struct netdev_tnl_build_header_params;
 struct netdev {
     /* The following do not change during the lifetime of a struct netdev. */
     char *name;                         /* Name of network device. */
+    //此netdev由哪个netdev_class处理
     const struct netdev_class *netdev_class; /* Functions to control
                                                 this device. */
 

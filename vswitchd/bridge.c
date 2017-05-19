@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016 Nicira, Inc.
+/* Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -137,7 +137,7 @@ struct bridge {
     struct hmap mappings;       /* "struct" indexed by UUID */
 
     /* Used during reconfiguration. */
-    struct shash wanted_ports;//需要创建的port
+    struct shash wanted_ports;//配置指明需要创建的port
 
     /* Synthetic local port if necessary. */
     struct ovsrec_port synth_local_port;
@@ -509,14 +509,14 @@ bridge_init(const char *remote)//用database路径初始化桥
 }
 
 void
-bridge_exit(void)
+bridge_exit(bool delete_datapath)
 {
     struct bridge *br, *next_br;
 
     if_notifier_destroy(ifnotifier);
     seq_destroy(ifaces_changed);
     HMAP_FOR_EACH_SAFE (br, next_br, node, &all_bridges) {
-        bridge_destroy(br, false);
+        bridge_destroy(br, delete_datapath);
     }
     ovsdb_idl_destroy(idl);
 }
@@ -619,6 +619,8 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
                                         OFPROTO_FLOW_LIMIT_DEFAULT));
     ofproto_set_max_idle(smap_get_int(&ovs_cfg->other_config, "max-idle",
                                       OFPROTO_MAX_IDLE_DEFAULT));
+    ofproto_set_vlan_limit(smap_get_int(&ovs_cfg->other_config, "vlan-limit",
+                                       LEGACY_MAX_VLAN_HEADERS));
 
     ofproto_set_threads(
         smap_get_int(&ovs_cfg->other_config, "n-handler-threads", 0),
@@ -629,9 +631,9 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      *
      * This is mostly an update to bridge data structures. Nothing is pushed
      * down to ofproto or lower layers. */
-    add_del_bridges(ovs_cfg);
+    add_del_bridges(ovs_cfg);//依据配置，增删除桥
     HMAP_FOR_EACH (br, node, &all_bridges) {
-        bridge_collect_wanted_ports(br, &br->wanted_ports);
+        bridge_collect_wanted_ports(br, &br->wanted_ports);//收集配置指明的所有口
         bridge_del_ports(br, &br->wanted_ports);//删除不需要的port,更新已存在的port的配置
     }
 
@@ -650,9 +652,9 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      * deletions (they might especially overlap in name). */
     //上面我们依据配置，将上层不需要的birdges,port已删除，这里我们检查all_bridges即可知道哪些
     //ofprotos需要删除。
-    bridge_delete_ofprotos();
+    bridge_delete_ofprotos();//删除不再需要的ofproto
     HMAP_FOR_EACH (br, node, &all_bridges) {
-    	//如果br有它对应的ofproto,则需要检查port的处理
+    	//如果br有它对应的ofproto,则需要检查ofproto中的port，并进行
     	//删除及更新
         if (br->ofproto) {
             bridge_delete_or_reconfigure_ports(br);
@@ -841,12 +843,12 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
         ofp_port_t requested_ofp_port;
         struct iface *iface;
 
-        sset_add(&ofproto_ports, ofproto_port.name);
+        sset_add(&ofproto_ports, ofproto_port.name);//记录接口名称
 
         //检查br中是否还存在此iface
         iface = iface_lookup(br, ofproto_port.name);
         if (!iface) {
-        	//配置中没有这个iface
+        	//br中没有这个iface
             /* No such iface is configured, so we should delete this
              * ofproto_port.
              *
@@ -970,6 +972,7 @@ bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
                 struct iface *iface = iface_lookup(br, iface_cfg->name);
 
                 if (!iface) {
+                	//做实际工作，创建iface
                     iface_create(br, iface_cfg, port_cfg);
                 }
             }
@@ -1020,6 +1023,11 @@ port_configure(struct port *port)
         s.trunks = vlan_bitmap_from_array(cfg->trunks, cfg->n_trunks);
     }
 
+    s.cvlans = NULL;
+    if (cfg->n_cvlans) {
+        s.cvlans = vlan_bitmap_from_array(cfg->cvlans, cfg->n_cvlans);
+    }
+
     /* Get VLAN mode. */
     if (cfg->vlan_mode) {
         if (!strcmp(cfg->vlan_mode, "access")) {
@@ -1030,6 +1038,8 @@ port_configure(struct port *port)
             s.vlan_mode = PORT_VLAN_NATIVE_TAGGED;
         } else if (!strcmp(cfg->vlan_mode, "native-untagged")) {
             s.vlan_mode = PORT_VLAN_NATIVE_UNTAGGED;
+        } else if (!strcmp(cfg->vlan_mode, "dot1q-tunnel")) {
+            s.vlan_mode = PORT_VLAN_DOT1Q_TUNNEL;
         } else {
             /* This "can't happen" because ovsdb-server should prevent it. */
             VLOG_WARN("port %s: unknown VLAN mode %s, falling "
@@ -1039,7 +1049,7 @@ port_configure(struct port *port)
     } else {
         if (s.vlan >= 0) {
             s.vlan_mode = PORT_VLAN_ACCESS;
-            if (cfg->n_trunks) {
+            if (cfg->n_trunks || cfg->n_cvlans) {
                 VLOG_WARN("port %s: ignoring trunks in favor of implicit vlan",
                           port->name);
             }
@@ -1047,6 +1057,12 @@ port_configure(struct port *port)
             s.vlan_mode = PORT_VLAN_TRUNK;
         }
     }
+
+    const char *qe = smap_get_def(&cfg->other_config, "qinq-ethtype", "");
+    s.qinq_ethtype = (!strcmp(qe, "802.1q")
+                      ? ETH_TYPE_VLAN_8021Q
+                      : ETH_TYPE_VLAN_8021AD);
+
     s.use_priority_tags = smap_get_bool(&cfg->other_config, "priority-tags",
                                         false);
 
@@ -1081,6 +1097,7 @@ port_configure(struct port *port)
     ofproto_bundle_register(port->bridge->ofproto, port, &s);
 
     /* Clean up. */
+    free(s.cvlans);
     free(s.slaves);
     free(s.trunks);
     free(s.lacp_slaves);
@@ -1585,7 +1602,7 @@ bridge_configure_stp(struct bridge *br, bool enable_stp)
                                           STP_DEFAULT_HELLO_TIME);
 
         br_s.max_age = smap_get_ullong(&br->cfg->other_config, "stp-max-age",
-                                       STP_DEFAULT_HELLO_TIME / 1000) * 1000;
+                                       STP_DEFAULT_MAX_AGE / 1000) * 1000;
         br_s.fwd_delay = smap_get_ullong(&br->cfg->other_config,
                                          "stp-forward-delay",
                                          STP_DEFAULT_FWD_DELAY / 1000) * 1000;
@@ -1810,17 +1827,18 @@ iface_do_create(const struct bridge *br,
     int error;
     const char *type;
 
-    if (netdev_is_reserved_name(iface_cfg->name)) {//检查要创建的接口名称是否已预留
+    if (netdev_is_reserved_name(iface_cfg->name)) {
+    	//检查要创建的接口名称是否已预留
         VLOG_WARN("could not create interface %s, name is reserved",
                   iface_cfg->name);
         error = EINVAL;
         goto error;
     }
 
-    //由datapath决定要创建的netdev类型
+    //由datapath决定要创建的netdev类型（例如dpdk？tap?等）
     type = ofproto_port_open_type(br->cfg->datapath_type,
                                   iface_get_type(iface_cfg, br->cfg));
-    error = netdev_open(iface_cfg->name, type, &netdev);//创建对应的设备
+    error = netdev_open(iface_cfg->name, type, &netdev);//创建对应type的设备
     if (error) {
         VLOG_WARN_BUF(errp, "could not open network device %s (%s)",
                       iface_cfg->name, ovs_strerror(error));
@@ -1835,6 +1853,7 @@ iface_do_create(const struct bridge *br,
     iface_set_netdev_mtu(iface_cfg, netdev);//配置mtu
 
     *ofp_portp = iface_pick_ofport(iface_cfg);//ofp_portp是来源于配置
+    //向ofproto内添加这个port
     error = ofproto_port_add(br->ofproto, netdev, ofp_portp);
     if (error) {
         VLOG_WARN_BUF(errp, "could not add network device %s to ofproto (%s)",
@@ -2527,7 +2546,7 @@ port_refresh_stp_status(struct port *port)
 
     /* Set Status column. */
     smap_init(&smap);
-    smap_add_format(&smap, "stp_port_id", STP_PORT_ID_FMT, status.port_id);
+    smap_add_format(&smap, "stp_port_id", "%d", status.port_id);
     smap_add(&smap, "stp_state", stp_state_name(status.state));
     smap_add_format(&smap, "stp_sec_in_state", "%u", status.sec_in_state);
     smap_add(&smap, "stp_role", stp_role_name(status.role));
@@ -2747,34 +2766,31 @@ static void
 refresh_controller_status(void)
 {
     struct bridge *br;
-    struct shash info;
-    const struct ovsrec_controller *cfg;
-
-    shash_init(&info);
 
     /* Accumulate status for controllers on all bridges. */
     HMAP_FOR_EACH (br, node, &all_bridges) {
+        struct shash info = SHASH_INITIALIZER(&info);
         ofproto_get_ofproto_controller_info(br->ofproto, &info);
-    }
 
-    /* Update each controller in the database with current status. */
-    OVSREC_CONTROLLER_FOR_EACH(cfg, idl) {
-        struct ofproto_controller_info *cinfo =
-            shash_find_data(&info, cfg->target);
+        /* Update each controller of the bridge in the database with
+         * current status. */
+        struct ovsrec_controller **controllers;
+        size_t n_controllers = bridge_get_controllers(br, &controllers);
+        size_t i;
+        for (i = 0; i < n_controllers; i++) {
+            struct ovsrec_controller *cfg = controllers[i];
+            struct ofproto_controller_info *cinfo =
+                shash_find_data(&info, cfg->target);
 
-        if (cinfo) {
+            ovs_assert(cinfo);
             ovsrec_controller_set_is_connected(cfg, cinfo->is_connected);
-            ovsrec_controller_set_role(cfg, ofp12_controller_role_to_str(
-                                           cinfo->role));
+            const char *role = ofp12_controller_role_to_str(cinfo->role);
+            ovsrec_controller_set_role(cfg, role);
             ovsrec_controller_set_status(cfg, &cinfo->pairs);
-        } else {
-            ovsrec_controller_set_is_connected(cfg, false);
-            ovsrec_controller_set_role(cfg, NULL);
-            ovsrec_controller_set_status(cfg, NULL);
         }
-    }
 
-    ofproto_free_ofproto_controller_info(&info);
+        ofproto_free_ofproto_controller_info(&info);
+    }
 }
 
 /* Update interface and mirror statistics if necessary. */
@@ -3425,7 +3441,7 @@ bridge_collect_wanted_ports(struct bridge *br,
 
     shash_init(wanted_ports);
 
-    //遍历桥配置的所有接口
+    //遍历桥配置中指明的所有接口
     for (i = 0; i < br->cfg->n_ports; i++) {
         const char *name = br->cfg->ports[i]->name;
         if (!shash_add_once(wanted_ports, name, br->cfg->ports[i])) {
@@ -3435,7 +3451,7 @@ bridge_collect_wanted_ports(struct bridge *br,
     }
 
     //检查此桥是否有controllers的控制
-    if (bridge_get_controllers(br, NULL)
+    if (bridge_get_controllers(br, NULL) //有controller接口
         && !shash_find(wanted_ports, br->name)) {
         VLOG_WARN("bridge %s: no port named %s, synthesizing one",
                   br->name, br->name);
@@ -3452,6 +3468,7 @@ bridge_collect_wanted_ports(struct bridge *br,
 
         br->synth_local_ifacep = &br->synth_local_iface;
 
+        //加入虚拟的本地port
         shash_add(wanted_ports, br->name, &br->synth_local_port);
     }
 }
@@ -4409,6 +4426,9 @@ iface_destroy__(struct iface *iface)//iface销毁
     if (iface) {
         struct port *port = iface->port;
         struct bridge *br = port->bridge;
+
+        VLOG_INFO("bridge %s: deleted interface %s on port %d",
+                  br->name, iface->name, iface->ofp_port);
 
         if (br->ofproto && iface->ofp_port != OFPP_NONE) {
             ofproto_port_unregister(br->ofproto, iface->ofp_port);
