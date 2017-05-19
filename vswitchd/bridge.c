@@ -666,7 +666,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      *     - Add ports that are missing. */
     HMAP_FOR_EACH_SAFE (br, next, node, &all_bridges) {
         if (!br->ofproto) {
-        	//br有了配置，我们还没有没有创建对应的ofproto，现在创建
+        	    //br有了配置，我们还没有没有创建对应的ofproto，现在创建
             int error;
 
             error = ofproto_create(br->name, br->type, &br->ofproto);

@@ -1767,6 +1767,7 @@ ofproto_run(struct ofproto *p)
 
         p->eviction_group_timer = time_msec() + 1000;//下一次时间
 
+        //遍历每个表
         for (i = 0; i < p->n_tables; i++) {
             struct oftable *table = &p->tables[i];
             struct eviction_group *evg;
@@ -1784,11 +1785,13 @@ ofproto_run(struct ofproto *p)
             }
 
             ovs_mutex_lock(&ofproto_mutex);
+            //遍历具体一个表里的每条规则
             CLS_FOR_EACH (rule, cr, &table->cls) {
                 if (rule->idle_timeout || rule->hard_timeout) {
                     if (!rule->eviction_group) {
                         eviction_group_add_rule(rule);
                     } else {
+                    	   //改变规则优先级
                         heap_raw_change(&rule->evg_node,
                                         rule_eviction_priority(p, rule));
                     }
