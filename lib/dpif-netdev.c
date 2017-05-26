@@ -2934,6 +2934,7 @@ parse_affinity_list(const char *affinity_list, unsigned *core_ids, int n_rxq)
             break;
         }
 
+        //如果配置中有大于n_rxq的配置，忽略
         if (rxq_id < n_rxq) {
             core_ids[rxq_id] = core_id;
         }
