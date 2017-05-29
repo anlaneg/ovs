@@ -1141,6 +1141,7 @@ netdev_dpdk_process_devargs(const char *devargs, char **errp)
     return new_port_id;
 }
 
+//设置队列数
 static void
 dpdk_set_rxq_config(struct netdev_dpdk *dev, const struct smap *args)
     OVS_REQUIRES(dev->mutex)
@@ -1190,11 +1191,14 @@ netdev_dpdk_set_config(struct netdev *netdev, const struct smap *args,
     ovs_mutex_lock(&dpdk_mutex);
     ovs_mutex_lock(&dev->mutex);
 
+    //收队列数量
     dpdk_set_rxq_config(dev, args);
 
+    //收队列描述符数量
     dpdk_process_queue_size(netdev, args, "n_rxq_desc",
                             NIC_PORT_DEFAULT_RXQ_SIZE,
                             &dev->requested_rxq_size);
+    //发队列描述符数量
     dpdk_process_queue_size(netdev, args, "n_txq_desc",
                             NIC_PORT_DEFAULT_TXQ_SIZE,
                             &dev->requested_txq_size);
