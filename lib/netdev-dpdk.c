@@ -663,6 +663,7 @@ dpdk_eth_dev_queue_setup(struct netdev_dpdk *dev, int n_rxq, int n_txq)
             VLOG_INFO("Retrying setup with (rxq:%d txq:%d)", n_rxq, n_txq);
         }
 
+        //配置dpdk接口
         diag = rte_eth_dev_configure(dev->port_id, n_rxq, n_txq, &conf);
         if (diag) {
             VLOG_WARN("Interface %s eth_dev setup error %s\n",
@@ -670,6 +671,7 @@ dpdk_eth_dev_queue_setup(struct netdev_dpdk *dev, int n_rxq, int n_txq)
             break;
         }
 
+        //配置dpdk发队列
         for (i = 0; i < n_txq; i++) {
             diag = rte_eth_tx_queue_setup(dev->port_id, i, dev->txq_size,
                                           dev->socket_id, NULL);
@@ -686,6 +688,7 @@ dpdk_eth_dev_queue_setup(struct netdev_dpdk *dev, int n_rxq, int n_txq)
             continue;
         }
 
+        //配置dpdk收队列
         for (i = 0; i < n_rxq; i++) {
             diag = rte_eth_rx_queue_setup(dev->port_id, i, dev->rxq_size,
                                           dev->socket_id, NULL,
@@ -765,6 +768,7 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
         return -diag;
     }
 
+    //启动dpdk网卡
     diag = rte_eth_dev_start(dev->port_id);
     if (diag) {
         VLOG_ERR("Interface %s start error: %s", dev->up.name,
@@ -772,6 +776,7 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
         return -diag;
     }
 
+    //dpdk设置为混杂模式
     rte_eth_promiscuous_enable(dev->port_id);
     rte_eth_allmulticast_enable(dev->port_id);
 
@@ -1593,6 +1598,7 @@ netdev_dpdk_rxq_recv(struct netdev_rxq *rxq, struct dp_packet_batch *batch)
         return EAGAIN;
     }
 
+    //收取报文
     nb_rx = rte_eth_rx_burst(rx->port_id, rxq->queue_id,
                              (struct rte_mbuf **) batch->packets,
                              NETDEV_MAX_BURST);
@@ -2764,9 +2770,11 @@ netdev_dpdk_class_init(void)//模块载入时处理
      * needs to be done only once */
     if (ovsthread_once_start(&once)) {
         ovs_thread_create("dpdk_watchdog", dpdk_watchdog, NULL);
+        //注册控制接口状态变化的命令
         unixctl_command_register("netdev-dpdk/set-admin-state",
                                  "[netdev] up|down", 1, 2,
                                  netdev_dpdk_set_admin_state, NULL);
+        //注册关闭接口命令
         unixctl_command_register("netdev-dpdk/detach",
                                  "pci address of device", 1, 1,
                                  netdev_dpdk_detach, NULL);
@@ -3348,7 +3356,7 @@ static const struct netdev_class dpdk_class =
         netdev_dpdk_get_stats,
         netdev_dpdk_get_features,
         netdev_dpdk_get_status,
-        netdev_dpdk_reconfigure,
+        netdev_dpdk_reconfigure,//dpdk口配置
         netdev_dpdk_rxq_recv);
 
 static const struct netdev_class dpdk_ring_class =
