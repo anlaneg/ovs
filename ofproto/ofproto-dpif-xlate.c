@@ -3294,40 +3294,29 @@ xlate_flow_is_protected(const struct xlate_ctx *ctx, const struct flow *flow, co
 
 //如果出接口有对端，则重新加入匹配并重新执行，如果无对端，是隧道的添加相关隧道动作
 //不是隧道的，添加普通otuput处理。
-static void
-compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
-                        const struct xlate_bond_recirc *xr, bool check_stp)
+static bool
+check_output_prerequisites(struct xlate_ctx *ctx,
+                           const struct xport *xport,
+                           struct flow *flow,
+                           bool check_stp)
 {
-    const struct xport *xport = get_ofp_port(ctx->xbridge, ofp_port);
     struct flow_wildcards *wc = ctx->wc;
-    struct flow *flow = &ctx->xin->flow;
-    struct flow_tnl flow_tnl;
-    union flow_vlan_hdr flow_vlans[FLOW_MAX_VLAN_HEADERS];
-    uint8_t flow_nw_tos;
-    odp_port_t out_port, odp_port;
-    bool tnl_push_pop_send = false;
-    uint8_t dscp;
-
-    /* If 'struct flow' gets additional metadata, we'll need to zero it out
-     * before traversing a patch port. */
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 39);
-    memset(&flow_tnl, 0, sizeof flow_tnl);
 
     //有效性检查
     if (!xport) {
         xlate_report(ctx, OFT_WARN, "Nonexistent output port");
-        return;
+        return false;
     } else if (xport->config & OFPUTIL_PC_NO_FWD) {
         xlate_report(ctx, OFT_DETAIL, "OFPPC_NO_FWD set, skipping output");
-        return;
+        return false;
     } else if (ctx->mirror_snaplen != 0 && xport->odp_port == ODPP_NONE) {
         xlate_report(ctx, OFT_WARN,
                      "Mirror truncate to ODPP_NONE, skipping output");
-        return;
+        return false;
     } else if (xlate_flow_is_protected(ctx, flow, xport)) {
         xlate_report(ctx, OFT_WARN,
                      "Flow is between protected ports, skipping output.");
-        return;
+        return false;
     } else if (check_stp) {//需要考虑stp
         if (is_stp(&ctx->base_flow)) {//是否为stp报文
             if (!xport_stp_should_forward_bpdu(xport) &&
@@ -3341,7 +3330,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
                                  "RSTP not managing BPDU in this state, "
                                  "skipping bpdu output");
                 }
-                return;
+                return false;
             }
         } else if ((xport->cfm && cfm_should_process_flow(xport->cfm, flow, wc))
                    || (xport->bfd && bfd_should_process_flow(xport->bfd, flow,
@@ -3356,8 +3345,50 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
                 xlate_report(ctx, OFT_WARN,
                              "RSTP not in forwarding state, skipping output");
             }
-            return;
+            return false;
         }
+    }
+    return true;
+}
+
+static bool
+terminate_native_tunnel(struct xlate_ctx *ctx, ofp_port_t ofp_port,
+                        struct flow *flow, struct flow_wildcards *wc,
+                        odp_port_t *tnl_port)
+{
+    *tnl_port = ODPP_NONE;
+
+    /* XXX: Write better Filter for tunnel port. We can use in_port
+     * in tunnel-port flow to avoid these checks completely. */
+    if (ofp_port == OFPP_LOCAL &&
+        ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {
+        *tnl_port = tnl_port_map_lookup(flow, wc);
+    }
+
+    return *tnl_port != ODPP_NONE;
+}
+
+static void
+compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
+                        const struct xlate_bond_recirc *xr, bool check_stp)
+{
+    const struct xport *xport = get_ofp_port(ctx->xbridge, ofp_port);
+    struct flow_wildcards *wc = ctx->wc;
+    struct flow *flow = &ctx->xin->flow;
+    struct flow_tnl flow_tnl;
+    union flow_vlan_hdr flow_vlans[FLOW_MAX_VLAN_HEADERS];
+    uint8_t flow_nw_tos;
+    odp_port_t out_port, odp_port, odp_tnl_port;
+    bool is_native_tunnel = false;
+    uint8_t dscp;
+
+    /* If 'struct flow' gets additional metadata, we'll need to zero it out
+     * before traversing a patch port. */
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 39);
+    memset(&flow_tnl, 0, sizeof flow_tnl);
+
+    if (!check_output_prerequisites(ctx, xport, flow, check_stp)) {
+        return;
     }
 
     //报文可以正常转发
@@ -3544,7 +3575,8 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         out_port = odp_port;//从这个口输出
         if (ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {
             xlate_report(ctx, OFT_DETAIL, "output to native tunnel");
-            tnl_push_pop_send = true;//本地进行tunnel处理
+            is_native_tunnel = true;//本地进行tunnel处理
+
         } else {
         	//kernel进行tunnel处理
             xlate_report(ctx, OFT_DETAIL, "output to kernel tunnel");
@@ -3559,9 +3591,12 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
 
     //出接口不为NONE
     if (out_port != ODPP_NONE) {
-        xlate_commit_actions(ctx);//提交合并后的actions到ctx中
+        /* Commit accumulated flow updates before output. */
+	//提交合并后的actions到ctx中
+        xlate_commit_actions(ctx);
 
         if (xr) {
+            /* Recirculate the packet. */
             struct ovs_action_hash *act_hash;
 
             /* Hash action. */
@@ -3574,51 +3609,39 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
             /* Recirc action. */
             nl_msg_put_u32(ctx->odp_actions, OVS_ACTION_ATTR_RECIRC,
                            xr->recirc_id);//添加重定向到recirc_id表动作
+        } else if (is_native_tunnel) {
+            /* Output to native tunnel port. */
+            build_tunnel_send(ctx, xport, flow, odp_port);//构造 tunnel发送处理
+            flow->tunnel = flow_tnl; /* Restore tunnel metadata */
+
+        } else if (terminate_native_tunnel(ctx, ofp_port, flow, wc,
+                                           &odp_tnl_port)) {
+            /* Intercept packet to be received on native tunnel port. */
+            nl_msg_put_odp_port(ctx->odp_actions, OVS_ACTION_ATTR_TUNNEL_POP,
+                                odp_tnl_port);
+
         } else {
-        	//普通的输出
-            if (tnl_push_pop_send) {
-                build_tunnel_send(ctx, xport, flow, odp_port);//构造 tunnel发送处理
-                flow->tunnel = flow_tnl; /* Restore tunnel metadata */
-            } else {
-                odp_port_t odp_tnl_port = ODPP_NONE;
+            /* Tunnel push-pop action is not compatible with
+             * IPFIX action. */
+            compose_ipfix_action(ctx, out_port);
 
-                /* XXX: Write better Filter for tunnel port. We can use inport
-                * int tunnel-port flow to avoid these checks completely. */
-                if (ofp_port == OFPP_LOCAL &&
-                    ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {
-                	//如果ofp_port是本地口，且tunnel在本地处理，则检查此流是否可区配某tunnel口
+            /* Handle truncation of the mirrored packet. */
+            if (ctx->mirror_snaplen > 0 &&
+                    ctx->mirror_snaplen < UINT16_MAX) {
+                struct ovs_action_trunc *trunc;
 
-                    odp_tnl_port = tnl_port_map_lookup(flow, wc);//查找此流是否对应某tunnel口
-                }
-
-                if (odp_tnl_port != ODPP_NONE) {//找到了此流对应的tunnel口，添加隧道移除动作
-                    nl_msg_put_odp_port(ctx->odp_actions,
-                                        OVS_ACTION_ATTR_TUNNEL_POP,//添加隧道口移除动作
-                                        odp_tnl_port);//由这个隧道口处理解封装
-                } else {
-                    /* Tunnel push-pop action is not compatible with
-                     * IPFIX action. */
-                    compose_ipfix_action(ctx, out_port);
-
-                    /* Handle truncation of the mirrored packet. */
-                    if (ctx->mirror_snaplen > 0 &&
-                        ctx->mirror_snaplen < UINT16_MAX) {
-                        struct ovs_action_trunc *trunc;
-
-                        trunc = nl_msg_put_unspec_uninit(ctx->odp_actions,
-                                                         OVS_ACTION_ATTR_TRUNC,
-                                                         sizeof *trunc);
-                        trunc->max_len = ctx->mirror_snaplen;
-                        if (!ctx->xbridge->support.trunc) {
-                            ctx->xout->slow |= SLOW_ACTION;
-                        }
-                    }
-
-                    nl_msg_put_odp_port(ctx->odp_actions,
-                                        OVS_ACTION_ATTR_OUTPUT,
-                                        out_port);//添加输出到指定接口的action
+                trunc = nl_msg_put_unspec_uninit(ctx->odp_actions,
+                                                 OVS_ACTION_ATTR_TRUNC,
+                                                 sizeof *trunc);
+                trunc->max_len = ctx->mirror_snaplen;
+                if (!ctx->xbridge->support.trunc) {
+                    ctx->xout->slow |= SLOW_ACTION;
                 }
             }
+
+            nl_msg_put_odp_port(ctx->odp_actions,
+                                OVS_ACTION_ATTR_OUTPUT,
+                                out_port);
         }
 
         ctx->sflow_odp_port = odp_port;
@@ -4682,7 +4705,7 @@ xlate_output_trunc_action(struct xlate_ctx *ctx,
             if (xport == NULL || xport->odp_port == ODPP_NONE) {
                 /* Since truncate happens at its following output action, if
                  * the output port is a patch port, the behavior is somehow
-                 * unpredicable. For simpilicity, disallow this case. */
+                 * unpredictable.  For simplicity, disallow this case. */
                 ofputil_port_to_string(port, name, sizeof name);
                 xlate_report_error(ctx, "output_trunc does not support "
                                    "patch port %s", name);
