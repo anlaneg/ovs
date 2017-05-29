@@ -2573,6 +2573,7 @@ new_device(int vid)
     LIST_FOR_EACH(dev, list_node, &dpdk_list) {
         ovs_mutex_lock(&dev->mutex);
         if (strncmp(ifname, dev->vhost_id, IF_NAME_SZ) == 0) {
+        	//找到名称为ifname的virio设备
             uint32_t qp_num = rte_vhost_get_queue_num(vid);
 
             /* Get NUMA information */
@@ -2588,6 +2589,7 @@ new_device(int vid)
             if (dev->requested_n_txq != qp_num
                 || dev->requested_n_rxq != qp_num
                 || dev->requested_socket_id != newnode) {
+            	//如果配置发生变更，则要求netdev重新配置
                 dev->requested_socket_id = newnode;
                 dev->requested_n_rxq = qp_num;
                 dev->requested_n_txq = qp_num;
@@ -3375,7 +3377,7 @@ static const struct netdev_class dpdk_ring_class =
         netdev_dpdk_reconfigure,
         netdev_dpdk_rxq_recv);
 
-//XXX 实现vm与dpdk之间的对接
+//实现vm与dpdk之间的对接
 static const struct netdev_class dpdk_vhost_class =
     NETDEV_DPDK_CLASS(
         "dpdkvhostuser",
