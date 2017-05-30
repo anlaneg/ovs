@@ -3377,13 +3377,13 @@ static const struct netdev_class dpdk_vhost_class =
         netdev_dpdk_vhost_destruct,
         NULL,
         NULL,
-        netdev_dpdk_vhost_send,
+        netdev_dpdk_vhost_send,//vhost发包
         netdev_dpdk_vhost_get_carrier,
         netdev_dpdk_vhost_get_stats,
         NULL,
         NULL,
         netdev_dpdk_vhost_reconfigure,
-        netdev_dpdk_vhost_rxq_recv);
+        netdev_dpdk_vhost_rxq_recv);//vhost收包
 static const struct netdev_class dpdk_vhost_client_class =
     NETDEV_DPDK_CLASS(
         "dpdkvhostuserclient",
