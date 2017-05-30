@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2015, 2016 Nicira, Inc.
+ * Copyright (c) 2014, 2015, 2016, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -118,6 +118,7 @@ BUILD_ASSERT_DECL((MAX_NB_MBUF / ROUND_DOWN_POW2(MAX_NB_MBUF/MIN_NB_MBUF))
 #define XSTAT_TX_1024_TO_1522_PACKETS    "tx_size_1024_to_1522_packets"
 #define XSTAT_TX_1523_TO_MAX_PACKETS     "tx_size_1523_to_max_packets"
 
+#define XSTAT_RX_MULTICAST_PACKETS       "rx_multicast_packets"
 #define XSTAT_TX_MULTICAST_PACKETS       "tx_multicast_packets"
 #define XSTAT_RX_BROADCAST_PACKETS       "rx_broadcast_packets"
 #define XSTAT_TX_BROADCAST_PACKETS       "tx_broadcast_packets"
@@ -1133,7 +1134,8 @@ netdev_dpdk_process_devargs(const char *devargs, char **errp)
             VLOG_INFO("Device '%s' attached to DPDK", devargs);
         } else {
             /* Attach unsuccessful */
-            VLOG_WARN_BUF(errp, "Error attaching device '%s' to DPDK", devargs);
+            VLOG_WARN_BUF(errp, "Error attaching device '%s' to DPDK",
+                          devargs);
             return -1;
         }
     }
@@ -2013,6 +2015,8 @@ netdev_dpdk_convert_xstats(struct netdev_stats *stats,
             stats->tx_1024_to_1522_packets = xstats[i].value;
         } else if (strcmp(XSTAT_TX_1523_TO_MAX_PACKETS, names[i].name) == 0) {
             stats->tx_1523_to_max_packets = xstats[i].value;
+        } else if (strcmp(XSTAT_RX_MULTICAST_PACKETS, names[i].name) == 0) {
+            stats->multicast = xstats[i].value;
         } else if (strcmp(XSTAT_TX_MULTICAST_PACKETS, names[i].name) == 0) {
             stats->tx_multicast_packets = xstats[i].value;
         } else if (strcmp(XSTAT_RX_BROADCAST_PACKETS, names[i].name) == 0) {
@@ -2229,10 +2233,12 @@ static int
 netdev_dpdk_get_ifindex(const struct netdev *netdev)//返回port-id
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-    int ifindex;
 
     ovs_mutex_lock(&dev->mutex);
-    ifindex = dev->port_id;
+    /* Calculate hash from the netdev name. Ensure that ifindex is a 24-bit
+     * postive integer to meet RFC 2863 recommendations.
+     */
+    int ifindex = hash_string(netdev->name, 0) % 0xfffffe + 1;
     ovs_mutex_unlock(&dev->mutex);
 
     return ifindex;
@@ -2567,6 +2573,7 @@ new_device(int vid)
     LIST_FOR_EACH(dev, list_node, &dpdk_list) {
         ovs_mutex_lock(&dev->mutex);
         if (strncmp(ifname, dev->vhost_id, IF_NAME_SZ) == 0) {
+        	//找到名称为ifname的virio设备
             uint32_t qp_num = rte_vhost_get_queue_num(vid);
 
             /* Get NUMA information */
@@ -2582,6 +2589,7 @@ new_device(int vid)
             if (dev->requested_n_txq != qp_num
                 || dev->requested_n_rxq != qp_num
                 || dev->requested_socket_id != newnode) {
+            	//如果配置发生变更，则要求netdev重新配置
                 dev->requested_socket_id = newnode;
                 dev->requested_n_rxq = qp_num;
                 dev->requested_n_txq = qp_num;
@@ -3096,7 +3104,8 @@ egress_policer_qos_get(const struct qos_conf *conf, struct smap *details)
 }
 
 static bool
-egress_policer_qos_is_equal(const struct qos_conf *conf, const struct smap *details)
+egress_policer_qos_is_equal(const struct qos_conf *conf,
+                            const struct smap *details)
 {
     struct egress_policer *policer =
         CONTAINER_OF(conf, struct egress_policer, qos_conf);
@@ -3368,7 +3377,7 @@ static const struct netdev_class dpdk_ring_class =
         netdev_dpdk_reconfigure,
         netdev_dpdk_rxq_recv);
 
-//XXX 实现vm与dpdk之间的对接
+//实现vm与dpdk之间的对接
 static const struct netdev_class dpdk_vhost_class =
     NETDEV_DPDK_CLASS(
         "dpdkvhostuser",
