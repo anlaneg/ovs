@@ -301,6 +301,7 @@ struct ovs_mutex ofproto_mutex = OVS_MUTEX_INITIALIZER;
 unsigned ofproto_flow_limit = OFPROTO_FLOW_LIMIT_DEFAULT;
 unsigned ofproto_max_idle = OFPROTO_MAX_IDLE_DEFAULT;
 
+//handler,revalidators进程数
 size_t n_handlers, n_revalidators;
 
 /* Map from datapath name to struct ofproto, for use by unixctl commands. */

@@ -216,7 +216,7 @@ discover_numa_and_core(void)
             struct numa_node *n;
             struct dirent *subdir;
 
-            n = insert_new_numa_node(i);
+            n = insert_new_numa_node(i);//打开dir成功，说明存在numa node i
 
             //遍历所有子目录，对以cpu开头的目录，记为识别的cpu
             while ((subdir = readdir(dir)) != NULL) {
@@ -286,7 +286,7 @@ ovs_numa_init__(const char *dummy_config)
         const struct numa_node *n;
 
         if (!dummy_config) {//无dummy_config
-            discover_numa_and_core();//真实情况
+            discover_numa_and_core();//真实numa情况
         } else {
             discover_numa_and_core_dummy(dummy_config);//dummy情况
         }

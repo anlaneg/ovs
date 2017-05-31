@@ -342,6 +342,7 @@ enum pmd_cycles_counter_type {
 struct dp_netdev_rxq {
     struct dp_netdev_port *port;
     struct netdev_rxq *rx;
+    //负责收取此队列的core_id
     unsigned core_id;                  /* Core to which this queue should be
                                           pinned. OVS_CORE_UNSPEC if the
                                           queue doesn't need to be pinned to a
@@ -2983,6 +2984,7 @@ parse_affinity_list(const char *affinity_list, unsigned *core_ids, int n_rxq)
     while (ofputil_parse_key_value(&list, &key, &value)) {
         int rxq_id, core_id;
 
+        //提取rxq_id对应的core_id
         if (!str_to_int(key, 0, &rxq_id) || rxq_id < 0
             || !str_to_int(value, 0, &core_id) || core_id < 0) {
             error = EINVAL;
@@ -3008,6 +3010,7 @@ dpif_netdev_port_set_rxq_affinity(struct dp_netdev_port *port,
     unsigned *core_ids, i;
     int error = 0;
 
+    //在core_ids中收集n_rxq个队列分别由哪些core负责
     core_ids = xmalloc(port->n_rxq * sizeof *core_ids);
     if (parse_affinity_list(affinity_list, core_ids, port->n_rxq)) {
         error = EINVAL;
@@ -3177,11 +3180,12 @@ port_reconfigure(struct dp_netdev_port *port)
     port->need_reconfigure = false;
 
     /* Closes the existing 'rxq's. */
-    //移除所有存在的收队列
+    //先释放掉当前port上所有存在的队列
     for (i = 0; i < port->n_rxq; i++) {
         netdev_rxq_close(port->rxqs[i].rx);
         port->rxqs[i].rx = NULL;
     }
+
     port->n_rxq = 0;
 
     /* Allows 'netdev' to apply the pending configuration changes. */
@@ -3194,6 +3198,7 @@ port_reconfigure(struct dp_netdev_port *port)
         }
     }
     /* If the netdev_reconfigure() above succeeds, reopens the 'rxq's. */
+    //重新按要求的数量创建rxq
     port->rxqs = xrealloc(port->rxqs,
                           sizeof *port->rxqs * netdev_n_rxq(netdev));
     /* Realloc 'used' counters for tx queues. */
@@ -3223,11 +3228,11 @@ struct rr_numa_list {
 struct rr_numa {
     struct hmap_node node;
 
-    int numa_id;
+    int numa_id;//numa节点id号
 
     /* Non isolated pmds on numa node 'numa_id' */
-    struct dp_netdev_pmd_thread **pmds;
-    int n_pmds;
+    struct dp_netdev_pmd_thread **pmds;//在此numa中的pmd引用（数组）
+    int n_pmds;//有多少个pmd（数组长度）
 
     int cur_index;
 };
@@ -3246,6 +3251,7 @@ rr_numa_list_lookup(struct rr_numa_list *rr, int numa_id)
     return NULL;
 }
 
+//将所有未绑定core或者没有被隔离的pmd线程，按numa分类，并将其记录在rr中
 static void
 rr_numa_list_populate(struct dp_netdev *dp, struct rr_numa_list *rr)
 {
@@ -3254,8 +3260,10 @@ rr_numa_list_populate(struct dp_netdev *dp, struct rr_numa_list *rr)
 
     hmap_init(&rr->numas);
 
+    //将所有未绑定core或者没有被隔离的pmd线程，按numa分类，并将其记录在rr中
     CMAP_FOR_EACH (pmd, node, &dp->poll_threads) {
-        if (pmd->core_id == NON_PMD_CORE_ID || pmd->isolated) {
+        //跳过已被隔离的pmd或者跳过没有绑定core的pmd
+    	if (pmd->core_id == NON_PMD_CORE_ID || pmd->isolated) {
             continue;
         }
 
@@ -3267,7 +3275,7 @@ rr_numa_list_populate(struct dp_netdev *dp, struct rr_numa_list *rr)
         }
         numa->n_pmds++;
         numa->pmds = xrealloc(numa->pmds, numa->n_pmds * sizeof *numa->pmds);
-        numa->pmds[numa->n_pmds - 1] = pmd;
+        numa->pmds[numa->n_pmds - 1] = pmd;//存入当前pmd
     }
 }
 
@@ -3295,6 +3303,10 @@ rr_numa_list_destroy(struct rr_numa_list *rr)
  *
  * The function doesn't touch the pmd threads, it just stores the assignment
  * in the 'pmd' member of each rxq. */
+//rxq调度比较简单，分两种情况：
+//1.先调度明确要求绑定的port,按其要求的core进行绑定.绑定后，此core设置为隔离
+//2。接着调度没明确要求绑定的port,在调度前，会重新排除掉已被隔离的pmd(故一旦pmd被隔离，将不会自动有
+//队列调度上来，需要手动绑定来指定），然后将与队列轮转的放在同一个numa上的所有pmd上。（如这次放1，下次放2）
 static void
 rxq_scheduling(struct dp_netdev *dp, bool pinned) OVS_REQUIRES(dp->port_mutex)
 {
@@ -3303,46 +3315,57 @@ rxq_scheduling(struct dp_netdev *dp, bool pinned) OVS_REQUIRES(dp->port_mutex)
 
     rr_numa_list_populate(dp, &rr);
 
+    //遍历dp的所有port
     HMAP_FOR_EACH (port, node, &dp->ports) {
         struct rr_numa *numa;
         int numa_id;
 
+        //不考虑非pmd的port(非pmd的绑定在0上）
         if (!netdev_is_pmd(port->netdev)) {
             continue;
         }
 
+        //找出port对应的numa节点，并取出此numa上有哪些pmd在运行（numa变量）
         numa_id = netdev_get_numa_id(port->netdev);
         numa = rr_numa_list_lookup(&rr, numa_id);
 
+        //遍历此port的所有队列
         for (int qid = 0; qid < port->n_rxq; qid++) {
             struct dp_netdev_rxq *q = &port->rxqs[qid];
 
+            //开启明确绑定，如果q要求绑定到某core
             if (pinned && q->core_id != OVS_CORE_UNSPEC) {
                 struct dp_netdev_pmd_thread *pmd;
 
+                //取出此core对应的pmd
                 pmd = dp_netdev_get_pmd(dp, q->core_id);
                 if (!pmd) {
-                    VLOG_WARN("There is no PMD thread on core %d. Queue "
+                    //此core没有对应的pmd,warn,指明端口不会被poll
+                	VLOG_WARN("There is no PMD thread on core %d. Queue "
                               "%d on port \'%s\' will not be polled.",
                               q->core_id, qid, netdev_get_name(port->netdev));
                 } else {
                     q->pmd = pmd;
-                    pmd->isolated = true;
+                    pmd->isolated = true;//指明独占（配置明确指明在此core上，不再接受自动配置）
                     dp_netdev_pmd_unref(pmd);
                 }
             } else if (!pinned && q->core_id == OVS_CORE_UNSPEC) {
-                if (!numa) {
-                    VLOG_WARN("There's no available (non isolated) pmd thread "
+                //没有开启明确绑定，q也没有指明要绑在那个core上。
+            	if (!numa) {
+                    //此port所在的numa节点没有对应的pmd,报错
+            		VLOG_WARN("There's no available (non isolated) pmd thread "
                               "on numa node %d. Queue %d on port \'%s\' will "
                               "not be polled.",
                               numa_id, qid, netdev_get_name(port->netdev));
                 } else {
-                    q->pmd = rr_numa_get_pmd(numa);
+                    //平均分布（遍历着来）
+                	q->pmd = rr_numa_get_pmd(numa);
                 }
             }
         }
     }
 
+    //销毁临时结构
     rr_numa_list_destroy(&rr);
 }
 
@@ -3358,9 +3381,11 @@ reconfigure_pmd_threads(struct dp_netdev *dp)
      * datapath.  If the user didn't provide any "pmd-cpu-mask", we start
      * NR_PMD_THREADS per numa node. */
     if (!has_pmd_port(dp)) {
-        pmd_cores = ovs_numa_dump_n_cores_per_numa(0);//每个numa上取0个
+        //dp里没有pmd port
+    	pmd_cores = ovs_numa_dump_n_cores_per_numa(0);//每个numa上取0个（即返回空集）
     } else if (dp->pmd_cmask && dp->pmd_cmask[0]) {
-        pmd_cores = ovs_numa_dump_cores_with_cmask(dp->pmd_cmask);
+        //配置了pmd_cmask
+    	pmd_cores = ovs_numa_dump_cores_with_cmask(dp->pmd_cmask);
     } else {
         pmd_cores = ovs_numa_dump_n_cores_per_numa(NR_PMD_THREADS);//每个numa上取1个
     }
@@ -3385,7 +3410,8 @@ reconfigure_pmd_threads(struct dp_netdev *dp)
     /* Destroy the old and recreate the new pmd threads.  We don't perform an
      * incremental update because we would have to adjust 'static_tx_qid'. */
     if (changed) {
-        struct ovs_numa_info_core *core;
+        //配置发生了变化
+    	struct ovs_numa_info_core *core;
         struct ovs_numa_info_numa *numa;
 
         /* Do not destroy the non pmd thread. */
@@ -3441,15 +3467,18 @@ pmd_remove_stale_ports(struct dp_netdev *dp,
     HMAP_FOR_EACH_SAFE (poll, poll_next, node, &pmd->poll_list) {
         struct dp_netdev_port *port = poll->rxq->port;
 
+        //dp中不存在此port了，将其删除
         if (port->need_reconfigure
             || !hmap_contains(&dp->ports, &port->node)) {
             dp_netdev_del_rxq_from_pmd(pmd, poll);
         }
     }
+
     //检查发情况
     HMAP_FOR_EACH_SAFE (tx, tx_next, node, &pmd->tx_ports) {
         struct dp_netdev_port *port = tx->port;
 
+        //dp中不存在此port了，将其删除
         if (port->need_reconfigure
             || !hmap_contains(&dp->ports, &port->node)) {
             dp_netdev_del_port_tx_from_pmd(pmd, tx);
@@ -3474,9 +3503,9 @@ reconfigure_datapath(struct dp_netdev *dp)
 
     /* Step 1: Adjust the pmd threads based on the datapath ports, the cores
      * on the system and the user configuration. */
-    reconfigure_pmd_threads(dp);//pmd线程配置
+    reconfigure_pmd_threads(dp);//重新配置pmd线程配置
 
-    wanted_txqs = cmap_count(&dp->poll_threads);
+    wanted_txqs = cmap_count(&dp->poll_threads);//pmd线程数
 
     /* The number of pmd threads might have changed, or a port can be new:
      * adjust the txqs. */
@@ -3501,6 +3530,7 @@ reconfigure_datapath(struct dp_netdev *dp)
 
     /* Remove from the pmd threads all the ports that have been deleted or
      * need reconfiguration. */
+    //有些port在pmd中不存在了，需要将其移除掉
     CMAP_FOR_EACH (pmd, node, &dp->poll_threads) {
         pmd_remove_stale_ports(dp, pmd);
     }
@@ -3508,7 +3538,8 @@ reconfigure_datapath(struct dp_netdev *dp)
     /* Reload affected pmd threads.  We must wait for the pmd threads before
      * reconfiguring the ports, because a port cannot be reconfigured while
      * it's being used. */
-    reload_affected_pmds(dp);//在重新配置port前,pmd中需要先移除掉，故使pmd执行reload
+    //同步点，等待受影响的pmds完成reload
+    reload_affected_pmds(dp);//在重新配置port前,pmd中需要先移除掉无用port，故使pmd执行reload
 
     /* Step 3: Reconfigure ports. */
 
@@ -3538,11 +3569,13 @@ reconfigure_datapath(struct dp_netdev *dp)
      * wanted thread according to the scheduling policy. */
 
     /* Reset all the pmd threads to non isolated. */
+    //将所有pmd线程置为不隔离
     CMAP_FOR_EACH (pmd, node, &dp->poll_threads) {
         pmd->isolated = false;
     }
 
     /* Reset all the queues to unassigned */
+    //置各rxq对应的pmd为NULL
     HMAP_FOR_EACH (port, node, &dp->ports) {
         for (int i = 0; i < port->n_rxq; i++) {
             port->rxqs[i].pmd = NULL;
@@ -3562,7 +3595,8 @@ reconfigure_datapath(struct dp_netdev *dp)
 
         ovs_mutex_lock(&pmd->port_mutex);
         HMAP_FOR_EACH_SAFE (poll, poll_next, node, &pmd->poll_list) {
-            if (poll->rxq->pmd != pmd) {
+            //rxq_scheduling函数中可能将此队列放在别的pmd上了，故需要移除
+        	if (poll->rxq->pmd != pmd) {
                 dp_netdev_del_rxq_from_pmd(pmd, poll);
             }
         }
@@ -3575,13 +3609,14 @@ reconfigure_datapath(struct dp_netdev *dp)
     reload_affected_pmds(dp);//使pmd重新load
 
     /* Step 6: Add queues from scheduling, if they're not there already. */
-    //遍历datapath中的所有port
+    //第5步，我们移除了不再由pmd负责的队列，但有一些新加入的对队还没有加入到pmd中，这里将其加入。
     HMAP_FOR_EACH (port, node, &dp->ports) {
         //忽略非pmd设备
-    		if (!netdev_is_pmd(port->netdev)) {
+    	if (!netdev_is_pmd(port->netdev)) {
             continue;
         }
 
+    	//遍历当前port上的所有队列
         for (int qid = 0; qid < port->n_rxq; qid++) {
             struct dp_netdev_rxq *q = &port->rxqs[qid];
 
@@ -4324,7 +4359,7 @@ dp_netdev_del_pmd(struct dp_netdev *dp, struct dp_netdev_pmd_thread *pmd)
         pmd_free_cached_ports(pmd);
         ovs_mutex_unlock(&dp->non_pmd_mutex);
     } else {
-        latch_set(&pmd->exit_latch);
+        latch_set(&pmd->exit_latch);//知会pmd需要退出
         dp_netdev_reload_pmd__(pmd);
         xpthread_join(pmd->thread, NULL);
     }
@@ -4364,6 +4399,7 @@ dp_netdev_destroy_all_pmds(struct dp_netdev *dp, bool non_pmd)
         pmd_list[k++] = pmd;
     }
 
+    //删除dp上所有的pmd
     for (size_t i = 0; i < k; i++) {
         dp_netdev_del_pmd(dp, pmd_list[i]);
     }
@@ -4426,7 +4462,7 @@ dp_netdev_del_rxq_from_pmd(struct dp_netdev_pmd_thread *pmd,
     hmap_remove(&pmd->poll_list, &poll->node);
     free(poll);
 
-    pmd->need_reload = true;
+    pmd->need_reload = true;//知会pmd重新load
 }
 
 /* Add 'port' to the tx port cache of 'pmd', which must be reloaded for the

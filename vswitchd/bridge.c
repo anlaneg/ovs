@@ -499,7 +499,7 @@ bridge_init(const char *remote)//用database路径初始化桥
     bond_init();
     cfm_init();
     bfd_init();
-    ovs_numa_init();
+    ovs_numa_init();//numa初始化
     stp_init();
     lldp_init();
     rstp_init();
@@ -668,7 +668,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      *     - Add ports that are missing. */
     HMAP_FOR_EACH_SAFE (br, next, node, &all_bridges) {
         if (!br->ofproto) {
-        	    //br有了配置，我们还没有没有创建对应的ofproto，现在创建
+        	//br有了配置，我们还没有没有创建对应的ofproto，现在创建
             int error;
 
             error = ofproto_create(br->name, br->type, &br->ofproto);
