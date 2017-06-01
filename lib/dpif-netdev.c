@@ -245,6 +245,7 @@ struct dp_meter {
  *    port_mutex
  *    non_pmd_mutex
  */
+//datapath对应的netdev
 struct dp_netdev {
     const struct dpif_class *const class;
     const char *const name;
@@ -353,9 +354,9 @@ struct dp_netdev_rxq {
 /* A port in a netdev-based datapath. */
 struct dp_netdev_port {
     odp_port_t port_no;//port编号
-    struct netdev *netdev;
+    struct netdev *netdev;//port对应的netdev
     struct hmap_node node;      /* Node in dp_netdev's 'ports'. */
-    struct netdev_saved_flags *sf;
+    struct netdev_saved_flags *sf;//保存的flags
     struct dp_netdev_rxq *rxqs;//port的收队列数组
     unsigned n_rxq;             /* Number of elements in 'rxq' *///port有多少收队列
     //由于发队列在实现上要求与pmd等数量，故可能遇到网卡不支持的队列数量，XPS解决此问题，实现队列
@@ -363,7 +364,7 @@ struct dp_netdev_port {
     bool dynamic_txqs;          /* If true XPS will be used. */
     unsigned *txq_used;         /* Number of threads that use each tx queue. */
     struct ovs_mutex txq_used_mutex;
-    char *type;                 /* Port type as requested by user. */
+    char *type;                 /* Port type as requested by user. */ //netdev class类型
     //收队列的cpu亲昵性
     char *rxq_affinity_list;    /* Requested affinity of rx queues. */
     bool need_reconfigure;      /* True if we should reconfigure netdev. */
@@ -1232,6 +1233,7 @@ dp_netdev_is_reconf_required(struct dp_netdev *dp)
     return seq_read(dp->reconfigure_seq) != dp->last_reconfigure_seq;
 }
 
+//dp层面打开一个网络设备
 static int
 dpif_netdev_open(const struct dpif_class *class, const char *name,
                  bool create, struct dpif **dpifp)
@@ -1451,19 +1453,20 @@ port_create(const char *devname, const char *type,
     *portp = NULL;
 
     /* Open and validate network device. */
-    error = netdev_open(devname, type, &netdev);
+    error = netdev_open(devname, type, &netdev);//构造netdev
     if (error) {
         return error;
     }
     /* XXX reject non-Ethernet devices */
 
-    netdev_get_flags(netdev, &flags);
+    netdev_get_flags(netdev, &flags);//获取其状态
     if (flags & NETDEV_LOOPBACK) {
         VLOG_ERR("%s: cannot add a loopback device", devname);
         error = EINVAL;
         goto out;
     }
 
+    //将其设置为混杂模式
     error = netdev_turn_flags_on(netdev, NETDEV_PROMISC, &sf);
     if (error) {
         VLOG_ERR("%s: cannot set promisc flag", devname);
@@ -1474,7 +1477,7 @@ port_create(const char *devname, const char *type,
     port->port_no = port_no;
     port->netdev = netdev;
     port->type = xstrdup(type);
-    port->sf = sf;
+    port->sf = sf;//保存的flags
     port->need_reconfigure = true;
     ovs_mutex_init(&port->txq_used_mutex);
 

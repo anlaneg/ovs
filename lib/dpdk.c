@@ -40,6 +40,7 @@ VLOG_DEFINE_THIS_MODULE(dpdk);
 
 static FILE *log_stream = NULL;       /* Stream for DPDK log redirection */
 
+//保存vhost_socket的目录，默认在ovs_rundir()
 static char *vhost_sock_dir = NULL;   /* Location of vhost-user sockets */
 
 //检查ovs_other_config中是否有flag配置，如果有并且flag对应的配置字符串长度小于size，则使用配置的值

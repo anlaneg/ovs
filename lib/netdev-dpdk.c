@@ -170,8 +170,8 @@ BUILD_ASSERT_DECL(IS_POW2(DPDK_RING_SIZE));
 enum { DRAIN_TSC = 200000ULL };
 
 enum dpdk_dev_type {
-    DPDK_DEV_ETH = 0,
-    DPDK_DEV_VHOST = 1,
+    DPDK_DEV_ETH = 0,//物理设备
+    DPDK_DEV_VHOST = 1,//vhost设备
 };
 
 /* Quality of Service */
@@ -270,6 +270,7 @@ static const struct dpdk_qos_ops *const qos_confs[] = {
 static struct ovs_mutex dpdk_mutex = OVS_MUTEX_INITIALIZER;
 
 /* Contains all 'struct dpdk_dev's. */
+//所有dpdk设备串起的链
 static struct ovs_list dpdk_list OVS_GUARDED_BY(dpdk_mutex)
     = OVS_LIST_INITIALIZER(&dpdk_list);
 
@@ -852,10 +853,10 @@ common_construct(struct netdev *netdev, unsigned int port_no,
     /* If the 'sid' is negative, it means that the kernel fails
      * to obtain the pci numa info.  In that situation, always
      * use 'SOCKET0'. */
-    dev->socket_id = socket_id < 0 ? SOCKET0 : socket_id;
+    dev->socket_id = socket_id < 0 ? SOCKET0 : socket_id;//如果socket_id参数无效，则采用socket0
     dev->requested_socket_id = dev->socket_id;
     dev->port_id = port_no;
-    dev->type = type;
+    dev->type = type;//指明设备类型（物理设备，还是vhost设备）
     dev->flags = 0;
     dev->requested_mtu = ETHER_MTU;
     dev->max_packet_len = MTU_TO_FRAME_LEN(dev->mtu);
@@ -885,6 +886,7 @@ common_construct(struct netdev *netdev, unsigned int port_no,
 
     ovs_list_push_back(&dpdk_list, &dev->list_node);
 
+    //要求此设备重新配置
     netdev_request_reconfigure(netdev);
 
     return 0;
@@ -915,17 +917,21 @@ static int
 vhost_common_construct(struct netdev *netdev)
     OVS_REQUIRES(dpdk_mutex)
 {
+	//获得master core的socket
     int socket_id = rte_lcore_to_socket_id(rte_get_master_lcore());
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
 
+    //申请1024条txq
     dev->tx_q = netdev_dpdk_alloc_txq(OVS_VHOST_MAX_QUEUE_NUM);
     if (!dev->tx_q) {
         return ENOMEM;
     }
 
+    //初始化vhost netdev
     return common_construct(netdev, -1, DPDK_DEV_VHOST, socket_id);
 }
 
+//服务端初始化
 static int
 netdev_dpdk_vhost_construct(struct netdev *netdev)
 {
@@ -936,6 +942,7 @@ netdev_dpdk_vhost_construct(struct netdev *netdev)
     /* 'name' is appended to 'vhost_sock_dir' and used to create a socket in
      * the file system. '/' or '\' would traverse directories, so they're not
      * acceptable in 'name'. */
+    //无效名称检查
     if (strchr(name, '/') || strchr(name, '\\')) {
         VLOG_ERR("\"%s\" is not a valid name for a vhost-user port. "
                  "A valid name must not include '/' or '\\'",
@@ -950,7 +957,7 @@ netdev_dpdk_vhost_construct(struct netdev *netdev)
     snprintf(dev->vhost_id, sizeof dev->vhost_id, "%s/%s",
              dpdk_get_vhost_sock_dir(), name);
 
-    dev->vhost_driver_flags &= ~RTE_VHOST_USER_CLIENT;
+    dev->vhost_driver_flags &= ~RTE_VHOST_USER_CLIENT;//指明为服务端
     err = rte_vhost_driver_register(dev->vhost_id, dev->vhost_driver_flags);
     if (err) {
         VLOG_ERR("vhost-user socket device setup failure for socket %s\n",
@@ -966,6 +973,7 @@ netdev_dpdk_vhost_construct(struct netdev *netdev)
     return err;
 }
 
+//客户端初始化
 static int
 netdev_dpdk_vhost_client_construct(struct netdev *netdev)
 {
@@ -1087,6 +1095,7 @@ netdev_dpdk_get_config(const struct netdev *netdev, struct smap *args)//填充�
     smap_add_format(args, "configured_tx_queues", "%d", netdev->n_txq);
     smap_add_format(args, "mtu", "%d", dev->mtu);
 
+    //物理设备配置
     if (dev->type == DPDK_DEV_ETH) {
         smap_add_format(args, "requested_rxq_descriptors", "%d",
                         dev->requested_rxq_size);
@@ -1318,6 +1327,7 @@ netdev_dpdk_vhost_client_set_config(struct netdev *netdev,
     return 0;
 }
 
+//返回此netdev对应的socket id
 static int
 netdev_dpdk_get_numa_id(const struct netdev *netdev)
 {
@@ -2799,6 +2809,7 @@ netdev_dpdk_vhost_class_init(void)
         rte_vhost_feature_disable(1ULL << VIRTIO_NET_F_HOST_TSO4
                                   | 1ULL << VIRTIO_NET_F_HOST_TSO6
                                   | 1ULL << VIRTIO_NET_F_CSUM);
+        //新的dpdk中已不在要求创建此线程了（由dpdk自已创建）
         ovs_thread_create("vhost_thread", start_vhost_loop, NULL);
 
         ovsthread_once_done(&once);
@@ -3382,7 +3393,7 @@ static const struct netdev_class dpdk_vhost_class =
     NETDEV_DPDK_CLASS(
         "dpdkvhostuser",
         netdev_dpdk_vhost_class_init,
-        netdev_dpdk_vhost_construct,
+        netdev_dpdk_vhost_construct,//仅创建socket,未监听socket
         netdev_dpdk_vhost_destruct,
         NULL,
         NULL,

@@ -361,8 +361,10 @@ netdev_is_reserved_name(const char *name)
  * Before opening rxqs or sending packets, '*netdevp' may need to be
  * reconfigured (with netdev_is_reconf_required() and netdev_reconfigure()).
  * */
+//获得netdev,如果netdev不存在，则创建指定netdev（细分为交由type对应的class去创建）
+//对应的alloc()->construct()会被调用
 int
-netdev_open(const char *name, const char *type, struct netdev **netdevp)//创建指定netdev（细分为交由type对应的class去创建）
+netdev_open(const char *name, const char *type, struct netdev **netdevp)
     OVS_EXCLUDED(netdev_mutex)
 {
     struct netdev *netdev;
@@ -385,6 +387,7 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)//创建
 
         rc = netdev_lookup_class(type && type[0] ? type : "system");//如果type未指定，采用system
         if (rc && ovs_refcount_try_ref_rcu(&rc->refcnt)) {
+        	//为netdev申请内存
             netdev = rc->class->alloc();
             if (netdev) {//分配成功
                 memset(netdev, 0, sizeof *netdev);
@@ -402,10 +405,12 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)//创建
 
                 ovs_list_init(&netdev->saved_flags_list);
 
+                //构造port数据
                 error = rc->class->construct(netdev);
                 if (!error) {
                     netdev_change_seq_changed(netdev);
-                } else {//处理失败的话，就释放空间
+                } else {
+                	//处理失败的话，就释放空间
                     ovs_refcount_unref(&rc->refcnt);
                     seq_destroy(netdev->reconfigure_seq);
                     free(netdev->name);
