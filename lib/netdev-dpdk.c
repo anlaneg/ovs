@@ -1318,7 +1318,7 @@ netdev_dpdk_vhost_client_set_config(struct netdev *netdev,
     if (!(dev->vhost_driver_flags & RTE_VHOST_USER_CLIENT)) {
         path = smap_get(args, "vhost-server-path");
         if (path && strcmp(path, dev->vhost_id)) {
-            strcpy(dev->vhost_id, path);
+            strcpy(dev->vhost_id, path);//容许修改vhost的path
             netdev_request_reconfigure(netdev);
         }
     }
