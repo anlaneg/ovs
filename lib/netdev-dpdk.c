@@ -329,14 +329,14 @@ enum dpdk_hw_ol_features {
 struct netdev_dpdk {
     struct netdev up;//外部的结构体，供框架用
     int port_id;
-    int max_packet_len;//支持的最大报文数
+    int max_packet_len;//支持的最大报文长度
     enum dpdk_dev_type type;
 
     struct dpdk_tx_queue *tx_q;
 
     struct ovs_mutex mutex OVS_ACQ_AFTER(dpdk_mutex);
 
-    struct dpdk_mp *dpdk_mp;
+    struct dpdk_mp *dpdk_mp;//这个设备使用那个mbuf pool
     int mtu;//mtu
     int socket_id;//表明在哪个numa节点上
     int buf_size;
@@ -808,8 +808,9 @@ netdev_dpdk_cast(const struct netdev *netdev)
     return CONTAINER_OF(netdev, struct netdev_dpdk, up);
 }
 
+//申请netdev(申请一个netdev_dpdk，并将其up返回）
 static struct netdev *
-netdev_dpdk_alloc(void)//申请netdev
+netdev_dpdk_alloc(void)
 {
     struct netdev_dpdk *dev;
 
@@ -873,7 +874,7 @@ common_construct(struct netdev *netdev, unsigned int port_no,
     netdev->n_txq = 0;
     dev->requested_n_rxq = NR_QUEUE;
     dev->requested_n_txq = NR_QUEUE;
-    dev->requested_rxq_size = NIC_PORT_DEFAULT_RXQ_SIZE;
+    dev->requested_rxq_size = NIC_PORT_DEFAULT_RXQ_SIZE;//队列大小
     dev->requested_txq_size = NIC_PORT_DEFAULT_TXQ_SIZE;
 
     /* Initialize the flow control to NULL */
@@ -954,10 +955,14 @@ netdev_dpdk_vhost_construct(struct netdev *netdev)
     /* Take the name of the vhost-user port and append it to the location where
      * the socket is to be created, then register the socket.
      */
+    //拼接出socket path
     snprintf(dev->vhost_id, sizeof dev->vhost_id, "%s/%s",
              dpdk_get_vhost_sock_dir(), name);
 
+    //由于这里是第一次使用vhost_driver_flags，故这个标记位上没有zero copy flag被赋上
+    //故此版本还不支持 @2017-06-08
     dev->vhost_driver_flags &= ~RTE_VHOST_USER_CLIENT;//指明为服务端
+    //注册vsocket,未开始监听
     err = rte_vhost_driver_register(dev->vhost_id, dev->vhost_driver_flags);
     if (err) {
         VLOG_ERR("vhost-user socket device setup failure for socket %s\n",
@@ -1458,12 +1463,14 @@ netdev_dpdk_policer_run(struct rte_meter_srtcm *meter,
     for (i = 0; i < pkt_cnt; i++) {
         pkt = pkts[i];
         /* Handle current packet */
+        //简单的按网速测算，超过网速就丢包
         if (netdev_dpdk_policer_pkt_handle(meter, pkt, current_time)) {
             if (cnt != i) {
                 pkts[cnt] = pkt;
             }
             cnt++;
         } else {
+        	//将不能放送的报文直接释放掉
             rte_pktmbuf_free(pkt);
         }
     }
@@ -1554,6 +1561,7 @@ netdev_dpdk_vhost_update_rx_counters(struct netdev_stats *stats,
 /*
  * The receive path for the vhost port is the TX path out from guest.
  */
+//ovs自某个给定队列上收取vhost报文
 static int
 netdev_dpdk_vhost_rxq_recv(struct netdev_rxq *rxq,
                            struct dp_packet_batch *batch)
@@ -1569,6 +1577,7 @@ netdev_dpdk_vhost_rxq_recv(struct netdev_rxq *rxq,
         return EAGAIN;
     }
 
+    //从vhost设备中取出报文
     nb_rx = rte_vhost_dequeue_burst(netdev_dpdk_get_vid(dev),//vhosh报文出队
                                     qid * VIRTIO_QNUM + VIRTIO_TXQ,
                                     dev->dpdk_mp->mp,
@@ -1578,6 +1587,7 @@ netdev_dpdk_vhost_rxq_recv(struct netdev_rxq *rxq,
         return EAGAIN;
     }
 
+    //处理入口qos
     if (policer) {
         dropped = nb_rx;
         nb_rx = ingress_policer_run(policer,
@@ -1587,6 +1597,7 @@ netdev_dpdk_vhost_rxq_recv(struct netdev_rxq *rxq,
     }
 
     rte_spinlock_lock(&dev->stats_lock);
+    //更新统计计数
     netdev_dpdk_vhost_update_rx_counters(&dev->stats, batch->packets,
                                          nb_rx, dropped);
     rte_spinlock_unlock(&dev->stats_lock);
@@ -1636,6 +1647,7 @@ netdev_dpdk_rxq_recv(struct netdev_rxq *rxq, struct dp_packet_batch *batch)
     return 0;
 }
 
+//如果此接口有qos,则进行qos处理
 static inline int
 netdev_dpdk_qos_run(struct netdev_dpdk *dev, struct rte_mbuf **pkts,
                     int cnt)
@@ -1694,6 +1706,7 @@ netdev_dpdk_vhost_update_tx_counters(struct netdev_stats *stats,
     }
 }
 
+//ovs向qid队列发送报文
 static void
 __netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
                          struct dp_packet **pkts, int cnt)
@@ -1704,6 +1717,7 @@ __netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
     unsigned int dropped = 0;
     int i, retries = 0;
 
+    //选择一个队列发送
     qid = dev->tx_q[qid % netdev->n_txq].map;
 
     if (OVS_UNLIKELY(!is_vhost_running(dev) || qid < 0
@@ -1716,8 +1730,10 @@ __netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
 
     rte_spinlock_lock(&dev->tx_q[qid].tx_lock);
 
+    //如果要发送的报文超过dev容许的最大长度，则丢包（不想分片）
     cnt = netdev_dpdk_filter_packet_len(dev, cur_pkts, cnt);
     /* Check has QoS has been configured for the netdev */
+    //出口qos处理
     cnt = netdev_dpdk_qos_run(dev, cur_pkts, cnt);
     dropped = total_pkts - cnt;
 
@@ -1729,6 +1745,7 @@ __netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
                                           vhost_qid, cur_pkts, cnt);//将报文入队至vhost队列
         if (OVS_LIKELY(tx_pkts)) {
             /* Packets have been sent.*/
+        	//防止没有发送完，继续尝试
             cnt -= tx_pkts;
             /* Prepare for possible retry.*/
             cur_pkts = &cur_pkts[tx_pkts];
@@ -1742,10 +1759,11 @@ __netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
 
     rte_spinlock_lock(&dev->stats_lock);
     netdev_dpdk_vhost_update_tx_counters(&dev->stats, pkts, total_pkts,
-                                         cnt + dropped);
+                                         cnt + dropped);//将没有发送去的报文计在dropped中
     rte_spinlock_unlock(&dev->stats_lock);
 
 out:
+	//将没有发出去的报文扔掉（这里没有log）
     for (i = 0; i < total_pkts - dropped; i++) {
         dp_packet_delete(pkts[i]);
     }
@@ -1828,7 +1846,7 @@ netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
         dpdk_do_tx_copy(netdev, qid, batch);
         dp_packet_delete_batch(batch, may_steal);
     } else {
-        dp_packet_batch_apply_cutlen(batch);
+        dp_packet_batch_apply_cutlen(batch);//按action对报文进行截断
         __netdev_dpdk_vhost_send(netdev, qid, batch->packets, batch->count);
     }
     return 0;
@@ -3139,13 +3157,14 @@ egress_policer_run(struct qos_conf *conf, struct rte_mbuf **pkts, int pkt_cnt)
     return cnt;
 }
 
+//出接口时做qos
 static const struct dpdk_qos_ops egress_policer_ops = {
     "egress-policer",    /* qos_name */
     egress_policer_qos_construct,
     egress_policer_qos_destruct,
     egress_policer_qos_get,
     egress_policer_qos_is_equal,
-    egress_policer_run
+    egress_policer_run //出口qos运行
 };
 
 static int

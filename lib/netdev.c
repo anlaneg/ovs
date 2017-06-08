@@ -401,14 +401,14 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)
 
                 /* By default enable one tx and rx queue per netdev. */
                 netdev->n_txq = netdev->netdev_class->send ? 1 : 0;//有发送函数，队列为1
-                netdev->n_rxq = netdev->netdev_class->rxq_alloc ? 1 : 0;//
+                netdev->n_rxq = netdev->netdev_class->rxq_alloc ? 1 : 0;//有队列申请函数，队列为默认为1
 
                 ovs_list_init(&netdev->saved_flags_list);
 
                 //构造port数据
                 error = rc->class->construct(netdev);
                 if (!error) {
-                    netdev_change_seq_changed(netdev);
+                    netdev_change_seq_changed(netdev);//标明配置发生变化
                 } else {
                 	//处理失败的话，就释放空间
                     ovs_refcount_unref(&rc->refcnt);
@@ -466,6 +466,7 @@ int
 netdev_set_config(struct netdev *netdev, const struct smap *args, char **errp)
     OVS_EXCLUDED(netdev_mutex)
 {
+	//如果此接口支持配置，则对接口类行args配置
     if (netdev->netdev_class->set_config) {
         const struct smap no_args = SMAP_INITIALIZER(&no_args);
         char *verbose_error = NULL;

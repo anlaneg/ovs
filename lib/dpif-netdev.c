@@ -3141,7 +3141,7 @@ dp_netdev_process_rxq_port(struct dp_netdev_pmd_thread *pmd,
 
     dp_packet_batch_init(&batch);
     cycles_count_start(pmd);
-    //收包
+    //从队列中收包
     error = netdev_rxq_recv(rx, &batch);
     cycles_count_end(pmd, PMD_CYCLES_POLLING);
     if (!error) {
@@ -5187,7 +5187,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 tx_qid = pmd->static_tx_qid;
             }
 
-            //发送报文
+            //向外发送报文
             netdev_send(p->port->netdev, tx_qid, packets_, may_steal,
                         dynamic_txqs);
             return;
