@@ -2135,8 +2135,8 @@
 
           <dt><code>gre</code></dt>
           <dd>
-            An Ethernet over RFC 2890 Generic Routing Encapsulation over IPv4/IPv6
-            tunnel.
+            Generic Routing Encapsulation (GRE) over IPv4/IPv6 tunnel,
+            configurable to encapsulate layer 2 or layer 3 traffic.
           </dd>
 
           <dt><code>vxlan</code></dt>
@@ -2380,9 +2380,46 @@
               additional information.
               (<code>https://tools.ietf.org/html/draft-smith-vxlan-group-policy</code>)
             </li>
+            <li>
+              <code>gpe</code>: Support for Generic Protocol Encapsulation in
+              accordance with IETF draft
+              <code>https://tools.ietf.org/html/draft-ietf-nvo3-vxlan-gpe</code>.
+            </li>
           </ul>
         </column>
 
+        <column name="options" key="layer3" type='{"type": "boolean"}'>
+          <p>
+            By default, or if set to false, the tunnel carries L2 packets (with
+            an Ethernet header).  If set to true, the tunnel carries L3 packets
+            (without an Ethernet header present).
+          </p>
+
+          <p>
+            To set this option to true, the <code>gpe</code> extension must
+            also be enabled in <ref column="options" key="exts"/>.
+          </p>
+        </column>
+      </group>
+
+      <group title="Tunnel Options: gre only">
+        <p>
+          <code>gre</code> interfaces support these options.
+        </p>
+
+        <column name="options" key="layer3" type='{"type": "boolean"}'>
+          <p>
+            By default, or if set to false, the tunnel carries L2 packets (with
+            an Ethernet header).  If set to true, the tunnel carries L3 packets
+            (without an Ethernet header present).
+          </p>
+
+          <p>
+            A single GRE tunnel cannot carry both L2 and L3 packets, but the
+            same effect can be realized by creating two tunnels with different
+            <code>layer3</code> settings and otherwise the same configuration.
+          </p>
+        </column>
       </group>
 
       <group title="Tunnel Options: gre, geneve, and vxlan">
@@ -2448,10 +2485,11 @@
           Specifies the PCI address associated with the port for physical
           devices, or the virtual driver to be used for the port when a virtual
           PMD is intended to be used. For the latter, the argument string
-          typically takes the form of eth_&lt;driver_name&gt;&lt;x&gt; where
-          'driver_name' is a valid virtual DPDK PMD driver name and where 'x'
-          lies in the range of 0 to RTE_MAX_ETHPORTS-1.
-          Only supported by the dpdk port type.
+          typically takes the form of
+          <code>eth_<var>driver_name</var><var>x</var></code>, where
+          <var>driver_name</var> is a valid virtual DPDK PMD driver name and
+          <var>x</var> is a unique identifier of your choice for the given
+          port.  Only supported by the dpdk port type.
         </p>
       </column>
 
@@ -2801,12 +2839,12 @@
         BFD operates by regularly transmitting BFD control messages at a rate
         negotiated independently in each direction.  Each endpoint specifies
         the rate at which it expects to receive control messages, and the rate
-        at which it is willing to transmit them.  Open vSwitch uses a detection
-        multiplier of three, meaning that an endpoint signals a connectivity
-        fault if three consecutive BFD control messages fail to arrive.  In the
-        case of a unidirectional connectivity issue, the system not receiving
-        BFD control messages signals the problem to its peer in the messages it
-        transmits.
+        at which it is willing to transmit them.  By default, Open vSwitch uses
+        a detection multiplier of three, meaning that an endpoint signals a
+        connectivity fault if three consecutive BFD control messages fail to
+        arrive.  In the case of a unidirectional connectivity issue, the system
+        not receiving BFD control messages signals the problem to its peer in
+        the messages it transmits.
       </p>
 
       <p>
@@ -2916,6 +2954,13 @@
           to indicate that the encapsulated packet is an OAM frame. By setting
           this to true, BFD packets will be marked as OAM if encapsulated in
           one of these tunnels.
+        </column>
+
+        <column name="bfd" key="mult"
+                type='{"type": "integer", "minInteger": 1, "maxInteger": 255}'>
+          The BFD detection multiplier, which defaults to 3.  An endpoint
+          signals a connectivity fault if the given number of consecutive BFD
+          control messages fail to arrive.
         </column>
       </group>
 

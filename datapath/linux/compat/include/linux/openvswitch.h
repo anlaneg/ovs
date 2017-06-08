@@ -291,6 +291,7 @@ enum ovs_vport_attr {
 enum {
 	OVS_VXLAN_EXT_UNSPEC,
 	OVS_VXLAN_EXT_GBP,      /* Flag or __u32 */
+	OVS_VXLAN_EXT_GPE = 8,  /* Flag or __u32 */
 	__OVS_VXLAN_EXT_MAX,
 };
 
@@ -363,6 +364,8 @@ enum ovs_key_attr {
 	/* Only used within kernel data path. */
 	OVS_KEY_ATTR_TUNNEL_INFO,  /* struct ovs_tunnel_info */
 #endif
+
+	OVS_KEY_ATTR_PACKET_TYPE,  /* be32 packet type */
 	__OVS_KEY_ATTR_MAX
 };
 
@@ -715,7 +718,7 @@ struct ovs_action_push_tnl {
 	uint32_t out_port;//路由指出的出接口
 	uint32_t header_len;//存放在header缓冲区内的数据长度
 	uint32_t tnl_type;     /* For logging. */ //tunnel的类型，看enum ovs_vport_type
-	uint8_t  header[TNL_PUSH_HEADER_SIZE];//存放构造好的tunnel头（ethhdr,iphdr,...)
+	uint8_t  header[TNL_PUSH_HEADER_SIZE / 4];//存放构造好的tunnel头（ethhdr,iphdr,...)
 };
 #endif
 

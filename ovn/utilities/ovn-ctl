@@ -108,6 +108,8 @@ start_nb_ovsdb() {
         set "$@" --private-key=db:OVN_Northbound,SSL,private_key
         set "$@" --certificate=db:OVN_Northbound,SSL,certificate
         set "$@" --ca-cert=db:OVN_Northbound,SSL,ca_cert
+        set "$@" --ssl-protocols=db:OVN_Northbound,SSL,ssl_protocols
+        set "$@" --ssl-ciphers=db:OVN_Northbound,SSL,ssl_ciphers
 
         if test X"$DB_NB_CREATE_INSECURE_REMOTE" = Xyes; then
             set "$@" --remote=ptcp:$DB_NB_PORT:$DB_NB_ADDR
@@ -141,6 +143,8 @@ start_sb_ovsdb() {
         set "$@" --private-key=db:OVN_Southbound,SSL,private_key
         set "$@" --certificate=db:OVN_Southbound,SSL,certificate
         set "$@" --ca-cert=db:OVN_Southbound,SSL,ca_cert
+        set "$@" --ssl-protocols=db:OVN_Southbound,SSL,ssl_protocols
+        set "$@" --ssl-ciphers=db:OVN_Southbound,SSL,ssl_ciphers
 
         if test X"$DB_SB_CREATE_INSECURE_REMOTE" = Xyes; then
             set "$@" --remote=ptcp:$DB_SB_PORT:$DB_SB_ADDR
@@ -424,7 +428,7 @@ Commands:
 Options:
   --ovn-northd-priority=NICE     set ovn-northd's niceness (default: $OVN_NORTHD_PRIORITY)
   --ovn-northd-wrapper=WRAPPER   run with a wrapper like valgrind for debugging
-  --ovn-controller-priority=NICE     set ovn-northd's niceness (default: $OVN_CONTROLLER_PRIORITY)
+  --ovn-controller-priority=NICE     set ovn-controller's niceness (default: $OVN_CONTROLLER_PRIORITY)
   --ovn-controller-wrapper=WRAPPER   run with a wrapper like valgrind for debugging
   --ovn-controller-ssl-key=KEY OVN Southbound SSL private key file
   --ovn-controller-ssl-cert=CERT OVN Southbound SSL certificate file

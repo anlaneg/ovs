@@ -319,7 +319,8 @@ Connection commands:\n\
 SSL commands:\n\
   get-ssl                     print the SSL configuration\n\
   del-ssl                     delete the SSL configuration\n\
-  set-ssl PRIV-KEY CERT CA-CERT  set the SSL configuration\n\
+  set-ssl PRIV-KEY CERT CA-CERT [SSL-PROTOS [SSL-CIPHERS]] \
+set the SSL configuration\n\
 \n\
 %s\
 \n\
@@ -792,17 +793,17 @@ sbctl_dump_openflow(struct vconn *vconn, const struct uuid *uuid, bool stats)
 
             ds_clear(&s);
             if (stats) {
-                ofp_print_flow_stats(&s, fs);
+                ofp_print_flow_stats(&s, fs, NULL);
             } else {
                 ds_put_format(&s, " %stable=%s%"PRIu8" ",
                               colors.special, colors.end, fs->table_id);
-                match_format(&fs->match, &s, OFP_DEFAULT_PRIORITY);
+                match_format(&fs->match, NULL, &s, OFP_DEFAULT_PRIORITY);
                 if (ds_last(&s) != ' ') {
                     ds_put_char(&s, ' ');
                 }
 
                 ds_put_format(&s, "%sactions=%s", colors.actions, colors.end);
-                ofpacts_format(fs->ofpacts, fs->ofpacts_len, &s);
+                ofpacts_format(fs->ofpacts, fs->ofpacts_len, NULL, &s);
             }
             printf("   %s\n", ds_cstr(&s));
         }
@@ -1114,6 +1115,13 @@ cmd_set_ssl(struct ctl_context *ctx)
 
     sbrec_ssl_set_bootstrap_ca_cert(ssl, bootstrap);
 
+    if (ctx->argc == 5) {
+        sbrec_ssl_set_ssl_protocols(ssl, ctx->argv[4]);
+    } else if (ctx->argc == 6) {
+        sbrec_ssl_set_ssl_protocols(ssl, ctx->argv[4]);
+        sbrec_ssl_set_ssl_ciphers(ssl, ctx->argv[5]);
+    }
+
     sbrec_sb_global_set_ssl(sb_global, ssl);
 }
 
@@ -1344,11 +1352,10 @@ do_sbctl(const char *args, struct ctl_command *commands, size_t n_commands,
 try_again:
     /* Our transaction needs to be rerun, or a prerequisite was not met.  Free
      * resources and return so that the caller can try again. */
-    if (txn) {
-        ovsdb_idl_txn_abort(txn);
-        ovsdb_idl_txn_destroy(txn);
-        the_idl_txn = NULL;
-    }
+    ovsdb_idl_txn_abort(txn);
+    ovsdb_idl_txn_destroy(txn);
+    the_idl_txn = NULL;
+
     ovsdb_symbol_table_destroy(symtab);
     for (c = commands; c < &commands[n_commands]; c++) {
         ds_destroy(&c->output);
@@ -1408,8 +1415,9 @@ static const struct ctl_command_syntax sbctl_commands[] = {
     /* SSL commands. */
     {"get-ssl", 0, 0, "", pre_cmd_get_ssl, cmd_get_ssl, NULL, "", RO},
     {"del-ssl", 0, 0, "", pre_cmd_del_ssl, cmd_del_ssl, NULL, "", RW},
-    {"set-ssl", 3, 3, "PRIVATE-KEY CERTIFICATE CA-CERT", pre_cmd_set_ssl,
-     cmd_set_ssl, NULL, "--bootstrap", RW},
+    {"set-ssl", 3, 5,
+        "PRIVATE-KEY CERTIFICATE CA-CERT [SSL-PROTOS [SSL-CIPHERS]]",
+        pre_cmd_set_ssl, cmd_set_ssl, NULL, "--bootstrap", RW},
 
     {NULL, 0, 0, NULL, NULL, NULL, NULL, NULL, RO},
 };

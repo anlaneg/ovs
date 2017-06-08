@@ -1814,12 +1814,13 @@ ovn_port_update_sbrec(const struct ovn_port *op,
                                    op->nbsp->n_addresses);
 
         struct smap ids = SMAP_INITIALIZER(&ids);
-        const char *name = smap_get(&op->nbsp->external_ids,
-                                    "neutron:port_name");
+        smap_clone(&ids, &op->nbsp->external_ids);
+        const char *name = smap_get(&ids, "neutron:port_name");
         if (name && name[0]) {
             smap_add(&ids, "name", name);
         }
         sbrec_port_binding_set_external_ids(op->sb, &ids);
+        smap_destroy(&ids);
     }
 }
 
@@ -3305,9 +3306,11 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
         /*
          * Add ARP/ND reply flows if either the
          *  - port is up or
-         *  - port type is router
+         *  - port type is router or
+         *  - port type is localport
          */
-        if (!lsp_is_up(op->nbsp) && strcmp(op->nbsp->type, "router")) {
+        if (!lsp_is_up(op->nbsp) && strcmp(op->nbsp->type, "router") &&
+            strcmp(op->nbsp->type, "localport")) {
             continue;
         }
 
@@ -3856,7 +3859,7 @@ build_static_route_flow(struct hmap *lflows, struct ovn_datapath *od,
                         const struct nbrec_logical_router_static_route *route)
 {
     ovs_be32 nexthop;
-    const char *lrp_addr_s;
+    const char *lrp_addr_s = NULL;
     unsigned int plen;
     bool is_ipv4;
 
@@ -3966,7 +3969,7 @@ build_static_route_flow(struct hmap *lflows, struct ovn_datapath *od,
         }
     }
 
-     if (!lrp_addr_s) {
+    if (!out_port || !lrp_addr_s) {
         /* There is no matched out port. */
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
         VLOG_WARN_RL(&rl, "No path for static route %s; next hop %s",

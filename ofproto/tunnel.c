@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2014, 2015 Nicira, Inc.
+/* Copyright (c) 2013, 2014, 2015, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@
 #include "openvswitch/vlog.h"
 #include "unaligned.h"
 #include "ofproto-dpif.h"
+#include "netdev-vport.h"
 
 VLOG_DEFINE_THIS_MODULE(tunnel);
 
@@ -50,6 +51,7 @@ struct tnl_match {
     bool in_key_flow;//见后面的注释（谁把这个结构提前，却不将注释提前 :-P)
     bool ip_src_flow;
     bool ip_dst_flow;
+    bool is_layer3;
 };
 
 struct tnl_port {
@@ -169,6 +171,7 @@ tnl_port_add__(const struct ofport_dpif *ofport, const struct netdev *netdev,
     tnl_port->match.ip_dst_flow = cfg->ip_dst_flow;
     tnl_port->match.in_key_flow = cfg->in_key_flow;
     tnl_port->match.odp_port = odp_port;
+    tnl_port->match.is_layer3 = netdev_vport_is_layer3(netdev);
 
     map = tnl_match_map(&tnl_port->match);
     existing_port = tnl_find_exact(&tnl_port->match, *map);
@@ -213,7 +216,8 @@ tnl_port_add__(const struct ofport_dpif *ofport, const struct netdev *netdev,
 //添加隧道口
 int
 tnl_port_add(const struct ofport_dpif *ofport, const struct netdev *netdev,
-             odp_port_t odp_port, bool native_tnl, const char name[]) OVS_EXCLUDED(rwlock)
+             odp_port_t odp_port, bool native_tnl, const char name[])
+    OVS_EXCLUDED(rwlock)
 {
     bool ok;
 
@@ -240,8 +244,14 @@ tnl_port_reconfigure(const struct ofport_dpif *ofport,
 
     fat_rwlock_wrlock(&rwlock);
     tnl_port = tnl_find_ofport(ofport);
+<<<<<<< HEAD
     if (!tnl_port) {//不存在，添加
         changed = tnl_port_add__(ofport, netdev, odp_port, false, native_tnl, name);
+=======
+    if (!tnl_port) {
+        changed = tnl_port_add__(ofport, netdev, odp_port, false, native_tnl,
+                                 name);
+>>>>>>> upstream/master
     } else if (tnl_port->netdev != netdev
                || tnl_port->match.odp_port != odp_port
                || tnl_port->change_seq != netdev_get_change_seq(tnl_port->netdev)) {//已存在，且变更了，删除掉再添加
@@ -312,20 +322,34 @@ tnl_port_receive(const struct flow *flow) OVS_EXCLUDED(rwlock)
     fat_rwlock_rdlock(&rwlock);
     tnl_port = tnl_find(flow);
     ofport = tnl_port ? tnl_port->ofport : NULL;
+<<<<<<< HEAD
     if (!tnl_port) {//没有找到这样的tunnel口
         char *flow_str = flow_to_string(flow);
+=======
+    if (!tnl_port) {
+        char *flow_str = flow_to_string(flow, NULL);
+>>>>>>> upstream/master
 
         VLOG_WARN_RL(&rl, "receive tunnel port not found (%s)", flow_str);
         free(flow_str);
         goto out;
     }
 
+<<<<<<< HEAD
     if (!VLOG_DROP_DBG(&dbg_rl)) {//debug
         pre_flow_str = flow_to_string(flow);
     }
 
     if (pre_flow_str) {//debug代码
         char *post_flow_str = flow_to_string(flow);
+=======
+    if (!VLOG_DROP_DBG(&dbg_rl)) {
+        pre_flow_str = flow_to_string(flow, NULL);
+    }
+
+    if (pre_flow_str) {
+        char *post_flow_str = flow_to_string(flow, NULL);
+>>>>>>> upstream/master
         char *tnl_str = tnl_port_fmt(tnl_port);
         VLOG_DBG("flow received\n"
                  "%s"
@@ -394,6 +418,8 @@ tnl_wc_init(struct flow *flow, struct flow_wildcards *wc)
             && IP_ECN_is_ce(flow->tunnel.ip_tos)) {
             wc->masks.nw_tos |= IP_ECN_MASK;
         }
+        /* Match on packet_type for tunneled packets.*/
+        wc->masks.packet_type = OVS_BE32_MAX;
     }
 }
 
@@ -422,8 +448,13 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
     cfg = netdev_get_tunnel_config(tnl_port->netdev);//获取tunnel口的配置
     ovs_assert(cfg);
 
+<<<<<<< HEAD
     if (!VLOG_DROP_DBG(&dbg_rl)) {//调试代码
         pre_flow_str = flow_to_string(flow);
+=======
+    if (!VLOG_DROP_DBG(&dbg_rl)) {
+        pre_flow_str = flow_to_string(flow, NULL);
+>>>>>>> upstream/master
     }
 
     if (!cfg->ip_src_flow) {//填充src-ip
@@ -483,7 +514,7 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
     }
 
     if (pre_flow_str) {
-        char *post_flow_str = flow_to_string(flow);
+        char *post_flow_str = flow_to_string(flow, NULL);
         char *tnl_str = tnl_port_fmt(tnl_port);
         VLOG_DBG("flow sent\n"
                  "%s"
@@ -580,6 +611,7 @@ tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)//通过流来找tunnel�
                     match.in_key_flow = in_key_flow;
                     match.ip_dst_flow = ip_dst_flow;
                     match.ip_src_flow = ip_src == IP_SRC_FLOW;
+                    match.is_layer3 = flow->packet_type != htonl(PT_ETH);
 
                     tnl_port = tnl_find_exact(&match, map);
                     if (tnl_port) {
@@ -629,6 +661,9 @@ tnl_match_fmt(const struct tnl_match *match, struct ds *ds)
         ds_put_cstr(ds, ", key=flow");
     } else {
         ds_put_format(ds, ", key=%#"PRIx64, ntohll(match->in_key));
+    }
+    if (match->is_layer3) {
+        ds_put_cstr(ds, ", layer3");
     }
 
     ds_put_format(ds, ", dp port=%"PRIu32, match->odp_port);

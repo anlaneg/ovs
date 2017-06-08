@@ -620,12 +620,15 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
     }
     miniflow_push_uint32(mf, dp_hash, md->dp_hash);//标记hash位存在，填充dp_hash
     miniflow_push_uint32(mf, in_port, odp_to_u32(md->in_port.odp_port));//标记in_port位存在，填充in_port
-    if (md->recirc_id || md->ct_state) {//如果recirc_id被设置
+    if (md->ct_state) {//如果recirc_id被设置
         miniflow_push_uint32(mf, recirc_id, md->recirc_id);
         miniflow_push_uint8(mf, ct_state, md->ct_state);
         ct_nw_proto_p = miniflow_pointer(mf, ct_nw_proto);
         miniflow_push_uint8(mf, ct_nw_proto, 0);
         miniflow_push_uint16(mf, ct_zone, md->ct_zone);
+    } else if (md->recirc_id) {
+        miniflow_push_uint32(mf, recirc_id, md->recirc_id);
+        miniflow_pad_to_64(mf, recirc_id);
     }
 
     if (md->ct_state) {//如果ct_state被设置
@@ -1073,10 +1076,11 @@ flow_clear_conntrack(struct flow *flow)
 }
 
 char *
-flow_to_string(const struct flow *flow)
+flow_to_string(const struct flow *flow,
+               const struct ofputil_port_map *port_map)
 {
     struct ds ds = DS_EMPTY_INITIALIZER;
-    flow_format(&ds, flow);
+    flow_format(&ds, flow, port_map);
     return ds_cstr(&ds);
 }
 
@@ -1316,7 +1320,8 @@ unknown:
 }
 
 void
-flow_format(struct ds *ds, const struct flow *flow)
+flow_format(struct ds *ds,
+            const struct flow *flow, const struct ofputil_port_map *port_map)
 {
     struct match match;
     struct flow_wildcards *wc = &match.wc;
@@ -1378,13 +1383,14 @@ flow_format(struct ds *ds, const struct flow *flow)
         WC_UNMASK_FIELD(wc, metadata);
     }
 
-    match_format(&match, ds, OFP_DEFAULT_PRIORITY);
+    match_format(&match, port_map, ds, OFP_DEFAULT_PRIORITY);
 }
 
 void
-flow_print(FILE *stream, const struct flow *flow)
+flow_print(FILE *stream,
+           const struct flow *flow, const struct ofputil_port_map *port_map)
 {
-    char *s = flow_to_string(flow);
+    char *s = flow_to_string(flow, port_map);
     fputs(s, stream);
     free(s);
 }
@@ -1935,7 +1941,7 @@ flow_hash_symmetric_l3l4(const struct flow *flow, uint32_t basis,
         const uint64_t *a = ALIGNED_CAST(uint64_t *, flow->ipv6_src.s6_addr);
         const uint64_t *b = ALIGNED_CAST(uint64_t *, flow->ipv6_dst.s6_addr);
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < sizeof flow->ipv6_src / sizeof *a; i++) {
             hash = hash_add64(hash, a[i] ^ b[i]);
         }
     } else {

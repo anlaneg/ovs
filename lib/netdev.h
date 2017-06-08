@@ -100,6 +100,7 @@ struct netdev_tunnel_config {//tunnel配置结构体
 
     bool csum;//是否需要计算checksum
     bool dont_fragment;//是否要打上不容许分片标记
+    bool is_layer3;
 };
 
 void netdev_run(void);
