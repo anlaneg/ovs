@@ -2119,7 +2119,6 @@ emc_probabilistic_insert(struct dp_netdev_pmd_thread *pmd,
     }
 }
 
->>>>>>> upstream/master
 static inline struct dp_netdev_flow *
 emc_lookup(struct emc_cache *cache, const struct netdev_flow_key *key)
 {
