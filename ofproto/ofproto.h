@@ -389,7 +389,7 @@ enum port_vlan_mode {
     /* Untagged incoming packets are part of 'vlan', as are incoming packets
      * tagged with 'vlan'.  Outgoing packets tagged with 'vlan' are untagged.
      * Other VLANs in 'trunks' are trunked. */
-    PORT_VLAN_NATIVE_UNTAGGED//与上面不同的是，出去时不需要加tag
+    PORT_VLAN_NATIVE_UNTAGGED,//与上面不同的是，出去时不需要加tag
 
     /* 802.1q tunnel port. Incoming packets are added an outer vlan tag
      * 'vlan'. If 'cvlans' is set, only allows VLANs in 'cvlans'. */
