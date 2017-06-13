@@ -155,15 +155,11 @@ netdev_tnl_push_ip_header(struct dp_packet *packet,
     eth = dp_packet_push_uninit(packet, size);
     *ip_tot_size = dp_packet_size(packet) - sizeof (struct eth_header);//计算ip totoal size
 
-<<<<<<< HEAD
     memcpy(eth, header, size);//将header放入
-=======
-    memcpy(eth, header, size);
     /* The encapsulated packet has type Ethernet. Adjust dp_packet. */
     packet->packet_type = htonl(PT_ETH);
     dp_packet_reset_offsets(packet);
     packet->l3_ofs = sizeof (struct eth_header);
->>>>>>> upstream/master
 
     if (netdev_tnl_is_header_ipv6(header)) {//放入的header是否为ipv6协议
         ip6 = netdev_tnl_ipv6_hdr(eth);
@@ -526,10 +522,6 @@ netdev_vxlan_pop_header(struct dp_packet *packet)
         goto err;
     }
 
-<<<<<<< HEAD
-    if (get_16aligned_be32(&vxh->vx_flags) != htonl(VXLAN_FLAGS) ||
-       (get_16aligned_be32(&vxh->vx_vni) & htonl(0xff))) {//检查flag及预留字段
-=======
     vx_flags = get_16aligned_be32(&vxh->vx_flags);
     if (vx_flags & htonl(VXLAN_HF_GPE)) {
         vx_flags &= htonl(~VXLAN_GPE_USED_BITS);
@@ -553,8 +545,7 @@ netdev_vxlan_pop_header(struct dp_packet *packet)
     }
 
     if (vx_flags != htonl(VXLAN_FLAGS) ||
-       (get_16aligned_be32(&vxh->vx_vni) & htonl(0xff))) {
->>>>>>> upstream/master
+       (get_16aligned_be32(&vxh->vx_vni) & htonl(0xff))) {//检查flag及预留字段
         VLOG_WARN_RL(&err_rl, "invalid vxlan flags=%#x vni=%#x\n",
                      ntohl(vx_flags),
                      ntohl(get_16aligned_be32(&vxh->vx_vni)));
@@ -591,11 +582,6 @@ netdev_vxlan_build_header(const struct netdev *netdev,
 
     vxh = udp_build_header(tnl_cfg, data, params);
 
-<<<<<<< HEAD
-    //填充vxlan头
-    put_16aligned_be32(&vxh->vx_flags, htonl(VXLAN_FLAGS));
-    put_16aligned_be32(&vxh->vx_vni, htonl(ntohll(params->flow->tunnel.tun_id) << 8));
-=======
     if (tnl_cfg->exts & (1 << OVS_VXLAN_EXT_GPE)) {
         put_16aligned_be32(&vxh->vx_flags, htonl(VXLAN_FLAGS | VXLAN_HF_GPE));
         put_16aligned_be32(&vxh->vx_vni,
@@ -616,11 +602,12 @@ netdev_vxlan_build_header(const struct netdev *netdev,
             vxh->vx_gpe.next_protocol = VXLAN_GPE_NP_ETHERNET;
         }
     } else {
+
+        //填充vxlan头
         put_16aligned_be32(&vxh->vx_flags, htonl(VXLAN_FLAGS));
         put_16aligned_be32(&vxh->vx_vni,
                            htonl(ntohll(params->flow->tunnel.tun_id) << 8));
     }
->>>>>>> upstream/master
 
     ovs_mutex_unlock(&dev->mutex);
     data->header_len += sizeof *vxh;

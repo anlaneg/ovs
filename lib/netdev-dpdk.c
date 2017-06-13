@@ -332,15 +332,9 @@ enum dpdk_hw_ol_features {
 };
 
 struct netdev_dpdk {
-<<<<<<< HEAD
     struct netdev up;//外部的结构体，供框架用
-    int port_id;
-    int max_packet_len;//支持的最大报文长度
-=======
-    struct netdev up;
     dpdk_port_t port_id;
-    int max_packet_len;
->>>>>>> upstream/master
+    int max_packet_len;//支持的最大报文长度
     enum dpdk_dev_type type;
 
     struct dpdk_tx_queue *tx_q;
@@ -944,13 +938,9 @@ vhost_common_construct(struct netdev *netdev)
         return ENOMEM;
     }
 
-<<<<<<< HEAD
     //初始化vhost netdev
-    return common_construct(netdev, -1, DPDK_DEV_VHOST, socket_id);
-=======
     return common_construct(netdev, DPDK_ETH_PORT_ID_INVALID,
                             DPDK_DEV_VHOST, socket_id);
->>>>>>> upstream/master
 }
 
 //服务端初始化
@@ -1671,6 +1661,7 @@ netdev_dpdk_rxq_recv(struct netdev_rxq *rxq, struct dp_packet_batch *batch)
 
     if (policer) {
         dropped = nb_rx;
+        //inport的qos处理
         nb_rx = ingress_policer_run(policer,
                                     (struct rte_mbuf **) batch->packets,
                                     nb_rx);
@@ -2799,14 +2790,6 @@ netdev_dpdk_class_init(void)//模块载入时处理
         unixctl_command_register("netdev-dpdk/set-admin-state",
                                  "[netdev] up|down", 1, 2,
                                  netdev_dpdk_set_admin_state, NULL);
-<<<<<<< HEAD
-        //注册关闭接口命令
-        unixctl_command_register("netdev-dpdk/detach",
-                                 "pci address of device", 1, 1,
-                                 netdev_dpdk_detach, NULL);
-=======
->>>>>>> upstream/master
-
         ovsthread_once_done(&once);
     }
 

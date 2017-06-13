@@ -427,12 +427,8 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args, char **errp)//�
     int err;
 
     has_csum = strstr(type, "gre") || strstr(type, "geneve") ||
-<<<<<<< HEAD
                strstr(type, "stt") || strstr(type, "vxlan");//这几种需要check sum
-=======
-               strstr(type, "stt") || strstr(type, "vxlan");
     optional_layer3 = !strcmp(type, "gre");
->>>>>>> upstream/master
     memset(&tnl_cfg, 0, sizeof tnl_cfg);
 
     /* Add a default destination port for tunnel ports if none specified. */
@@ -550,9 +546,6 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args, char **errp)//�
         }
     }
 
-<<<<<<< HEAD
-    if (!ipv6_addr_is_set(&tnl_cfg.ipv6_dst) && !tnl_cfg.ip_dst_flow) {//两个都不配，报错
-=======
     if (optional_layer3 && is_layer3) {
        tnl_cfg.is_layer3 = is_layer3;
     } else if (!optional_layer3 && is_layer3) {
@@ -560,8 +553,7 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args, char **errp)//�
                       name, type, "layer3");
     }
 
-    if (!ipv6_addr_is_set(&tnl_cfg.ipv6_dst) && !tnl_cfg.ip_dst_flow) {
->>>>>>> upstream/master
+    if (!ipv6_addr_is_set(&tnl_cfg.ipv6_dst) && !tnl_cfg.ip_dst_flow) {//两个都不配，报错
         ds_put_format(&errors,
                       "%s: %s type requires valid 'remote_ip' argument\n",
                       name, type);

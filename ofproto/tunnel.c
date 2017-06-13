@@ -244,14 +244,9 @@ tnl_port_reconfigure(const struct ofport_dpif *ofport,
 
     fat_rwlock_wrlock(&rwlock);
     tnl_port = tnl_find_ofport(ofport);
-<<<<<<< HEAD
     if (!tnl_port) {//不存在，添加
-        changed = tnl_port_add__(ofport, netdev, odp_port, false, native_tnl, name);
-=======
-    if (!tnl_port) {
         changed = tnl_port_add__(ofport, netdev, odp_port, false, native_tnl,
                                  name);
->>>>>>> upstream/master
     } else if (tnl_port->netdev != netdev
                || tnl_port->match.odp_port != odp_port
                || tnl_port->change_seq != netdev_get_change_seq(tnl_port->netdev)) {//已存在，且变更了，删除掉再添加
@@ -322,34 +317,20 @@ tnl_port_receive(const struct flow *flow) OVS_EXCLUDED(rwlock)
     fat_rwlock_rdlock(&rwlock);
     tnl_port = tnl_find(flow);
     ofport = tnl_port ? tnl_port->ofport : NULL;
-<<<<<<< HEAD
     if (!tnl_port) {//没有找到这样的tunnel口
-        char *flow_str = flow_to_string(flow);
-=======
-    if (!tnl_port) {
         char *flow_str = flow_to_string(flow, NULL);
->>>>>>> upstream/master
 
         VLOG_WARN_RL(&rl, "receive tunnel port not found (%s)", flow_str);
         free(flow_str);
         goto out;
     }
 
-<<<<<<< HEAD
-    if (!VLOG_DROP_DBG(&dbg_rl)) {//debug
-        pre_flow_str = flow_to_string(flow);
-    }
-
-    if (pre_flow_str) {//debug代码
-        char *post_flow_str = flow_to_string(flow);
-=======
-    if (!VLOG_DROP_DBG(&dbg_rl)) {
+    if (!VLOG_DROP_DBG(&dbg_rl)) {//debug代码
         pre_flow_str = flow_to_string(flow, NULL);
     }
 
     if (pre_flow_str) {
         char *post_flow_str = flow_to_string(flow, NULL);
->>>>>>> upstream/master
         char *tnl_str = tnl_port_fmt(tnl_port);
         VLOG_DBG("flow received\n"
                  "%s"
@@ -448,13 +429,8 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
     cfg = netdev_get_tunnel_config(tnl_port->netdev);//获取tunnel口的配置
     ovs_assert(cfg);
 
-<<<<<<< HEAD
     if (!VLOG_DROP_DBG(&dbg_rl)) {//调试代码
-        pre_flow_str = flow_to_string(flow);
-=======
-    if (!VLOG_DROP_DBG(&dbg_rl)) {
         pre_flow_str = flow_to_string(flow, NULL);
->>>>>>> upstream/master
     }
 
     if (!cfg->ip_src_flow) {//填充src-ip

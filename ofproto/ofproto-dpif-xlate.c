@@ -165,14 +165,9 @@ struct xport {
 
     struct hmap skb_priorities;      /* Map of 'skb_priority_to_dscp's. */
 
-<<<<<<< HEAD
     bool may_enable;                 /* May be enabled in bonds. */ //用于指明是否在bonds中启用
     bool is_tunnel;                  /* Is a tunnel port. */ //指明是tunnel口
-=======
-    bool may_enable;                 /* May be enabled in bonds. */
-    bool is_tunnel;                  /* Is a tunnel port. */
     bool is_layer3;                  /* Is a layer 3 port. */
->>>>>>> upstream/master
 
     struct cfm *cfm;                 /* CFM handle or null. */ //802.1ag协议
     struct bfd *bfd;                 /* BFD handle or null. */ //双向转发侦测
@@ -2722,12 +2717,8 @@ xlate_normal(struct xlate_ctx *ctx)
 
     /* Learn source MAC. */
     bool is_grat_arp = is_gratuitous_arp(flow, wc);
-<<<<<<< HEAD
-    if (ctx->xin->allow_side_effects) {
-    	//fdb表学习
-=======
     if (ctx->xin->allow_side_effects && !in_port->is_layer3) {
->>>>>>> upstream/master
+    	//fdb表学习,仅在二层口时启用fdb学习
         update_learning_table(ctx, in_xbundle, flow->dl_src, vlan,
                               is_grat_arp);
     }
@@ -3266,17 +3257,13 @@ build_tunnel_send(struct xlate_ctx *ctx, const struct xport *xport,
     }
     tnl_push_data.tnl_port = odp_to_u32(tunnel_odp_port);//这个应与xport->ofport相同，需要查看上层调用（上层保证了这一点)
     tnl_push_data.out_port = odp_to_u32(out_dev->odp_port);
-<<<<<<< HEAD
-    odp_put_tnl_push_action(ctx->odp_actions, &tnl_push_data);//设置push_tnl动作及其参数
-=======
 
     /* After tunnel header has been added, packet_type of flow and base_flow
      * need to be set to PT_ETH. */
     ctx->xin->flow.packet_type = htonl(PT_ETH);
     ctx->base_flow.packet_type = htonl(PT_ETH);
 
-    odp_put_tnl_push_action(ctx->odp_actions, &tnl_push_data);
->>>>>>> upstream/master
+    odp_put_tnl_push_action(ctx->odp_actions, &tnl_push_data);//设置push_tnl动作及其参数
     return 0;
 }
 
@@ -3412,10 +3399,6 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         return;
     }
 
-<<<<<<< HEAD
-    //报文可以正常转发
-    if (xport->peer) {//如果有对端（对端还是一个xport)
-=======
     if (flow->packet_type == htonl(PT_ETH) && xport->is_layer3) {
         /* Ethernet packet to L3 outport -> pop ethernet header. */
         flow->packet_type = PACKET_TYPE_BE(OFPHTN_ETHERTYPE,
@@ -3427,8 +3410,8 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         flow->dl_src = eth_addr_zero;
     }
 
-    if (xport->peer) {
->>>>>>> upstream/master
+    //报文可以正常转发
+    if (xport->peer) {//如果有对端（对端还是一个xport)
         const struct xport *peer = xport->peer;
         struct flow old_flow = ctx->xin->flow;
         struct flow_tnl old_flow_tnl_wc = ctx->wc->masks.tunnel;
@@ -6486,9 +6469,6 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     }
     ctx.wc->masks.tunnel.metadata.tab = flow->tunnel.metadata.tab;
 
-<<<<<<< HEAD
-    if (!xin->ofpacts && !ctx.rule) {//需要查规则
-=======
     /* Get the proximate input port of the packet.  (If xin->frozen_state,
      * flow->in_port is the ultimate input port of the packet.) */
     struct xport *in_port = get_ofp_port(xbridge,
@@ -6504,8 +6484,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         flow->dl_dst = eth_addr_zero;
     }
 
-    if (!xin->ofpacts && !ctx.rule) {
->>>>>>> upstream/master
+    if (!xin->ofpacts && !ctx.rule) {//需要查规则
         ctx.rule = rule_dpif_lookup_from_table(
             ctx.xbridge->ofproto, ctx.xin->tables_version, flow, ctx.wc,
             ctx.xin->resubmit_stats, &ctx.table_id,

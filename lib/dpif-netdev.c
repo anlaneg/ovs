@@ -2433,11 +2433,7 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     cmap_insert(&pmd->flow_table, CONST_CAST(struct cmap_node *, &flow->node),//将flow加入到flow_table表中，flow_table为l2表
                 dp_netdev_flow_hash(&flow->ufid));
 
-<<<<<<< HEAD
-    if (OVS_UNLIKELY(VLOG_IS_DBG_ENABLED())) {//调试代码
-=======
-    if (OVS_UNLIKELY(!VLOG_DROP_DBG((&upcall_rl)))) {
->>>>>>> upstream/master
+    if (OVS_UNLIKELY(!VLOG_DROP_DBG((&upcall_rl)))) {//调试代码
         struct ds ds = DS_EMPTY_INITIALIZER;
         struct ofpbuf key_buf, mask_buf;
         struct odp_flow_key_parms odp_parms = {
@@ -3547,13 +3543,9 @@ reconfigure_datapath(struct dp_netdev *dp)
     /* We only reconfigure the ports that we determined above, because they're
      * not being used by any pmd thread at the moment.  If a port fails to
      * reconfigure we remove it from the datapath. */
-<<<<<<< HEAD
-    //使port进行重配置
-    HMAP_FOR_EACH (port, node, &dp->ports) {
-=======
+	//使port进行重配置
     struct dp_netdev_port *next_port;
     HMAP_FOR_EACH_SAFE (port, next_port, node, &dp->ports) {
->>>>>>> upstream/master
         int err;
 
         if (!port->need_reconfigure) {
