@@ -227,14 +227,14 @@ enum ct_timeout {
  * */
 struct conntrack_bucket {
     /* Protects 'connections' and 'exp_lists'.  Used in the fast path */
-    struct ct_lock lock;
+    struct ct_lock lock;//保护链表的锁
     /* Contains the connections in the bucket, indexed by 'struct conn_key' */
-    struct hmap connections OVS_GUARDED;
+    struct hmap connections OVS_GUARDED;//conn哈希
     /* For each possible timeout we have a list of connections. When the
      * timeout of a connection is updated, we move it to the back of the list.
      * Since the connection in a list have the same relative timeout, the list
      * will be ordered, with the oldest connections to the front. */
-    struct ovs_list exp_lists[N_CT_TM] OVS_GUARDED;
+    struct ovs_list exp_lists[N_CT_TM] OVS_GUARDED;//链接过期链
 
     /* Protects 'next_cleanup'. Used to make sure that there's only one thread
      * performing the cleanup. */
@@ -259,10 +259,10 @@ struct conntrack {
     struct latch clean_thread_exit;
 
     /* Number of connections currently in the connection tracker. */
-    atomic_count n_conn;
+    atomic_count n_conn;//连接数
     /* Connections limit. When this limit is reached, no new connection
      * will be accepted. */
-    atomic_uint n_conn_limit;
+    atomic_uint n_conn_limit;//连接数上限
 
     /* The following resources are referenced during nat connection
      * creation and deletion. */

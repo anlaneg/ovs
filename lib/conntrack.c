@@ -49,7 +49,7 @@ struct conn_lookup_ctx {
     struct conn_key key;
     struct conn *conn;
     uint32_t hash;
-    bool reply;
+    bool reply;//是否应答方向（一般网络设备中用up,down来表示)
     bool related;
 };
 
@@ -102,6 +102,7 @@ static inline bool
 extract_l3_ipv6(struct conn_key *key, const void *data, size_t size,
                 const char **new_data);
 
+//注册各传输层链接跟踪钩子点
 static struct ct_l4_proto *l4_protos[] = {
     [IPPROTO_TCP] = &ct_proto_tcp,
     [IPPROTO_UDP] = &ct_proto_other,
@@ -109,6 +110,7 @@ static struct ct_l4_proto *l4_protos[] = {
     [IPPROTO_ICMPV6] = &ct_proto_icmp6,
 };
 
+//依据不同的类型，设置不同的timeout值
 long long ct_timeout_val[] = {
 #define CT_TIMEOUT(NAME, VAL) [CT_TM_##NAME] = VAL,
     CT_TIMEOUTS
@@ -487,6 +489,7 @@ nat_clean(struct conntrack *ct, struct conn *conn,
     ct_lock_lock(&ct->buckets[bucket_rev_conn].lock);
     ct_rwlock_wrlock(&ct->nat_resources_lock);
 
+    //这个可以被优化掉，就像我之前做的一样，通过正向的conn可以计算出反向的conn时，则可以移除此次查询
     struct conn *rev_conn = conn_lookup(ct, &conn->rev_key, now);
 
     struct nat_conn_key_node *nat_conn_key_node =
@@ -509,15 +512,18 @@ nat_clean(struct conntrack *ct, struct conn *conn,
     ct_lock_lock(&ctb->lock);
 }
 
+//session销毁
 static void
 conn_clean(struct conntrack *ct, struct conn *conn,
            struct conntrack_bucket *ctb)
     OVS_REQUIRES(ctb->lock)
 {
+	//将conn自冲突链中摘除
     ovs_list_remove(&conn->exp_node);
     hmap_remove(&ctb->connections, &conn->node);
     atomic_count_dec(&ct->n_conn);
     if (conn->nat_info) {
+    	//nat资源释放
         nat_clean(ct, conn, ctb);
     } else {
         delete_conn(conn);
@@ -544,13 +550,17 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
 
         atomic_read_relaxed(&ct->n_conn_limit, &n_conn_limit);
 
+        //连接数达到上限，不容许创建，返回NULL
         if (atomic_count_get(&ct->n_conn) >= n_conn_limit) {
             COVERAGE_INC(conntrack_full);
             return nc;
         }
 
+        //在bucket桶位置创建一条新连接
         nc = new_conn(&ct->buckets[bucket], pkt, &ctx->key, now);
         ctx->conn = nc;
+
+        //设置rev_key(反向key)
         nc->rev_key = nc->key;
         conn_key_reverse(&nc->rev_key);
 
@@ -744,9 +754,9 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             const struct nat_action_info_t *nat_action_info)
 {
     struct conn *conn;
-    unsigned bucket = hash_to_bucket(ctx->hash);
-    ct_lock_lock(&ct->buckets[bucket].lock);
-    conn_key_lookup(&ct->buckets[bucket], ctx, now);
+    unsigned bucket = hash_to_bucket(ctx->hash);//找到此流对应的桶
+    ct_lock_lock(&ct->buckets[bucket].lock);//加锁
+    conn_key_lookup(&ct->buckets[bucket], ctx, now);//找到连接
     conn = ctx->conn;
 
     /* Delete found entry if in wrong direction. 'force' implies commit. */
@@ -765,15 +775,16 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             ctx2.key = conn->rev_key;
             ctx2.hash = conn_key_hash(&conn->rev_key, ct->hash_basis);
 
-            ct_lock_unlock(&ct->buckets[bucket].lock);
+            ct_lock_unlock(&ct->buckets[bucket].lock);//解开此流对应的锁
             bucket = hash_to_bucket(ctx2.hash);
 
-            ct_lock_lock(&ct->buckets[bucket].lock);
-            conn_key_lookup(&ct->buckets[bucket], &ctx2, now);
+            ct_lock_lock(&ct->buckets[bucket].lock);//加此流反向对应的锁
+            conn_key_lookup(&ct->buckets[bucket], &ctx2, now);//找到此流对应反向的连接
 
             if (ctx2.conn) {
                 conn = ctx2.conn;
             } else {
+            	//没有找到
                 /* It is a race condition where conn has timed out and removed
                  * between unlock of the rev_conn and lock of the forward conn;
                  * nothing to do. */
@@ -852,8 +863,10 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
         /* Continue without the helper */
     }
 
+    //遍历处理每个包，对报文进行解析，将解析好的内容存放在ctx.key中
     for (size_t i = 0; i < cnt; i++) {
         if (!conn_key_extract(ct, pkts[i], dl_type, &ctx, zone)) {
+        	//解析失败，此报文为分片或者格式不正确
             pkts[i]->md.ct_state = CS_INVALID;
             write_ct_md(pkts[i], zone, NULL, NULL);
             continue;
@@ -1046,9 +1059,11 @@ extract_l3_ipv4(struct conn_key *key, const void *data, size_t size,
         }
     }
 
+    //ip长度
     ip_len = IP_IHL(ip->ip_ihl_ver) * 4;
 
     if (new_data) {
+    	//检查长度
         if (OVS_UNLIKELY(ip_len < IP_HEADER_LEN)) {
             return false;
         }
@@ -1056,17 +1071,21 @@ extract_l3_ipv4(struct conn_key *key, const void *data, size_t size,
             return false;
         }
 
+        //确定传输性首地址
         *new_data = (char *) data + ip_len;
     }
 
+    //注意，不支持分片返回false
     if (IP_IS_FRAGMENT(ip->ip_frag_off)) {
         return false;
     }
 
+    //校验checksum
     if (validate_checksum && csum(data, ip_len) != 0) {
         return false;
     }
 
+    //解析地址，上层协议
     key->src.addr.ipv4 = ip->ip_src;
     key->dst.addr.ipv4 = ip->ip_dst;
     key->nw_proto = ip->ip_proto;
@@ -1135,11 +1154,13 @@ checksum_valid(const struct conn_key *key, const void *data, size_t size,
     return csum_finish(csum) == 0;
 }
 
+//tcp报文检查
 static inline bool
 check_l4_tcp(const struct conn_key *key, const void *data, size_t size,
              const void *l3)
 {
     const struct tcp_header *tcp = data;
+    //数据长度必须大于tcp头长度
     if (size < sizeof *tcp) {
         return false;
     }
@@ -1149,6 +1170,7 @@ check_l4_tcp(const struct conn_key *key, const void *data, size_t size,
         return false;
     }
 
+    //tcp调验
     return checksum_valid(key, data, size, l3);
 }
 
@@ -1418,29 +1440,32 @@ extract_l4_icmp6(struct conn_key *key, const void *data, size_t size,
  *
  * If 'related' is NULL, it means that we're already parsing a header nested
  * in an ICMP error.  In this case, we skip checksum and length validation. */
+//4层报文解析
 static inline bool
 extract_l4(struct conn_key *key, const void *data, size_t size, bool *related,
            const void *l3)
 {
+	//tcp协议处理
     if (key->nw_proto == IPPROTO_TCP) {
         return (!related || check_l4_tcp(key, data, size, l3))
-               && extract_l4_tcp(key, data, size);
+               && extract_l4_tcp(key, data, size);//解tcp包
     } else if (key->nw_proto == IPPROTO_UDP) {
         return (!related || check_l4_udp(key, data, size, l3))
-               && extract_l4_udp(key, data, size);
+               && extract_l4_udp(key, data, size);//解udp包
     } else if (key->dl_type == htons(ETH_TYPE_IP)
                && key->nw_proto == IPPROTO_ICMP) {
         return (!related || check_l4_icmp(data, size))
-               && extract_l4_icmp(key, data, size, related);
+               && extract_l4_icmp(key, data, size, related);//解icmp
     } else if (key->dl_type == htons(ETH_TYPE_IPV6)
                && key->nw_proto == IPPROTO_ICMPV6) {
         return (!related || check_l4_icmp6(key, data, size, l3))
-               && extract_l4_icmp6(key, data, size, related);
+               && extract_l4_icmp6(key, data, size, related);//解icmp6
     } else {
         return false;
     }
 }
 
+//如果可以解析成功，则返回True
 static bool
 conn_key_extract(struct conntrack *ct, struct dp_packet *pkt, ovs_be16 dl_type,
                  struct conn_lookup_ctx *ctx, uint16_t zone)
@@ -1453,6 +1478,7 @@ conn_key_extract(struct conntrack *ct, struct dp_packet *pkt, ovs_be16 dl_type,
 
     memset(ctx, 0, sizeof *ctx);
 
+    //非期待的报文
     if (!l2 || !l3 || !l4) {
         return false;
     }
@@ -1493,6 +1519,7 @@ conn_key_extract(struct conntrack *ct, struct dp_packet *pkt, ovs_be16 dl_type,
      */
     ctx->key.dl_type = dl_type;
     if (ctx->key.dl_type == htons(ETH_TYPE_IP)) {
+    	//不能处理分片
         ok = extract_l3_ipv4(&ctx->key, l3, tail - (char *) l3, NULL, true);
     } else if (ctx->key.dl_type == htons(ETH_TYPE_IPV6)) {
         ok = extract_l3_ipv6(&ctx->key, l3, tail - (char *) l3, NULL);
@@ -1501,7 +1528,9 @@ conn_key_extract(struct conntrack *ct, struct dp_packet *pkt, ovs_be16 dl_type,
     }
 
     if (ok) {
+    	//如果解析成功，则进入
         if (extract_l4(&ctx->key, l4, tail - l4, &ctx->related, l3)) {
+        	//如果解析成功，则将key hash
             ctx->hash = conn_key_hash(&ctx->key, ct->hash_basis);
             return true;
         }
@@ -1817,6 +1846,7 @@ nat_conn_keys_remove(struct hmap *nat_conn_keys, const struct conn_key *key,
     }
 }
 
+//连接查询
 static void
 conn_key_lookup(struct conntrack_bucket *ctb, struct conn_lookup_ctx *ctx,
                 long long now)
@@ -1827,13 +1857,14 @@ conn_key_lookup(struct conntrack_bucket *ctb, struct conn_lookup_ctx *ctx,
     ctx->conn = NULL;
 
     HMAP_FOR_EACH_WITH_HASH (conn, node, hash, &ctb->connections) {
-        if (!memcmp(&conn->key, &ctx->key, sizeof conn->key)
+    	//这个比对实际就是我之前做的session比对时，采用的flow0,flow1比对。
+        if (!memcmp(&conn->key, &ctx->key, sizeof conn->key)//正向比
                 && !conn_expired(conn, now)) {
             ctx->conn = conn;
             ctx->reply = false;
             break;
         }
-        if (!memcmp(&conn->rev_key, &ctx->key, sizeof conn->rev_key)
+        if (!memcmp(&conn->rev_key, &ctx->key, sizeof conn->rev_key)//反向比
                 && !conn_expired(conn, now)) {
             ctx->conn = conn;
             ctx->reply = true;
@@ -1865,6 +1896,7 @@ valid_new(struct dp_packet *pkt, struct conn_key *key)
     return l4_protos[key->nw_proto]->valid_new(pkt);
 }
 
+//新建连接
 static struct conn *
 new_conn(struct conntrack_bucket *ctb, struct dp_packet *pkt,
          struct conn_key *key, long long now)
@@ -1874,12 +1906,13 @@ new_conn(struct conntrack_bucket *ctb, struct dp_packet *pkt,
     newconn = l4_protos[key->nw_proto]->new_conn(ctb, pkt, now);
 
     if (newconn) {
-        newconn->key = *key;
+        newconn->key = *key;//设置正向key
     }
 
     return newconn;
 }
 
+//释放内存
 static void
 delete_conn(struct conn *conn)
 {

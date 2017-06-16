@@ -59,11 +59,11 @@ struct nat_conn_key_node {
 };
 
 struct conn {
-    struct conn_key key;
-    struct conn_key rev_key;
+    struct conn_key key;//正向
+    struct conn_key rev_key;//反向
     long long expiration;
-    struct ovs_list exp_node;
-    struct hmap_node node;
+    struct ovs_list exp_node;//挂链用
+    struct hmap_node node;//挂connect链
     ovs_u128 label;
     /* XXX: consider flattening. */
     struct nat_action_info_t *nat_info;
@@ -101,10 +101,12 @@ extern struct ct_l4_proto ct_proto_icmp6;
 
 extern long long ct_timeout_val[];
 
+//初始化过期链
 static inline void
 conn_init_expiration(struct conntrack_bucket *ctb, struct conn *conn,
                         enum ct_timeout tm, long long now)
 {
+	//加入对应的过期链
     conn->expiration = now + ct_timeout_val[tm];
     ovs_list_push_back(&ctb->exp_lists[tm], &conn->exp_node);
 }

@@ -265,6 +265,7 @@ dp_packet_equal(const struct dp_packet *a, const struct dp_packet *b)
            !memcmp(dp_packet_data(a), dp_packet_data(b), dp_packet_size(a));
 }
 
+//检查报文类型是以太网
 static inline bool
 dp_packet_is_eth(const struct dp_packet *b)
 {
@@ -273,6 +274,7 @@ dp_packet_is_eth(const struct dp_packet *b)
 
 /* Get the start of the Ethernet frame. 'l3_ofs' marks the end of the l2
  * headers, so return NULL if it is not set. */
+//返回以太头起始位置
 static inline void *
 dp_packet_eth(const struct dp_packet *b)
 {

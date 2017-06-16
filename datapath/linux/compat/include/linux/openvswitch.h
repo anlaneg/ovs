@@ -884,7 +884,7 @@ enum ovs_action_attr {//action类型
 				       * data immediately followed by a mask.
 				       * The data must be zero for the unmasked
 				       * bits. */
-	OVS_ACTION_ATTR_CT,           /* Nested OVS_CT_ATTR_* . */
+	OVS_ACTION_ATTR_CT,           /* Nested OVS_CT_ATTR_* . */ //连接跟踪动作
 	OVS_ACTION_ATTR_TRUNC,        /* u32 struct ovs_action_trunc. */ //设置cut_len
 	OVS_ACTION_ATTR_PUSH_ETH,     /* struct ovs_action_push_eth. */
 	OVS_ACTION_ATTR_POP_ETH,      /* No argument. */

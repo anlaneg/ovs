@@ -103,6 +103,7 @@ OVS_NO_RETURN void ovs_assert_failure(const char *, const char *, const char *);
 #endif
 
 /* Yields the size of MEMBER within STRUCT. */
+//取结构体struct中的成员member的大小
 #define MEMBER_SIZEOF(STRUCT, MEMBER) (sizeof(((STRUCT *) NULL)->MEMBER))
 
 /* Yields the offset of the end of MEMBER within STRUCT. */

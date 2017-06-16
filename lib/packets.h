@@ -782,9 +782,9 @@ BUILD_ASSERT_DECL(UDP_HEADER_LEN == sizeof(struct udp_header));
 #define TCP_NS  0x100
 
 #define TCP_CTL(flags, offset) (htons((flags) | ((offset) << 12)))
-#define TCP_FLAGS(tcp_ctl) (ntohs(tcp_ctl) & 0x0fff)
+#define TCP_FLAGS(tcp_ctl) (ntohs(tcp_ctl) & 0x0fff) //取tcp标志位
 #define TCP_FLAGS_BE16(tcp_ctl) ((tcp_ctl) & htons(0x0fff))
-#define TCP_OFFSET(tcp_ctl) (ntohs(tcp_ctl) >> 12)
+#define TCP_OFFSET(tcp_ctl) (ntohs(tcp_ctl) >> 12) //提取tcp头长度
 
 #define TCP_HEADER_LEN 20
 struct tcp_header {
@@ -792,8 +792,8 @@ struct tcp_header {
     ovs_be16 tcp_dst;
     ovs_16aligned_be32 tcp_seq;
     ovs_16aligned_be32 tcp_ack;
-    ovs_be16 tcp_ctl;
-    ovs_be16 tcp_winsz;
+    ovs_be16 tcp_ctl;//tcp标记位及tcp头部长度
+    ovs_be16 tcp_winsz;//tcp窗口大小
     ovs_be16 tcp_csum;
     ovs_be16 tcp_urg;
 };

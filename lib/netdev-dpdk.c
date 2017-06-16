@@ -31,7 +31,7 @@
 #include <rte_malloc.h>
 #include <rte_mbuf.h>
 #include <rte_meter.h>
-#include <rte_virtio_net.h>
+#include <rte_virtio_net.h> //v16.11-rc1可编译通过（dpdk新版本已重命名此文件）
 
 #include "dirs.h"
 #include "dp-packet.h"

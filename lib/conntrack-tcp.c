@@ -44,16 +44,17 @@
 #include "util.h"
 
 struct tcp_peer {
-    enum ct_dpif_tcp_state state;
+    enum ct_dpif_tcp_state state;//tcp状态
     uint32_t               seqlo;          /* Max sequence number sent     */
     uint32_t               seqhi;          /* Max the other end ACKd + win */
     uint16_t               max_win;        /* largest window (pre scaling) */
-    uint8_t                wscale;         /* window scaling factor        */
+    uint8_t                wscale;         /* window scaling factor        */ //窗口放大因子
 };
 
+//tcp链连跟踪
 struct conn_tcp {
-    struct conn up;
-    struct tcp_peer peer[2];
+    struct conn up;//基类
+    struct tcp_peer peer[2];//src，目地
 };
 
 enum {
@@ -107,31 +108,42 @@ tcp_invalid_flags(uint16_t flags)
 }
 
 #define TCP_MAX_WSCALE 14
-#define CT_WSCALE_FLAG 0x80
+#define CT_WSCALE_FLAG 0x80 //启用了窗口放大
 #define CT_WSCALE_UNKNOWN 0x40
 #define CT_WSCALE_MASK 0xf
 
+
+//取窗口放大因子
 static uint8_t
 tcp_get_wscale(const struct tcp_header *tcp)
 {
-    int len = TCP_OFFSET(tcp->tcp_ctl) * 4 - sizeof *tcp;
-    const uint8_t *opt = (const uint8_t *)(tcp + 1);
+    int len = TCP_OFFSET(tcp->tcp_ctl) * 4 - sizeof *tcp;//选项的长度
+    const uint8_t *opt = (const uint8_t *)(tcp + 1);//选项的起始指针
     uint8_t wscale = 0;
     uint8_t optlen;
 
     while (len >= 3) {
         switch (*opt) {
-        case TCPOPT_EOL:
+        case TCPOPT_EOL://选项结束标记
             return wscale;
-        case TCPOPT_NOP:
+        case TCPOPT_NOP://空选项标记
             opt++;
             len--;
             break;
         case TCPOPT_WINDOW:
+        	//窗口调整选项（最大14）
+        	//TCP发送端在发送一个满窗口长度（最大65535字节）的数据后必须等待对端的ACK更新窗口后才能继续发送数据。
+        	//在广域网中传输数据时，由于往返时间较长，发送端等待的时间也会较长，这样会使得TCP数据交互的速度大大降低
+        	//（长肥管道现象）。使用窗口扩大选项可以使得发送端得到更大的通告窗口，这样就可以在ACK到来前发送更多的数据，
+        	//减少了等待的时间，提高了数据传输效率。
+            //　窗口扩大因子（shift.cnt）的大小是8bit，所以其值最大为255。使用窗口扩大选项后，真正的通告窗口大小 = TCP头
+        	//中的窗口值＊2**shift.cnt。但由于TCP判断数据是新是旧的方法是：数据的序列号是否位于sun.una到sun.una + 2**31的范围内，
+        	//如果是，则为新，否则为旧。故通告窗口大小在最大值不能大于或等于2**31，即max_windows <= 2**30。所以shitr.cnt的最大值为
+        	//30 - 16 = 14。
             wscale = MIN(opt[2], TCP_MAX_WSCALE);
             wscale |= CT_WSCALE_FLAG;
             /* fall through */
-        default:
+        default://其它选项，取其长度，跳过此选项
             optlen = opt[1];
             if (optlen < 2) {
                 optlen = 2;
@@ -406,6 +418,7 @@ tcp_valid_new(struct dp_packet *pkt)
     return true;
 }
 
+//tcp新创建连接跟踪回调
 static struct conn *
 tcp_new_conn(struct conntrack_bucket *ctb, struct dp_packet *pkt,
              long long now)
@@ -420,29 +433,37 @@ tcp_new_conn(struct conntrack_bucket *ctb, struct dp_packet *pkt,
     src = &newconn->peer[0];
     dst = &newconn->peer[1];
 
+    //记录seq number
     src->seqlo = ntohl(get_16aligned_be32(&tcp->tcp_seq));
-    src->seqhi = src->seqlo + tcp_payload_length(pkt) + 1;
+    src->seqhi = src->seqlo + tcp_payload_length(pkt) + 1;//对端响应时，响应此seq number
 
     if (tcp_flags & TCP_SYN) {
-        src->seqhi++;
-        src->wscale = tcp_get_wscale(tcp);
+        src->seqhi++;//占用seq
+        src->wscale = tcp_get_wscale(tcp);//提取窗口放大因子
     } else {
+    	//非syn报文，窗口放大因子未知
         src->wscale = CT_WSCALE_UNKNOWN;
         dst->wscale = CT_WSCALE_UNKNOWN;
     }
     src->max_win = MAX(ntohs(tcp->tcp_winsz), 1);
+    //启用了窗口放大因子
     if (src->wscale & CT_WSCALE_MASK) {
         /* Remove scale factor from initial window */
+    	//计算窗口大小
         uint8_t sws = src->wscale & CT_WSCALE_MASK;
         src->max_win = DIV_ROUND_UP((uint32_t) src->max_win, 1 << sws);
     }
+
     if (tcp_flags & TCP_FIN) {
-        src->seqhi++;
+        src->seqhi++;//占用seq
     }
+
+    //由于之有一方的流，对方我们暂不清楚，故设置为default值
+    //这些值可以认为没有意义
     dst->seqhi = 1;
     dst->max_win = 1;
-    src->state = CT_DPIF_TCPS_SYN_SENT;
-    dst->state = CT_DPIF_TCPS_CLOSED;
+    src->state = CT_DPIF_TCPS_SYN_SENT;//进入syn_send状态（这个状态不是正确的，因为没有检查syn标记）
+    dst->state = CT_DPIF_TCPS_CLOSED;//假设对方是closed状态
 
     conn_init_expiration(ctb, &newconn->up, CT_TM_TCP_FIRST_PACKET,
                          now);
