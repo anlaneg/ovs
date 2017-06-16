@@ -717,7 +717,7 @@ add_manager_options(struct shash *remotes, const struct ovsdb_row *row)
     struct ovsdb_jsonrpc_options *options;
     long long int max_backoff, probe_interval;
     bool read_only;
-    const char *target, *dscp_string;
+    const char *target, *dscp_string, *role;
 
     //读被引用表的target列
     if (!ovsdb_util_read_string_column(row, "target", &target) || !target) {
@@ -737,6 +737,12 @@ add_manager_options(struct shash *remotes, const struct ovsdb_row *row)
     }
     if (ovsdb_util_read_bool_column(row, "read_only", &read_only)) {
         options->read_only = read_only;
+    }
+
+    free(options->role);
+    options->role = NULL;
+    if (ovsdb_util_read_string_column(row, "role", &role) && role) {
+        options->role = xstrdup(role);
     }
 
     //可选字段dscp

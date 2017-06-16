@@ -16,6 +16,7 @@ from __future__ import print_function
 
 import email
 import getopt
+import os
 import re
 import sys
 
@@ -98,6 +99,11 @@ skip_signoff_check = False
 # Python isn't checked as flake8 performs these checks during build.
 line_length_blacklist = ['.am', '.at', 'etc', '.in', '.m4', '.mk', '.patch',
                          '.py']
+
+# Don't enforce a requirement that leading whitespace be all spaces on
+# files that include these characters in their name, since these kinds
+# of files need lines with leading tabs.
+leading_whitespace_blacklist = ['.mk', '.am', '.at']
 
 
 def is_subtracted_line(line):
@@ -200,8 +206,9 @@ checks = [
      'check': lambda x: line_length_check(x),
      'print': lambda: print_warning("Line length is >79-characters long")},
 
-    {'regex': '$(?<!\.mk|\.am)',
-     'match_name': None,
+    {'regex': None,
+     'match_name':
+     lambda x: not any([fmt in x for fmt in leading_whitespace_blacklist]),
      'check': lambda x: not leading_whitespace_is_spaces(x),
      'print': lambda: print_warning("Line has non-spaces leading whitespace")},
 
@@ -381,21 +388,23 @@ def ovs_checkpatch_parse(text, filename):
 
 
 def usage():
-    print("Open vSwitch checkpatch.py")
-    print("Checks a patch for trivial mistakes.")
-    print("usage:")
-    print("%s [options] [patch file]" % sys.argv[0])
-    print("options:")
-    print("-h|--help\t\t\t\tThis help message")
-    print("-b|--skip-block-whitespace\t"
-          "Skips the if/while/for whitespace tests")
-    print("-f|--check-file\t\t\tCheck a file instead of a patchfile.")
-    print("-l|--skip-leading-whitespace\t"
-          "Skips the leading whitespace test")
-    print("-s|--skip-signoff-lines\t"
-          "Do not emit an error if no Signed-off-by line is present")
-    print("-t|--skip-trailing-whitespace\t"
-          "Skips the trailing whitespace test")
+    print("""\
+Open vSwitch checkpatch.py
+Checks a patch for trivial mistakes.
+usage:
+%s [options] [PATCH | -f SOURCE | -1 | -2 | ...]
+
+Input options:
+-f|--check-file                Arguments are source files, not patches.
+-1, -2, ...                    Check recent commits in this repo.
+
+Check options:
+-h|--help                      This help message
+-b|--skip-block-whitespace     Skips the if/while/for whitespace tests
+-l|--skip-leading-whitespace   Skips the leading whitespace test
+-s|--skip-signoff-lines        Tolerate missing Signed-off-by line
+-t|--skip-trailing-whitespace  Skips the trailing whitespace test"""
+          % sys.argv[0])
 
 
 def ovs_checkpatch_file(filename):
@@ -418,9 +427,26 @@ def ovs_checkpatch_file(filename):
     return result
 
 
+def partition(pred, iterable):
+    """Returns [[trues], [falses]], where [trues] is the items in
+    'iterable' that satisfy 'pred' and [falses] is all the rest."""
+    trues = []
+    falses = []
+    for item in iterable:
+        if pred(item):
+            trues.append(item)
+        else:
+            falses.append(item)
+    return trues, falses
+
+
 if __name__ == '__main__':
     try:
-        optlist, args = getopt.getopt(sys.argv[1:], 'bhlstf',
+        numeric_options, args = partition(lambda s: re.match('-[0-9]+$', s),
+                                          sys.argv[1:])
+        n_patches = int(numeric_options[-1][1:]) if numeric_options else 0
+
+        optlist, args = getopt.getopt(args, 'bhlstf',
                                       ["check-file",
                                        "help",
                                        "skip-block-whitespace",
@@ -451,6 +477,19 @@ if __name__ == '__main__':
 
     if sys.stdout.isatty():
         colors = True
+
+    if n_patches:
+        status = 0
+        for i in reversed(range(0, n_patches)):
+            revision = 'HEAD~%d' % i
+            f = os.popen('git format-patch -1 --stdout %s' % revision, 'r')
+            patch = f.read()
+            f.close()
+
+            print('== Checking %s ==' % revision)
+            if ovs_checkpatch_parse(patch, revision):
+                status = -1
+        sys.exit(status)
 
     try:
         filename = args[0]

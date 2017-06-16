@@ -76,9 +76,10 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
 #define MTU_TO_MAX_FRAME_LEN(mtu)   ((mtu) + ETHER_HDR_MAX_LEN)
 #define FRAME_LEN_TO_MTU(frame_len) ((frame_len)                    \
                                      - ETHER_HDR_LEN - ETHER_CRC_LEN)
-#define MBUF_SIZE(mtu)              (MTU_TO_MAX_FRAME_LEN(mtu)      \
-                                     + sizeof(struct dp_packet)     \
-                                     + RTE_PKTMBUF_HEADROOM)
+#define MBUF_SIZE(mtu)              ROUND_UP((MTU_TO_MAX_FRAME_LEN(mtu) \
+                                             + sizeof(struct dp_packet) \
+                                             + RTE_PKTMBUF_HEADROOM),   \
+                                             RTE_CACHE_LINE_SIZE)
 #define NETDEV_DPDK_MBUF_ALIGN      1024
 #define NETDEV_DPDK_MAX_PKT_LEN     9728
 
@@ -986,6 +987,8 @@ netdev_dpdk_vhost_construct(struct netdev *netdev)
     err = vhost_common_construct(netdev);
 
     ovs_mutex_unlock(&dpdk_mutex);
+    VLOG_WARN_ONCE("dpdkvhostuser ports are considered deprecated;  "
+                   "please migrate to dpdkvhostuserclient ports.");
     return err;
 }
 
@@ -1135,6 +1138,8 @@ netdev_dpdk_get_config(const struct netdev *netdev, struct smap *args)//填充�
                         dev->txq_size);
         if (dev->hw_ol_features & NETDEV_RX_CHECKSUM_OFFLOAD) {
             smap_add(args, "rx_csum_offload", "true");
+        } else {
+            smap_add(args, "rx_csum_offload", "false");
         }
     }
     ovs_mutex_unlock(&dev->mutex);
@@ -3353,6 +3358,7 @@ unlock:
     RXQ_RECV,                                                 \
     NULL,                       /* rx_wait */                 \
     NULL,                       /* rxq_drain */               \
+    NO_OFFLOAD_API                                            \
 }
 
 //dpdk网络处理

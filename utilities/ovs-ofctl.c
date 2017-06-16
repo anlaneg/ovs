@@ -135,6 +135,9 @@ static const struct ofputil_port_map *ports_to_show(const char *vconn_name);
 static bool should_accept_ports(void);
 static bool should_show_ports(void);
 
+/* --stats, --no-stats: Show statistics in flow dumps? */
+static int show_stats = 1;
+
 static const struct ovs_cmdl_command *get_all_commands(void);
 
 OVS_NO_RETURN static void usage(void);
@@ -212,6 +215,8 @@ parse_options(int argc, char *argv[])
         {"rsort", optional_argument, NULL, OPT_RSORT},
         {"names", no_argument, &use_port_names, 1},
         {"no-names", no_argument, &use_port_names, 0},
+        {"stats", no_argument, &show_stats, 1},
+        {"no-stats", no_argument, &show_stats, 0},
         {"unixctl",     required_argument, NULL, OPT_UNIXCTL},
         {"help", no_argument, NULL, 'h'},
         {"option", no_argument, NULL, 'o'},
@@ -699,16 +704,18 @@ static void
 bundle_print_errors(struct ovs_list *errors, struct ovs_list *requests,
                     const char *vconn_name)
 {
-    struct vconn_bundle_error *error, *next;
+    struct ofpbuf *error, *next;
     struct ofpbuf *bmsg;
 
     INIT_CONTAINER(bmsg, requests, list_node);
 
     LIST_FOR_EACH_SAFE (error, next, list_node, errors) {
+        const struct ofp_header *error_oh = error->data;
+        ovs_be32 error_xid = error_oh->xid;
         enum ofperr ofperr;
         struct ofpbuf payload;
 
-        ofperr = ofperr_decode_msg(&error->ofp_msg, &payload);
+        ofperr = ofperr_decode_msg(error_oh, &payload);
         if (!ofperr) {
             fprintf(stderr, "***decode error***");
         } else {
@@ -724,7 +731,7 @@ bundle_print_errors(struct ovs_list *errors, struct ovs_list *requests,
             LIST_FOR_EACH_CONTINUE (bmsg, list_node, requests) {
                 const struct ofp_header *oh = bmsg->data;
 
-                if (oh->xid == error->ofp_msg.xid) {
+                if (oh->xid == error_xid) {
                     ofp_msg = oh;
                     msg_len = bmsg->size;
                     break;
@@ -735,7 +742,7 @@ bundle_print_errors(struct ovs_list *errors, struct ovs_list *requests,
                       verbosity + 1);
         }
         ofpbuf_uninit(&payload);
-        free(error);
+        ofpbuf_delete(error);
     }
     fflush(stderr);
 }
@@ -1355,7 +1362,7 @@ compare_flows(const void *afs_, const void *bfs_)
 static void
 ofctl_dump_flows(struct ovs_cmdl_context *ctx)
 {
-    if (!n_criteria && !should_show_ports()) {
+    if (!n_criteria && !should_show_ports() && show_stats) {
         ofctl_dump_flows__(ctx->argc, ctx->argv, false);
         return;
     } else {
@@ -1376,8 +1383,9 @@ ofctl_dump_flows(struct ovs_cmdl_context *ctx)
         struct ds s = DS_EMPTY_INITIALIZER;
         for (size_t i = 0; i < n_fses; i++) {
             ds_clear(&s);
-            ofp_print_flow_stats(&s, &fses[i], ports_to_show(ctx->argv[1]));
-            puts(ds_cstr(&s));
+            ofp_print_flow_stats(&s, &fses[i], ports_to_show(ctx->argv[1]),
+                                 show_stats);
+            printf(" %s\n", ds_cstr(&s));
         }
         ds_destroy(&s);
 

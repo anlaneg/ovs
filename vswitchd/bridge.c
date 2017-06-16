@@ -3025,6 +3025,7 @@ bridge_run(void)
     cfg = ovsrec_open_vswitch_first(idl);
 
     if (cfg) {
+        netdev_set_flow_api_enabled(&cfg->other_config);
     	//dpdk配置（取出数据库中的other_config)
         dpdk_init(&cfg->other_config);
     }

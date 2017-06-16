@@ -829,7 +829,7 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
 
     packet->l4_ofs = (char *)data - frame;
     miniflow_push_be32(mf, nw_frag,
-                       BYTES_TO_BE32(nw_frag, nw_tos, nw_ttl, nw_proto));//将分片，tos,ttl,proto打包为一个３２位整数
+                       bytes_to_be32(nw_frag, nw_tos, nw_ttl, nw_proto));//将分片，tos,ttl,proto打包为一个３２位整数
 
     if (OVS_LIKELY(!(nw_frag & FLOW_NW_FRAG_LATER))) {//如果要缓一会再解析的话，就跳过，否则进入，比如需要组装分片等
         if (OVS_LIKELY(nw_proto == IPPROTO_TCP)) {//tcp协议
