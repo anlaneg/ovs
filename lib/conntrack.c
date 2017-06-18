@@ -46,8 +46,8 @@ COVERAGE_DEFINE(conntrack_full);
 COVERAGE_DEFINE(conntrack_long_cleanup);
 
 struct conn_lookup_ctx {
-    struct conn_key key;
-    struct conn *conn;
+    struct conn_key key;//比对的key
+    struct conn *conn;//连接
     uint32_t hash;
     bool reply;//是否应答方向（一般网络设备中用up,down来表示)
     bool related;
@@ -539,6 +539,7 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
     unsigned bucket = hash_to_bucket(ctx->hash);
     struct conn *nc = NULL;
 
+    //校验此报文是否可以新建连接跟踪
     if (!valid_new(pkt, &ctx->key)) {
         pkt->md.ct_state = CS_INVALID;
         return nc;
@@ -1467,6 +1468,7 @@ extract_l4(struct conn_key *key, const void *data, size_t size, bool *related,
 }
 
 //如果可以解析成功，则返回True
+//自报文中解析出key
 static bool
 conn_key_extract(struct conntrack *ct, struct dp_packet *pkt, ovs_be16 dl_type,
                  struct conn_lookup_ctx *ctx, uint16_t zone)
@@ -1555,6 +1557,7 @@ ct_endpoint_hash_add(uint32_t hash, const struct ct_endpoint *ep)
 }
 
 /* Symmetric */
+//给出key取其对应的hash
 static uint32_t
 conn_key_hash(const struct conn_key *key, uint32_t basis)
 {
@@ -1575,6 +1578,7 @@ conn_key_hash(const struct conn_key *key, uint32_t basis)
     return hash_finish(hash, 0);
 }
 
+//交换key的源及目的
 static void
 conn_key_reverse(struct conn_key *key)
 {
@@ -1892,6 +1896,7 @@ conn_expired(struct conn *conn, long long now)
     return false;
 }
 
+//检查是否可以创建新连接
 static bool
 valid_new(struct dp_packet *pkt, struct conn_key *key)
 {

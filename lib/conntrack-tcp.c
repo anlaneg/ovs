@@ -82,16 +82,19 @@ conn_tcp_cast(const struct conn* conn)
 
 /* pf does this in in pf_normalize_tcp(), and it is called only if scrub
  * is enabled.  We're not scrubbing, but this check seems reasonable.  */
+//检查tcp标记位
 static bool
 tcp_invalid_flags(uint16_t flags)
 {
 
+	//有syn标记时，不得有rst,fin标记
     if (flags & TCP_SYN) {
         if (flags & TCP_RST || flags & TCP_FIN) {
             return true;
         }
     } else {
         /* Illegal packet */
+    		//没有syn标记时，竞然没有ack或者rst标记，有误的报文
         if (!(flags & (TCP_ACK|TCP_RST))) {
             return true;
         }
@@ -99,11 +102,13 @@ tcp_invalid_flags(uint16_t flags)
 
     if (!(flags & TCP_ACK)) {
         /* These flags are only valid if ACK is set */
+    		//ack标记不存在时，fin,push,urg标记设置则有误
         if ((flags & TCP_FIN) || (flags & TCP_PSH) || (flags & TCP_URG)) {
             return true;
         }
     }
 
+    //标记位有效
     return false;
 }
 
@@ -163,21 +168,24 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
     struct conn_tcp *conn = conn_tcp_cast(conn_);
     struct tcp_header *tcp = dp_packet_l4(pkt);
     /* The peer that sent 'pkt' */
+    //取出源
     struct tcp_peer *src = &conn->peer[reply ? 1 : 0];
     /* The peer that should receive 'pkt' */
     struct tcp_peer *dst = &conn->peer[reply ? 0 : 1];
     uint8_t sws = 0, dws = 0;
-    uint16_t tcp_flags = TCP_FLAGS(tcp->tcp_ctl);
+    uint16_t tcp_flags = TCP_FLAGS(tcp->tcp_ctl);//报文中的标记位
 
-    uint16_t win = ntohs(tcp->tcp_winsz);
+    uint16_t win = ntohs(tcp->tcp_winsz);//窗口大小
     uint32_t ack, end, seq, orig_seq;
-    uint32_t p_len = tcp_payload_length(pkt);
+    uint32_t p_len = tcp_payload_length(pkt);//此报文中包含的tcp负载（非ip total length - tcphdr length)
     int ackskew;
 
+    //如果tcp标记位有训，返回更新无效
     if (tcp_invalid_flags(tcp_flags)) {
         return CT_UPDATE_INVALID;
     }
 
+    //收到syn标记，意识到是一条新流
     if (((tcp_flags & (TCP_SYN | TCP_ACK)) == TCP_SYN)
         && dst->state >= CT_DPIF_TCPS_FIN_WAIT_2
         && src->state >= CT_DPIF_TCPS_FIN_WAIT_2) {
@@ -185,6 +193,7 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
         return CT_UPDATE_NEW;
     }
 
+    //应用窗口扩大因子
     if (src->wscale & CT_WSCALE_FLAG
         && dst->wscale & CT_WSCALE_FLAG
         && !(tcp_flags & TCP_SYN)) {
@@ -196,6 +205,7 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
                && dst->wscale & CT_WSCALE_UNKNOWN
                && !(tcp_flags & TCP_SYN)) {
 
+    		//扩大因子，仅在syn中有效
         sws = TCP_MAX_WSCALE;
         dws = TCP_MAX_WSCALE;
     }
@@ -404,6 +414,7 @@ tcp_valid_new(struct dp_packet *pkt)
     struct tcp_header *tcp = dp_packet_l4(pkt);
     uint16_t tcp_flags = TCP_FLAGS(tcp->tcp_ctl);
 
+    //检查tcp标记是否有效
     if (tcp_invalid_flags(tcp_flags)) {
         return false;
     }
@@ -411,6 +422,7 @@ tcp_valid_new(struct dp_packet *pkt)
     /* A syn+ack is not allowed to create a connection.  We want to allow
      * totally new connections (syn) or already established, not partially
      * open (syn+ack). */
+    //同时有syn+ack标记的，认为是无效的
     if ((tcp_flags & TCP_SYN) && (tcp_flags & TCP_ACK)) {
         return false;
     }

@@ -88,8 +88,8 @@ enum ct_conn_type {
 
 struct ct_l4_proto {
     struct conn *(*new_conn)(struct conntrack_bucket *, struct dp_packet *pkt,
-                             long long now);
-    bool (*valid_new)(struct dp_packet *pkt);
+                             long long now);//新建连接
+    bool (*valid_new)(struct dp_packet *pkt);//校验报文是否可以创建新连接
     enum ct_update_res (*conn_update)(struct conn *conn,
                                       struct conntrack_bucket *,
                                       struct dp_packet *pkt, bool reply,
@@ -123,6 +123,7 @@ conn_update_expiration(struct conntrack_bucket *ctb, struct conn *conn,
     conn_init_expiration(ctb, conn, tm, now);
 }
 
+//tcp payload 长度
 static inline uint32_t
 tcp_payload_length(struct dp_packet *pkt)
 {
