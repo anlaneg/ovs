@@ -106,6 +106,7 @@ xzalloc(size_t size)
     return xcalloc(1, size);
 }
 
+//申请size字节的内存
 void *
 xmalloc(size_t size)
 {
@@ -128,6 +129,7 @@ xrealloc(void *p, size_t size)
     return p;
 }
 
+//申请一块内存，并将p_内存指向的前size字节，copy到新申请的内存里
 void *
 xmemdup(const void *p_, size_t size)
 {

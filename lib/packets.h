@@ -790,8 +790,8 @@ BUILD_ASSERT_DECL(UDP_HEADER_LEN == sizeof(struct udp_header));
 struct tcp_header {
     ovs_be16 tcp_src;
     ovs_be16 tcp_dst;
-    ovs_16aligned_be32 tcp_seq;
-    ovs_16aligned_be32 tcp_ack;
+    ovs_16aligned_be32 tcp_seq;//seq序号
+    ovs_16aligned_be32 tcp_ack;//ack序号
     ovs_be16 tcp_ctl;//tcp标记位及tcp头部长度
     ovs_be16 tcp_winsz;//tcp窗口大小
     ovs_be16 tcp_csum;

@@ -565,7 +565,9 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
         nc->rev_key = nc->key;
         conn_key_reverse(&nc->rev_key);
 
+        //有nat信息
         if (nat_action_info) {
+        	//copy nat_action_info到nc->nat_info
             nc->nat_info = xmemdup(nat_action_info, sizeof *nc->nat_info);
             ct_rwlock_wrlock(&ct->nat_resources_lock);
 
@@ -590,12 +592,15 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
 
             nat_packet(pkt, nc, ctx->related);
         }
+
+        //将新建的连接插入bucket中
         hmap_insert(&ct->buckets[bucket].connections, &nc->node, ctx->hash);
         atomic_count_inc(&ct->n_conn);
     }
     return nc;
 }
 
+//更新连接，返回是否需要新建connect
 static bool
 conn_update_state(struct conntrack *ct, struct dp_packet *pkt,
                   struct conn_lookup_ctx *ctx, struct conn **conn,
@@ -610,13 +615,14 @@ conn_update_state(struct conntrack *ct, struct dp_packet *pkt,
             pkt->md.ct_state |= CS_REPLY_DIR;
         }
     } else {
+    	//更新连接状态
         enum ct_update_res res = conn_update(*conn, &ct->buckets[bucket],
                                              pkt, ctx->reply, now);
 
         switch (res) {
         case CT_UPDATE_VALID:
-            pkt->md.ct_state |= CS_ESTABLISHED;
-            pkt->md.ct_state &= ~CS_NEW;
+            pkt->md.ct_state |= CS_ESTABLISHED;//建立稳定连接
+            pkt->md.ct_state &= ~CS_NEW;//取掉new标记
             if (ctx->reply) {
                 pkt->md.ct_state |= CS_REPLY_DIR;
             }
@@ -803,6 +809,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     if (OVS_LIKELY(conn)) {
         create_new_conn = conn_update_state(ct, pkt, ctx, &conn, now, bucket);
         if (nat_action_info && !create_new_conn) {
+        	//有nat信息，且不需要新建connect,处理nat
             handle_nat(pkt, conn, zone, ctx->reply, ctx->related);
         }
     } else if (check_orig_tuple(ct, pkt, ctx, now, &bucket, &conn,
@@ -816,6 +823,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
         }
     }
 
+    //如果需要创建新的connection
     if (OVS_UNLIKELY(create_new_conn)) {
         conn = conn_not_found(ct, pkt, ctx, commit, now, nat_action_info,
                               &conn_for_un_nat_copy);
@@ -1126,6 +1134,7 @@ extract_l3_ipv6(struct conn_key *key, const void *data, size_t size,
         *new_data = data;
     }
 
+    //不支持ipv6分片
     if (nw_frag) {
         return false;
     }
@@ -1691,6 +1700,7 @@ nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
     uint16_t max_port;
     uint16_t first_port;
 
+    //计算hash值
     uint32_t hash = nat_range_hash(conn, ct->hash_basis);
 
     if ((conn->nat_info->nat_action & NAT_ACTION_SRC) &&
@@ -1720,6 +1730,7 @@ nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
     max_ct_addr = conn->nat_info->max_addr;
 
     if (conn->key.dl_type == htons(ETH_TYPE_IP)) {
+    	//ipv4报文，deltaa表示min_addr与max_addr间的差距
         deltaa = ntohl(conn->nat_info->max_addr.ipv4_aligned) -
                  ntohl(conn->nat_info->min_addr.ipv4_aligned);
         address_index = hash % (deltaa + 1);
@@ -1748,20 +1759,25 @@ nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
 
     while (true) {
         if (conn->nat_info->nat_action & NAT_ACTION_SRC) {
+        	//要做snat转换，则反向包的dst.addr即为转换后地址
             nat_conn->rev_key.dst.addr = ct_addr;
         } else {
+        	//不需要做snat转换，即做dnat,则反向包的src.addr即为转换后地址
             nat_conn->rev_key.src.addr = ct_addr;
         }
 
+        //port转换
         if ((conn->key.nw_proto == IPPROTO_ICMP) ||
             (conn->key.nw_proto == IPPROTO_ICMPV6)) {
             all_ports_tried = true;
         } else if (conn->nat_info->nat_action & NAT_ACTION_SRC) {
+        	//由于NAT_ACTION_SRC_PORT标记已被处理
             nat_conn->rev_key.dst.port = htons(port);
         } else {
             nat_conn->rev_key.src.port = htons(port);
         }
 
+        //去连接跟踪里查一遍
         struct nat_conn_key_node *nat_conn_key_node =
             nat_conn_keys_lookup(&ct->nat_conn_keys, &nat_conn->rev_key,
                                  ct->hash_basis);

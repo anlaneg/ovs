@@ -45,9 +45,9 @@
 
 struct tcp_peer {
     enum ct_dpif_tcp_state state;//tcp状态
-    uint32_t               seqlo;          /* Max sequence number sent     */
-    uint32_t               seqhi;          /* Max the other end ACKd + win */
-    uint16_t               max_win;        /* largest window (pre scaling) */
+    uint32_t               seqlo;          /* Max sequence number sent     */ //本端发送的最大seq
+    uint32_t               seqhi;          /* Max the other end ACKd + win */ //窗口的最大位置
+    uint16_t               max_win;        /* largest window (pre scaling) */ //最大窗口大小
     uint8_t                wscale;         /* window scaling factor        */ //窗口放大因子
 };
 
@@ -161,6 +161,7 @@ tcp_get_wscale(const struct tcp_header *tcp)
     return wscale;
 }
 
+//监测两端的tcp状态，变更自身的tcp状态
 static enum ct_update_res
 tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
                 struct dp_packet *pkt, bool reply, long long now)
@@ -173,19 +174,19 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
     /* The peer that should receive 'pkt' */
     struct tcp_peer *dst = &conn->peer[reply ? 0 : 1];
     uint8_t sws = 0, dws = 0;
-    uint16_t tcp_flags = TCP_FLAGS(tcp->tcp_ctl);//报文中的标记位
+    uint16_t tcp_flags = TCP_FLAGS(tcp->tcp_ctl);//取出报文中的标记位
 
     uint16_t win = ntohs(tcp->tcp_winsz);//窗口大小
     uint32_t ack, end, seq, orig_seq;
     uint32_t p_len = tcp_payload_length(pkt);//此报文中包含的tcp负载（非ip total length - tcphdr length)
     int ackskew;
 
-    //如果tcp标记位有训，返回更新无效
+    //如果tcp标记位有误，返回更新无效
     if (tcp_invalid_flags(tcp_flags)) {
         return CT_UPDATE_INVALID;
     }
 
-    //收到syn标记，意识到是一条新流
+    //收到仅有syn标记，意识到是一条新流（如果之前dst,src状态还未超时至closed,将源目的均置为closed状态）
     if (((tcp_flags & (TCP_SYN | TCP_ACK)) == TCP_SYN)
         && dst->state >= CT_DPIF_TCPS_FIN_WAIT_2
         && src->state >= CT_DPIF_TCPS_FIN_WAIT_2) {
@@ -193,11 +194,12 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
         return CT_UPDATE_NEW;
     }
 
-    //应用窗口扩大因子
+    //默认的sws,dws赋值
     if (src->wscale & CT_WSCALE_FLAG
         && dst->wscale & CT_WSCALE_FLAG
         && !(tcp_flags & TCP_SYN)) {
 
+    	//之前已获取到wscale,本包不是syn(即不能更新），使用之前获取的值
         sws = src->wscale & CT_WSCALE_MASK;
         dws = dst->wscale & CT_WSCALE_MASK;
 
@@ -205,7 +207,7 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
                && dst->wscale & CT_WSCALE_UNKNOWN
                && !(tcp_flags & TCP_SYN)) {
 
-    		//扩大因子，仅在syn中有效
+    	//之前未获取到，本包不是syn,使用最大扩大因子
         sws = TCP_MAX_WSCALE;
         dws = TCP_MAX_WSCALE;
     }
@@ -217,22 +219,23 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
      */
 
     orig_seq = seq = ntohl(get_16aligned_be32(&tcp->tcp_seq));
-    if (src->state < CT_DPIF_TCPS_SYN_SENT) {
+    if (src->state < CT_DPIF_TCPS_SYN_SENT) {//close,listen状态时
         /* First packet from this end. Set its state */
 
         ack = ntohl(get_16aligned_be32(&tcp->tcp_ack));
 
-        end = seq + p_len;
+        end = seq + p_len;//本报文中最后一个字节对应的seq编号
         if (tcp_flags & TCP_SYN) {
-            end++;
+            end++;//tcp syn占用字节
             if (dst->wscale & CT_WSCALE_FLAG) {
-                src->wscale = tcp_get_wscale(tcp);
+                src->wscale = tcp_get_wscale(tcp);//取本方向宣称的窗口扩大因子
                 if (src->wscale & CT_WSCALE_FLAG) {
                     /* Remove scale factor from initial window */
                     sws = src->wscale & CT_WSCALE_MASK;
-                    win = DIV_ROUND_UP((uint32_t) win, 1 << sws);
+                    win = DIV_ROUND_UP((uint32_t) win, 1 << sws);//本方向指出的窗口大小
                     dws = dst->wscale & CT_WSCALE_MASK;
                 } else {
+                	//未看到wscale选项(没有搞懂下面这两行代码）
                     /* fixup other window */
                     dst->max_win <<= dst->wscale & CT_WSCALE_MASK;
                     /* in case of a retrans SYN|ACK */
@@ -240,11 +243,14 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
                 }
             }
         }
+
         if (tcp_flags & TCP_FIN) {
-            end++;
+            end++;//fin占用序列号
         }
 
-        src->seqlo = seq;
+        src->seqlo = seq;//记录源的序列号
+        //之前是close,listen状态，现在有包来，在未检测syn的情况下，直接置为syn_send状态
+        //状态处理很宽松。
         src->state = CT_DPIF_TCPS_SYN_SENT;
         /*
          * May need to slide the window (seqhi may have been set by
@@ -255,11 +261,14 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
                 || SEQ_GEQ(end + MAX(1, dst->max_win << dws), src->seqhi)) {
             src->seqhi = end + MAX(1, dst->max_win << dws);
         }
+
+        //更新最大窗口大小
         if (win > src->max_win) {
             src->max_win = win;
         }
 
     } else {
+    	//其它状态情况下，仅需要提取ack,end的序列号
         ack = ntohl(get_16aligned_be32(&tcp->tcp_ack));
         end = seq + p_len;
         if (tcp_flags & TCP_SYN) {
@@ -270,6 +279,7 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
         }
     }
 
+    //本方向的报文上没有ack标记，ack seq取dst方向的序列号。
     if ((tcp_flags & TCP_ACK) == 0) {
         /* Let it pass through the ack skew check */
         ack = dst->seqlo;
@@ -278,29 +288,32 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
                /* broken tcp stacks do not set ack */) {
         /* Many stacks (ours included) will set the ACK number in an
          * FIN|ACK if the SYN times out -- no sequence to ACK. */
-        ack = dst->seqlo;
+        ack = dst->seqlo;//处理syn超时情况下，客户端发送的报文。
     }
 
+    //如果本次没有数据，则选择不相信当前报文上的seq,采用之前的seq
     if (seq == end) {
         /* Ease sequencing restrictions on no data packets */
         seq = src->seqlo;
         end = seq;
     }
 
-    ackskew = dst->seqlo - ack;
+    ackskew = dst->seqlo - ack; //当前方向的ack被反方向的seqlo减。（即当前方向在确认反方向-ackskew前的报文
+    //ip头部宣称的最大大小是2字节，故使用0xffff,而1500是作者考虑l2,l3头后加入的值
 #define MAXACKWINDOW (0xffff + 1500)    /* 1500 is an arbitrary fudge factor */
-    if (SEQ_GEQ(src->seqhi, end)
+    if (SEQ_GEQ(src->seqhi, end) //end一定要在自已的窗口范围以内
         /* Last octet inside other's window space */
         && SEQ_GEQ(seq, src->seqlo - (dst->max_win << dws))
         /* Retrans: not more than one window back */
-        && (ackskew >= -MAXACKWINDOW)
+        && (ackskew >= -MAXACKWINDOW) //重传检查（比较随意，没有考虑窗口扩大因子）
         /* Acking not more than one reassembled fragment backwards */
-        && (ackskew <= (MAXACKWINDOW << sws))
+        && (ackskew <= (MAXACKWINDOW << sws)) //确认报文一定在窗口范围内
         /* Acking not more than one window forward */
         && ((tcp_flags & TCP_RST) == 0 || orig_seq == src->seqlo
             || (orig_seq == src->seqlo + 1) || (orig_seq + 1 == src->seqlo))) {
         /* Require an exact/+1 sequence match on resets when possible */
 
+    	//学习更新的数据
         /* update max window */
         if (src->max_win < win) {
             src->max_win = win;
@@ -314,6 +327,7 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
             dst->seqhi = ack + MAX((win << sws), 1);
         }
 
+        //状态更新
         /* update states */
         if (tcp_flags & TCP_SYN && src->state < CT_DPIF_TCPS_SYN_SENT) {
                 src->state = CT_DPIF_TCPS_SYN_SENT;
@@ -334,6 +348,7 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
 
         if (src->state >= CT_DPIF_TCPS_FIN_WAIT_2
             && dst->state >= CT_DPIF_TCPS_FIN_WAIT_2) {
+        	//将connect换到对应的过期链上
             conn_update_expiration(ctb, &conn->up, CT_TM_TCP_CLOSED, now);
         } else if (src->state >= CT_DPIF_TCPS_CLOSING
                    && dst->state >= CT_DPIF_TCPS_CLOSING) {
@@ -402,10 +417,10 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
             src->state = dst->state = CT_DPIF_TCPS_TIME_WAIT;
         }
     } else {
-        return CT_UPDATE_INVALID;
+        return CT_UPDATE_INVALID;//无效状态
     }
 
-    return CT_UPDATE_VALID;
+    return CT_UPDATE_VALID;//状态有效
 }
 
 static bool

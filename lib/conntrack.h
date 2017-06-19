@@ -84,7 +84,7 @@ struct nat_action_info_t {
     struct ct_addr max_addr;
     uint16_t min_port;
     uint16_t max_port;
-    uint16_t nat_action;
+    uint16_t nat_action;//nat转换方式
 };
 
 void conntrack_init(struct conntrack *);

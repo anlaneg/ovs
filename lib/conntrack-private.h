@@ -65,7 +65,7 @@ struct nat_conn_key_node {
 struct conn {
     struct conn_key key;//正向
     struct conn_key rev_key;//反向
-    long long expiration;
+    long long expiration;//过期时间
     struct ovs_list exp_node;//挂链用
     struct hmap_node node;//挂connect链
     ovs_u128 label;
