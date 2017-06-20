@@ -546,6 +546,7 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
     }
     pkt->md.ct_state = CS_NEW;
 
+    //如果commit不给定，则将不会创建对应的conn
     if (commit) {
         unsigned int n_conn_limit;
 
@@ -768,6 +769,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     conn = ctx->conn;
 
     /* Delete found entry if in wrong direction. 'force' implies commit. */
+    //如果是force被指定，则ctx必须是发起方向，如果是响应方向，则移除conn
     if (conn && force && ctx->reply) {
         conn_clean(ct, conn, &ct->buckets[bucket]);
         conn = NULL;
@@ -831,10 +833,12 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
 
     write_ct_md(pkt, zone, conn, &ctx->key);
     if (conn && setmark) {
+    	    //将设置的mark置入conn
         set_mark(pkt, conn, setmark[0], setmark[1]);
     }
 
     if (conn && setlabel) {
+    		//将设置的label置入conn
         set_label(pkt, conn, &setlabel[0], &setlabel[1]);
     }
 
