@@ -1656,7 +1656,7 @@ netdev_dpdk_rxq_recv(struct netdev_rxq *rxq, struct dp_packet_batch *batch)
         return EAGAIN;
     }
 
-    //收取报文
+    //收取报文(dpdk填充mbuf数组）
     nb_rx = rte_eth_rx_burst(rx->port_id, rxq->queue_id,
                              (struct rte_mbuf **) batch->packets,
                              NETDEV_MAX_BURST);

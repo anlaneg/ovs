@@ -181,7 +181,7 @@ struct xlate_ctx {
     const struct xbridge *xbridge;
 
     /* Flow at the last commit. */
-    struct flow base_flow;//基准flow
+    struct flow base_flow;//基准flow（upcall时将从报文中来的记录在此中），用于生成action
 
     /* Tunnel IP destination address as received.  This is stored separately
      * as the base_flow.tunnel is cleared on init to reflect the datapath
@@ -201,7 +201,7 @@ struct xlate_ctx {
     /* Flow translation populates this with wildcards relevant in translation.
      * When 'xin->wc' is nonnull, this is the same pointer.  When 'xin->wc' is
      * null, this is a pointer to a temporary buffer. */
-    struct flow_wildcards *wc;
+    struct flow_wildcards *wc;//flow的通配符
 
     /* Output buffer for datapath actions.  When 'xin->odp_actions' is nonnull,
      * this is the same pointer.  When 'xin->odp_actions' is null, this points
@@ -1349,6 +1349,7 @@ xlate_ofport_remove(struct ofport_dpif *ofport)
     xlate_xport_remove(new_xcfg, xport);
 }
 
+//通过flow获知入接口，记录在xportp中，通过xport获知ofproto
 static struct ofproto_dpif *
 xlate_lookup_ofproto_(const struct dpif_backer *backer, const struct flow *flow,
                       ofp_port_t *ofp_in_port, const struct xport **xportp)
@@ -1356,7 +1357,7 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer, const struct flow *flow,
     struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     const struct xport *xport;
 
-    //查找xport
+    //查找xport（此流对的入接口）
     xport = xport_lookup(xcfg, tnl_port_should_receive(flow)//是否tunnel　接口收到报文
                          ? tnl_port_receive(flow)//tunnel收取到报文
                          : odp_port_to_ofport(backer, flow->in_port.odp_port));
@@ -1724,6 +1725,7 @@ group_best_live_bucket(const struct xlate_ctx *ctx,
     return best_bucket;
 }
 
+//检查此vlan是否在trunk口范围内
 static bool
 xbundle_trunks_vlan(const struct xbundle *bundle, uint16_t vlan)
 {
@@ -1758,6 +1760,7 @@ xbundle_includes_vlan(const struct xbundle *xbundle, const struct xvlan *xvlan)
     }
 }
 
+//检查xbundle是否为一个镜像输出口
 static mirror_mask_t
 xbundle_mirror_out(const struct xbridge *xbridge, struct xbundle *xbundle)
 {
@@ -1954,6 +1957,7 @@ mirror_ingress_packet(struct xlate_ctx *ctx)
  * 'vid' should be the VID obtained from the 802.1Q header that was received as
  * part of a packet (specify 0 if there was no 802.1Q header), in the range
  * 0...4095. */
+//检查此接口是否收取此vlan
 static bool
 input_vid_is_valid(const struct xlate_ctx *ctx,
                    uint16_t vid, struct xbundle *in_xbundle)
@@ -1976,12 +1980,13 @@ input_vid_is_valid(const struct xlate_ctx *ctx,
 
     case PORT_VLAN_NATIVE_UNTAGGED:
     case PORT_VLAN_NATIVE_TAGGED:
-        if (!vid) {//这两种模式，必须要有vlan
+        if (!vid) {//这两种模式，必须要没有vlan
             /* Port must always carry its native VLAN. */
             return true;
         }
         /* Fall through. */
     case PORT_VLAN_TRUNK:
+    	//trunk口是否容许其通过
         if (!xbundle_trunks_vlan(in_xbundle, vid)) {
             xlate_report_error(ctx, "dropping VLAN %"PRIu16" packet "
                                "received on port %s not configured for "
@@ -2028,6 +2033,7 @@ xvlan_push_uninit(struct xvlan *src)
 }
 
 /* Extract VLAN information (headers) from flow */
+//提取并展开flow中的vlan信息
 static void
 xvlan_extract(const struct flow *flow, struct xvlan *xvlan)
 {
@@ -2072,6 +2078,7 @@ xvlan_input_translate(const struct xbundle *in_xbundle,
 
     switch (in_xbundle->vlan_mode) {
     case PORT_VLAN_ACCESS:
+    	//如果access口，设置vlan
         memset(xvlan, 0, sizeof(*xvlan));
         xvlan->v[0].tpid = in_xvlan->v[0].tpid ? in_xvlan->v[0].tpid :
                                                  ETH_TYPE_VLAN_8021Q;
@@ -2087,6 +2094,7 @@ xvlan_input_translate(const struct xbundle *in_xbundle,
     case PORT_VLAN_NATIVE_TAGGED:
         xvlan_copy(xvlan, in_xvlan);
         if (!in_xvlan->v[0].vid) {
+        	//没有vlan时，设置vlan
             xvlan->v[0].tpid = in_xvlan->v[0].tpid ? in_xvlan->v[0].tpid :
                                                      ETH_TYPE_VLAN_8021Q;
             xvlan->v[0].vid = in_xbundle->vlan;
@@ -2095,6 +2103,7 @@ xvlan_input_translate(const struct xbundle *in_xbundle,
         break;
 
     case PORT_VLAN_DOT1Q_TUNNEL:
+    	//再加一次vlan
         xvlan_copy(xvlan, in_xvlan);
         xvlan_push_uninit(xvlan);
         xvlan->v[0].tpid = in_xbundle->qinq_ethtype;
@@ -2115,23 +2124,23 @@ xvlan_output_translate(const struct xbundle *out_xbundle,
                        const struct xvlan *xvlan, struct xvlan *out_xvlan)
 {
     switch (out_xbundle->vlan_mode) {
-    case PORT_VLAN_ACCESS:
+    case PORT_VLAN_ACCESS://access口，vlan扔掉
         memset(out_xvlan, 0, sizeof(*out_xvlan));
         break;
 
     case PORT_VLAN_TRUNK:
     case PORT_VLAN_NATIVE_TAGGED:
-        xvlan_copy(out_xvlan, xvlan);
+        xvlan_copy(out_xvlan, xvlan);//需要含tag
         break;
 
-    case PORT_VLAN_NATIVE_UNTAGGED:
+    case PORT_VLAN_NATIVE_UNTAGGED://扔掉tag,但只能扔掉native
         xvlan_copy(out_xvlan, xvlan);
         if (xvlan->v[0].vid == out_xbundle->vlan) {
             xvlan_pop(out_xvlan);
         }
         break;
 
-    case PORT_VLAN_DOT1Q_TUNNEL:
+    case PORT_VLAN_DOT1Q_TUNNEL://加一层
         xvlan_copy(out_xvlan, xvlan);
         xvlan_pop(out_xvlan);
         break;
@@ -2151,7 +2160,7 @@ check_and_set_cvlan_mask(struct flow_wildcards *wc,
     }
 }
 
-//普通输出
+//普通输出（向out_xbundle口输出），xvlan是报文需要处理的vlan
 static void
 output_normal(struct xlate_ctx *ctx, const struct xbundle *out_xbundle,
               const struct xvlan *xvlan)
@@ -2172,6 +2181,7 @@ output_normal(struct xlate_ctx *ctx, const struct xbundle *out_xbundle,
     }
     vid = out_xvlan.v[0].vid;
     if (ovs_list_is_empty(&out_xbundle->xports)) {
+    	//这个xbundle没有成员
         /* Partially configured bundle with no slaves.  Drop the packet. */
         return;
     } else if (!out_xbundle->bond) {
@@ -2179,6 +2189,7 @@ output_normal(struct xlate_ctx *ctx, const struct xbundle *out_xbundle,
         xport = CONTAINER_OF(ovs_list_front(&out_xbundle->xports), struct xport,
                              bundle_node);
     } else {
+    	//有多个成员的xbundle
         struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
         struct flow_wildcards *wc = ctx->wc;
         struct ofport_dpif *ofport;
@@ -2203,7 +2214,8 @@ output_normal(struct xlate_ctx *ctx, const struct xbundle *out_xbundle,
                                           &ctx->xin->flow, wc, vid);
         xport = xport_lookup(xcfg, ofport);
 
-        if (!xport) {//port不存在，丢包
+        if (!xport) {
+        	//port不存在，丢包
             /* No slaves enabled, so drop packet. */
             return;
         }
@@ -2288,7 +2300,8 @@ is_admissible(struct xlate_ctx *ctx, struct xport *in_port,
 
     /* Drop frames for reserved multicast addresses
      * only if forward_bpdu option is absent. */
-    if (!xbridge->forward_bpdu && eth_addr_is_reserved(flow->dl_dst)) {//预留mac，且不转发bpdu的，直接丢。
+    if (!xbridge->forward_bpdu && eth_addr_is_reserved(flow->dl_dst)) {
+    	//预留mac，且不转发bpdu的，直接丢。
         xlate_report(ctx, OFT_DETAIL,
                      "packet has reserved destination MAC, dropping");
         return false;
@@ -2665,7 +2678,8 @@ xlate_normal(struct xlate_ctx *ctx)
     struct xvlan xvlan;
     uint16_t vlan;
 
-    //为源mac,目的mac,vlan的mask打上标记
+    //采用交换机的normal模拟转发，故实际上是按mac,vlan进行转换的
+    //问题是为什么要给src_mac打上标记？
     memset(&wc->masks.dl_src, 0xff, sizeof wc->masks.dl_src);
     memset(&wc->masks.dl_dst, 0xff, sizeof wc->masks.dl_dst);
     wc->masks.vlans[0].tci |= htons(VLAN_VID_MASK | VLAN_CFI);
@@ -2679,6 +2693,7 @@ xlate_normal(struct xlate_ctx *ctx)
     /* Drop malformed frames. */
     if (eth_type_vlan(flow->dl_type) &&
         !(flow->vlans[0].tci & htons(VLAN_CFI))) {
+    	//有vlan,VLAN_CFI位为0，在收包时，总时将此位置为1，故不会进入
         if (ctx->xin->packet != NULL) {
             xlate_report_error(ctx, "dropping packet with partial "
                                "VLAN tag received on port %s",
@@ -2689,6 +2704,7 @@ xlate_normal(struct xlate_ctx *ctx)
     }
 
     /* Drop frames on bundles reserved for mirroring. */
+    //镜像口不支持采用normal进行转发，容许造成环路
     if (xbundle_mirror_out(ctx->xbridge, in_xbundle)) {
         if (ctx->xin->packet != NULL) {
             xlate_report_error(ctx, "dropping packet received on port %s, "
@@ -2701,12 +2717,15 @@ xlate_normal(struct xlate_ctx *ctx)
     }
 
     /* Check VLAN. */
+    //检查此接口是否容许接收报文外层的vlan
     xvlan_extract(flow, &in_xvlan);
     if (!input_vid_is_valid(ctx, in_xvlan.v[0].vid, in_xbundle)) {
         xlate_report(ctx, OFT_WARN,
                      "disallowed VLAN VID for this input port, dropping");
         return;
     }
+
+    //设置vlan
     xvlan_input_translate(in_xbundle, &in_xvlan, &xvlan);
     vlan = xvlan.v[0].vid;
 
@@ -2739,6 +2758,7 @@ xlate_normal(struct xlate_ctx *ctx)
         && !eth_addr_is_broadcast(flow->dl_dst)//目的地址不是广播是组播,且为ipv4/ipv6报文
         && eth_addr_is_multicast(flow->dl_dst)
         && is_ip_any(flow)) {
+    	//组播报文snooping处理
         struct mcast_snooping *ms = ctx->xbridge->ms;
         struct mcast_group *grp = NULL;
 
@@ -2848,6 +2868,7 @@ xlate_normal(struct xlate_ctx *ctx)
                              "learned port is input port, dropping");
             }
         } else {
+        	//flood处理
             xlate_report(ctx, OFT_DETAIL,
                          "no learned MAC for destination, flooding");
             xlate_normal_flood(ctx, in_xbundle, &xvlan);
@@ -3611,7 +3632,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     //出接口不为NONE
     if (out_port != ODPP_NONE) {
         /* Commit accumulated flow updates before output. */
-	//提交合并后的actions到ctx中
+    	//提交合并后的actions到ctx中
         xlate_commit_actions(ctx);
 
         if (xr) {
@@ -4115,6 +4136,7 @@ xlate_ofpact_resubmit(struct xlate_ctx *ctx,
 
     in_port = resubmit->in_port;
     if (in_port == OFPP_IN_PORT) {
+    	//如果resubimit指定的是IN_PORT,则设置
         in_port = ctx->xin->flow.in_port.ofp_port;
     }
 
@@ -4796,6 +4818,7 @@ xlate_set_queue_action(struct xlate_ctx *ctx, uint32_t queue_id)
 {
     uint32_t skb_priority;
 
+    //将queue_id转换为优先级
     if (!dpif_queue_to_priority(ctx->xbridge->dpif, queue_id, &skb_priority)) {
         ctx->xin->flow.skb_priority = skb_priority;
     } else {
@@ -5475,6 +5498,7 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc)
                            OVS_CT_EVENTMASK_DEFAULT);
         }
     }
+    //存入zone,mark,label,helper动作参数
     nl_msg_put_u16(ctx->odp_actions, OVS_CT_ATTR_ZONE, zone);
     put_ct_mark(&ctx->xin->flow, ctx->odp_actions, ctx->wc);
     put_ct_label(&ctx->xin->flow, ctx->odp_actions, ctx->wc);
@@ -5593,7 +5617,6 @@ recirc_for_mpls(const struct ofpact *a, struct xlate_ctx *ctx)
     ctx_trigger_freeze(ctx);
 }
 
-//遍历转换actions
 static void
 xlate_ofpact_reg_move(struct xlate_ctx *ctx, const struct ofpact_reg_move *a)
 {
@@ -5622,6 +5645,7 @@ xlate_ofpact_unroll_xlate(struct xlate_ctx *ctx,
                  "cookie=%#"PRIx64, a->rule_table_id, a->rule_cookie);
 }
 
+//处理动作转换
 static void
 do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
                  struct xlate_ctx *ctx)
@@ -5630,7 +5654,7 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
     struct flow *flow = &ctx->xin->flow;
     const struct ofpact *a;
 
-    //有tunnel口，tunnel口需要邻居表项支持
+    //有tunnel口，tunnel口需要邻居表项支持，故进行领居表项snooping
     if (ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {
         tnl_neigh_snoop(flow, wc, ctx->xbridge->name);
     }
@@ -5641,19 +5665,20 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
         return;
     }
 
-    OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {//遍历actions集合
+    //遍历actions集合
+    OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
         struct ofpact_controller *controller;
         const struct ofpact_metadata *metadata;
         const struct ofpact_set_field *set_field;
         const struct mf_field *mf;
 
-        if (ctx->error) {//有错误提前退
+        if (ctx->error) {
             break;
         }
 
-        recirc_for_mpls(a, ctx);//mpls处理，暂忽略
+        recirc_for_mpls(a, ctx);
 
-        if (ctx->exit) {//需要退出
+        if (ctx->exit) {
             /* Check if need to store the remaining actions for later
              * execution. */
             if (ctx->freezing) {
@@ -5674,7 +5699,8 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
         }
 
         switch (a->type) {
-        case OFPACT_OUTPUT://output操作（output时再做action,其它操作不需要保存）
+        case OFPACT_OUTPUT:
+        	//output操作（output时再做action,其它操作不需要保存）
         	//传入出接口，可发送报文的最大长度，报文进入为True
             xlate_output_action(ctx, ofpact_get_OUTPUT(a)->port,
                                 ofpact_get_OUTPUT(a)->max_len, true);
@@ -5712,11 +5738,13 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             xlate_enqueue_action(ctx, ofpact_get_ENQUEUE(a));
             break;
 
-        case OFPACT_SET_VLAN_VID://设置vlan及vlan对应的vlan mask
+        case OFPACT_SET_VLAN_VID:
+        	//设置vlan及vlan对应的vlan mask
             wc->masks.vlans[0].tci |= htons(VLAN_VID_MASK | VLAN_CFI);
             if (flow->vlans[0].tci & htons(VLAN_CFI) ||
                 ofpact_get_SET_VLAN_VID(a)->push_vlan_if_needed) {
                 if (!flow->vlans[0].tpid) {
+                	//之前没有vlan,设置它
                     flow->vlans[0].tpid = htons(ETH_TYPE_VLAN);
                 }
                 flow->vlans[0].tci &= ~htons(VLAN_VID_MASK);//清掉vlan对应的几位
@@ -5727,12 +5755,15 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             break;
 
         case OFPACT_SET_VLAN_PCP:
+        	//只能设置最外层的vlan,故只设置外层wc
             wc->masks.vlans[0].tci |= htons(VLAN_PCP_MASK | VLAN_CFI);
             if (flow->vlans[0].tci & htons(VLAN_CFI) ||
                 ofpact_get_SET_VLAN_PCP(a)->push_vlan_if_needed) {
                 if (!flow->vlans[0].tpid) {
+                	//之前没有设置tpid,设置它
                     flow->vlans[0].tpid = htons(ETH_TYPE_VLAN);
                 }
+                //设置优先级，最是设置VLAN_CFI=1
                 flow->vlans[0].tci &= ~htons(VLAN_PCP_MASK);
                 flow->vlans[0].tci |=
                     htons((ofpact_get_SET_VLAN_PCP(a)->vlan_pcp
@@ -5740,27 +5771,32 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             }
             break;
 
-        case OFPACT_STRIP_VLAN://去除vlan
+        case OFPACT_STRIP_VLAN:
+        	//去除vlan（如果内层有vlan,则需要设置wc匹配内层vlan？？？对吗？)
             flow_pop_vlan(flow, wc);
             break;
 
-        case OFPACT_PUSH_VLAN://加个空的vlan,未设置vlan id
+        case OFPACT_PUSH_VLAN:
+        	//设置vlan(由于这个vlan信息不来源于报文，故不设置wc？？？对吗？)
             flow_push_vlan_uninit(flow, wc);
             flow->vlans[0].tpid = ofpact_get_PUSH_VLAN(a)->ethertype;
             flow->vlans[0].tci = htons(VLAN_CFI);
             break;
 
-        case OFPACT_SET_ETH_SRC://设置src mac
+        case OFPACT_SET_ETH_SRC:
+        	//设置src mac
             WC_MASK_FIELD(wc, dl_src);
             flow->dl_src = ofpact_get_SET_ETH_SRC(a)->mac;
             break;
 
-        case OFPACT_SET_ETH_DST://设置目的mac
+        case OFPACT_SET_ETH_DST:
+        	//设置目的mac
             WC_MASK_FIELD(wc, dl_dst);
             flow->dl_dst = ofpact_get_SET_ETH_DST(a)->mac;
             break;
 
-        case OFPACT_SET_IPV4_SRC://设置ip源
+        case OFPACT_SET_IPV4_SRC:
+        	//设置ip源
             if (flow->dl_type == htons(ETH_TYPE_IP)) {
                 memset(&wc->masks.nw_src, 0xff, sizeof wc->masks.nw_src);
                 flow->nw_src = ofpact_get_SET_IPV4_SRC(a)->ipv4;
@@ -5777,28 +5813,32 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
         case OFPACT_SET_IP_DSCP://tos中的dscp字段
             if (is_ip_any(flow)) {
                 wc->masks.nw_tos |= IP_DSCP_MASK;
+                //设置flow的dscp值
                 flow->nw_tos &= ~IP_DSCP_MASK;
                 flow->nw_tos |= ofpact_get_SET_IP_DSCP(a)->dscp;
             }
             break;
 
-        case OFPACT_SET_IP_ECN://tos中的ecn字段
+        case OFPACT_SET_IP_ECN:
             if (is_ip_any(flow)) {
                 wc->masks.nw_tos |= IP_ECN_MASK;
+                //设置flow的enc值
                 flow->nw_tos &= ~IP_ECN_MASK;
                 flow->nw_tos |= ofpact_get_SET_IP_ECN(a)->ecn;
             }
             break;
 
-        case OFPACT_SET_IP_TTL://设置ttl
+        case OFPACT_SET_IP_TTL:
             if (is_ip_any(flow)) {
                 wc->masks.nw_ttl = 0xff;
+                //设置ttl
                 flow->nw_ttl = ofpact_get_SET_IP_TTL(a)->ttl;
             }
             break;
 
         case OFPACT_SET_L4_SRC_PORT://设置源port
             if (is_ip_any(flow) && !(flow->nw_frag & FLOW_NW_FRAG_LATER)) {
+            	//如果是ipv4或ipv6报文，并且非首片报文，则设置传输层src port,同时设置mask
                 memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);
                 memset(&wc->masks.tp_src, 0xff, sizeof wc->masks.tp_src);
                 flow->tp_src = htons(ofpact_get_SET_L4_SRC_PORT(a)->port);
@@ -5821,14 +5861,17 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
              * to avoid that, only adding any actions that follow the resubmit
              * to the frozen actions.
              */
-            xlate_ofpact_resubmit(ctx, ofpact_get_RESUBMIT(a));//修改inport,table_id后重查，重做
+        	//修改inport,table_id后重查，重做
+            xlate_ofpact_resubmit(ctx, ofpact_get_RESUBMIT(a));
             continue;//跳过后面的检查
 
-        case OFPACT_SET_TUNNEL://设置tun_id(无mask关联，只是不是0，就说明设置了）
+        case OFPACT_SET_TUNNEL:
+        	//设置tun_id(无mask关联，只是不是0，就说明设置了）
             flow->tunnel.tun_id = htonll(ofpact_get_SET_TUNNEL(a)->tun_id);
             break;
 
         case OFPACT_SET_QUEUE:
+        	//设置skb_priority
             memset(&wc->masks.skb_priority, 0xff,
                    sizeof wc->masks.skb_priority);
             xlate_set_queue_action(ctx, ofpact_get_SET_QUEUE(a)->queue_id);
@@ -5902,7 +5945,8 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             }
             break;
 
-        case OFPACT_DEC_TTL://减ttl,如果a参数指明了多个controller，则在ttl为0时，上报错误
+        case OFPACT_DEC_TTL:
+        	//减ttl,如果a参数指明了多个controller，则在ttl为0时，上报错误
             wc->masks.nw_ttl = 0xff;
             if (compose_dec_ttl(ctx, ofpact_get_DEC_TTL(a))) {
                 return;
@@ -6308,7 +6352,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     struct xlate_ctx ctx = {
         .xin = xin,
         .xout = xout,
-        .base_flow = *flow,
+        .base_flow = *flow,//保存基准flow,生成action时用
         .orig_tunnel_ipv6_dst = flow_tnl_dst(&flow->tunnel),
         .xbridge = xbridge,
         .stack = OFPBUF_STUB_INITIALIZER(stack_stub),
@@ -6326,7 +6370,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
         .table_id = 0,
         .rule_cookie = OVS_BE64_MAX,
-        .orig_skb_priority = flow->skb_priority,
+        .orig_skb_priority = flow->skb_priority,//保存原始skb_priority
         .sflow_n_outputs = 0,
         .sflow_odp_port = 0,
         .nf_output_iface = NF_OUT_DROP,

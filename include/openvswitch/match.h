@@ -33,7 +33,7 @@ struct ofputil_port_map;
  * field in 'flow' is set to all-0-bits.  (The match_zero_wildcarded_fields()
  * function can be used to restore this invariant after adding wildcards.) */
 struct match {
-    struct flow flow;
+    struct flow flow;//报文中提取出来的数据
     struct flow_wildcards wc;
     struct tun_metadata_allocation tun_md;
 };

@@ -2250,6 +2250,7 @@ unwildcard_subfield(const struct mf_subfield *sf, struct flow_wildcards *wc)
         union mf_value mask;
 
         memset(&mask, 0, sizeof mask);
+        //从sf->ofs位置开始设置sf->n_bits个‘1’
         bitwise_one(&mask, sf->field->n_bytes, sf->ofs, sf->n_bits);
         mf_mask_field_masked(sf->field, &mask, wc);
     }

@@ -47,8 +47,8 @@ BUILD_ASSERT_DECL(FLOW_N_REGS % 4 == 0); /* Handle xxregs. */
 #define FLOW_DL_TYPE_NONE 0x5ff
 
 /* Fragment bits, used for IPv4 and IPv6, always zero for non-IP flows. */
-#define FLOW_NW_FRAG_ANY   (1 << 0) /* Set for any IP frag. */
-#define FLOW_NW_FRAG_LATER (1 << 1) /* Set for IP frag with nonzero offset. */
+#define FLOW_NW_FRAG_ANY   (1 << 0) /* Set for any IP frag. */ //标记分片报文
+#define FLOW_NW_FRAG_LATER (1 << 1) /* Set for IP frag with nonzero offset. */ //标记非首片
 #define FLOW_NW_FRAG_MASK  (FLOW_NW_FRAG_ANY | FLOW_NW_FRAG_LATER)
 
 BUILD_ASSERT_DECL(FLOW_NW_FRAG_ANY == NX_IP_FRAG_ANY);
@@ -114,13 +114,14 @@ struct flow {
     ofp_port_t actset_output;   /* Output port in action set. */
 
     /* L2, Order the same as in the Ethernet header! (64-bit aligned) */
-    struct eth_addr dl_dst;     /* Ethernet destination address. */
+    struct eth_addr dl_dst;     /* Ethernet destination address. */ //目的mac,源mac
     struct eth_addr dl_src;     /* Ethernet source address. */
-    ovs_be16 dl_type;           /* Ethernet frame type.
+    ovs_be16 dl_type;           /* Ethernet frame type. //帧格式
                                    Note: This also holds the Ethertype for L3
                                    packets of type PACKET_TYPE(1, Ethertype) */
-    uint8_t pad1[2];            /* Pad to 64 bits. */
-    union flow_vlan_hdr vlans[FLOW_MAX_VLAN_HEADERS]; /* VLANs */
+    uint8_t pad1[2];            /* Pad to 64 bits. */ //为minflow补齐为一个2个unit64_t
+
+    union flow_vlan_hdr vlans[FLOW_MAX_VLAN_HEADERS]; /* VLANs */ //为了支持双层vlan
     ovs_be32 mpls_lse[ROUND_UP(FLOW_MAX_MPLS_LABELS, 2)]; /* MPLS label stack
                                                              (with padding). */
     /* L3 (64-bit aligned) */
@@ -136,25 +137,26 @@ struct flow {
     uint8_t nw_frag;            /* FLOW_FRAG_* flags. */
     uint8_t nw_tos;             /* IP ToS (including DSCP and ECN). */
     uint8_t nw_ttl;             /* IP TTL/Hop Limit. */
-    uint8_t nw_proto;           /* IP protocol or low 8 bits of ARP opcode. */
+    uint8_t nw_proto;           /* IP protocol or low 8 bits of ARP opcode. */ //ip protocol
     struct in6_addr nd_target;  /* IPv6 neighbor discovery (ND) target. */
     struct eth_addr arp_sha;    /* ARP/ND source hardware address. */
     struct eth_addr arp_tha;    /* ARP/ND target hardware address. */
-    ovs_be16 tcp_flags;         /* TCP flags. With L3 to avoid matching L4. */
+    ovs_be16 tcp_flags;         /* TCP flags. With L3 to avoid matching L4. */ //tcp标记位
     ovs_be16 pad2;              /* Pad to 64 bits. */
 
     /* L4 (64-bit aligned) */
     ovs_be16 tp_src;            /* TCP/UDP/SCTP source port/ICMP type. */
     ovs_be16 tp_dst;            /* TCP/UDP/SCTP destination port/ICMP code. */ //运输层目的地址
-    ovs_be16 ct_tp_src;         /* CT original tuple source port/ICMP type. */
+    ovs_be16 ct_tp_src;         /* CT original tuple source port/ICMP type. */ //连接跟踪时转换后的port
     ovs_be16 ct_tp_dst;         /* CT original tuple dst port/ICMP code. */
-    ovs_be32 igmp_group_ip4;    /* IGMP group IPv4 address.
+    ovs_be32 igmp_group_ip4;    /* IGMP group IPv4 address.                    //igmp组播ip
                                  * Keep last for BUILD_ASSERT_DECL below. */
     ovs_be32 pad3;              /* Pad to 64 bits. */
 };
 BUILD_ASSERT_DECL(sizeof(struct flow) % sizeof(uint64_t) == 0);
 BUILD_ASSERT_DECL(sizeof(struct flow_tnl) % sizeof(uint64_t) == 0);
 
+//flow结构体占多少个uint64_t
 #define FLOW_U64S (sizeof(struct flow) / sizeof(uint64_t))
 
 /* Remember to update FLOW_WC_SEQ when changing 'struct flow'. */
@@ -190,6 +192,7 @@ struct flow_wildcards {
     struct flow masks;
 };
 
+//设置wc->masks.FIELD为全1
 #define WC_MASK_FIELD(WC, FIELD) \
     memset(&(WC)->masks.FIELD, 0xff, sizeof (WC)->masks.FIELD)
 #define WC_MASK_FIELD_MASK(WC, FIELD, MASK)     \

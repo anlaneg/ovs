@@ -874,6 +874,7 @@ out:
  * significant in the selection.  At some point earlier, 'wc' should
  * have been initialized (e.g., by flow_wildcards_init_catchall()).
  */
+//选一个出接口
 void *
 bond_choose_output_slave(struct bond *bond, const struct flow *flow,
                          struct flow_wildcards *wc, uint16_t vlan)
@@ -1811,7 +1812,7 @@ choose_output_slave(const struct bond *bond, const struct flow *flow,
 
     switch (balance) {
     case BM_AB:
-        return bond->active_slave;
+        return bond->active_slave;//AB情况下，选active的
 
     case BM_TCP:
         if (bond->lacp_status != LACP_NEGOTIATED) {
@@ -1828,6 +1829,7 @@ choose_output_slave(const struct bond *bond, const struct flow *flow,
         }
         e = lookup_bond_entry(bond, flow, vlan);
         if (!e->slave || !e->slave->enabled) {
+        	//轮询
             e->slave = get_enabled_slave(CONST_CAST(struct bond*, bond));
         }
         return e->slave;

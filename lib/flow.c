@@ -52,7 +52,7 @@ const uint8_t flow_segment_u64s[4] = {
     FLOW_U64S
 };
 
-int flow_vlan_limit = FLOW_MAX_VLAN_HEADERS;
+int flow_vlan_limit = FLOW_MAX_VLAN_HEADERS;//目前最大支持两层vlan(现行标准）
 
 /* Asserts that field 'f1' follows immediately after 'f0' in struct flow,
  * without any intervening padding. */
@@ -115,9 +115,11 @@ data_try_pull(const void **datap, size_t *sizep, size_t size)
 
 /* Context for pushing data to a miniflow. */
 struct mf_ctx {
+	//与struct flow结构体对应，每一个bit对应flow结构体上一个uint64_t。
+	//按map上的顺序，从前向后每个map上出现的1对应了data结构体上的数组
     struct flowmap map;
     uint64_t *data;//指向flowmap
-    uint64_t * const end;
+    uint64_t * const end;//data内存的结尾边界
 };
 
 /* miniflow_push_* macros allow filling in a miniflow data values in order.
@@ -145,7 +147,7 @@ BUILD_MESSAGE("FLOW_WC_SEQ changed: miniflow_extract() will have runtime "
     }                                                                   \
 }
 
-//设置ofs位为‘１’
+//设置ofs对应的map上的bit位,置为‘１’
 #define miniflow_set_map(MF, OFS)            \
     {                                        \
     ASSERT_FLOWMAP_NOT_SET(&MF.map, (OFS));  \
@@ -165,16 +167,21 @@ BUILD_MESSAGE("FLOW_WC_SEQ changed: miniflow_extract() will have runtime "
 
 #define miniflow_push_be64_(MF, OFS, VALUE)                     \
     miniflow_push_uint64_(MF, OFS, (OVS_FORCE uint64_t)(VALUE))
-//设置ofs位为'1',将value　push到mf.data中
+
+//设置ofs位为'1',将长度为uint32_t的value　push到mf.data中
 #define miniflow_push_uint32_(MF, OFS, VALUE)   \
     {                                           \
     MINIFLOW_ASSERT(MF.data < MF.end);          \
                                                 \
     if ((OFS) % 8 == 0) {                       \
+    	/*如果OFS以8对齐，则设置OFS/8位置的idx*/\
         miniflow_set_map(MF, OFS / 8);          \
+        /*填充32位的value值*/\
         *(uint32_t *)MF.data = VALUE;           \
     } else if ((OFS) % 8 == 4) {                \
+    	/*如果OFS以4对齐，则断言OFS/8已设置标记位*/\
         miniflow_assert_in_map(MF, OFS / 8);    \
+        /*存放在data+1的位置*/\
         *((uint32_t *)MF.data + 1) = VALUE;     \
         MF.data++;                              \
     }                                           \
@@ -285,6 +292,8 @@ BUILD_MESSAGE("FLOW_WC_SEQ changed: miniflow_extract() will have runtime "
     MF.data += 1;                   /* First word only. */      \
 }
 
+//取出uint32_t类型的FIELD在flow中的偏移量，填充MF.map上对应的bits标记位，并将VALUE存放
+//MF.data上。
 #define miniflow_push_uint32(MF, FIELD, VALUE)                      \
     miniflow_push_uint32_(MF, offsetof(struct flow, FIELD), VALUE)
 
@@ -338,6 +347,7 @@ parse_mpls(const void **datap, size_t *sizep)
 }
 
 /* passed vlan_hdrs arg must be at least size FLOW_MAX_VLAN_HEADERS. */
+//解析vlan头，更改datap地址
 static inline ALWAYS_INLINE size_t
 parse_vlan(const void **datap, size_t *sizep, union flow_vlan_hdr *vlan_hdrs)
 {
@@ -346,18 +356,19 @@ parse_vlan(const void **datap, size_t *sizep, union flow_vlan_hdr *vlan_hdrs)
     memset(vlan_hdrs, 0, sizeof(union flow_vlan_hdr) * FLOW_MAX_VLAN_HEADERS);
     data_pull(datap, sizep, ETH_ADDR_LEN * 2);
 
-    eth_type = *datap;
+    eth_type = *datap;//跳过dst,src mac后到达eth_type
 
     size_t n;
     for (n = 0; eth_type_vlan(*eth_type) && n < flow_vlan_limit; n++) {
         if (OVS_UNLIKELY(*sizep < sizeof(ovs_be32) + sizeof(ovs_be16))) {
+        	//报文长度不符，跳出
             break;
         }
 
         const ovs_16aligned_be32 *qp = data_pull(datap, sizep, sizeof *qp);
         vlan_hdrs[n].qtag = get_16aligned_be32(qp);
-        vlan_hdrs[n].tci |= htons(VLAN_CFI);
-        eth_type = *datap;
+        vlan_hdrs[n].tci |= htons(VLAN_CFI);//无论报文上VLAN_CFI如何，这里总将其赋为1(1为非规范格式)
+        eth_type = *datap;//下一层的eth_type
     }
     return n;
 }
@@ -592,7 +603,8 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
     ovs_be16 ct_tp_src = 0, ct_tp_dst = 0;
 
     /* Metadata. */
-    if (flow_tnl_dst_is_set(&md->tunnel)) {//如果tunnel被配置了
+    //如果tunnel被配置了
+    if (flow_tnl_dst_is_set(&md->tunnel)) {
         miniflow_push_words(mf, tunnel, &md->tunnel,
                             offsetof(struct flow_tnl, metadata) /
                             sizeof(uint64_t));
@@ -614,10 +626,13 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
             }
         }
     }
-    if (md->skb_priority || md->pkt_mark) {//如果skb_priority..被设置
+
+    //如果skb_priority被设置
+    if (md->skb_priority || md->pkt_mark) {
         miniflow_push_uint32(mf, skb_priority, md->skb_priority);
         miniflow_push_uint32(mf, pkt_mark, md->pkt_mark);
     }
+
     miniflow_push_uint32(mf, dp_hash, md->dp_hash);//标记hash位存在，填充dp_hash
     miniflow_push_uint32(mf, in_port, odp_to_u32(md->in_port.odp_port));//标记in_port位存在，填充in_port
     if (md->ct_state) {//如果recirc_id被设置
@@ -651,12 +666,12 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
     if (packet_type == htonl(PT_ETH)) {
         /* Must have full Ethernet header to proceed. */
         if (OVS_UNLIKELY(size < sizeof(struct eth_header))) {
-	    //数据大小没有一个eth头长，不玩了，出去
+	        //数据大小没有一个eth头长，不玩了，出去
             goto out;
         } else {
             /* Link layer. */
-            ASSERT_SEQUENTIAL(dl_dst, dl_src);//标记目的mac,填充目的mac
-            miniflow_push_macs(mf, dl_dst, data);
+            ASSERT_SEQUENTIAL(dl_dst, dl_src);
+            miniflow_push_macs(mf, dl_dst, data);//标记目的mac,填充目的mac
 
             /* VLAN */
             union flow_vlan_hdr vlans[FLOW_MAX_VLAN_HEADERS];
@@ -666,6 +681,7 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
             miniflow_push_be16(mf, dl_type, dl_type);//标记dl_type,填充dl_type,//填充802.1q头后的16位
             miniflow_pad_to_64(mf, dl_type);
             if (num_vlans > 0) {
+            	//有vlan头，放读取到的vlan
                 miniflow_push_words_32(mf, vlans, vlans, num_vlans);
             }
 
@@ -693,27 +709,29 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
     packet->l3_ofs = (char *)data - frame;//记录l3的offset
 
     nw_frag = 0;
-    if (OVS_LIKELY(dl_type == htons(ETH_TYPE_IP))) {//ip报文
+    if (OVS_LIKELY(dl_type == htons(ETH_TYPE_IP))) {//如果本层为ip报文
         const struct ip_header *nh = data;
         int ip_len;
         uint16_t tot_len;
 
+        //长度不足标准ip头
         if (OVS_UNLIKELY(size < IP_HEADER_LEN)) {
             goto out;
         }
-        ip_len = IP_IHL(nh->ip_ihl_ver) * 4;
+        ip_len = IP_IHL(nh->ip_ihl_ver) * 4;//ip头长度
 
-        if (OVS_UNLIKELY(ip_len < IP_HEADER_LEN)) {
+        if (OVS_UNLIKELY(ip_len < IP_HEADER_LEN)) {//错误的报文长度小于20
             goto out;
         }
-        if (OVS_UNLIKELY(size < ip_len)) {
+        if (OVS_UNLIKELY(size < ip_len)) {//错误的报文，宣称的长度与实际长度不符
             goto out;
         }
         tot_len = ntohs(nh->ip_tot_len);
         if (OVS_UNLIKELY(tot_len > size || ip_len > tot_len)) {
+        	//总长度比报文实际长度大或ip头长度比总长度大，错误报文
             goto out;
         }
-        if (OVS_UNLIKELY(size - tot_len > UINT8_MAX)) {
+        if (OVS_UNLIKELY(size - tot_len > UINT8_MAX)) {//total值校验（2层不可能超过255字节）
             goto out;
         }
         dp_packet_set_l2_pad_size(packet, size - tot_len);
@@ -737,9 +755,10 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
         nw_ttl = nh->ip_ttl;
         nw_proto = nh->ip_proto;
         if (OVS_UNLIKELY(IP_IS_FRAGMENT(nh->ip_frag_off))) {
+        	//分片报文
             nw_frag = FLOW_NW_FRAG_ANY;
             if (nh->ip_frag_off & htons(IP_FRAG_OFF_MASK)) {
-                nw_frag |= FLOW_NW_FRAG_LATER;
+                nw_frag |= FLOW_NW_FRAG_LATER;//标记非首片
             }
         }
         data_pull(&data, &size, ip_len);
@@ -794,8 +813,9 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
             goto out;
         }
     } else {
+    	//非ipv4,ipv6报文将自此进入
         if (dl_type == htons(ETH_TYPE_ARP) ||
-            dl_type == htons(ETH_TYPE_RARP)) {//arp解析
+            dl_type == htons(ETH_TYPE_RARP)) {//当前仅有arp解析
             struct eth_addr arp_buf[2];
             const struct arp_eth_header *arp = (const struct arp_eth_header *)
                 data_try_pull(&data, &size, ARP_ETH_HEADER_LEN);
@@ -831,9 +851,10 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
     miniflow_push_be32(mf, nw_frag,
                        bytes_to_be32(nw_frag, nw_tos, nw_ttl, nw_proto));//将分片，tos,ttl,proto打包为一个３２位整数
 
-    if (OVS_LIKELY(!(nw_frag & FLOW_NW_FRAG_LATER))) {//如果要缓一会再解析的话，就跳过，否则进入，比如需要组装分片等
+    if (OVS_LIKELY(!(nw_frag & FLOW_NW_FRAG_LATER))) {
+    	//首片或者非分片报文
         if (OVS_LIKELY(nw_proto == IPPROTO_TCP)) {//tcp协议
-            if (OVS_LIKELY(size >= TCP_HEADER_LEN)) {
+            if (OVS_LIKELY(size >= TCP_HEADER_LEN)) {//防止ip上层遇到tcp时有分片，此时不解析tcp
                 const struct tcp_header *tcp = data;
 
                 miniflow_push_be32(mf, arp_tha.ea[2], 0);
@@ -845,7 +866,7 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
                 miniflow_push_be16(mf, ct_tp_dst, ct_tp_dst);
             }
         } else if (OVS_LIKELY(nw_proto == IPPROTO_UDP)) {//udp协议
-            if (OVS_LIKELY(size >= UDP_HEADER_LEN)) {
+            if (OVS_LIKELY(size >= UDP_HEADER_LEN)) {//防止ip上层遇到udp时有分片，此时不解析udp
                 const struct udp_header *udp = data;
 
                 miniflow_push_be16(mf, tp_src, udp->udp_src);//源端口，目的端口填充
@@ -2005,6 +2026,7 @@ flow_random_hash_fields(struct flow *flow)
 }
 
 /* Masks the fields in 'wc' that are used by the flow hash 'fields'. */
+//为wc打上需要mask的字段
 void
 flow_mask_hash_fields(const struct flow *flow, struct flow_wildcards *wc,
                       enum nx_hash_fields fields)
@@ -2227,6 +2249,7 @@ flow_set_vlan_pcp(struct flow *flow, uint8_t pcp)
 }
 
 /* Counts the number of VLAN headers. */
+//计算此flow有多少层的vlan头
 int
 flow_count_vlan_headers(const struct flow *flow)
 {
@@ -2263,27 +2286,32 @@ flow_pop_vlan(struct flow *flow, struct flow_wildcards *wc)
 {
     int n = flow_count_vlan_headers(flow);
     if (n > 1) {
+    	//把内层的copy出来
         if (wc) {
             memset(&wc->masks.vlans[1], 0xff,
-                   sizeof(union flow_vlan_hdr) * (n - 1));
+                   sizeof(union flow_vlan_hdr) * (n - 1));//内层的需要匹配，故打上mask
         }
         memmove(&flow->vlans[0], &flow->vlans[1],
                 sizeof(union flow_vlan_hdr) * (n - 1));
     }
     if (n > 0) {
+    	//丢掉最外层的
         memset(&flow->vlans[n - 1], 0, sizeof(union flow_vlan_hdr));
     }
 }
 
+//空出一个vlan段
 void
 flow_push_vlan_uninit(struct flow *flow, struct flow_wildcards *wc)
 {
     if (wc) {
         int n = flow_count_vlan_headers(flow);
         if (n) {
-            memset(wc->masks.vlans, 0xff, sizeof(union flow_vlan_hdr) * n);
+            memset(wc->masks.vlans, 0xff, sizeof(union flow_vlan_hdr) * n);//为对应层的vlan加上mask
         }
     }
+
+    //将当前层的vlan（vlans[0]）移到内层(vlans[1])，然后空出一个新的vlan层(vlans[0])
     memmove(&flow->vlans[1], &flow->vlans[0],
             sizeof(union flow_vlan_hdr) * (FLOW_MAX_VLAN_HEADERS - 1));
     memset(&flow->vlans[0], 0, sizeof(union flow_vlan_hdr));

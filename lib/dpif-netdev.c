@@ -374,9 +374,9 @@ struct dp_netdev_port {
 /* Contained by struct dp_netdev_flow's 'stats' member.  */
 struct dp_netdev_flow_stats {
     atomic_llong used;             /* Last used time, in monotonic msecs. */
-    atomic_ullong packet_count;    /* Number of packets matched. */
-    atomic_ullong byte_count;      /* Number of bytes matched. */
-    atomic_uint16_t tcp_flags;     /* Bitwise-OR of seen tcp_flags values. */
+    atomic_ullong packet_count;    /* Number of packets matched. */ //此条流命中的报文数
+    atomic_ullong byte_count;      /* Number of bytes matched. */ //此条流命中的字节数
+    atomic_uint16_t tcp_flags;     /* Bitwise-OR of seen tcp_flags values. */ //此条流命中的tcp flags
 };
 
 /* A flow in 'dp_netdev_pmd_thread's 'flow_table'.
@@ -1943,7 +1943,7 @@ static inline bool
 netdev_flow_key_equal_mf(const struct netdev_flow_key *key,
                          const struct miniflow *mf)
 {
-    return !memcmp(&key->mf, mf, key->len);
+    return !memcmp(&key->mf, mf, key->len);//掩码与值需要完全区配
 }
 
 static inline void
@@ -2119,6 +2119,7 @@ emc_probabilistic_insert(struct dp_netdev_pmd_thread *pmd,
     }
 }
 
+//emc有一个key结构，它的current_entry->key结构需要与我们的key->mf完全一致才能认为匹配
 static inline struct dp_netdev_flow *
 emc_lookup(struct emc_cache *cache, const struct netdev_flow_key *key)
 {
@@ -3113,6 +3114,7 @@ cycles_count_start(struct dp_netdev_pmd_thread *pmd)
 }
 
 /* Stop counting cycles and add them to the counter 'type' */
+//计录各类型用时情况
 static inline void
 cycles_count_end(struct dp_netdev_pmd_thread *pmd,
                  enum pmd_cycles_counter_type type)
@@ -3137,16 +3139,17 @@ dp_netdev_process_rxq_port(struct dp_netdev_pmd_thread *pmd,
     cycles_count_start(pmd);
     //从队列中收包
     error = netdev_rxq_recv(rx, &batch);
-    cycles_count_end(pmd, PMD_CYCLES_POLLING);
+    cycles_count_end(pmd, PMD_CYCLES_POLLING);//记录nic收包时间
     if (!error) {
         *recirc_depth_get() = 0;
 
         cycles_count_start(pmd);
         //报文处理入口
         dp_netdev_input(pmd, &batch, port_no);
-        cycles_count_end(pmd, PMD_CYCLES_PROCESSING);
+        cycles_count_end(pmd, PMD_CYCLES_PROCESSING);//记录报文处理时间
     } else if (error != EAGAIN && error != EOPNOTSUPP) {
-        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+        //收到其它非EAGAIN的错误，打错误日志
+    	static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
         VLOG_ERR_RL(&rl, "error receiving data from %s: %s",
                     netdev_rxq_get_name(rx), ovs_strerror(error));
@@ -4506,6 +4509,7 @@ dpif_netdev_get_datapath_version(void)
      return xstrdup("<built-in>");
 }
 
+//更新流的统计信息
 static void
 dp_netdev_flow_used(struct dp_netdev_flow *netdev_flow, int cnt, int size,
                     uint16_t tcp_flags, long long now)
@@ -4536,11 +4540,13 @@ dp_netdev_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet_,
 {
     struct dp_netdev *dp = pmd->dp;
 
-    if (OVS_UNLIKELY(!dp->upcall_cb)) {//设备无upcall_cb，返回
+    if (OVS_UNLIKELY(!dp->upcall_cb)) {
+    	//此datapath设备无upcall_cb，则返回
         return ENODEV;
     }
 
-    if (OVS_UNLIKELY(!VLOG_DROP_DBG(&upcall_rl))) {//debug代码
+    //debug代码
+    if (OVS_UNLIKELY(!VLOG_DROP_DBG(&upcall_rl))) {
         struct ds ds = DS_EMPTY_INITIALIZER;
         char *packet_str;
         struct ofpbuf key;
@@ -4594,12 +4600,13 @@ dpif_netdev_packet_get_rss_hash(struct dp_packet *packet,
     return hash;
 }
 
+//命中同一条流的batch
 struct packet_batch_per_flow {
-    unsigned int byte_count;
-    uint16_t tcp_flags;
-    struct dp_netdev_flow *flow;
+    unsigned int byte_count;//同批次字节数
+    uint16_t tcp_flags;//同批次tcp flags
+    struct dp_netdev_flow *flow;//同批次命中的flow
 
-    struct dp_packet_batch array;
+    struct dp_packet_batch array;//同批次的报文组
 };
 
 static inline void
@@ -4609,7 +4616,7 @@ packet_batch_per_flow_update(struct packet_batch_per_flow *batch,
 {
     batch->byte_count += dp_packet_size(packet);
     batch->tcp_flags |= miniflow_get_tcp_flags(mf);
-    batch->array.packets[batch->array.count++] = packet;
+    batch->array.packets[batch->array.count++] = packet;//将此packet，归类到对应的batch中
 }
 
 static inline void
@@ -4631,7 +4638,7 @@ packet_batch_per_flow_execute(struct packet_batch_per_flow *batch,
                               long long now)
 {
     struct dp_netdev_actions *actions;
-    struct dp_netdev_flow *flow = batch->flow;
+    struct dp_netdev_flow *flow = batch->flow;//此批次对应的flow
 
     dp_netdev_flow_used(flow, batch->array.count, batch->byte_count,
                         batch->tcp_flags, now);
@@ -4642,7 +4649,7 @@ packet_batch_per_flow_execute(struct packet_batch_per_flow *batch,
                               actions->actions, actions->size, now);
 }
 
-//将packet加入到batches中，n_batches表示放在哪个索引号上
+//将packet加入到按flow划分的batches中，n_batches表示如果此flow没有对应的batch,则放在哪个索引号上
 static inline void
 dp_netdev_queue_batches(struct dp_packet *pkt,
                         struct dp_netdev_flow *flow, const struct miniflow *mf,
@@ -4652,7 +4659,7 @@ dp_netdev_queue_batches(struct dp_packet *pkt,
     struct packet_batch_per_flow *batch = flow->batch;
 
     if (OVS_UNLIKELY(!batch)) {
-        batch = &batches[(*n_batches)++];
+        batch = &batches[(*n_batches)++];//n_batches记录了之前有多个batches已分配，我们这里取一个空的
         packet_batch_per_flow_init(batch, flow);//设置packet的batch,flow
     }
 
@@ -4674,7 +4681,7 @@ static inline size_t
 emc_processing(struct dp_netdev_pmd_thread *pmd,
                struct dp_packet_batch *packets_,
                struct netdev_flow_key *keys,
-               struct packet_batch_per_flow batches[], size_t *n_batches,
+               struct packet_batch_per_flow batches[], size_t *n_batches,//出参，有多少个per_flow batches
                bool md_is_valid, odp_port_t port_no)
 {
     struct emc_cache *flow_cache = &pmd->flow_cache;
@@ -4688,10 +4695,12 @@ emc_processing(struct dp_netdev_pmd_thread *pmd,
 
     atomic_read_relaxed(&pmd->dp->emc_insert_min, &cur_min);
 
+    //逐个遍历所有报文
     DP_PACKET_BATCH_REFILL_FOR_EACH (i, size, packet, packets_) {
         struct dp_netdev_flow *flow;
 
-        if (OVS_UNLIKELY(dp_packet_size(packet) < ETH_HEADER_LEN)) {//比标准以太头还要小，丢
+        //比标准以太头还要小，丢
+        if (OVS_UNLIKELY(dp_packet_size(packet) < ETH_HEADER_LEN)) {
             dp_packet_delete(packet);//buf释放
             n_dropped++;
             continue;
@@ -4699,32 +4708,39 @@ emc_processing(struct dp_netdev_pmd_thread *pmd,
 
         //如果不是最后一个，则预取下一个包
         if (i != size - 1) {
-            //如果不是最后一个，则预取下一个包
             struct dp_packet **packets = packets_->packets;
             /* Prefetch next packet data and metadata. */
             OVS_PREFETCH(dp_packet_data(packets[i+1]));//预取下一个报文的数据（64字节）
             pkt_metadata_prefetch_init(&packets[i+1]->md);//预取metadata中的部分数据
         }
 
-        if (!md_is_valid) {//如果元数据还未初始化，初始化它(主要是设置入接口）
+        if (!md_is_valid) {
+        	//如果元数据还未初始化，初始化它(主要是设置入接口）
             pkt_metadata_init(&packet->md, port_no);
         }
-        miniflow_extract(packet, &key->mf);//填充key及key中的buf
+
+        //填充key及key中的buf
+        miniflow_extract(packet, &key->mf);
         key->len = 0; /* Not computed yet. */ //实际上我们已经填充了buf，但这里不为len赋值
         key->hash = dpif_netdev_packet_get_rss_hash(packet, &key->mf);
 
         /* If EMC is disabled skip emc_lookup */
+        //emc查询可以被跳过
         flow = (cur_min == 0) ? NULL: emc_lookup(flow_cache, key);//检查emc是否可以命中
-        if (OVS_LIKELY(flow)) {//命中
-            dp_netdev_queue_batches(packet, flow, &key->mf, batches,
+        if (OVS_LIKELY(flow)) {
+            //如果emc命中，则尝试将packet_batch 归类到flow_batch中
+        	dp_netdev_queue_batches(packet, flow, &key->mf, batches,
                                     n_batches);
         } else {
             /* Exact match cache missed. Group missed packets together at
              * the beginning of the 'packets' array. */
+        	//DP_PACKET_BATCH_REFILL_FOR_EACH 中我们将packets_->count已清为0，将packet放入packets_->count位置
+        	//这个报文没有命中emc,这里将其重新放回到packets_(需要按顺序放回）
             dp_packet_batch_refill(packets_, packet, i);
             /* 'key[n_missed]' contains the key of the current packet and it
              * must be returned to the caller. The next key should be extracted
              * to 'keys[n_missed + 1]'. */
+            //分配下一次解析用的key(由于有n_missed个报文，故keys缓冲区被用了n_missed个)
             key = &keys[++n_missed];//已填充这个missing报文对应的packet，取下一个未用的
         }
     }
@@ -4733,7 +4749,7 @@ emc_processing(struct dp_netdev_pmd_thread *pmd,
     dp_netdev_count_packet(pmd, DP_STAT_EXACT_HIT,
                            size - n_dropped - n_missed);
 
-    return dp_packet_batch_size(packets_);
+    return dp_packet_batch_size(packets_);//返回有多少个报文没有命中
 }
 
 static inline void
@@ -4750,13 +4766,16 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd,
     int error;
 
     match.tun_md.valid = false;
-    miniflow_expand(&key->mf, &match.flow);//如果我们将key->mf展开形式从上面传入的话，这里就不用这么麻烦了
+    //在进行l1,l2查询时，我们没有使用展开的flow,这里我们使用展开的flow,将minflow㞡开到flow中
+    miniflow_expand(&key->mf, &match.flow);
 
     ofpbuf_clear(actions);
     ofpbuf_clear(put_actions);
 
-    dpif_flow_hash(pmd->dp->dpif, &match.flow, sizeof match.flow, &ufid);
+    dpif_flow_hash(pmd->dp->dpif, &match.flow, sizeof match.flow, &ufid);//生成流对应的hash(ufid)
+
     //走upcall处理(actions,put_actions将被返回，如果put_actions->size为０，则action才会被加入）
+    //设置类型为流表缺失流程
     error = dp_netdev_upcall(pmd, packet, &match.flow, &match.wc,
                              &ufid, DPIF_UC_MISS, NULL, actions,
                              put_actions);
@@ -4833,8 +4852,10 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
 
     for (i = 0; i < cnt; i++) {
         /* Key length is needed in all the cases, hash computed on demand. */
-        keys[i].len = netdev_flow_key_size(miniflow_n_values(&keys[i].mf));//设置在emc中解释后key解释出来的数据长度
+    	//设置在emc中解释后key解释出来的数据长度
+        keys[i].len = netdev_flow_key_size(miniflow_n_values(&keys[i].mf));
     }
+
     /* Get the classifier for the in_port */
     cls = dp_netdev_pmd_lookup_dpcls(pmd, in_port);//通过in_port分类
     if (OVS_LIKELY(cls)) {
@@ -4843,7 +4864,9 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
         any_miss = true;
         memset(rules, 0, sizeof(rules));
     }
-    if (OVS_UNLIKELY(any_miss) && !fat_rwlock_tryrdlock(&dp->upcall_rwlock)) {//尝试读锁成功，则进入
+
+    //没有在cls中查询到，准备upcall(拿到upcall的锁，则成功进入，默认都可拿到）
+    if (OVS_UNLIKELY(any_miss) && !fat_rwlock_tryrdlock(&dp->upcall_rwlock)) {
         uint64_t actions_stub[512 / 8], slow_stub[512 / 8];
         struct ofpbuf actions, put_actions;
 
@@ -4874,8 +4897,9 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
             }
 
             miss_cnt++;
+            //向上走upcall查询
             handle_packet_upcall(pmd, packets[i], &keys[i], &actions,
-                                 &put_actions, &lost_cnt, now);//走upcall
+                                 &put_actions, &lost_cnt, now);
         }
 
         ofpbuf_uninit(&actions);
@@ -4904,7 +4928,7 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
 
         //2层缓冲，对１层缓存的维护入口（将我们刚找到的这些加入到flow_cache中）
         emc_probabilistic_insert(pmd, &keys[i], flow);
-        dp_netdev_queue_batches(packet, flow, &keys[i].mf, batches, n_batches);//入队
+        dp_netdev_queue_batches(packet, flow, &keys[i].mf, batches, n_batches);//将报文按flow划入不同batch中
     }
 
     dp_netdev_count_packet(pmd, DP_STAT_MASKED_HIT, cnt - miss_cnt);
@@ -4932,8 +4956,10 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
     enum { PKT_ARRAY_SIZE = NETDEV_MAX_BURST };
 #endif
     OVS_ALIGNED_VAR(CACHE_LINE_SIZE)
-        struct netdev_flow_key keys[PKT_ARRAY_SIZE];
-    struct packet_batch_per_flow batches[PKT_ARRAY_SIZE];//报文在emc处理时将填充在batches中
+    struct netdev_flow_key keys[PKT_ARRAY_SIZE];
+    //最坏的情况下，cnt个包，会被放在cnt个batches中（这里利用batches合并命中同一个flow的batch)
+    //报文在emc处理时将填充在batches中
+    struct packet_batch_per_flow batches[PKT_ARRAY_SIZE];
     long long now = time_msec();
     size_t n_batches;
     odp_port_t in_port;
@@ -4944,10 +4970,10 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
     emc_processing(pmd, packets, keys, batches, &n_batches,
                             md_is_valid, port_no);
     if (!dp_packet_batch_is_empty(packets)) {
-        //l1未命中的
+        //检查发现emc没有完全命中完
         /* Get ingress port from first packet's metadata. */
         in_port = packets->packets[0]->md.in_port.odp_port;
-	//执行l2,l3查询
+	    //执行l2,l3查询
         fast_path_processing(pmd, packets, keys, batches, &n_batches,
                              in_port, now);
     }
@@ -4963,21 +4989,24 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
      * appended to batches[k] of the 1st call to dp_netdev_input__(). */
     size_t i;
     for (i = 0; i < n_batches; i++) {
+    	//在按flow归类报文时为了方便临时用了这个值，为不影响下次结果，将其还原为NULL
         batches[i].flow->batch = NULL;
     }
 
+    //现在一共有n_batches条流被命中，按流执行
     for (i = 0; i < n_batches; i++) {
         packet_batch_per_flow_execute(&batches[i], pmd, now);//统一进行动作处理
     }
 }
 
-//对刚收上来的报进行处理，此时原数据是无效的，传false
+
 static void
 dp_netdev_input(struct dp_netdev_pmd_thread *pmd,
                 struct dp_packet_batch *packets,
                 odp_port_t port_no)
 {
-    dp_netdev_input__(pmd, packets, false, port_no);
+	//对刚收上来的报进行处理，此时原数据是无效的，传false
+	dp_netdev_input__(pmd, packets, false, port_no);
 }
 
 //处理过程中，报文需要回炉重查，此时元数据是有效的，传true

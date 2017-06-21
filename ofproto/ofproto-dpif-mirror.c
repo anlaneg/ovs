@@ -31,7 +31,7 @@ BUILD_ASSERT_DECL(sizeof(mirror_mask_t) * CHAR_BIT >= MAX_MIRRORS);
 
 struct mbridge {
     struct mirror *mirrors[MAX_MIRRORS];
-    struct cmap mbundles;
+    struct cmap mbundles;//按port索引的镜像配置
 
     bool need_revalidate;
     bool has_mirrors;

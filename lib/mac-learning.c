@@ -399,6 +399,7 @@ update_learning_table__(struct mac_learning *ml, struct eth_addr src,
 {
     struct mac_entry *mac;
 
+    //检查是否有必要学习这个mac
     if (!mac_learning_may_learn(ml, src, vlan)) {
         return false;
     }
@@ -421,7 +422,7 @@ update_learning_table__(struct mac_learning *ml, struct eth_addr src,
     }
 
     if (mac_entry_get_port(ml, mac) != in_port) {
-        mac_entry_set_port(ml, mac, in_port);
+        mac_entry_set_port(ml, mac, in_port);//更新out-port
         return true;
     }
     return false;

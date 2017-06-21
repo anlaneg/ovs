@@ -5799,25 +5799,31 @@ commit_odp_tunnel_action(const struct flow *flow, struct flow *base,
     }
 }
 
+//利用此函数完成动作生成
 static bool
 commit(enum ovs_key_attr attr, bool use_masked_set,
        const void *key, void *base, void *mask, size_t size,
        struct ofpbuf *odp_actions)
 {
-    if (memcmp(key, base, size)) {//如果key与base不同
-        bool fully_masked = odp_mask_is_exact(attr, mask, size);//是否全匹配
+    if (memcmp(key, base, size)) {
+    	//如果key与base不同（说明本次动作执行影响到此字段），需要生成动作
+        bool fully_masked = odp_mask_is_exact(attr, mask, size);//是否全匹配（是否全掩码）
 
-        if (use_masked_set && !fully_masked) {//用户设置了mask,且非全匹配
-            commit_masked_set_action(odp_actions, attr, key, mask, size);//填充attr,key,mask,
+        if (use_masked_set && !fully_masked) {//可以使用masked_set,且非全匹配
+        	//生成masked_set类动作
+            commit_masked_set_action(odp_actions, attr, key, mask, size);
         } else {
+        	//dp不支持masked_set,改为全mask
             if (!fully_masked) {
                 memset(mask, 0xff, size);//将mask变更为全ff
             }
+            //全掩码，故直接对attr赋值即可
             commit_set_action(odp_actions, attr, key, size);
         }
         memcpy(base, key, size);//更改base(完成到key的转化）
         return true;
-    } else {//完全相同，没有发生变化，返回false
+    } else {
+    	//完全相同，没有发生变化，返回false，不生成动作
         /* Mask bits are set when we have either read or set the corresponding
          * values.  Masked bits will be exact-matched, no need to set them
          * if the value did not actually change. */
@@ -5847,12 +5853,14 @@ commit_set_ether_addr_action(const struct flow *flow, struct flow *base_flow,
 {
     struct ovs_key_ethernet key, base, mask;
 
+    //取src,dst的mac地址
     get_ethernet_key(flow, &key);//取flow中的
     get_ethernet_key(base_flow, &base);//取base_flow中的
     get_ethernet_key(&wc->masks, &mask);//取wc->masks
 
     if (commit(OVS_KEY_ATTR_ETHERNET, use_masked,
                &key, &base, &mask, sizeof key, odp_actions)) {
+    	//动作生成，完成flow变更
         put_ethernet_key(&base, base_flow);//base_flow变更
         put_ethernet_key(&mask, &wc->masks);//wc->masks变更
     }
@@ -5865,7 +5873,9 @@ commit_ether_action(const struct flow *flow, struct flow *base_flow,
 {
     if (flow->packet_type == htonl(PT_ETH)) {
         if (base_flow->packet_type != htonl(PT_ETH)) {
-            odp_put_push_eth_action(odp_actions, &flow->dl_src, &flow->dl_dst);
+        	//现在是PT_ETH,之前不是PT_ETH
+            odp_put_push_eth_action(odp_actions, &flow->dl_src, &flow->dl_dst);//生成OVS_ACTION_ATTR_PUSH_ETH
+            //修改基准，以便下次再用
             base_flow->packet_type = flow->packet_type;
             base_flow->dl_src = flow->dl_src;
             base_flow->dl_dst = flow->dl_dst;
@@ -6328,6 +6338,7 @@ commit_set_pkt_mark_action(const struct flow *flow, struct flow *base_flow,
  * Returns a reason to force processing the flow's packets into the userspace
  * slow path, if there is one, otherwise 0. */
 //如果base与flow之间有不同，则加入到odp_actions中
+//用于生成规则，且为base上加path,使其变更为flow，方向goto语义继续执行
 enum slow_path_reason
 commit_odp_actions(const struct flow *flow, struct flow *base,
                    struct ofpbuf *odp_actions, struct flow_wildcards *wc,

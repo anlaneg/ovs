@@ -195,7 +195,7 @@ enum reval_result {
 };
 
 struct upcall {
-    struct ofproto_dpif *ofproto;  /* Parent ofproto. */ //对应的交换机操作句柄
+    struct ofproto_dpif *ofproto;  /* Parent ofproto. */ //哪个交换机发起的upcall
     const struct recirc_id_node *recirc; /* Recirculation context. */
     bool have_recirc_ref;                /* Reference held on recirc ctx? */
 
@@ -969,6 +969,7 @@ udpif_revalidator(void *arg)
     return NULL;
 }
 
+//按类型对upcall分类
 static enum upcall_type
 classify_upcall(enum dpif_upcall_type type, const struct nlattr *userdata)
 {
@@ -980,7 +981,7 @@ classify_upcall(enum dpif_upcall_type type, const struct nlattr *userdata)
     case DPIF_UC_ACTION:
         break;
 
-    case DPIF_UC_MISS://缺少流表
+    case DPIF_UC_MISS://l1,l2流表未查到时，走此条
         return MISS_UPCALL;//流缺失
 
     case DPIF_N_UC_TYPES:
@@ -1088,7 +1089,7 @@ upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
 
     upcall->recirc = NULL;
     upcall->have_recirc_ref = false;
-    upcall->flow = flow;
+    upcall->flow = flow;//报文中对应的提取的flow值
     upcall->packet = packet;
     upcall->ufid = ufid;
     upcall->pmd_id = pmd_id;
@@ -1112,6 +1113,7 @@ upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
     return 0;
 }
 
+//流表未命中，执行upcall的转换
 static void
 upcall_xlate(struct udpif *udpif, struct upcall *upcall,
              struct ofpbuf *odp_actions, struct flow_wildcards *wc)
@@ -1234,6 +1236,10 @@ should_install_flow(struct udpif *udpif, struct upcall *upcall)
 }
 
 //设备upcall回调函数入口
+//flow是自报文中解析出来的数据
+//ufid是由报文中解析数据得出的一个hash
+//wc是收集对应的mask
+//action,put_action收集对应的action信息
 static int
 upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufid,
           unsigned pmd_id, enum dpif_upcall_type type,

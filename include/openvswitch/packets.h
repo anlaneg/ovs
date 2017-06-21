@@ -64,8 +64,9 @@ union flow_in_port {
 union flow_vlan_hdr {
     ovs_be32 qtag;
     struct {
+    	//802.1Q标签的帧。TPID包含了一个固定的值0x8100 或者DOT1AD。
         ovs_be16 tpid;  /* ETH_TYPE_VLAN_DOT1Q or ETH_TYPE_DOT1AD */
-        ovs_be16 tci;
+        ovs_be16 tci;//Priority(3bit,0xe000) + Canonical Format Indicator( CFI ) (1 比特,0x1000） + VLAN Identified( VLAN ID ) (12比特）
     };
 };
 

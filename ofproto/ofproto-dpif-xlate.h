@@ -68,7 +68,7 @@ struct xlate_in {
 
     /* Flow to which the OpenFlow actions apply.  xlate_actions() will modify
      * this flow when actions change header fields. */
-    struct flow flow;
+    struct flow flow;//报文信息
 
     /* Pointer to the original flow received during the upcall. xlate_actions()
      * will never modify this flow. */

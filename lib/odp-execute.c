@@ -603,7 +603,7 @@ requires_datapath_assistance(const struct nlattr *a)
     return false;
 }
 
-//ovs动作执行
+//ovs执行openflow生成的动作
 void
 odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
                     const struct nlattr *actions, size_t actions_len,

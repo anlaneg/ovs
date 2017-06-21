@@ -253,7 +253,7 @@ bool flow_equal_except(const struct flow *a, const struct flow *b,
  *
  * map_t must be wide enough to hold any member of struct flow. */
 typedef unsigned long long map_t;
-#define MAP_T_BITS (sizeof(map_t) * CHAR_BIT)
+#define MAP_T_BITS (sizeof(map_t) * CHAR_BIT) //map_t 有多少个比特位
 #define MAP_1 (map_t)1
 #define MAP_MAX TYPE_MAXIMUM(map_t)
 
@@ -263,7 +263,8 @@ typedef unsigned long long map_t;
 #define MAP_FOR_EACH_INDEX(IDX, MAP)            \
     ULLONG_FOR_EACH_1(IDX, MAP)
 
-//sizeof(flow)，每８个字节算一个bit,一共需要占用多少bits,这些bit需要多少个uint64_t来容纳
+//sizeof(flow)，需要FLOW_U64S个uint64_t来存放，
+//我们用一个bit来表示uin64_t大小,则一共需要FLOWMAP_UNITS个map_t来存放这些bitmap.
 #define FLOWMAP_UNITS DIV_ROUND_UP(FLOW_U64S, MAP_T_BITS)
 
 struct flowmap {
@@ -368,19 +369,20 @@ flowmap_are_set(const struct flowmap *fm, size_t idx, unsigned int n_bits)
 
 /* Set the 'n_bits' consecutive bits in 'fm', starting at bit 'idx'.
  * 'n_bits' can be at most MAP_T_BITS. */
-//在idx位置处填充fm为１,填充的位数为n_bits
+//在idx位置开始用1来填充fm中的bit位,填充的位数为n_bits
 static inline void
 flowmap_set(struct flowmap *fm, size_t idx, unsigned int n_bits)
 {
-    map_t n_bits_mask = (MAP_1 << n_bits) - 1;
-    size_t unit = idx / MAP_T_BITS;
+    map_t n_bits_mask = (MAP_1 << n_bits) - 1;//生成n_bits个1
+    size_t unit = idx / MAP_T_BITS;//idx对应到第unit个map_t
 
-    idx %= MAP_T_BITS;
+    idx %= MAP_T_BITS;//对应到第unit的map_t的中idx个位
 
-    fm->bits[unit] |= n_bits_mask << idx;
+    fm->bits[unit] |= n_bits_mask << idx;//填充idx个位到unit
     /* The seemingly unnecessary bounds check on 'unit' is a workaround for a
      * false-positive array out of bounds error by GCC 4.9. */
-    if (unit + 1 < FLOWMAP_UNITS && idx + n_bits > MAP_T_BITS) {//如果刚才的左移，导致部分位丢失，则在下一个字节中设置这些位
+    //如果n_bits过大比如超过MAP_T_BITS,或者idx+n_bits 跨多个MAP_T，则需要向上填充
+    if (unit + 1 < FLOWMAP_UNITS && idx + n_bits > MAP_T_BITS) {
         /* 'MAP_T_BITS - idx' bits were set on 'unit', set the remaining
          * bits from the next unit. */
         fm->bits[unit + 1] |= n_bits_mask >> (MAP_T_BITS - idx);

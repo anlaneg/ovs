@@ -1325,6 +1325,7 @@ bitwise_zero(void *dst_, unsigned int dst_len, unsigned dst_ofs,
  * Required invariant:
  *   dst_ofs + n_bits <= dst_len * 8
  */
+//实现时，将dst指向的起始位置看成是最高位。（所以填充时就会有dst--)
 void
 bitwise_one(void *dst_, unsigned int dst_len, unsigned dst_ofs,
             unsigned int n_bits)

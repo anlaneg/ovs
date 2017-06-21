@@ -699,6 +699,7 @@ netdev_rxq_recv(struct netdev_rxq *rx, struct dp_packet_batch *batch)//自队列
     if (!retval) {
         COVERAGE_INC(netdev_received);
     } else {
+    	//未收到报文
         batch->count = 0;
     }
     return retval;

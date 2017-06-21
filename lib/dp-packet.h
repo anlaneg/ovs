@@ -65,10 +65,10 @@ struct dp_packet {
                                     * Padding is non-pullable. */
     uint16_t l2_5_ofs;             /* MPLS label stack offset, or UINT16_MAX */ //2.5层协议
     uint16_t l3_ofs;               /* Network-level header offset,
-                                    * or UINT16_MAX. */
+                                    * or UINT16_MAX. */ //data到网络层起始的偏移量
     uint16_t l4_ofs;               /* Transport-level header offset,
-                                      or UINT16_MAX. */
-    uint32_t cutlen;               /* length in bytes to cut from the end. */
+                                      or UINT16_MAX. */ //data到传输层起始位置的偏移量
+    uint32_t cutlen;               /* length in bytes to cut from the end. */ //报文要切成多大长度
     ovs_be32 packet_type;          /* Packet type as defined in OpenFlow */
     union {
         struct pkt_metadata md;//剥离隧道时，隧道报文中获取的信息，存放在此
@@ -653,11 +653,12 @@ reset_dp_packet_checksum_ol_flags(struct dp_packet *p)
 enum { NETDEV_MAX_BURST = 32 }; /* Maximum number packets in a batch. */
 
 struct dp_packet_batch {
-    size_t count;
+    size_t count;//指示packets中有多少个报文是有效的
     bool trunc; /* true if the batch needs truncate. */
     struct dp_packet *packets[NETDEV_MAX_BURST];
 };
 
+//batch初始化，默认不trunc,有效报文数为0
 static inline void
 dp_packet_batch_init(struct dp_packet_batch *batch)
 {
@@ -683,6 +684,7 @@ dp_packet_batch_add(struct dp_packet_batch *batch, struct dp_packet *packet)
     dp_packet_batch_add__(batch, packet, NETDEV_MAX_BURST);
 }
 
+//获取这一批次有多少报文
 static inline size_t
 dp_packet_batch_size(const struct dp_packet_batch *batch)
 {
