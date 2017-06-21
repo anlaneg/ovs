@@ -301,7 +301,7 @@ struct dp_netdev {
 
     uint64_t last_tnl_conf_seq;
 
-    struct conntrack conntrack;//提供连接跟踪功能
+    struct conntrack conntrack;//提供连接跟踪功能（每个datapath一个这张表）
 
 };
 
@@ -1194,7 +1194,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     dp->upcall_aux = NULL;
     dp->upcall_cb = NULL;
 
-    conntrack_init(&dp->conntrack);
+    conntrack_init(&dp->conntrack);//连接跟踪初始化
 
     atomic_init(&dp->emc_insert_min, DEFAULT_EM_FLOW_INSERT_MIN);
 
@@ -5334,6 +5334,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                                  nl_attr_get_size(a)) {
             enum ovs_ct_attr sub_type = nl_attr_type(b);
 
+            //必要的几个参数设置，需要查下文档，看下面注释
             switch(sub_type) {
             case OVS_CT_ATTR_FORCE_COMMIT:
                 force = true;
@@ -5357,6 +5358,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 /* Silently ignored, as userspace datapath does not generate
                  * netlink events. */
                 break;
+            //填充nat_action_info结构体
             case OVS_CT_ATTR_NAT: {
                 const struct nlattr *b_nest;
                 unsigned int left_nest;
@@ -5376,28 +5378,28 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                         nat_config = true;
                         nat_action_info.nat_action |=
                             ((sub_type_nest == OVS_NAT_ATTR_SRC)
-                                ? NAT_ACTION_SRC : NAT_ACTION_DST);
+                                ? NAT_ACTION_SRC : NAT_ACTION_DST);//设置做哪种nat
                         break;
                     case OVS_NAT_ATTR_IP_MIN:
                         memcpy(&nat_action_info.min_addr,
                                nl_attr_get(b_nest),
-                               nl_attr_get_size(b_nest));
+                               nl_attr_get_size(b_nest));//设置地址池下限
                         ip_min_specified = true;
                         break;
                     case OVS_NAT_ATTR_IP_MAX:
                         memcpy(&nat_action_info.max_addr,
                                nl_attr_get(b_nest),
-                               nl_attr_get_size(b_nest));
+                               nl_attr_get_size(b_nest));//设置地址池上限
                         ip_max_specified = true;
                         break;
                     case OVS_NAT_ATTR_PROTO_MIN:
                         nat_action_info.min_port =
-                            nl_attr_get_u16(b_nest);
+                            nl_attr_get_u16(b_nest);//设置port下限
                         proto_num_min_specified = true;
                         break;
                     case OVS_NAT_ATTR_PROTO_MAX:
                         nat_action_info.max_port =
-                            nl_attr_get_u16(b_nest);
+                            nl_attr_get_u16(b_nest);//设置port上限
                         proto_num_max_specified = true;
                         break;
                     case OVS_NAT_ATTR_PERSISTENT:
@@ -5416,6 +5418,8 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 if (proto_num_min_specified && !proto_num_max_specified) {
                     nat_action_info.max_port = nat_action_info.min_port;
                 }
+
+                //如果设置了port的上限或下限，则隐含启用了port转换
                 if (proto_num_min_specified || proto_num_max_specified) {
                     if (nat_action_info.nat_action & NAT_ACTION_SRC) {
                         nat_action_info.nat_action |= NAT_ACTION_SRC_PORT;

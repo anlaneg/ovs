@@ -80,10 +80,10 @@ enum nat_action_e {
 };
 
 struct nat_action_info_t {
-    struct ct_addr min_addr;
-    struct ct_addr max_addr;
-    uint16_t min_port;
-    uint16_t max_port;
+    struct ct_addr min_addr;//nat资源池最小地址
+    struct ct_addr max_addr;//nat资源池最大地址
+    uint16_t min_port;//最小port
+    uint16_t max_port;//最大port
     uint16_t nat_action;//nat转换方式
 };
 
@@ -247,7 +247,7 @@ struct conntrack_bucket {
 
 struct conntrack {
     /* Independent buckets containing the connections */
-    struct conntrack_bucket buckets[CONNTRACK_BUCKETS];
+    struct conntrack_bucket buckets[CONNTRACK_BUCKETS];//连接信息表
 
     /* Salt for hashing a connection key. */
     uint32_t hash_basis;
@@ -256,7 +256,7 @@ struct conntrack {
      * tracker */
     pthread_t clean_thread;
     /* Latch to destroy the 'clean_thread' */
-    struct latch clean_thread_exit;
+    struct latch clean_thread_exit;//标记清理线程是否需要退出
 
     /* Number of connections currently in the connection tracker. */
     atomic_count n_conn;//连接数
@@ -266,7 +266,7 @@ struct conntrack {
 
     /* The following resources are referenced during nat connection
      * creation and deletion. */
-    struct hmap nat_conn_keys OVS_GUARDED;
+    struct hmap nat_conn_keys OVS_GUARDED;//含用nat信息的连接，需要在此hash上挂载
     /* This lock is used during NAT connection creation and deletion;
      * it is taken after a bucket lock and given back before that
      * bucket unlock.

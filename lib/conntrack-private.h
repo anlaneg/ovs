@@ -70,7 +70,7 @@ struct conn {
     struct hmap_node node;//挂connect链
     ovs_u128 label;
     /* XXX: consider flattening. */
-    struct nat_action_info_t *nat_info;
+    struct nat_action_info_t *nat_info;//nat分配信息
     uint32_t mark;
     uint8_t conn_type;
 };
@@ -83,7 +83,7 @@ enum ct_update_res {
 
 enum ct_conn_type {
     CT_CONN_TYPE_DEFAULT,
-    CT_CONN_TYPE_UN_NAT,
+    CT_CONN_TYPE_UN_NAT,//有nat资源的连接
 };
 
 struct ct_l4_proto {

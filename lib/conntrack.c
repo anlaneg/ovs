@@ -153,6 +153,7 @@ conntrack_init(struct conntrack *ct)
     atomic_count_init(&ct->n_conn, 0);
     atomic_init(&ct->n_conn_limit, DEFAULT_N_CONN_LIMIT);
     latch_init(&ct->clean_thread_exit);
+    //连接跟踪的老化处理线程
     ct->clean_thread = ovs_thread_create("ct_clean", clean_thread_main, ct);
 }
 
@@ -249,6 +250,7 @@ pat_packet(struct dp_packet *pkt, const struct conn *conn)
     if (conn->nat_info->nat_action & NAT_ACTION_SRC) {
         if (conn->key.nw_proto == IPPROTO_TCP) {
             struct tcp_header *th = dp_packet_l4(pkt);
+            //做tcp  src port转换
             packet_set_tcp_port(pkt, conn->rev_key.dst.port, th->tcp_dst);
         } else if (conn->key.nw_proto == IPPROTO_UDP) {
             struct udp_header *uh = dp_packet_l4(pkt);
@@ -269,9 +271,10 @@ static void
 nat_packet(struct dp_packet *pkt, const struct conn *conn, bool related)
 {
     if (conn->nat_info->nat_action & NAT_ACTION_SRC) {
-        pkt->md.ct_state |= CS_SRC_NAT;
+        pkt->md.ct_state |= CS_SRC_NAT;//标记做src nat
         if (conn->key.dl_type == htons(ETH_TYPE_IP)) {
             struct ip_header *nh = dp_packet_l3(pkt);
+            //修改源ip
             packet_set_ipv4_addr(pkt, &nh->ip_src,
                                  conn->rev_key.dst.addr.ipv4_aligned);
         } else {
@@ -288,6 +291,7 @@ nat_packet(struct dp_packet *pkt, const struct conn *conn, bool related)
         pkt->md.ct_state |= CS_DST_NAT;
         if (conn->key.dl_type == htons(ETH_TYPE_IP)) {
             struct ip_header *nh = dp_packet_l3(pkt);
+            //修改目的ip
             packet_set_ipv4_addr(pkt, &nh->ip_dst,
                                  conn->rev_key.src.addr.ipv4_aligned);
         } else {
@@ -498,6 +502,7 @@ nat_clean(struct conntrack *ct, struct conn *conn,
 
     /* In the unlikely event, rev conn was recreated, then skip
      * rev_conn cleanup. */
+    //如果反向的没有被删除，则将其删除
     if (rev_conn && (!nat_conn_key_node ||
                      memcmp(&nat_conn_key_node->value, &rev_conn->rev_key,
                             sizeof nat_conn_key_node->value))) {
@@ -518,7 +523,7 @@ conn_clean(struct conntrack *ct, struct conn *conn,
            struct conntrack_bucket *ctb)
     OVS_REQUIRES(ctb->lock)
 {
-	//将conn自冲突链中摘除
+	//将conn自过期链中摘除
     ovs_list_remove(&conn->exp_node);
     hmap_remove(&ctb->connections, &conn->node);
     atomic_count_dec(&ct->n_conn);
@@ -571,10 +576,12 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
             nc->nat_info = xmemdup(nat_action_info, sizeof *nc->nat_info);
             ct_rwlock_wrlock(&ct->nat_resources_lock);
 
+            //分配nat资源
             bool nat_res = nat_select_range_tuple(ct, nc,
                                                   conn_for_un_nat_copy);
 
             if (!nat_res) {
+            	//nat分配失败处理
                 free(nc->nat_info);
                 nc->nat_info = NULL;
                 free (nc);
@@ -586,10 +593,11 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
                 nc->conn_type == CT_CONN_TYPE_DEFAULT) {
                 *nc = *conn_for_un_nat_copy;
                 conn_for_un_nat_copy->conn_type = CT_CONN_TYPE_UN_NAT;
-                conn_for_un_nat_copy->nat_info = NULL;
+                conn_for_un_nat_copy->nat_info = NULL;//这里没有memory leak吗？
             }
             ct_rwlock_unlock(&ct->nat_resources_lock);
 
+            //应用nat,修改报文
             nat_packet(pkt, nc, ctx->related);
         }
 
@@ -646,6 +654,7 @@ create_un_nat_conn(struct conntrack *ct, struct conn *conn_for_un_nat_copy,
                    long long now)
 {
     struct conn *nc = xmemdup(conn_for_un_nat_copy, sizeof *nc);
+    //生成反向连接
     nc->key = conn_for_un_nat_copy->rev_key;
     nc->rev_key = conn_for_un_nat_copy->key;
     uint32_t un_nat_hash = conn_key_hash(&nc->key, ct->hash_basis);
@@ -661,9 +670,11 @@ create_un_nat_conn(struct conntrack *ct, struct conn *conn_for_un_nat_copy,
         && !memcmp(&nat_conn_key_node->value, &nc->rev_key,
                    sizeof nat_conn_key_node->value)
         && !rev_conn) {
+    	//反向连接不存在，则将其插入
         hmap_insert(&ct->buckets[un_nat_conn_bucket].connections,
                     &nc->node, un_nat_hash);
     } else {
+    	//已存在，不必插入，直接释放掉待插入的nc即可
         free(nc);
     }
     ct_rwlock_unlock(&ct->nat_resources_lock);
@@ -684,6 +695,7 @@ handle_nat(struct dp_packet *pkt, struct conn *conn,
         if (reply) {
             un_nat_packet(pkt, conn, related);
         } else {
+        	//报文修改，当related为True时，不修改port
             nat_packet(pkt, conn, related);
         }
     }
@@ -774,6 +786,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     }
 
     if (OVS_LIKELY(conn)) {
+    	//连接已存在，检查链接是否为nat链接
         if (conn->conn_type == CT_CONN_TYPE_UN_NAT) {
 
             ctx->reply = true;
@@ -790,9 +803,9 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             conn_key_lookup(&ct->buckets[bucket], &ctx2, now);//找到此流对应反向的连接
 
             if (ctx2.conn) {
-                conn = ctx2.conn;
+                conn = ctx2.conn;//将连接改为反向conn(即做nat后的连接）
             } else {
-            	//没有找到
+            	//没有找到，只有一半的链接，按流程，此时是有conn过期导致已删除掉半（解锁等删除即可）
                 /* It is a race condition where conn has timed out and removed
                  * between unlock of the rev_conn and lock of the forward conn;
                  * nothing to do. */
@@ -813,7 +826,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             handle_nat(pkt, conn, zone, ctx->reply, ctx->related);
         }
     } else if (check_orig_tuple(ct, pkt, ctx, now, &bucket, &conn,
-                                nat_action_info)) {
+                                nat_action_info)) {//利用matadata里的信息查询
         create_new_conn = conn_update_state(ct, pkt, ctx, &conn, now, bucket);
     } else {
         if (ctx->related) {
@@ -829,6 +842,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
                               &conn_for_un_nat_copy);
     }
 
+    //设置连接跟踪相关的matadata
     write_ct_md(pkt, zone, conn, &ctx->key);
     if (conn && setmark) {
         set_mark(pkt, conn, setmark[0], setmark[1]);
@@ -841,6 +855,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     ct_lock_unlock(&ct->buckets[bucket].lock);
 
     if (conn_for_un_nat_copy.conn_type == CT_CONN_TYPE_UN_NAT) {
+    	//生成nat信息
         create_un_nat_conn(ct, &conn_for_un_nat_copy, now);
     }
 }
@@ -867,6 +882,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
     struct conn_lookup_ctx ctx;
 
     if (helper) {
+    	//当前helper没有使能
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
 
         VLOG_WARN_RL(&rl, "ALG helper \"%s\" not supported", helper);
@@ -927,12 +943,15 @@ sweep_bucket(struct conntrack *ct, struct conntrack_bucket *ctb, long long now,
     unsigned i;
     size_t count = 0;
 
+    //遍历所有过期链
     for (i = 0; i < N_CT_TM; i++) {
         LIST_FOR_EACH_SAFE (conn, next, exp_node, &ctb->exp_lists[i]) {
             if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
+            	//如果过期，就conn_clean,如果没有过期，就得出最小的过期时间
                 if (!conn_expired(conn, now) || count >= limit) {
                     min_expiration = MIN(min_expiration, conn->expiration);
                     if (count >= limit) {
+                    	//移除超过我们的工作限制，退出
                         /* Do not check other lists. */
                         COVERAGE_INC(conntrack_long_cleanup);
                         return min_expiration;
@@ -978,6 +997,7 @@ conntrack_clean(struct conntrack *ct, long long now)
          * limit to 10% of the global limit equally split among buckets. If
          * the bucket is busier than the others, we limit to 10% of its
          * current size. */
+        //清理一定量的过期connect
         min_exp = sweep_bucket(ct, ctb, now,
                 MAX(prev_count/10, n_conn_limit/(CONNTRACK_BUCKETS*10)));
         clean_count += prev_count - hmap_count(&ctb->connections);
@@ -1034,7 +1054,7 @@ clean_thread_main(void *f_)
         long long next_wake;
         long long now = time_msec();
 
-        next_wake = conntrack_clean(ct, now);
+        next_wake = conntrack_clean(ct, now);//清理
 
         if (next_wake < now) {
             poll_timer_wait_until(now + CT_CLEAN_MIN_INTERVAL);
@@ -1042,7 +1062,7 @@ clean_thread_main(void *f_)
             poll_timer_wait_until(MAX(next_wake, now + CT_CLEAN_INTERVAL));
         }
         latch_wait(&ct->clean_thread_exit);
-        poll_block();
+        poll_block();//等待事件发生或定时器到期
     }
 
     return NULL;
@@ -1689,6 +1709,7 @@ nat_range_hash(const struct conn *conn, uint32_t basis)
     return hash_finish(hash, 0);
 }
 
+//分配nat资源（这个算法必须得改，这个分配太慢了，nat资源应有自已的表，而不是依附于conn表来做查询)
 static bool
 nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
                        struct conn *nat_conn)
@@ -1771,7 +1792,7 @@ nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
             (conn->key.nw_proto == IPPROTO_ICMPV6)) {
             all_ports_tried = true;
         } else if (conn->nat_info->nat_action & NAT_ACTION_SRC) {
-        	//由于NAT_ACTION_SRC_PORT标记已被处理
+        	//由于NAT_ACTION_SRC_PORT标记已被处理，故不必要检查
             nat_conn->rev_key.dst.port = htons(port);
         } else {
             nat_conn->rev_key.src.port = htons(port);
@@ -1783,6 +1804,7 @@ nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
                                  ct->hash_basis);
 
         if (!nat_conn_key_node) {
+        	//没有人和我们冲突，故此nat地址可用
             struct nat_conn_key_node *nat_conn_key =
                 xzalloc(sizeof *nat_conn_key);
             nat_conn_key->key = nat_conn->rev_key;
@@ -1801,19 +1823,24 @@ nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
                 port++;
             }
             if (port == first_port) {
+            	//所有port已尝试了一遍
                 all_ports_tried = true;
             }
         } else {
+        	//检查是否到达max_ct_addr
             if (memcmp(&ct_addr, &max_ct_addr, sizeof ct_addr)) {
                 if (conn->key.dl_type == htons(ETH_TYPE_IP)) {
                     ct_addr.ipv4_aligned = htonl(
-                        ntohl(ct_addr.ipv4_aligned) + 1);
+                        ntohl(ct_addr.ipv4_aligned) + 1);//ip地址加1
                 } else {
                     nat_ipv6_addr_increment(&ct_addr.ipv6_aligned, 1);
                 }
             } else {
+            	//到达max_ct_addr，使用min_addr
                 ct_addr = conn->nat_info->min_addr;
             }
+
+            //检查ct_addr是否已完成min_addr到max_addr的遍历
             if (!memcmp(&ct_addr, &first_addr, sizeof ct_addr)) {
                 if (!original_ports_tried) {
                     original_ports_tried = true;
@@ -1824,6 +1851,7 @@ nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
                     break;
                 }
             }
+
             first_port = min_port;
             port = first_port;
             all_ports_tried = false;
