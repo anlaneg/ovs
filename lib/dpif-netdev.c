@@ -5442,6 +5442,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             VLOG_WARN_RL(&rl, "NAT specified without commit.");
         }
 
+        //连接跟踪执行
         conntrack_execute(&dp->conntrack, packets_, aux->flow->dl_type, force,
                           commit, zone, setmark, setlabel, helper,
                           nat_action_info_ref);
