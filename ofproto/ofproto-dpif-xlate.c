@@ -3288,7 +3288,7 @@ build_tunnel_send(struct xlate_ctx *ctx, const struct xport *xport,
     return 0;
 }
 
-//填充所有动作序列,修改ctx->odp_actions
+//针对base_flow与flow生成动作序列,修改ctx->odp_actions
 static void
 xlate_commit_actions(struct xlate_ctx *ctx)
 {
@@ -5388,6 +5388,7 @@ put_ct_label(const struct flow *flow, struct ofpbuf *odp_actions,
     }
 }
 
+//存入alg helper
 static void
 put_ct_helper(struct xlate_ctx *ctx,
               struct ofpbuf *odp_actions, struct ofpact_conntrack *ofc)
@@ -5407,6 +5408,7 @@ put_ct_helper(struct xlate_ctx *ctx,
     }
 }
 
+//处理nat action
 static void
 put_ct_nat(struct xlate_ctx *ctx)
 {
@@ -5481,6 +5483,8 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc)
     ctx->ct_nat_action = NULL;
     ctx->wc->masks.ct_mark = 0;
     ctx->wc->masks.ct_label.u64.hi = ctx->wc->masks.ct_label.u64.lo = 0;
+
+    //处理连接跟踪的子action
     do_xlate_actions(ofc->actions, ofpact_ct_get_action_len(ofc), ctx);
 
     if (ofc->zone_src.field) {
@@ -5498,17 +5502,19 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc)
                            OVS_CT_EVENTMASK_DEFAULT);
         }
     }
+
     //存入zone,mark,label,helper动作参数
     nl_msg_put_u16(ctx->odp_actions, OVS_CT_ATTR_ZONE, zone);
     put_ct_mark(&ctx->xin->flow, ctx->odp_actions, ctx->wc);
     put_ct_label(&ctx->xin->flow, ctx->odp_actions, ctx->wc);
     put_ct_helper(ctx, ctx->odp_actions, ofc);
-    put_ct_nat(ctx);
+    put_ct_nat(ctx);//生成nat动作
     ctx->ct_nat_action = NULL;
     nl_msg_end_nested(ctx->odp_actions, ct_offset);
 
     /* Restore the original ct fields in the key. These should only be exposed
      * after recirculation to another table. */
+    //还原旧的信息，防止后面还有动作
     ctx->base_flow.ct_mark = old_ct_mark;
     ctx->wc->masks.ct_mark = old_ct_mark_mask;
     ctx->base_flow.ct_label = old_ct_label;
@@ -6050,6 +6056,7 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
 
         case OFPACT_NAT:
             /* This will be processed by compose_conntrack_action(). */
+        	//记录nat_action信息（会由CT进行处理）
             ctx->ct_nat_action = ofpact_get_NAT(a);
             break;
 
@@ -6610,7 +6617,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
              * packet, so cancel all actions and freezing if forwarding is
              * disabled. */
             if (in_port && (!xport_stp_forward_state(in_port) ||
-                            !xport_rstp_forward_state(in_port))) {//有入接口，且入接口可转发
+                            !xport_rstp_forward_state(in_port))) {
+            	//有入接口，且入接口可转发
                 ctx.odp_actions->size = sample_actions_len;
                 ctx_cancel_freeze(&ctx);
                 ofpbuf_clear(&ctx.action_set);
@@ -6628,7 +6636,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         if (!ctx.freezing
             && xbridge->has_in_band
             && in_band_must_output_to_local_port(flow)
-            && !actions_output_to_local_port(&ctx)) {//针对dpcp报文进行处理
+            && !actions_output_to_local_port(&ctx)) {
+        	//针对dpcp报文进行处理
             compose_output_action(&ctx, OFPP_LOCAL, NULL);//输出到本地端口
         }
 
