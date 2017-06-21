@@ -860,7 +860,7 @@ netdev_push_header(const struct netdev *netdev,
         //封装隧道头到报文中
         netdev->netdev_class->push_header(packet, data);
         //改入接口
-        pkt_metadata_init(&packet->md, u32_to_odp(data->out_port));
+        pkt_metadata_init(&packet->md, data->out_port);
     }
 
     return 0;

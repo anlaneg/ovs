@@ -714,11 +714,11 @@ struct ovs_action_hash {
  * this header to build final header according to actual packet parameters.
  */
 struct ovs_action_push_tnl {
-	uint32_t tnl_port;//查找tnl-port时使用，此port负责封装隧道（tunnel口编号）
-	uint32_t out_port;//路由指出的出接口
+	odp_port_t tnl_port;//查找tnl-port时使用，此port负责封装隧道（tunnel口编号）
+	odp_port_t out_port;//路由指出的出接口
 	uint32_t header_len;//存放在header缓冲区内的数据长度
-	uint32_t tnl_type;     /* For logging. */ //tunnel的类型，看enum ovs_vport_type
-	uint8_t  header[TNL_PUSH_HEADER_SIZE / 4];//存放构造好的tunnel头（ethhdr,iphdr,...)
+	uint32_t tnl_type;     /* For logging. *///tunnel的类型，看enum ovs_vport_type
+	uint32_t header[TNL_PUSH_HEADER_SIZE / 4];//存放构造好的tunnel头（ethhdr,iphdr,...)
 };
 #endif
 
