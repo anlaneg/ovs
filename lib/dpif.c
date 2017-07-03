@@ -102,6 +102,15 @@ static bool should_log_flow_message(const struct vlog_module *module,
 /* Incremented whenever tnl route, arp, etc changes. */
 struct seq *tnl_conf_seq;
 
+static bool
+dpif_is_internal_port(const char *type)
+{
+    /* For userspace datapath, tap devices are the equivalent
+     * of internal devices in the kernel datapath, so both
+     * these types are 'internal' devices. */
+    return !strcmp(type, "internal") || !strcmp(type, "tap");
+}
+
 //注册dpif_class,初始化tunnel需要的邻居表项，路由表项
 static void
 dp_initialize(void)
@@ -367,7 +376,7 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
             struct netdev *netdev;
             int err;
 
-            if (!strcmp(dpif_port.type, "internal")) {
+            if (dpif_is_internal_port(dpif_port.type)) {
                 continue;
             }
 
@@ -580,7 +589,8 @@ dpif_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
         VLOG_DBG_RL(&dpmsg_rl, "%s: added %s as port %"PRIu32,
                     dpif_name(dpif), netdev_name, port_no);
 
-        if (strcmp(netdev_get_type(netdev), "internal")) {
+        if (!dpif_is_internal_port(netdev_get_type(netdev))) {
+
             struct dpif_port dpif_port;
 
             dpif_port.type = CONST_CAST(char *, netdev_get_type(netdev));
@@ -1742,7 +1752,7 @@ log_flow_message(const struct dpif *dpif, int error,
     }
     if (actions || actions_len) {
         ds_put_cstr(&ds, ", actions:");
-        format_odp_actions(&ds, actions, actions_len);
+        format_odp_actions(&ds, actions, actions_len, NULL);
     }
     vlog(module, flow_message_log_level(error), "%s", ds_cstr(&ds));
     ds_destroy(&ds);
@@ -1830,7 +1840,7 @@ log_execute_message(const struct dpif *dpif,
                       (subexecute ? "sub-"
                        : dpif_execute_needs_help(execute) ? "super-"
                        : ""));
-        format_odp_actions(&ds, execute->actions, execute->actions_len);
+        format_odp_actions(&ds, execute->actions, execute->actions_len, NULL);
         if (error) {
             ds_put_format(&ds, " failed (%s)", ovs_strerror(error));
         }

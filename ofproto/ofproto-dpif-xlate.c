@@ -167,7 +167,7 @@ struct xport {
 
     bool may_enable;                 /* May be enabled in bonds. */ //用于指明是否在bonds中启用
     bool is_tunnel;                  /* Is a tunnel port. */ //指明是tunnel口
-    bool is_layer3;                  /* Is a layer 3 port. */
+    enum netdev_pt_mode pt_mode;     /* packet_type handling. */
 
     struct cfm *cfm;                 /* CFM handle or null. */ //802.1ag协议
     struct bfd *bfd;                 /* BFD handle or null. */ //双向转发侦测
@@ -913,7 +913,7 @@ xlate_xport_set(struct xport *xport, odp_port_t odp_port,
     xport->state = state;
     xport->stp_port_no = stp_port_no;
     xport->is_tunnel = is_tunnel;
-    xport->is_layer3 = netdev_vport_is_layer3(netdev);
+    xport->pt_mode = netdev_get_pt_mode(netdev);
     xport->may_enable = may_enable;
     xport->odp_port = odp_port;
 
@@ -2736,7 +2736,10 @@ xlate_normal(struct xlate_ctx *ctx)
 
     /* Learn source MAC. */
     bool is_grat_arp = is_gratuitous_arp(flow, wc);
-    if (ctx->xin->allow_side_effects && !in_port->is_layer3) {
+    if (ctx->xin->allow_side_effects
+        && flow->packet_type == htonl(PT_ETH)
+        && in_port->pt_mode != NETDEV_PT_LEGACY_L3
+    ) {
     	//fdb表学习,仅在二层口时启用fdb学习
         update_learning_table(ctx, in_xbundle, flow->dl_src, vlan,
                               is_grat_arp);
@@ -3420,15 +3423,19 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         return;
     }
 
-    if (flow->packet_type == htonl(PT_ETH) && xport->is_layer3) {
-        /* Ethernet packet to L3 outport -> pop ethernet header. */
-        flow->packet_type = PACKET_TYPE_BE(OFPHTN_ETHERTYPE,
-                                           ntohs(flow->dl_type));
-    } else if (flow->packet_type != htonl(PT_ETH) && !xport->is_layer3) {
-        /* L2 outport and non-ethernet packet_type -> add dummy eth header. */
-        flow->packet_type = htonl(PT_ETH);
-        flow->dl_dst = eth_addr_zero;
-        flow->dl_src = eth_addr_zero;
+    if (flow->packet_type == htonl(PT_ETH)) {
+        /* Strip Ethernet header for legacy L3 port. */
+        if (xport->pt_mode == NETDEV_PT_LEGACY_L3) {
+            flow->packet_type = PACKET_TYPE_BE(OFPHTN_ETHERTYPE,
+                                               ntohs(flow->dl_type));
+        }
+    } else {
+        /* Add dummy Ethernet header for legacy L2 port. */
+        if (xport->pt_mode == NETDEV_PT_LEGACY_L2) {
+            flow->packet_type = htonl(PT_ETH);
+            flow->dl_dst = eth_addr_zero;
+            flow->dl_src = eth_addr_zero;
+        }
     }
 
     //报文可以正常转发
@@ -4336,11 +4343,6 @@ execute_controller_action(struct xlate_ctx *ctx, int len,
     if (!xlate_execute_odp_actions(packet, ctx->odp_actions->data,
                                   ctx->odp_actions->size)) {
         xlate_report_error(ctx, "Failed to execute controller action");
-        dp_packet_delete(packet);
-        return;
-    }
-
-    if (packet->packet_type != htonl(PT_ETH)) {
         dp_packet_delete(packet);
         return;
     }
@@ -6258,8 +6260,11 @@ xlate_wc_init(struct xlate_ctx *ctx)
     flow_wildcards_init_catchall(ctx->wc);
 
     /* Some fields we consider to always be examined. */
-    WC_MASK_FIELD(ctx->wc, in_port);//标记in_port存在
-    WC_MASK_FIELD(ctx->wc, dl_type);//标记链路层类型
+    WC_MASK_FIELD(ctx->wc, packet_type);//标记in_port存在
+    WC_MASK_FIELD(ctx->wc, in_port);//标记链路层类型
+    if (is_ethernet(&ctx->xin->flow, NULL)) {
+        WC_MASK_FIELD(ctx->wc, dl_type);
+    }
     if (is_ip_any(&ctx->xin->flow)) {
         WC_MASK_FIELD_MASK(ctx->wc, nw_frag, FLOW_NW_FRAG_MASK);//设置分片处理标记
     }
@@ -6291,6 +6296,7 @@ xlate_wc_finish(struct xlate_ctx *ctx)
     if (ctx->xin->upcall_flow->packet_type != htonl(PT_ETH)) {
         ctx->wc->masks.dl_dst = eth_addr_zero;
         ctx->wc->masks.dl_src = eth_addr_zero;
+        ctx->wc->masks.dl_type = 0;
     }
 
     /* ICMPv4 and ICMPv6 have 8-bit "type" and "code" fields.  struct flow
@@ -6524,8 +6530,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     struct xport *in_port = get_ofp_port(xbridge,
                                          ctx.base_flow.in_port.ofp_port);
 
-    if (flow->packet_type != htonl(PT_ETH) && in_port && in_port->is_layer3 &&
-        ctx.table_id == 0) {
+    if (flow->packet_type != htonl(PT_ETH) && in_port &&
+        in_port->pt_mode == NETDEV_PT_LEGACY_L3 && ctx.table_id == 0) {
         /* Add dummy Ethernet header to non-L2 packet if it's coming from a
          * L3 port. So all packets will be L2 packets for lookup.
          * The dl_type has already been set from the packet_type. */

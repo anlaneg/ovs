@@ -3326,6 +3326,7 @@ unlock:
     GET_STATS,                                                \
     GET_FEATURES,                                             \
     NULL,                       /* set_advertisements */      \
+    NULL,                       /* get_pt_mode */             \
                                                               \
     netdev_dpdk_set_policing,                                 \
     netdev_dpdk_get_qos_types,                                \
