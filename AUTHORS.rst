@@ -81,6 +81,7 @@ Christoph Jaeger                cj@linux.com
 Chris Wright                    chrisw@sous-sol.org
 Chuck Short                     zulcss@ubuntu.com
 Ciara Loftus                    ciara.loftus@intel.com
+Clint Byrum                     clint@fewbar.com
 Cong Wang                       amwang@redhat.com
 Conner Herriges                 conner.herriges@ibm.com
 Damien Millescamps              damien.millescamps@6wind.com
@@ -158,6 +159,7 @@ Jan Scheurich                   jan.scheurich@ericsson.com
 Jan Vansteenkiste               jan@vstone.eu
 Jarno Rajahalme                 jarno@ovn.org
 Jason Kölker                    jason@koelker.net
+Jason Wessel                    jason.wessel@windriver.com
 Jasper Capel                    jasper@capel.tv
 Jean Tourrilhes                 jt@hpl.hp.com
 Jeremy Stribling                strib@nicira.com
@@ -333,6 +335,8 @@ Zongkai LI                      zealokii@gmail.com
 Zhi Yong Wu                     zwu.kernel@gmail.com
 Zang MingJie                    zealot0630@gmail.com
 Zhenyu Gao                      sysugaozhenyu@gmail.com
+ZhiPeng Lu                      lu.zhipeng@zte.com.cn
+Zhou Yangchao                   1028519445@qq.com
 nickcooper-zhangtonghao         nickcooper-zhangtonghao@opencloud.tech
 wenxu                           wenxu@ucloud.cn
 wisd0me                         ak47izatool@gmail.com
@@ -340,6 +344,8 @@ xushengping                     shengping.xu@huawei.com
 yinpeijun                       yinpeijun@huawei.com
 zangchuanqiang                  zangchuanqiang@huawei.com
 zhaojingjing                    zhao.jingjing1@zte.com.cn
+zhongbaisong                    zhongbaisong@huawei.com
+zhaozhanxu                      zhaozhanxu@163.com
 =============================== ===============================================
 
 The following additional people are mentioned in commit logs as having

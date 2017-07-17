@@ -9208,6 +9208,7 @@ ofputil_pull_ofp11_buckets(struct ofpbuf *msg, size_t buckets_length,
         if (error) {
             ofpbuf_uninit(&ofpacts);
             ofputil_bucket_list_destroy(buckets);
+            free(bucket);
             return OFPERR_OFPGMFC_BAD_WATCH;
         }
         bucket->watch_group = ntohl(ob->watch_group);
@@ -9777,6 +9778,7 @@ ofputil_encode_group_mod(enum ofp_version ofp_version,
     switch (ofp_version) {
     case OFP10_VERSION:
         bad_group_cmd(gm->command);
+        /* fall through */
 
     case OFP11_VERSION:
     case OFP12_VERSION:
@@ -9869,6 +9871,9 @@ ofputil_pull_ofp15_group_mod(struct ofpbuf *msg, enum ofp_version ofp_version,
     }
 
     bucket_list_len = ntohs(ogm->bucket_array_len);
+    if (bucket_list_len > msg->size) {
+        return OFPERR_OFPBRC_BAD_LEN;
+    }
     error = ofputil_pull_ofp15_buckets(msg, bucket_list_len, ofp_version,
                                        gm->type, &gm->buckets);
     if (error) {
@@ -11044,15 +11049,21 @@ ofputil_async_cfg_default(enum ofp_version version)
         pin |= 1u << OFPR_IMPLICIT_MISS;
     }
 
-    return (struct ofputil_async_cfg) {
+    struct ofputil_async_cfg oac = {
         .master[OAM_PACKET_IN] = pin,
-
-        .master[OAM_FLOW_REMOVED]
-            = (version >= OFP14_VERSION ? OFPRR14_BITS : OFPRR10_BITS),
-
         .master[OAM_PORT_STATUS] = OFPPR_BITS,
-        .slave[OAM_PORT_STATUS] = OFPPR_BITS,
+        .slave[OAM_PORT_STATUS] = OFPPR_BITS
     };
+
+    if (version >= OFP14_VERSION) {
+        oac.master[OAM_FLOW_REMOVED] = OFPRR14_BITS;
+    } else if (version == OFP13_VERSION) {
+        oac.master[OAM_FLOW_REMOVED] = OFPRR13_BITS;
+    } else {
+        oac.master[OAM_FLOW_REMOVED] = OFPRR10_BITS;
+    }
+
+    return oac;
 }
 
 static void

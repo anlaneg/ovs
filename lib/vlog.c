@@ -360,7 +360,7 @@ vlog_set_log_file(const char *file_name)
     new_log_file_name = (file_name
                          ? xstrdup(file_name)
                          : xasprintf("%s/%s.log", ovs_logdir(), program_name));
-    new_log_fd = open(new_log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0666);
+    new_log_fd = open(new_log_file_name, O_WRONLY | O_CREAT | O_APPEND, 0660);
     if (new_log_fd < 0) {
         VLOG_WARN("failed to open %s for logging: %s",
                   new_log_file_name, ovs_strerror(errno));
@@ -631,6 +631,10 @@ vlog_unixctl_set(struct unixctl_conn *conn, int argc, const char *argv[],
 {
     int i;
 
+    /* With no argument, set all destinations and modules to "dbg". */
+    if (argc == 1) {
+        vlog_set_levels(NULL, VLF_ANY_DESTINATION, VLL_DBG);
+    }
     for (i = 1; i < argc; i++) {
         char *msg = vlog_set_levels_from_string(argv[i]);
         if (msg) {
@@ -791,7 +795,7 @@ vlog_init(void)
 
         unixctl_command_register(
             "vlog/set", "{spec | PATTERN:destination:pattern}",
-            1, INT_MAX, vlog_unixctl_set, NULL);
+            0, INT_MAX, vlog_unixctl_set, NULL);
         unixctl_command_register("vlog/list", "", 0, 0, vlog_unixctl_list,
                                  NULL);
         unixctl_command_register("vlog/list-pattern", "", 0, 0,

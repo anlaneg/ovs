@@ -52,6 +52,7 @@ static struct ovs_list addr_list;//记录所有有ip地址的设备（类型ip_d
 
 struct tnl_port {
     odp_port_t port;
+    struct ovs_refcount ref_cnt;
     ovs_be16 tp_port;
     uint8_t nw_proto;
     char dev_name[IFNAMSIZ];
@@ -203,7 +204,8 @@ tnl_port_map_insert(odp_port_t port, ovs_be16 tp_port,
     ovs_mutex_lock(&mutex);
     LIST_FOR_EACH(p, node, &port_list) {
         if (tp_port == p->tp_port && p->nw_proto == nw_proto) {//已找到
-             goto out;
+            ovs_refcount_ref(&p->ref_cnt);
+            goto out;
         }
     }
 
@@ -212,6 +214,7 @@ tnl_port_map_insert(odp_port_t port, ovs_be16 tp_port,
     p->tp_port = tp_port;
     p->nw_proto = nw_proto;
     ovs_strlcpy(p->dev_name, dev_name, sizeof p->dev_name);
+    ovs_refcount_init(&p->ref_cnt);
     ovs_list_insert(&port_list, &p->node);//指明此端口占用了某协议此指定端口
 
     //此设备可能发出隧道报文
@@ -266,29 +269,22 @@ tnl_port_map_delete(ovs_be16 tp_port, const char type[])
 {
     struct tnl_port *p, *next;
     struct ip_device *ip_dev;
-    bool found = false;
     uint8_t nw_proto;
 
     nw_proto = tnl_type_to_nw_proto(type);
 
     ovs_mutex_lock(&mutex);
     LIST_FOR_EACH_SAFE(p, next, node, &port_list) {
-        if (p->tp_port == tp_port && p->nw_proto == nw_proto) {
+        if (p->tp_port == tp_port && p->nw_proto == nw_proto &&
+                    ovs_refcount_unref_relaxed(&p->ref_cnt) == 1) {
             ovs_list_remove(&p->node);
-            found = true;
+            LIST_FOR_EACH(ip_dev, node, &addr_list) {
+                ipdev_map_delete(ip_dev, p->tp_port, p->nw_proto);
+            }
+            free(p);
             break;
         }
     }
-
-    if (!found) {
-        goto out;
-    }
-    LIST_FOR_EACH(ip_dev, node, &addr_list) {
-        ipdev_map_delete(ip_dev, p->tp_port, p->nw_proto);
-    }
-
-    free(p);
-out:
     ovs_mutex_unlock(&mutex);
 }
 

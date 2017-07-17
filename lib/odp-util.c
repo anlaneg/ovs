@@ -4498,8 +4498,9 @@ odp_flow_key_from_flow__(const struct odp_flow_key_parms *parms,
         nl_msg_put_unspec(buf, OVS_KEY_ATTR_CT_LABELS, &data->ct_label,
                           sizeof(data->ct_label));
     }
-    if (parms->support.ct_orig_tuple && flow->ct_nw_proto) {
-        if (flow->dl_type == htons(ETH_TYPE_IP)) {
+    if (flow->ct_nw_proto) {
+        if (parms->support.ct_orig_tuple
+            && flow->dl_type == htons(ETH_TYPE_IP)) {
             struct ovs_key_ct_tuple_ipv4 ct = {
                 data->ct_nw_src,
                 data->ct_nw_dst,
@@ -4509,7 +4510,8 @@ odp_flow_key_from_flow__(const struct odp_flow_key_parms *parms,
             };
             nl_msg_put_unspec(buf, OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV4, &ct,
                               sizeof ct);
-        } else if (flow->dl_type == htons(ETH_TYPE_IPV6)) {
+        } else if (parms->support.ct_orig_tuple6
+                   && flow->dl_type == htons(ETH_TYPE_IPV6)) {
             struct ovs_key_ct_tuple_ipv6 ct = {
                 data->ct_ipv6_src,
                 data->ct_ipv6_dst,
@@ -5363,7 +5365,8 @@ parse_8021q_onward(const struct nlattr *attrs[OVS_KEY_ATTR_MAX + 1],
                         ? nl_attr_get_be16(attrs[OVS_KEY_ATTR_VLAN])
                         : htons(0));
         if (!is_mask) {
-            if (!(present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_VLAN))) {
+            if (!(present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_VLAN)) ||
+                !(present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_ENCAP))) {
                 return ODP_FIT_TOO_LITTLE;
             } else if (flow->vlans[encaps].tci == htons(0)) {
                 /* Corner case for a truncated 802.1Q header. */

@@ -23,7 +23,16 @@ AC_DEFUN([OVS_ENABLE_WERROR],
    AC_CONFIG_COMMANDS_PRE(
      [if test "X$enable_Werror" = Xyes; then
         OVS_CFLAGS="$OVS_CFLAGS -Werror"
-      fi])])
+      fi])
+
+   # Unless --enable-Werror is specified, report but do not fail the build
+   # for errors reported by flake8.
+   if test "X$enable_Werror" = Xyes; then
+     FLAKE8_WERROR=
+   else
+     FLAKE8_WERROR=-
+   fi
+   AC_SUBST([FLAKE8_WERROR])])
 
 dnl OVS_CHECK_LINUX
 dnl
@@ -206,9 +215,10 @@ AC_DEFUN([OVS_CHECK_DPDK], [
         DPDK_INCLUDE="$with_dpdk/include"
         # If 'with_dpdk' is passed install directory, point to headers
         # installed in $DESTDIR/$prefix/include/dpdk
-        AC_CHECK_FILE([$DPDK_INCLUDE/rte_config.h], [],
-                      [AC_CHECK_FILE([$DPDK_INCLUDE/dpdk/rte_config.h],
-                                     [DPDK_INCLUDE=$DPDK_INCLUDE/dpdk], [])])
+        if test ! -e "$DPDK_INCLUDE/rte_config.h" && \
+           test -e "$DPDK_INCLUDE/dpdk/rte_config.h"; then
+           DPDK_INCLUDE=$DPDK_INCLUDE/dpdk
+        fi
         DPDK_LIB_DIR="$with_dpdk/lib"
         ;;
     esac
@@ -951,6 +961,14 @@ AC_DEFUN([OVS_ENABLE_SPARSE],
    AC_SUBST([SPARSE])
    AC_CONFIG_COMMANDS_PRE(
      [CC='$(if $(C),env REAL_CC="'"$CC"'" CHECK="$(SPARSE) -I $(top_srcdir)/include/sparse $(SPARSEFLAGS) $(SPARSE_EXTRA_INCLUDES) " cgcc $(CGCCFLAGS),'"$CC"')'])])
+
+dnl OVS_CTAGS_IDENTIFIERS
+dnl
+dnl ctags ignores symbols with extras identifiers. This builds a list of
+dnl specially handled identifiers to be ignored.
+AC_DEFUN([OVS_CTAGS_IDENTIFIERS],
+    AC_SUBST([OVS_CTAGS_IDENTIFIERS_LIST],
+           [`printf '-I "'; sed -n 's/^#define \(OVS_[A-Z_]\+\)(\.\.\.)$/\1+/p' ${srcdir}/include/openvswitch/compiler.h  | tr \\\n ' ' ; printf '"'`] ))
 
 dnl OVS_PTHREAD_SET_NAME
 dnl

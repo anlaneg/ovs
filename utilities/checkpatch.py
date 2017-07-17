@@ -256,6 +256,7 @@ std_functions = [
         ('strerror', 'Use ovs_strerror() in place of strerror()'),
         ('sleep', 'Use xsleep() in place of sleep()'),
         ('abort', 'Use ovs_abort() in place of abort()'),
+        ('assert', 'Use ovs_assert() in place of assert()'),
         ('error', 'Use ovs_error() in place of error()'),
 ]
 checks += [
@@ -320,7 +321,7 @@ def ovs_checkpatch_parse(text, filename):
     is_co_author = re.compile(r'(\s*(Co-authored-by: )(.*))$',
                               re.I | re.M | re.S)
 
-    for line in text.decode(errors='ignore').split('\n'):
+    for line in text.split('\n'):
         if current_file != previous_file:
             previous_file = current_file
 
@@ -418,7 +419,7 @@ def ovs_checkpatch_file(filename):
     for part in mail.walk():
         if part.get_content_maintype() == 'multipart':
             continue
-    result = ovs_checkpatch_parse(part.get_payload(decode=True), filename)
+    result = ovs_checkpatch_parse(part.get_payload(decode=False), filename)
     if result < 0:
         print("Lines checked: %d, Warnings: %d, Errors: %d" %
               (total_line, __warnings, __errors))
