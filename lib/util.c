@@ -48,7 +48,7 @@ VLOG_DEFINE_THIS_MODULE(util);
 #define LINUX 0
 #endif
 
-COVERAGE_DEFINE(util_xalloc);
+COVERAGE_DEFINE(util_xalloc);//定义计数器util_xalloc
 
 /* argv[0] without directory names. */
 char *program_name;//保存进程名称
@@ -127,10 +127,10 @@ xmalloc(size_t size)
 }
 
 void *
-xrealloc(void *p, size_t size)
+xrealloc(void *p, size_t size)//realloc的简单封装
 {
     p = realloc(p, size ? size : 1);
-    COVERAGE_INC(util_xalloc);
+    COVERAGE_INC(util_xalloc);//调用次数统计
     if (p == NULL) {
         out_of_memory();
     }
@@ -194,8 +194,8 @@ xvasprintf(const char *format, va_list args)
 void *
 x2nrealloc(void *p, size_t *n, size_t s)
 {
-    *n = *n == 0 ? 1 : 2 * *n;
-    return xrealloc(p, *n * s);
+    *n = *n == 0 ? 1 : 2 * *n;//n初始化为1，之后每次2倍进行增长，即1,2,4...
+    return xrealloc(p, *n * s);//申请n块大小为s的内存
 }
 
 /* The desired minimum alignment for an allocated block of memory. */

@@ -1323,6 +1323,7 @@ join_logical_ports(struct northd_context *ctx,
     ovs_list_init(both);
 
     const struct sbrec_port_binding *sb;
+    //加载南向库中已有的port信息
     SBREC_PORT_BINDING_FOR_EACH (sb, ctx->ovnsb_idl) {
         struct ovn_port *op = ovn_port_create(ports, sb->logical_port,
                                               NULL, NULL, sb);
@@ -1337,6 +1338,7 @@ join_logical_ports(struct northd_context *ctx,
                     = od->nbs->ports[i];
                 struct ovn_port *op = ovn_port_find(ports, nbsp->name);
                 if (op) {
+                	//op被查询是到了，说明两个库都应存在
                     if (op->nbsp || op->nbrp) {
                         static struct vlog_rate_limit rl
                             = VLOG_RATE_LIMIT_INIT(5, 1);
@@ -1355,14 +1357,14 @@ join_logical_ports(struct northd_context *ctx,
                              queue_id);
                     }
 
-                    ovs_list_push_back(both, &op->list);
+                    ovs_list_push_back(both, &op->list);//加入both链
 
                     /* This port exists due to a SB binding, but should
                      * not have been initialized fully. */
                     ovs_assert(!op->n_lsp_addrs && !op->n_ps_addrs);
                 } else {
                     op = ovn_port_create(ports, nbsp->name, nbsp, NULL, NULL);
-                    ovs_list_push_back(nb_only, &op->list);
+                    ovs_list_push_back(nb_only, &op->list);//标明北向库独有
                 }
 
                 op->lsp_addrs

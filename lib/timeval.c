@@ -271,8 +271,8 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
     int retval = 0;
 
     time_init();
-    coverage_clear();
-    coverage_run();
+    coverage_clear();//执行统计
+    coverage_run();//计算各时间段统计值
     if (*last_wakeup && !thread_is_pmd()) {
         log_poll_interval(*last_wakeup);
     }

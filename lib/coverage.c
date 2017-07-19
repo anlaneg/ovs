@@ -29,23 +29,24 @@
 VLOG_DEFINE_THIS_MODULE(coverage);
 
 /* The coverage counters. */
-static struct coverage_counter **coverage_counters = NULL;
-static size_t n_coverage_counters = 0;
-static size_t allocated_coverage_counters = 0;
+static struct coverage_counter **coverage_counters = NULL;//保存记数器指针（数组方式）
+static size_t n_coverage_counters = 0;//记录存放有多少个记数器指针
+static size_t allocated_coverage_counters = 0;//记录当前申请的空间可存放多少记数器指针
 
 static struct ovs_mutex coverage_mutex = OVS_MUTEX_INITIALIZER;
 
 DEFINE_STATIC_PER_THREAD_DATA(long long int, coverage_clear_time, LLONG_MIN);
-static long long int coverage_run_time = LLONG_MIN;
+static long long int coverage_run_time = LLONG_MIN;//记录上次执行run的时间
 
 /* Index counter used to compute the moving average array's index. */
-static unsigned int idx_count = 0;
+static unsigned int idx_count = 0;//在average数组上移动时用此变量做下标（模拟时间移动）
 
 static void coverage_read(struct svec *);
 static unsigned int coverage_array_sum(const unsigned int *arr,
                                        const unsigned int len);
 
 /* Registers a coverage counter with the coverage core */
+//注册记数器
 void
 coverage_counter_register(struct coverage_counter* counter)
 {
@@ -109,14 +110,14 @@ coverage_hash(void)
         c[i] = coverage_counters[i];
     }
     ovs_mutex_unlock(&coverage_mutex);
-    qsort(c, n_coverage_counters, sizeof *c, compare_coverage_counters);
+    qsort(c, n_coverage_counters, sizeof *c, compare_coverage_counters);//将c数组按计数大小进行排序
 
     /* Hash the names in each group along with the rank. */
     n_groups = 0;
     for (i = 0; i < n_coverage_counters; ) {
         int j;
 
-        if (!c[i]->total) {
+        if (!c[i]->total) {//丢掉计数为0的
             break;
         }
         n_groups++;
@@ -195,6 +196,7 @@ coverage_log(void)
 }
 
 /* Adds coverage counter information to 'lines'. */
+//生成统计数据
 static void
 coverage_read(struct svec *lines)
 {
@@ -204,7 +206,7 @@ coverage_read(struct svec *lines)
     uint32_t hash;
     size_t i;
 
-    hash = coverage_hash();
+    hash = coverage_hash();//这个hash的计算代价有点大
 
     n_never_hit = 0;
     svec_add_nocopy(lines,
@@ -213,6 +215,7 @@ coverage_read(struct svec *lines)
                               "hash=%08"PRIx32":",
                               COVERAGE_RUN_INTERVAL/1000, hash));
 
+    //取各计数器的计数（先作个副本，防止在生成字符串时发生变化）
     totals = xmalloc(n_coverage_counters * sizeof *totals);
     ovs_mutex_lock(&coverage_mutex);
     for (i = 0; i < n_coverage_counters; i++) {
@@ -231,9 +234,9 @@ coverage_read(struct svec *lines)
                           c[i]->name,
                           (c[i]->min[(idx_count - 1) % MIN_AVG_LEN]
                            * 1000.0 / COVERAGE_RUN_INTERVAL),
-                          coverage_array_sum(c[i]->min, MIN_AVG_LEN) / 60.0,
-                          coverage_array_sum(c[i]->hr,  HR_AVG_LEN) / 3600.0,
-                          totals[i]));
+                          coverage_array_sum(c[i]->min, MIN_AVG_LEN) / 60.0,//在一分钟的视角内计算一秒速度
+                          coverage_array_sum(c[i]->hr,  HR_AVG_LEN) / 3600.0,//在一小时的视角内计算一秒速度
+                          totals[i]));//显示总数
         } else {
             n_never_hit++;
         }
@@ -264,7 +267,7 @@ coverage_clear__(bool trylock)
         *thread_time = now + COVERAGE_CLEAR_INTERVAL;
     }
 
-    if (now >= *thread_time) {
+    if (now >= *thread_time) {//每COVERAGE_CLEAR_INTERVAL间隔统计一次
         size_t i;
 
         if (trylock) {
@@ -276,9 +279,10 @@ coverage_clear__(bool trylock)
             ovs_mutex_lock(&coverage_mutex);
         }
 
+        //使所有记数器进行统计
         for (i = 0; i < n_coverage_counters; i++) {
             struct coverage_counter *c = coverage_counters[i];
-            c->total += c->count();
+            c->total += c->count();//计算总数到total
         }
         ovs_mutex_unlock(&coverage_mutex);
         *thread_time = now + COVERAGE_CLEAR_INTERVAL;
@@ -314,11 +318,13 @@ coverage_run(void)
         coverage_run_time = now + COVERAGE_RUN_INTERVAL;
     }
 
+    //每COVERAGE_RUN_INTERVAL间隔运行一次
     if (now >= coverage_run_time) {
         size_t i, j;
         /* Computes the number of COVERAGE_RUN_INTERVAL slots, since
          * it is possible that the actual run interval is multiple of
          * COVERAGE_RUN_INTERVAL. */
+        //有多少个间隔没有执行此函数
         int slots = (now - coverage_run_time) / COVERAGE_RUN_INTERVAL + 1;
 
         for (i = 0; i < n_coverage_counters; i++) {
@@ -327,11 +333,12 @@ coverage_run(void)
 
             /* Computes the differences between the current total and the one
              * recorded in last invocation of coverage_run(). */
+            //计算差量，并更新last_total
             count = c[i]->total - c[i]->last_total;
             c[i]->last_total = c[i]->total;
             /* The count over the time interval is evenly distributed
              * among slots by calculating the portion. */
-            portion = count / slots;
+            portion = count / slots;//每间隔值
 
             for (j = 0; j < slots; j++) {
                 /* Updates the index variables. */
@@ -341,17 +348,23 @@ coverage_run(void)
                 unsigned int m_idx = idx % MIN_AVG_LEN;
                 unsigned int h_idx = idx / MIN_AVG_LEN;
 
+                //每次增加portion,而count/slots是可能有余数的，
+                //故将这个余数直接算在第一个时间点内，其后就全为0了
+                //以5秒一个间隔放在相应时间点的计数中
                 c[i]->min[m_idx] = portion + (j == (slots - 1)
                                               ? count % slots : 0);
+                //按分钟合在hr中
                 c[i]->hr[h_idx] = m_idx == 0
                                   ? c[i]->min[m_idx]
                                   : (c[i]->hr[h_idx] + c[i]->min[m_idx]);
                 /* This is to guarantee that h_idx ranges from 0 to 59. */
+                //idx向前移动
                 idx = (idx + 1) % (MIN_AVG_LEN * HR_AVG_LEN);
             }
         }
 
         /* Updates the global index variables. */
+        //维护idx_count
         idx_count = (idx_count + slots) % (MIN_AVG_LEN * HR_AVG_LEN);
         /* Updates the run time. */
         coverage_run_time = now + COVERAGE_RUN_INTERVAL;
