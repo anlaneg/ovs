@@ -145,6 +145,7 @@ shash_add_once(struct shash *sh, const char *name, const void *data)//保容许�
 void
 shash_add_assert(struct shash *sh, const char *name, const void *data)
 {
+	//必须之前是没有的，本次成功插入，否则挂掉
     bool added OVS_UNUSED = shash_add_once(sh, name, data);
     ovs_assert(added);
 }

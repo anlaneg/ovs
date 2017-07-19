@@ -509,6 +509,7 @@ size_t ovs_thread_stats_next_bucket(const struct ovsthread_stats *, size_t);
 
 bool single_threaded(void);
 
+//断言当前位置时为单线程
 void assert_single_threaded_at(const char *where);
 #define assert_single_threaded() assert_single_threaded_at(OVS_SOURCE_LOCATOR)
 

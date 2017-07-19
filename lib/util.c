@@ -502,6 +502,7 @@ ovs_set_program_name(const char *argv0, const char *version)
     basename = xstrdup(slash ? slash + 1 : argv0);//取进程名
 #endif
 
+    //重新设置program_name(不使用lt-前缀）
     assert_single_threaded();
     free(program_name);
     /* Remove libtool prefix, if it is there */
@@ -512,6 +513,7 @@ ovs_set_program_name(const char *argv0, const char *version)
     }
     program_name = basename;
 
+    //设置program_version
     free(program_version);
     if (!strcmp(version, VERSION)) {//如果相等
         program_version = xasprintf("%s (Open vSwitch) "VERSION"\n",
@@ -629,7 +631,7 @@ ovs_get_program_name(void)
 
 /* Print the version information for the program.  */
 void
-ovs_print_version(uint8_t min_ofp, uint8_t max_ofp)
+ovs_print_version(uint8_t min_ofp, uint8_t max_ofp)//显示版本
 {
     printf("%s", program_version);
     if (min_ofp || max_ofp) {

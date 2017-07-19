@@ -86,7 +86,7 @@ struct ovsdb_idl_row {
 };
 
 struct ovsdb_idl_column {
-    char *name;
+    char *name;//列名称
     struct ovsdb_type type;
     bool mutable;
     void (*parse)(struct ovsdb_idl_row *, const struct ovsdb_datum *);
@@ -108,7 +108,7 @@ struct ovsdb_idl_table {
     unsigned char *modes;    /* OVSDB_IDL_* bitmasks, indexed by column. */
     bool need_table;         /* Monitor table even if no columns are selected
                               * for replication. */
-    struct shash columns;    /* Contains "const struct ovsdb_idl_column *"s. */
+    struct shash columns;    /* Contains "const struct ovsdb_idl_column *"s. */ //按列名称索引
     struct hmap rows;        /* Contains "struct ovsdb_idl_row"s. */
     struct ovsdb_idl *idl;   /* Containing idl. */
     unsigned int change_seqno[OVSDB_IDL_CHANGE_MAX];
@@ -121,8 +121,8 @@ struct ovsdb_idl_table {
 
 struct ovsdb_idl_class {
     const char *database;       /* <db-name> for this database. */
-    const struct ovsdb_idl_table_class *tables;
-    size_t n_tables;
+    const struct ovsdb_idl_table_class *tables;//表数组
+    size_t n_tables;//表数目
 };
 
 struct ovsdb_idl_row *ovsdb_idl_get_row_arc(

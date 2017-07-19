@@ -24,6 +24,7 @@
 
 /* Doubly linked list head or element. */
 struct ovs_list {
+	//双链表结构
     struct ovs_list *prev;     /* Previous list element. */
     struct ovs_list *next;     /* Next list element. */
 };

@@ -57,6 +57,7 @@ struct northd_context {
     struct ovsdb_idl_txn *ovnsb_txn;
 };
 
+//北向库，南向库名称
 static const char *ovnnb_db;
 static const char *ovnsb_db;
 
@@ -266,6 +267,7 @@ add_tnlid(struct hmap *set, uint32_t tnlid)
     node->tnlid = tnlid;
 }
 
+//检查tunlid是否在set中已存在
 static bool
 tnlid_in_use(const struct hmap *set, uint32_t tnlid)
 {
@@ -284,13 +286,16 @@ allocate_tnlid(struct hmap *set, const char *name, uint32_t max,
 {
     for (uint32_t tnlid = *hint + 1; tnlid != *hint;
          tnlid = tnlid + 1 <= max ? tnlid + 1 : 1) {
+    	//检查tnlid是否已被使用？
         if (!tnlid_in_use(set, tnlid)) {
+        	//加入set,找到了一个空闲的tnlid
             add_tnlid(set, tnlid);
             *hint = tnlid;
             return tnlid;
         }
     }
 
+    //尝试了一圈，没有发现可用的tunnel ids
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
     VLOG_WARN_RL(&rl, "all %s tunnel ids exhausted", name);
     return 0;
@@ -501,6 +506,7 @@ ovn_datapath_from_sbrec(struct hmap *datapaths,
     return ovn_datapath_find(datapaths, &key);
 }
 
+//此router是被enable
 static bool
 lrouter_is_enabled(const struct nbrec_logical_router *lrouter)
 {
@@ -666,24 +672,27 @@ join_datapaths(struct northd_context *ctx, struct hmap *datapaths,
         ovs_list_push_back(sb_only, &od->list);
     }
 
+    //遍历nbs
     const struct nbrec_logical_switch *nbs;
     NBREC_LOGICAL_SWITCH_FOR_EACH (nbs, ctx->ovnnb_idl) {
+    	//检查datapaths中是否有此条记录
         struct ovn_datapath *od = ovn_datapath_find(datapaths,
                                                     &nbs->header_.uuid);
         if (od) {
             od->nbs = nbs;
             ovs_list_remove(&od->list);
-            ovs_list_push_back(both, &od->list);
+            ovs_list_push_back(both, &od->list);//加入both链
             ovn_datapath_update_external_ids(od);
         } else {
             od = ovn_datapath_create(datapaths, &nbs->header_.uuid,
                                      nbs, NULL, NULL);
-            ovs_list_push_back(nb_only, &od->list);
+            ovs_list_push_back(nb_only, &od->list);//仅nb库中有，加入
         }
 
         init_ipam_info_for_datapath(od);
     }
 
+    //遍历nbr
     const struct nbrec_logical_router *nbr;
     NBREC_LOGICAL_ROUTER_FOR_EACH (nbr, ctx->ovnnb_idl) {
         if (!lrouter_is_enabled(nbr)) {
@@ -709,11 +718,12 @@ join_datapaths(struct northd_context *ctx, struct hmap *datapaths,
         } else {
             od = ovn_datapath_create(datapaths, &nbr->header_.uuid,
                                      NULL, nbr, NULL);
-            ovs_list_push_back(nb_only, &od->list);
+            ovs_list_push_back(nb_only, &od->list);//仅nb库中有此nbr
         }
     }
 }
 
+//目前最多支持0到(1u<<24)-1个
 static uint32_t
 ovn_datapath_allocate_key(struct hmap *dp_tnlids)
 {
@@ -734,6 +744,7 @@ build_datapaths(struct northd_context *ctx, struct hmap *datapaths)
     join_datapaths(ctx, datapaths, &sb_only, &nb_only, &both);
 
     if (!ovs_list_is_empty(&nb_only)) {
+    	//有新增内容，先记录已经存在的tunnel_key
         /* First index the in-use datapath tunnel IDs. */
         struct hmap dp_tnlids = HMAP_INITIALIZER(&dp_tnlids);
         struct ovn_datapath *od;
@@ -743,6 +754,7 @@ build_datapaths(struct northd_context *ctx, struct hmap *datapaths)
 
         /* Add southbound record for each unmatched northbound record. */
         LIST_FOR_EACH (od, list, &nb_only) {
+        	//为nb_only申请没有使用的tunnel_key
             uint16_t tunnel_key = ovn_datapath_allocate_key(&dp_tnlids);
             if (!tunnel_key) {
                 break;
@@ -756,6 +768,7 @@ build_datapaths(struct northd_context *ctx, struct hmap *datapaths)
     }
 
     /* Delete southbound records without northbound matches. */
+    //先除南向库中多余的记录
     struct ovn_datapath *od, *next;
     LIST_FOR_EACH_SAFE (od, next, list, &sb_only) {
         ovs_list_remove(&od->list);
@@ -6279,11 +6292,11 @@ parse_options(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
         STREAM_SSL_OPTION_HANDLERS;
 
         case 'd':
-            ovnsb_db = optarg;
+            ovnsb_db = optarg;//南向库
             break;
 
         case 'D':
-            ovnnb_db = optarg;
+            ovnnb_db = optarg;//北向库
             break;
 
         case 'h':
@@ -6303,6 +6316,7 @@ parse_options(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
         }
     }
 
+    //未指定南向，北向库，使用默认名称的库
     if (!ovnsb_db) {
         ovnsb_db = default_sb_db();
     }
@@ -6333,10 +6347,10 @@ main(int argc, char *argv[])
     fatal_ignore_sigpipe();
     ovs_cmdl_proctitle_init(argc, argv);
     set_program_name(argv[0]);
-    service_start(&argc, &argv);
-    parse_options(argc, argv);
+    service_start(&argc, &argv);//windows处理，linux无处理
+    parse_options(argc, argv);//参数解析（主要是南向，北向库名称）
 
-    daemonize_start(false);
+    daemonize_start(false);//demon处理
 
     retval = unixctl_server_create(NULL, &unixctl);
     if (retval) {
@@ -6454,9 +6468,9 @@ main(int argc, char *argv[])
     exiting = false;
     while (!exiting) {
         struct northd_context ctx = {
-            .ovnnb_idl = ovnnb_idl_loop.idl,
+            .ovnnb_idl = ovnnb_idl_loop.idl,//nb库
             .ovnnb_txn = ovsdb_idl_loop_run(&ovnnb_idl_loop),
-            .ovnsb_idl = ovnsb_idl_loop.idl,
+            .ovnsb_idl = ovnsb_idl_loop.idl,//sb库
             .ovnsb_txn = ovsdb_idl_loop_run(&ovnsb_idl_loop),
         };
 

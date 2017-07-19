@@ -78,3 +78,4 @@ testsuite.tmp.orig
 .project
 .settings/
 /.venv
+.pydevproject

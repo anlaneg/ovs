@@ -3399,6 +3399,7 @@ apply_nested_clone_actions(struct xlate_ctx *ctx, const struct xport *in_dev,
             size_t old_size = ctx->odp_actions->size;
             mirror_mask_t old_mirrors2 = ctx->mirrors;
 
+            //从表0重查
             xlate_table_action(ctx, flow->in_port.ofp_port, 0, true, true,
                                false);
             ctx->mirrors = old_mirrors2;
