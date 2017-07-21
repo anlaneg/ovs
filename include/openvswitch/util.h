@@ -209,7 +209,9 @@ is_pow2(uintmax_t x)
 #define RDP2_5(X) (      (X) | (      (X) >> 1))
 
 /* Macros for sizing bitmaps */
+//一个unsigned long可以提供多少bit
 #define BITMAP_ULONG_BITS (sizeof(unsigned long) * CHAR_BIT)
+//N_BITS bit最少需要多少个unsigned long类型
 #define BITMAP_N_LONGS(N_BITS) DIV_ROUND_UP(N_BITS, BITMAP_ULONG_BITS)
 
 /* Given ATTR, and TYPE, cast the ATTR to TYPE by first casting ATTR to

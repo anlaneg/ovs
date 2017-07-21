@@ -534,6 +534,7 @@ ip_parse_masked_len(const char *s, int *n, ovs_be32 *ip,
  *
  * Returns NULL if successful, otherwise an error message that the caller must
  * free(). */
+//解析网段信息
 char * OVS_WARN_UNUSED_RESULT
 ip_parse_masked(const char *s, ovs_be32 *ip, ovs_be32 *mask)
 {

@@ -45,8 +45,8 @@ struct ipv6_netaddr {
 };
 
 struct lport_addresses {
-    char ea_s[ETH_ADDR_STRLEN + 1];
-    struct eth_addr ea;
+    char ea_s[ETH_ADDR_STRLEN + 1];//mac地址字符串形式
+    struct eth_addr ea;//mac地址
     size_t n_ipv4_addrs;
     struct ipv4_netaddr *ipv4_addrs;
     size_t n_ipv6_addrs;

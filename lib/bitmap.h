@@ -33,18 +33,21 @@ bitmap_bit__(size_t offset)
     return 1UL << (offset % BITMAP_ULONG_BITS);
 }
 
+//返回n_bits需要多少个long类型
 static inline size_t
 bitmap_n_longs(size_t n_bits)
 {
     return BITMAP_N_LONGS(n_bits);
 }
 
+//返回n_bits需要多少字节来存放
 static inline size_t
 bitmap_n_bytes(size_t n_bits)
 {
     return bitmap_n_longs(n_bits) * sizeof(unsigned long int);
 }
 
+//申请足够存放n_bits bit的字节空间
 static inline unsigned long *
 bitmap_allocate(size_t n_bits)
 {
@@ -91,6 +94,7 @@ bitmap_is_set(const unsigned long *bitmap, size_t offset)//检查offset位是否
     return (*bitmap_unit__(bitmap, offset) & bitmap_bit__(offset)) != 0;
 }
 
+//将offset位置的bit置为1
 static inline unsigned long *
 bitmap_set1(unsigned long *bitmap, size_t offset)
 {
@@ -126,6 +130,7 @@ bitmap_set_n__(unsigned long *bitmap, size_t start, size_t n, bool value)
 
 /* Sets 'count' consecutive bits in 'bitmap', starting at bit offset 'start',
  * to 'value'. */
+//将start 位置开始长度为count的bit位置为value
 static inline unsigned long *
 bitmap_set_multiple(unsigned long *bitmap, size_t start, size_t count,
                     bool value)

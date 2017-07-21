@@ -72,6 +72,7 @@ add_ipv6_netaddr(struct lport_addresses *laddrs, struct in6_addr addr,
  *        Use specified MAC address, but allocate an IP address
  *        dynamically.
  */
+//检查此address是否为动态mac地址
 bool
 is_dynamic_lsp_address(const char *address)
 {
@@ -93,6 +94,7 @@ parse_and_store_addresses(const char *address, struct lport_addresses *laddrs,
     int buf_index = 0;
     const char *buf_end = buf + strlen(address);
 
+    //解析mac地址
     if (extract_eth_addr) {
         if (!ovs_scan_len(buf, &buf_index, ETH_ADDR_SCAN_FMT,
                           ETH_ADDR_SCAN_ARGS(laddrs->ea))) {
@@ -105,6 +107,7 @@ parse_and_store_addresses(const char *address, struct lport_addresses *laddrs,
                  ETH_ADDR_ARGS(laddrs->ea));
     }
 
+    //解析ip地址
     ovs_be32 ip4;
     struct in6_addr ip6;
     unsigned int plen;
@@ -147,6 +150,7 @@ parse_and_store_addresses(const char *address, struct lport_addresses *laddrs,
  * Returns true if at least 'MAC' is found in 'address', false otherwise.
  *
  * The caller must call destroy_lport_addresses(). */
+//解析mac地址，ip地址
 bool
 extract_addresses(const char *address, struct lport_addresses *laddrs,
                   int *ofs)
@@ -212,20 +216,21 @@ extract_lrp_networks(const struct nbrec_logical_router_port *lrp,
 {
     memset(laddrs, 0, sizeof *laddrs);
 
-    if (!eth_addr_from_string(lrp->mac, &laddrs->ea)) {
+    if (!eth_addr_from_string(lrp->mac, &laddrs->ea)) {//mac地址解析
         laddrs->ea = eth_addr_zero;
         return false;
     }
     snprintf(laddrs->ea_s, sizeof laddrs->ea_s, ETH_ADDR_FMT,
              ETH_ADDR_ARGS(laddrs->ea));
 
+    //ip地址解析
     for (int i = 0; i < lrp->n_networks; i++) {
         ovs_be32 ip4;
         struct in6_addr ip6;
         unsigned int plen;
         char *error;
 
-        error = ip_parse_cidr(lrp->networks[i], &ip4, &plen);
+        error = ip_parse_cidr(lrp->networks[i], &ip4, &plen);//ipv4地址解析
         if (!error) {
             if (!ip4) {
                 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
@@ -238,7 +243,7 @@ extract_lrp_networks(const struct nbrec_logical_router_port *lrp,
         }
         free(error);
 
-        error = ipv6_parse_cidr(lrp->networks[i], &ip6, &plen);
+        error = ipv6_parse_cidr(lrp->networks[i], &ip6, &plen);//ipv6地址解析
         if (!error) {
             add_ipv6_netaddr(laddrs, ip6, plen);
         } else {
@@ -250,6 +255,7 @@ extract_lrp_networks(const struct nbrec_logical_router_port *lrp,
     }
 
     /* Always add the IPv6 link local address. */
+    //总是产生link local 地址
     struct in6_addr lla;
     in6_generate_lla(laddrs->ea, &lla);
     add_ipv6_netaddr(laddrs, lla, 64);
