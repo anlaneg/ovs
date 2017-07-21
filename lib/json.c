@@ -298,6 +298,7 @@ json_array(const struct json *json)
     return CONST_CAST(struct json_array *, &json->u.array);
 }
 
+//取json类型的object取值
 struct shash *
 json_object(const struct json *json)
 {
