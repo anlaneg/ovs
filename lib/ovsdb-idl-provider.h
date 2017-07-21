@@ -70,7 +70,7 @@ struct ovsdb_idl_row {
     struct ovsdb_datum *old;    /* Committed data (null if orphaned). */
 
     /* Transactional data. */
-    struct ovsdb_datum *new;    /* Modified data (null to delete row). */
+    struct ovsdb_datum *new;    /* Modified data (null to delete row). */ //更新或者新插入行时，此字符不为null
     unsigned long int *prereqs; /* Bitmap of columns to verify in "old". */
     unsigned long int *written; /* Bitmap of columns from "new" to write. */
     struct hmap_node txn_node;  /* Node in ovsdb_idl_txn's list. */
@@ -109,7 +109,7 @@ struct ovsdb_idl_table {
     bool need_table;         /* Monitor table even if no columns are selected
                               * for replication. */
     struct shash columns;    /* Contains "const struct ovsdb_idl_column *"s. */ //按列名称索引
-    struct hmap rows;        /* Contains "struct ovsdb_idl_row"s. */
+    struct hmap rows;        /* Contains "struct ovsdb_idl_row"s. */ //数据行（osdb_idl_row结构）
     struct ovsdb_idl *idl;   /* Containing idl. */
     unsigned int change_seqno[OVSDB_IDL_CHANGE_MAX];
     struct ovs_list track_list; /* Tracked rows (ovsdb_idl_row.track_node). */

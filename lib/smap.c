@@ -245,6 +245,7 @@ smap_get_ullong(const struct smap *smap, const char *key,
 /* Gets the value associated with 'key' in 'smap' and converts it to a UUID
  * using uuid_from_string().  Returns true if successful, false if 'key' is not
  * in 'smap' or if 'key' does not have the correct syntax for a UUID. */
+//取uuid类型的数据，将数据存放在uuid中，数据的值存放在smap的key键下
 bool
 smap_get_uuid(const struct smap *smap, const char *key, struct uuid *uuid)
 {

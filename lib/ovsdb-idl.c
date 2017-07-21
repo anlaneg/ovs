@@ -2445,14 +2445,14 @@ ovsdb_idl_get_row_for_uuid(const struct ovsdb_idl *idl,
     return ovsdb_idl_get_row(ovsdb_idl_table_from_class(idl, tc), uuid);
 }
 
-//我们用update更新了table中的rows,现在我们返回首个rows
+//返回表table中node开始的首个存在的行
 static struct ovsdb_idl_row *
 next_real_row(struct ovsdb_idl_table *table, struct hmap_node *node)
 {
     for (; node; node = hmap_next(&table->rows, node)) {
         struct ovsdb_idl_row *row;
 
-        row = CONTAINER_OF(node, struct ovsdb_idl_row, hmap_node);
+        row = CONTAINER_OF(node, struct ovsdb_idl_row, hmap_node);//由node获得osdb_idl_row结构
         if (ovsdb_idl_row_exists(row)) {
             return row;
         }
@@ -2466,6 +2466,7 @@ next_real_row(struct ovsdb_idl_table *table, struct hmap_node *node)
  * Database tables are internally maintained as hash tables, so adding or
  * removing rows while traversing the same table can cause some rows to be
  * visited twice or not at apply. */
+//返回table的首行记录
 const struct ovsdb_idl_row *
 ovsdb_idl_first_row(const struct ovsdb_idl *idl,
                     const struct ovsdb_idl_table_class *table_class)
@@ -2477,6 +2478,7 @@ ovsdb_idl_first_row(const struct ovsdb_idl *idl,
 
 /* Returns a row following 'row' within its table, or a null pointer if 'row'
  * is the last row in its table. */
+//取row的下一行
 const struct ovsdb_idl_row *
 ovsdb_idl_next_row(const struct ovsdb_idl_row *row)
 {
