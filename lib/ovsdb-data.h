@@ -28,6 +28,7 @@ struct ovsdb_symbol_table;
 struct smap;
 
 /* One value of an atomic type (given by enum ovs_atomic_type). */
+//原子类型
 union ovsdb_atom {
     int64_t integer;
     double real;

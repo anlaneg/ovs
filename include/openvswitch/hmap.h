@@ -382,6 +382,7 @@ hmap_next__(const struct hmap *hmap, size_t start)
 
 /* Returns the first node in 'hmap', in arbitrary order, or a null pointer if
  * 'hmap' is empty. */
+//返回此hash表中的首个元素
 static inline struct hmap_node *
 hmap_first(const struct hmap *hmap)
 {

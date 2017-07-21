@@ -1964,6 +1964,7 @@ ovsdb_idl_row_change__(struct ovsdb_idl_row *row, const struct json *row_json,
         unsigned int column_idx;
         struct ovsdb_datum *old;
 
+        //取出column_name对应的列
         column = shash_find_data(&table->columns, column_name);
         if (!column) {
             VLOG_WARN_RL(&syntax_rl, "unknown column %s updating row "UUID_FMT,
@@ -1972,13 +1973,14 @@ ovsdb_idl_row_change__(struct ovsdb_idl_row *row, const struct json *row_json,
         }
 
         column_idx = column - table->class->columns;
-        old = &row->old[column_idx];
+        old = &row->old[column_idx];//列索引
 
         error = NULL;
         if (apply_diff) {
             struct ovsdb_datum diff;
 
             ovs_assert(!row_json);
+            //将node->data表示的数据按type类型转换，转换为diff
             error = ovsdb_transient_datum_from_json(&diff, &column->type,
                                                     node->data);
             if (!error) {
@@ -2305,11 +2307,13 @@ ovsdb_idl_insert_row(struct ovsdb_idl_row *row, const struct json *row_json)
     const struct ovsdb_idl_table_class *class = row->table->class;
     size_t i;
 
-    ovs_assert(!row->old && !row->new);
+    ovs_assert(!row->old && !row->new);//插入时new,old均为NULL
+    //对insert操作来说，row->old为默认行
     row->old = row->new = xmalloc(class->n_columns * sizeof *row->old);
     for (i = 0; i < class->n_columns; i++) {
         ovsdb_datum_init_default(&row->old[i], &class->columns[i].type);
     }
+
     ovsdb_idl_row_update(row, row_json, OVSDB_IDL_CHANGE_INSERT);
     ovsdb_idl_row_parse(row);
 

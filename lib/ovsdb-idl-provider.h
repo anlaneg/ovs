@@ -67,7 +67,7 @@ struct ovsdb_idl_row {
     struct ovs_list src_arcs;   /* Forward arcs (ovsdb_idl_arc.src_node). */
     struct ovs_list dst_arcs;   /* Backward arcs (ovsdb_idl_arc.dst_node). */
     struct ovsdb_idl_table *table; /* Containing table. */
-    struct ovsdb_datum *old;    /* Committed data (null if orphaned). */
+    struct ovsdb_datum *old;    /* Committed data (null if orphaned). */ //key,valueg键值对的数组类型
 
     /* Transactional data. */
     struct ovsdb_datum *new;    /* Modified data (null to delete row). */

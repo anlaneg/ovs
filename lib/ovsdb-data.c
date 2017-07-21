@@ -54,6 +54,7 @@ wrap_json(const char *name, struct json *wrapped)
  *
  * The caller must eventually arrange for 'atom' to be destroyed (with
  * ovsdb_atom_destroy()). */
+//按默认值初始化（原子类型）
 void
 ovsdb_atom_init_default(union ovsdb_atom *atom, enum ovsdb_atomic_type type)
 {
@@ -306,6 +307,7 @@ ovsdb_symbol_referenced(struct ovsdb_symbol *symbol,
     }
 }
 
+//初始化n个原子变量
 static union ovsdb_atom *
 alloc_default_atoms(enum ovsdb_atomic_type type, size_t n)
 {
@@ -915,6 +917,7 @@ ovsdb_datum_init_empty(struct ovsdb_datum *datum)
  *
  *    - n_min > 1 is invalid.  See ovsdb_type_is_valid().
  */
+//将datum更新为type的默认类型
 void
 ovsdb_datum_init_default(struct ovsdb_datum *datum,
                          const struct ovsdb_type *type)
