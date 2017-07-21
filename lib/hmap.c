@@ -87,6 +87,7 @@ hmap_moved(struct hmap *hmap)
     }
 }
 
+//将hmap改new_mask更新，并重建新的hash表
 static void
 resize(struct hmap *hmap, size_t new_mask, const char *where)
 {
@@ -100,9 +101,10 @@ resize(struct hmap *hmap, size_t new_mask, const char *where)
         tmp.buckets = xmalloc(sizeof *tmp.buckets * (new_mask + 1));//申请指针数组内存
         tmp.mask = new_mask;
         for (i = 0; i <= tmp.mask; i++) {
-            tmp.buckets[i] = NULL;
+            tmp.buckets[i] = NULL;//桶初始化为NULL
         }
     }
+    //把旧的hmap内容加入到tmp中
     for (i = 0; i <= hmap->mask; i++) {
         struct hmap_node *node, *next;
         int count = 0;
@@ -111,6 +113,7 @@ resize(struct hmap *hmap, size_t new_mask, const char *where)
             hmap_insert_fast(&tmp, node, node->hash);
             count++;
         }
+        //冲突链过长，打log说明
         if (count > 5) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
             COVERAGE_INC(hmap_pathological);
@@ -118,13 +121,19 @@ resize(struct hmap *hmap, size_t new_mask, const char *where)
                         where, count, hmap->n, hmap->mask + 1);
         }
     }
+    //指针交换
     hmap_swap(hmap, &tmp);
+    //旧hash表销毁
     hmap_destroy(&tmp);
 }
 
 static size_t
 calc_mask(size_t capacity)
 {
+	//假设capacity/2后，mask的在第n位上是1（且n+1位到最高位为0）
+	//当n > 1时则mask |= mask >>1 ;后 mask第n位，第n-1位将为11
+	//当n > 2时 第n,n-1,n-2,n-3位将为1111
+	//故此代码是在构造任意数，将其从最高位开始，向0位均设置为‘1’
     size_t mask = capacity / 2;
     mask |= mask >> 1;
     mask |= mask >> 2;
@@ -137,7 +146,7 @@ calc_mask(size_t capacity)
 
     /* If we need to dynamically allocate buckets we might as well allocate at
      * least 4 of them. */
-    mask |= (mask & 1) << 1;
+    mask |= (mask & 1) << 1;//如果mask为1，则将mask变更为‘11’
 
     return mask;
 }
@@ -152,6 +161,7 @@ hmap_expand_at(struct hmap *hmap, const char *where)
 {
     size_t new_mask = calc_mask(hmap->n);
     if (new_mask > hmap->mask) {
+    	//如果mask增加了（增加hmap_expand的计数）
         COVERAGE_INC(hmap_expand);
         resize(hmap, new_mask, where);
     }
@@ -162,6 +172,7 @@ hmap_expand_at(struct hmap *hmap, const char *where)
  * ('where' is used in debug logging.  Commonly one would use hmap_shrink() to
  * automatically provide the caller's source file and line number for
  * 'where'.) */
+//收紧
 void
 hmap_shrink_at(struct hmap *hmap, const char *where)
 {

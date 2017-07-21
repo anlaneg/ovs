@@ -1,3 +1,4 @@
+# encoding:utf-8
 # Copyright (c) 2010, 2015 Nicira, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -114,6 +115,7 @@ class _SelectSelect(object):
 
             return [(events[retval], 0)]
         else:
+            #linux处理
             if timeout == -1:
                 # epoll uses -1 for infinite timeout, select uses None.
                 timeout = None

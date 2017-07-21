@@ -2390,6 +2390,7 @@ metadata in_port in_port_oxm pkt_mark ct_mark ct_label reg0 reg1 reg2 reg3 reg4 
     matching:
       dp_hash: arbitrary mask
       recirc_id: exact match or wildcard
+      packet_type: exact match or wildcard
       conj_id: exact match or wildcard
       tun_id: arbitrary mask
       tun_src: arbitrary mask
@@ -3428,8 +3429,8 @@ udp,vlan_tci=0x0000,dl_src=00:26:b9:8c:b0:f9,dl_dst=00:25:83:df:b4:00,nw_src=172
     ovs-ofctl -O OpenFlow13 add-group br0 group_id=1234,type=all,bucket=output:10
     ovs-ofctl -O OpenFlow13 add-flow br0 send_flow_rem,actions=group:1234
     ovs-ofctl -O OpenFlow13 --strict del-groups br0 group_id=1234
-    if test X"$1" = X"OFPRR_DELETE"; then shift;
-        echo >>expout "OFPT_FLOW_REMOVED (OF1.3):  reason=gropu_delete table_id=0"
+    if test X"$1" = X"OFPRR_GROUP_DELETE"; then shift;
+        echo >>expout "OFPT_FLOW_REMOVED (OF1.3):  reason=group_delete table_id=0"
     fi
 
     AT_FAIL_IF([test X"$1" != X])
@@ -3449,19 +3450,19 @@ check_async 1
 
 # Set miss_send_len to 128, turning on packet-ins for our service connection.
 ovs-appctl -t ovs-ofctl ofctl/send 0409000c0123456700000080
-check_async 2 OFPR_ACTION OFPPR_ADD OFPPR_DELETE OFPRR_DELETE
+check_async 2 OFPR_ACTION OFPPR_ADD OFPPR_DELETE OFPRR_DELETE OFPRR_GROUP_DELETE
 
 # Become slave (OF 1.3), which should disable everything except port status.
 ovs-appctl -t ovs-ofctl ofctl/send 041800180000000200000003000000000000000000000001
 check_async 3 OFPPR_ADD OFPPR_DELETE
 
 # Use OF 1.3 OFPT_SET_ASYNC to enable a patchwork of asynchronous messages.
-ovs-appctl -t ovs-ofctl ofctl/send 041c002000000002000000020000000500000005000000020000000200000005
-check_async 4 OFPR_INVALID_TTL OFPPR_DELETE OFPRR_DELETE
+ovs-appctl -t ovs-ofctl ofctl/send 041c00200000000200000002000000050000000500000002000000020000000d
+check_async 4 OFPR_INVALID_TTL OFPPR_DELETE OFPRR_DELETE OFPRR_GROUP_DELETE
 
 # Set controller ID 123.
 ovs-appctl -t ovs-ofctl ofctl/send 04040018000000030000232000000014000000000000007b
-check_async 5 OFPR_NO_MATCH OFPPR_DELETE OFPRR_DELETE
+check_async 5 OFPR_NO_MATCH OFPPR_DELETE OFPRR_DELETE OFPRR_GROUP_DELETE
 
 # Restore controller ID 0.
 ovs-appctl -t ovs-ofctl ofctl/send 040400180000000300002320000000140000000000000000
@@ -4135,6 +4136,87 @@ OFPT_BARRIER_REPLY:
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
+dnl This test checks that 1.5 packet_out is properly encoded/decoded.
+AT_SETUP([ofproto - packet-out with set_field metadata (OpenFlow 1.5)])
+OVS_VSWITCHD_START
+
+# Start a monitor listening for packet-ins.
+AT_CHECK([ovs-ofctl -P standard -O OpenFlow13 monitor br0 --detach --no-chdir --pidfile])
+ovs-appctl -t ovs-ofctl ofctl/send 0409000c0123456700000080
+ovs-appctl -t ovs-ofctl ofctl/barrier
+ovs-appctl -t ovs-ofctl ofctl/set-output-file monitor.log
+AT_CAPTURE_FILE([monitor.log])
+
+# Send a packet-out with a couple of set-field action to set some metadata, and forward to controller
+AT_CHECK([ovs-ofctl -O OpenFlow15 packet-out br0 CONTROLLER 'set_field:0xfafafafa5a5a5a5a->metadata, controller' '0001020304050010203040501234'])
+
+# Stop the monitor and check its output.
+ovs-appctl -t ovs-ofctl ofctl/barrier
+ovs-appctl -t ovs-ofctl exit
+
+AT_CHECK([sed 's/ (xid=0x[[0-9a-fA-F]]*)//' monitor.log], [0], [dnl
+OFPT_PACKET_IN (OF1.3): total_len=14 metadata=0xfafafafa5a5a5a5a,in_port=CONTROLLER (via action) data_len=14 (unbuffered)
+vlan_tci=0x0000,dl_src=00:10:20:30:40:50,dl_dst=00:01:02:03:04:05,dl_type=0x1234
+OFPT_BARRIER_REPLY (OF1.3):
+])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+dnl This test checks that packet_type PT_ETH is properly encoded/decoded in 1.5 packet_out.
+AT_SETUP([ofproto - packet-out with set_field metadata with packet_type PT_ETH (OpenFlow 1.5)])
+OVS_VSWITCHD_START
+
+# Start a monitor listening for packet-ins.
+AT_CHECK([ovs-ofctl -P standard -O OpenFlow13 monitor br0 --detach --no-chdir --pidfile])
+ovs-appctl -t ovs-ofctl ofctl/send 0409000c0123456700000080
+ovs-appctl -t ovs-ofctl ofctl/barrier
+ovs-appctl -t ovs-ofctl ofctl/set-output-file monitor.log
+AT_CAPTURE_FILE([monitor.log])
+
+# Send a packet-out with a couple of set-field action to set some metadata, and forward to controller
+AT_CHECK([ovs-ofctl -O OpenFlow15 packet-out br0 "in_port=controller packet=0001020304050010203040501234 packet_type(0,0x0) actions=set_field:0xfafafafa5a5a5a5a->metadata,controller"])
+
+# Stop the monitor and check its output.
+ovs-appctl -t ovs-ofctl ofctl/barrier
+ovs-appctl -t ovs-ofctl exit
+
+AT_CHECK([sed 's/ (xid=0x[[0-9a-fA-F]]*)//' monitor.log], [0], [dnl
+OFPT_PACKET_IN (OF1.3): total_len=14 metadata=0xfafafafa5a5a5a5a,in_port=CONTROLLER (via action) data_len=14 (unbuffered)
+vlan_tci=0x0000,dl_src=00:10:20:30:40:50,dl_dst=00:01:02:03:04:05,dl_type=0x1234
+OFPT_BARRIER_REPLY (OF1.3):
+])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+dnl This test checks that packet_type PT_IPV4 is properly encoded/decoded in 1.5 packet_out.
+AT_SETUP([ofproto - packet-out with set_field metadata with packet_type PT_IPV4 on PTAP bridge (OpenFlow 1.5)])
+OVS_VSWITCHD_START
+
+# Start a monitor listening for packet-ins.
+AT_CHECK([ovs-ofctl -P standard -O OpenFlow13 monitor br0 --detach --no-chdir --pidfile])
+ovs-appctl -t ovs-ofctl ofctl/send 0409000c0123456700000080
+ovs-appctl -t ovs-ofctl ofctl/barrier
+ovs-appctl -t ovs-ofctl ofctl/set-output-file monitor.log
+AT_CAPTURE_FILE([monitor.log])
+
+# Send a packet-out with a couple of set-field action to set some metadata, and forward to controller
+AT_CHECK([ovs-ofctl -O OpenFlow15 packet-out br0 "in_port=controller packet=4500002012344000ff1155670a0000140a00001e006400c8000cea78ffffffff packet_type(1,0x800) actions=set_field:0xfafafafa5a5a5a5a->metadata,controller"])
+
+# Stop the monitor and check its output.
+ovs-appctl -t ovs-ofctl ofctl/barrier
+ovs-appctl -t ovs-ofctl exit
+
+AT_CHECK([sed 's/ (xid=0x[[0-9a-fA-F]]*)//' monitor.log], [0], [dnl
+OFPT_PACKET_IN (OF1.3): total_len=32 packet_type=(1,0x800),metadata=0xfafafafa5a5a5a5a,in_port=CONTROLLER (via action) data_len=32 (unbuffered)
+packet_type=(1,0x800),nw_src=10.0.0.20,nw_dst=10.0.0.30,nw_proto=17,nw_tos=0,nw_ecn=0,nw_ttl=255,tp_src=100,tp_dst=200 udp_csum:ea78
+OFPT_BARRIER_REPLY (OF1.3):
+])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
 dnl This test checks that metadata is encoded in packet_in structures,
 dnl supported by NXAST.
 AT_SETUP([ofproto - packet-out with metadata (NXM)])
@@ -4626,7 +4708,7 @@ OFPT_GET_ASYNC_REPLY (OF1.3):
  master:
        PACKET_IN: no_match action
      PORT_STATUS: add delete modify
-    FLOW_REMOVED: idle hard delete
+    FLOW_REMOVED: idle hard delete group_delete
      ROLE_STATUS: (off)
     TABLE_STATUS: (off)
   REQUESTFORWARD: (off)

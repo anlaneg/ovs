@@ -94,11 +94,13 @@ TESTSUITE_AT = \
 	tests/vtep-ctl.at \
 	tests/auto-attach.at \
 	tests/ovn.at \
+	tests/ovn-northd.at \
 	tests/ovn-nbctl.at \
 	tests/ovn-sbctl.at \
 	tests/ovn-controller.at \
 	tests/ovn-controller-vtep.at \
-	tests/mcast-snooping.at
+	tests/mcast-snooping.at \
+	tests/packet-type-aware.at
 
 SYSTEM_KMOD_TESTSUITE_AT = \
 	tests/system-common-macros.at \
@@ -108,7 +110,8 @@ SYSTEM_KMOD_TESTSUITE_AT = \
 SYSTEM_USERSPACE_TESTSUITE_AT = \
 	tests/system-userspace-testsuite.at \
 	tests/system-ovn.at \
-	tests/system-userspace-macros.at
+	tests/system-userspace-macros.at \
+	tests/system-userspace-packet-type-aware.at
 
 SYSTEM_TESTSUITE_AT = \
 	tests/system-common-macros.at \

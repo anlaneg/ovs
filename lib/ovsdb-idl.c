@@ -270,17 +270,18 @@ ovsdb_idl_create(const char *remote, const struct ovsdb_idl_class *class,
     idl->class = class;
     idl->session = jsonrpc_session_open(remote, retry);
     shash_init(&idl->table_by_name);
-    idl->tables = xmalloc(class->n_tables * sizeof *idl->tables);
+    idl->tables = xmalloc(class->n_tables * sizeof *idl->tables);//申请存放表的空间
     for (i = 0; i < class->n_tables; i++) {
-        const struct ovsdb_idl_table_class *tc = &class->tables[i];
-        struct ovsdb_idl_table *table = &idl->tables[i];
+        const struct ovsdb_idl_table_class *tc = &class->tables[i];//class中的任一个表
+        struct ovsdb_idl_table *table = &idl->tables[i];//申请的此表的空间
         size_t j;
 
-        shash_add_assert(&idl->table_by_name, tc->name, table);
+        shash_add_assert(&idl->table_by_name, tc->name, table);//注册表到table_by_name
         table->class = tc;
         table->modes = xmalloc(tc->n_columns);
         memset(table->modes, default_mode, tc->n_columns);
         table->need_table = false;
+        //初始化此表的列信息
         shash_init(&table->columns);
         for (j = 0; j < tc->n_columns; j++) {
             const struct ovsdb_idl_column *column = &tc->columns[j];

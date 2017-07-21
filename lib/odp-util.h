@@ -78,7 +78,7 @@ const char *slow_path_reason_to_explanation(enum slow_path_reason);
 #define ODPP_NONE  ODP_PORT_C(UINT32_MAX)
 
 void format_odp_actions(struct ds *, const struct nlattr *odp_actions,
-                        size_t actions_len);
+                        size_t actions_len, const struct hmap *portno_names);
 int odp_actions_from_string(const char *, const struct simap *port_names,
                             struct ofpbuf *odp_actions);
 
@@ -92,6 +92,9 @@ struct odp_portno_names {
 void odp_portno_names_set(struct hmap *portno_names, odp_port_t port_no,
                           char *port_name);
 void odp_portno_names_destroy(struct hmap *portno_names);
+void odp_portno_name_format(const struct hmap *portno_names,
+                            odp_port_t, struct ds *);
+
 /* The maximum number of bytes that odp_flow_key_from_flow() appends to a
  * buffer.  This is the upper bound on the length of a nlattr-formatted flow
  * key that ovs-vswitchd fully understands.
@@ -193,7 +196,8 @@ int odp_flow_from_string(const char *s,
     ODP_SUPPORT_FIELD(bool, ct_state_nat, "CT state NAT")                    \
                                                                              \
     /* Conntrack original direction tuple matching * supported. */           \
-    ODP_SUPPORT_FIELD(bool, ct_orig_tuple, "CT orig tuple")
+    ODP_SUPPORT_FIELD(bool, ct_orig_tuple, "CT orig tuple")                  \
+    ODP_SUPPORT_FIELD(bool, ct_orig_tuple6, "CT orig tuple for IPv6")
 
 /* Indicates support for various fields. This defines how flows will be
  * serialised. */

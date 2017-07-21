@@ -176,7 +176,7 @@ static char *saved_proctitle OVS_GUARDED_BY(proctitle_mutex);
  * before anything else, period, at the very beginning of program
  * execution.  */
 void
-ovs_cmdl_proctitle_init(int argc, char **argv)
+ovs_cmdl_proctitle_init(int argc, char **argv)//修改argv指向新的位置（这些新的位置可写）
 {
     int i;
 
@@ -189,21 +189,21 @@ ovs_cmdl_proctitle_init(int argc, char **argv)
     ovs_mutex_lock(&proctitle_mutex);
     /* Specialized version of first loop iteration below. */
     argv_start = argv[0];
-    argv_size = strlen(argv[0]) + 1;
+    argv_size = strlen(argv[0]) + 1;//参数0的长度
     argv[0] = xstrdup(argv[0]);
 
     for (i = 1; i < argc; i++) {
         size_t size = strlen(argv[i]) + 1;
 
         /* Add (argv[i], strlen(argv[i])+1) to (argv_start, argv_size). */
-        if (argv[i] + size == argv_start) {
+        if (argv[i] + size == argv_start) {//参数是反向增长的（即argv[i-1]指向的地址大于argv[i]
             /* Arguments grow downward in memory. */
             argv_start -= size;
             argv_size += size;
-        } else if (argv[i] == argv_start + argv_size) {
+        } else if (argv[i] == argv_start + argv_size) {//参数正向增长
             /* Arguments grow upward in memory. */
             argv_size += size;
-        } else {
+        } else {//参数不连续
             /* Arguments not contiguous.  (Is this really Linux?) */
         }
 
@@ -255,6 +255,7 @@ ovs_cmdl_proctitle_restore(void)
 {
     ovs_mutex_lock(&proctitle_mutex);
     if (saved_proctitle) {
+    	//构造原来保存的参数
         memcpy(argv_start, saved_proctitle, argv_size);
         free(saved_proctitle);
         saved_proctitle = NULL;

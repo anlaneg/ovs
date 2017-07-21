@@ -274,6 +274,7 @@ alloc_nat_zone_key(const struct uuid *key, const char *type)
     return xasprintf(UUID_FMT"_%s", UUID_ARGS(key), type);
 }
 
+//默认库名称（南向，北向）
 const char *
 default_nb_db(void)
 {

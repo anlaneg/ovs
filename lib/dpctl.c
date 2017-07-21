@@ -49,6 +49,8 @@
 #include "unixctl.h"
 #include "util.h"
 #include "openvswitch/ofp-parse.h"
+#include "openvswitch/vlog.h"
+VLOG_DEFINE_THIS_MODULE(dpctl);
 
 typedef int dpctl_command_handler(int argc, const char *argv[],
                                   struct dpctl_params *);
@@ -756,13 +758,43 @@ format_dpif_flow(struct ds *ds, const struct dpif_flow *f, struct hmap *ports,
         ds_put_cstr(ds, ", offloaded:yes");
     }
     ds_put_cstr(ds, ", actions:");
-    format_odp_actions(ds, f->actions, f->actions_len);
+    format_odp_actions(ds, f->actions, f->actions_len, ports);
 }
 
 static char *supported_dump_types[] = {
     "offloaded",
     "ovs",
 };
+
+static struct hmap *
+dpctl_get_portno_names(struct dpif *dpif, const struct dpctl_params *dpctl_p)
+{
+    if (dpctl_p->names) {
+        struct hmap *portno_names = xmalloc(sizeof *portno_names);
+        hmap_init(portno_names);
+
+        struct dpif_port_dump port_dump;
+        struct dpif_port dpif_port;
+        DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
+            odp_portno_names_set(portno_names, dpif_port.port_no,
+                                 dpif_port.name);
+        }
+
+        return portno_names;
+    } else {
+        return NULL;
+    }
+}
+
+static void
+dpctl_free_portno_names(struct hmap *portno_names)
+{
+    if (portno_names) {
+        odp_portno_names_destroy(portno_names);
+        hmap_destroy(portno_names);
+        free(portno_names);
+    }
+}
 
 static int
 dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
@@ -775,10 +807,6 @@ dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
     char *type = NULL;
     struct flow flow_filter;
     struct flow_wildcards wc_filter;
-
-    struct dpif_port_dump port_dump;
-    struct dpif_port dpif_port;
-    struct hmap portno_names;
 
     struct dpif_flow_dump_thread *flow_dump_thread;
     struct dpif_flow_dump *flow_dump;
@@ -809,15 +837,14 @@ dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
         goto out_free;
     }
 
-
-    hmap_init(&portno_names);
-    DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
-        odp_portno_names_set(&portno_names, dpif_port.port_no, dpif_port.name);
-    }
+    struct hmap *portno_names = dpctl_get_portno_names(dpif, dpctl_p);
 
     if (filter) {
         struct ofputil_port_map port_map;
         ofputil_port_map_init(&port_map);
+
+        struct dpif_port_dump port_dump;
+        struct dpif_port dpif_port;
         DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
             ofputil_port_map_put(&port_map,
                                  u16_to_ofp(odp_to_u32(dpif_port.port_no)),
@@ -892,7 +919,7 @@ dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
             }
             pmd_id = f.pmd_id;
         }
-        format_dpif_flow(&ds, &f, &portno_names, type, dpctl_p);
+        format_dpif_flow(&ds, &f, portno_names, type, dpctl_p);
 
         dpctl_print(dpctl_p, "%s\n", ds_cstr(&ds));
     }
@@ -905,8 +932,7 @@ dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
     ds_destroy(&ds);
 
 out_dpifclose:
-    odp_portno_names_destroy(&portno_names);
-    hmap_destroy(&portno_names);
+    dpctl_free_portno_names(portno_names);
     dpif_close(dpif);
 out_free:
     free(filter);
@@ -1034,11 +1060,8 @@ dpctl_get_flow(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 {
     const char *key_s = argv[argc - 1];
     struct dpif_flow flow;
-    struct dpif_port dpif_port;
-    struct dpif_port_dump port_dump;
     struct dpif *dpif;
     char *dp_name;
-    struct hmap portno_names;
     ovs_u128 ufid;
     struct ofpbuf buf;
     uint64_t stub[DPIF_FLOW_BUFSIZE / 8];
@@ -1057,10 +1080,8 @@ dpctl_get_flow(int argc, const char *argv[], struct dpctl_params *dpctl_p)
     }
 
     ofpbuf_use_stub(&buf, &stub, sizeof stub);
-    hmap_init(&portno_names);
-    DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
-        odp_portno_names_set(&portno_names, dpif_port.port_no, dpif_port.name);
-    }
+
+    struct hmap *portno_names = dpctl_get_portno_names(dpif, dpctl_p);
 
     n = odp_ufid_from_string(key_s, &ufid);
     if (n <= 0) {
@@ -1076,13 +1097,12 @@ dpctl_get_flow(int argc, const char *argv[], struct dpctl_params *dpctl_p)
     }
 
     ds_init(&ds);
-    format_dpif_flow(&ds, &flow, &portno_names, NULL, dpctl_p);
+    format_dpif_flow(&ds, &flow, portno_names, NULL, dpctl_p);
     dpctl_print(dpctl_p, "%s\n", ds_cstr(&ds));
     ds_destroy(&ds);
 
 out:
-    odp_portno_names_destroy(&portno_names);
-    hmap_destroy(&portno_names);
+    dpctl_free_portno_names(portno_names);
     ofpbuf_uninit(&buf);
     dpif_close(dpif);
     return error;
@@ -1308,6 +1328,142 @@ dpctl_flush_conntrack(int argc, const char *argv[],
     dpif_close(dpif);
     return error;
 }
+
+static int
+dpctl_ct_stats_show(int argc, const char *argv[],
+                     struct dpctl_params *dpctl_p)
+{
+    struct dpif *dpif;
+    char *name;
+
+    struct ct_dpif_dump_state *dump;
+    struct ct_dpif_entry cte;
+    uint16_t zone, *pzone = NULL;
+    bool verbose = false;
+    int lastargc = 0;
+
+    int proto_stats[CT_STATS_MAX];
+    int tcp_conn_per_states[CT_DPIF_TCPS_MAX_NUM];
+    int error;
+
+    while (argc > 1 && lastargc != argc) {
+        lastargc = argc;
+        if (!strncmp(argv[argc - 1], "verbose", 7)) {
+            verbose = true;
+            argc--;
+        } else if (!strncmp(argv[argc - 1], "zone=", 5)) {
+            if (ovs_scan(argv[argc - 1], "zone=%"SCNu16, &zone)) {
+                pzone = &zone;
+                argc--;
+            }
+        }
+    }
+
+    name = (argc > 1) ? xstrdup(argv[1]) : get_one_dp(dpctl_p);
+    if (!name) {
+        return EINVAL;
+    }
+
+    error = parsed_dpif_open(name, false, &dpif);
+    free(name);
+    if (error) {
+        dpctl_error(dpctl_p, error, "opening datapath");
+        return error;
+    }
+
+    memset(proto_stats, 0, sizeof(proto_stats));
+    memset(tcp_conn_per_states, 0, sizeof(tcp_conn_per_states));
+    error = ct_dpif_dump_start(dpif, &dump, pzone);
+    if (error) {
+        dpctl_error(dpctl_p, error, "starting conntrack dump");
+        dpif_close(dpif);
+        return error;
+    }
+
+    int tot_conn = 0;
+    while (!ct_dpif_dump_next(dump, &cte)) {
+        ct_dpif_entry_uninit(&cte);
+        tot_conn++;
+        switch (cte.tuple_orig.ip_proto) {
+        case IPPROTO_ICMP:
+            proto_stats[CT_STATS_ICMP]++;
+            break;
+        case IPPROTO_ICMPV6:
+            proto_stats[CT_STATS_ICMPV6]++;
+            break;
+        case IPPROTO_TCP:
+            proto_stats[CT_STATS_TCP]++;
+            uint8_t tcp_state;
+            /* We keep two separate tcp states, but we print just one. The
+             * Linux kernel connection tracker internally keeps only one state,
+             * so 'state_orig' and 'state_reply', will be the same. */
+            tcp_state = MAX(cte.protoinfo.tcp.state_orig,
+                            cte.protoinfo.tcp.state_reply);
+            tcp_state = ct_dpif_coalesce_tcp_state(tcp_state);
+            tcp_conn_per_states[tcp_state]++;
+            break;
+        case IPPROTO_UDP:
+            proto_stats[CT_STATS_UDP]++;
+            break;
+        case IPPROTO_SCTP:
+            proto_stats[CT_STATS_SCTP]++;
+            break;
+        case IPPROTO_UDPLITE:
+            proto_stats[CT_STATS_UDPLITE]++;
+            break;
+        case IPPROTO_DCCP:
+            proto_stats[CT_STATS_DCCP]++;
+            break;
+        case IPPROTO_IGMP:
+            proto_stats[CT_STATS_IGMP]++;
+            break;
+        default:
+            proto_stats[CT_STATS_OTHER]++;
+            break;
+        }
+    }
+
+    dpctl_print(dpctl_p, "Connections Stats:\n    Total: %d\n", tot_conn);
+    if (proto_stats[CT_STATS_TCP]) {
+        dpctl_print(dpctl_p, "\tTCP: %d\n", proto_stats[CT_STATS_TCP]);
+        if (verbose) {
+            dpctl_print(dpctl_p, "\t  Conn per TCP states:\n");
+            for (int i = 0; i < CT_DPIF_TCPS_MAX_NUM; i++) {
+                if (tcp_conn_per_states[i]) {
+                    struct ds s = DS_EMPTY_INITIALIZER;
+                    ct_dpif_format_tcp_stat(&s, i, tcp_conn_per_states[i]);
+                    dpctl_print(dpctl_p, "%s\n", ds_cstr(&s));
+                    ds_destroy(&s);
+                }
+            }
+        }
+    }
+    if (proto_stats[CT_STATS_UDP]) {
+        dpctl_print(dpctl_p, "\tUDP: %d\n", proto_stats[CT_STATS_UDP]);
+    }
+    if (proto_stats[CT_STATS_UDPLITE]) {
+        dpctl_print(dpctl_p, "\tUDPLITE: %d\n", proto_stats[CT_STATS_UDPLITE]);
+    }
+    if (proto_stats[CT_STATS_SCTP]) {
+        dpctl_print(dpctl_p, "\tSCTP: %d\n", proto_stats[CT_STATS_SCTP]);
+    }
+    if (proto_stats[CT_STATS_ICMP]) {
+        dpctl_print(dpctl_p, "\tICMP: %d\n", proto_stats[CT_STATS_ICMP]);
+    }
+    if (proto_stats[CT_STATS_DCCP]) {
+        dpctl_print(dpctl_p, "\tDCCP: %d\n", proto_stats[CT_STATS_DCCP]);
+    }
+    if (proto_stats[CT_STATS_IGMP]) {
+        dpctl_print(dpctl_p, "\tIGMP: %d\n", proto_stats[CT_STATS_IGMP]);
+    }
+    if (proto_stats[CT_STATS_OTHER]) {
+        dpctl_print(dpctl_p, "\tOther: %d\n", proto_stats[CT_STATS_OTHER]);
+    }
+
+    ct_dpif_dump_done(dump);
+    dpif_close(dpif);
+    return error;
+}
 
 /* Undocumented commands for unit testing. */
 
@@ -1330,7 +1486,7 @@ dpctl_parse_actions(int argc, const char *argv[], struct dpctl_params* dpctl_p)
         }
 
         ds_init(&s);
-        format_odp_actions(&s, actions.data, actions.size);
+        format_odp_actions(&s, actions.data, actions.size, NULL);
         dpctl_print(dpctl_p, "%s\n", ds_cstr(&s));
         ds_destroy(&s);
 
@@ -1495,7 +1651,7 @@ dpctl_normalize_actions(int argc, const char *argv[],
 
     if (dpctl_p->verbosity) {
         ds_clear(&s);
-        format_odp_actions(&s, odp_actions.data, odp_actions.size);
+        format_odp_actions(&s, odp_actions.data, odp_actions.size, NULL);
         dpctl_print(dpctl_p, "input actions: %s\n", ds_cstr(&s));
     }
 
@@ -1565,7 +1721,7 @@ dpctl_normalize_actions(int argc, const char *argv[],
         }
 
         ds_clear(&s);
-        format_odp_actions(&s, af->actions.data, af->actions.size);
+        format_odp_actions(&s, af->actions.data, af->actions.size, NULL);
         dpctl_puts(dpctl_p, false, ds_cstr(&s));
 
         ofpbuf_uninit(&af->actions);
@@ -1593,7 +1749,8 @@ static const struct dpctl_command all_commands[] = {
     { "set-if", "dp iface...", 2, INT_MAX, dpctl_set_if, DP_RW },
     { "dump-dps", "", 0, 0, dpctl_dump_dps, DP_RO },
     { "show", "[dp...]", 0, INT_MAX, dpctl_show, DP_RO },
-    { "dump-flows", "[dp] [filter=..] [type=..]", 0, 3, dpctl_dump_flows, DP_RO },
+    { "dump-flows", "[dp] [filter=..] [type=..]",
+      0, 3, dpctl_dump_flows, DP_RO },
     { "add-flow", "[dp] flow actions", 2, 3, dpctl_add_flow, DP_RW },
     { "mod-flow", "[dp] flow actions", 2, 3, dpctl_mod_flow, DP_RW },
     { "get-flow", "[dp] ufid", 1, 2, dpctl_get_flow, DP_RO },
@@ -1601,12 +1758,15 @@ static const struct dpctl_command all_commands[] = {
     { "del-flows", "[dp]", 0, 1, dpctl_del_flows, DP_RW },
     { "dump-conntrack", "[dp] [zone=N]", 0, 2, dpctl_dump_conntrack, DP_RO },
     { "flush-conntrack", "[dp] [zone=N]", 0, 2, dpctl_flush_conntrack, DP_RW },
+    { "ct-stats-show", "[dp] [zone=N] [verbose]",
+      0, 3, dpctl_ct_stats_show, DP_RO },
     { "help", "", 0, INT_MAX, dpctl_help, DP_RO },
     { "list-commands", "", 0, INT_MAX, dpctl_list_commands, DP_RO },
 
     /* Undocumented commands for testing. */
     { "parse-actions", "actions", 1, INT_MAX, dpctl_parse_actions, DP_RO },
-    { "normalize-actions", "actions", 2, INT_MAX, dpctl_normalize_actions, DP_RO },
+    { "normalize-actions", "actions",
+      2, INT_MAX, dpctl_normalize_actions, DP_RO },
 
     { NULL, NULL, 0, 0, NULL, DP_RO },
 };
@@ -1623,7 +1783,6 @@ int
 dpctl_run_command(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 {
     const struct dpctl_command *p;
-
     if (argc < 1) {
         dpctl_error(dpctl_p, 0, "missing command name; use --help for help");
         return EINVAL;
@@ -1683,6 +1842,7 @@ dpctl_unixctl_handler(struct unixctl_conn *conn, int argc, const char *argv[],
     /* Parse options (like getopt). Unfortunately it does
      * not seem a good idea to call getopt_long() here, since it uses global
      * variables */
+    bool set_names = false;
     while (argc > 1 && !error) {
         const char *arg = argv[1];
         if (!strncmp(arg, "--", 2)) {
@@ -1695,6 +1855,12 @@ dpctl_unixctl_handler(struct unixctl_conn *conn, int argc, const char *argv[],
                 dpctl_p.may_create = true;
             } else if (!strcmp(arg, "--more")) {
                 dpctl_p.verbosity++;
+            } else if (!strcmp(arg, "--names")) {
+                dpctl_p.names = true;
+                set_names = true;
+            } else if (!strcmp(arg, "--no-names")) {
+                dpctl_p.names = false;
+                set_names = true;
             } else {
                 ds_put_format(&ds, "Unrecognized option %s", argv[1]);
                 error = true;
@@ -1729,6 +1895,11 @@ dpctl_unixctl_handler(struct unixctl_conn *conn, int argc, const char *argv[],
         argv++;
         argc--;
     }
+    if (!set_names) {
+        dpctl_p.names = dpctl_p.verbosity > 0;
+    }
+    VLOG_INFO("set_names=%d verbosity=%d names=%d", set_names,
+              dpctl_p.verbosity, dpctl_p.names);
 
     if (!error) {
         dpctl_command_handler *handler = (dpctl_command_handler *) aux;

@@ -254,6 +254,7 @@ hmap_is_empty(const struct hmap *hmap)
 
 /* Inserts 'node', with the given 'hash', into 'hmap'.  'hmap' is never
  * expanded automatically. */
+//将node结点插入到桶首，节点数将增加1
 static inline void
 hmap_insert_fast(struct hmap *hmap, struct hmap_node *node, size_t hash)
 {
@@ -276,12 +277,14 @@ hmap_insert_at(struct hmap *hmap, struct hmap_node *node, size_t hash,
 {
     hmap_insert_fast(hmap, node, hash);
     if (hmap->n / 2 > hmap->mask) {
+    	//节点数过多时，空间将被扩展
         hmap_expand_at(hmap, where);
     }
 }
 
 /* Removes 'node' from 'hmap'.  Does not shrink the hash table; call
  * hmap_shrink() directly if desired. */
+//自hash表中移除node,节点数将被减一
 static inline void
 hmap_remove(struct hmap *hmap, struct hmap_node *node)
 {
@@ -300,6 +303,7 @@ hmap_remove(struct hmap *hmap, struct hmap_node *node)
  *
  * Afterward, 'old_node' is not part of 'hmap', and the client is responsible
  * for freeing it (if this is desirable). */
+//将old_node替换为new_node(要求保证位置替换，new_node中的hash将被old_node的hash值取代）
 static inline void
 hmap_replace(struct hmap *hmap,
              const struct hmap_node *old_node, struct hmap_node *new_node)
@@ -313,6 +317,7 @@ hmap_replace(struct hmap *hmap,
     new_node->next = old_node->next;
 }
 
+//在node指向的链上，查找与hash值相同的节点
 static inline struct hmap_node *
 hmap_next_with_hash__(const struct hmap_node *node, size_t hash)
 {
@@ -324,6 +329,7 @@ hmap_next_with_hash__(const struct hmap_node *node, size_t hash)
 
 /* Returns the first node in 'hmap' with the given 'hash', or a null pointer if
  * no nodes have that hash value. */
+//在hash对应的桶上查找与此hash值相同的节点
 static inline struct hmap_node *
 hmap_first_with_hash(const struct hmap *hmap, size_t hash)
 {
@@ -332,6 +338,7 @@ hmap_first_with_hash(const struct hmap *hmap, size_t hash)
 
 /* Returns the first node in 'hmap' in the bucket in which the given 'hash'
  * would land, or a null pointer if that bucket is empty. */
+//返回hash对应的桶的第一个元素
 static inline struct hmap_node *
 hmap_first_in_bucket(const struct hmap *hmap, size_t hash)
 {
@@ -346,6 +353,7 @@ hmap_first_in_bucket(const struct hmap *hmap, size_t hash)
  * will be skipped.  (Removing 'node' from the hash map does not prevent
  * calling this function, since node->next is preserved, although freeing
  * 'node' of course does.) */
+//node所有冲突链上的下一个元素
 static inline struct hmap_node *
 hmap_next_in_bucket(const struct hmap_node *node)
 {
@@ -360,13 +368,14 @@ hmap_next_in_bucket(const struct hmap_node *node)
  * will be skipped.  (Removing 'node' from the hash map does not prevent
  * calling this function, since node->next is preserved, although freeing
  * 'node' of course does.) */
+//在node所在的桶上查找与node具有相同hash的节点
 static inline struct hmap_node *
 hmap_next_with_hash(const struct hmap_node *node)
 {
     return hmap_next_with_hash__(node->next, node->hash);
 }
 
-//从start索引开始，获得第一个非NULL的桶
+//从start索引(桶索引）开始，获得第一个非NULL的桶
 static inline struct hmap_node *
 hmap_next__(const struct hmap *hmap, size_t start)
 {
@@ -382,7 +391,11 @@ hmap_next__(const struct hmap *hmap, size_t start)
 
 /* Returns the first node in 'hmap', in arbitrary order, or a null pointer if
  * 'hmap' is empty. */
+<<<<<<< HEAD
 //返回此hash表中的首个元素
+=======
+//返回表hmap的第一个元素（0号桶第一个）
+>>>>>>> 67b1b69bdcf6da2d36de9c952f6cfa939eb929df
 static inline struct hmap_node *
 hmap_first(const struct hmap *hmap)
 {
@@ -396,6 +409,7 @@ hmap_first(const struct hmap *hmap)
  * may be skipped or visited twice.  (Removing 'node' from the hash map does
  * not prevent calling this function, since node->next is preserved, although
  * freeing 'node' of course does.) */
+//返回表hmap中的node对应的下一个元素（如果node所在桶还有其它元素，则返回后继，如果没有了，则切换到下一个桶）
 static inline struct hmap_node *
 hmap_next(const struct hmap *hmap, const struct hmap_node *node)
 {

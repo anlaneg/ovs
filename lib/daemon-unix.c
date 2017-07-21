@@ -79,11 +79,11 @@ static int daemonize_fd = -1;
 
 /* --monitor: Should a supervisory process monitor the daemon and restart it if
  * it dies due to an error signal? */
-static bool monitor;
+static bool monitor;//是否起监控进程
 
 /* --user: Only root can use this option. Switch to new uid:gid after
  * initially running as root.  */
-static bool switch_user = false;
+static bool switch_user = false;//是否容许切换为其它用户运行
 static uid_t uid;
 static gid_t gid;
 static char *user = NULL;
@@ -318,6 +318,7 @@ fork_notify_startup(int fd)
     }
 }
 
+//检查是否需要重启进程
 static bool
 should_restart(int status)
 {
@@ -362,7 +363,7 @@ monitor_daemon(pid_t daemon_pid)
 
         if (child_ready) {
             do {
-                retval = waitpid(daemon_pid, &status, 0);
+                retval = waitpid(daemon_pid, &status, 0);//等待进程daemon_pid挂掉
             } while (retval == -1 && errno == EINTR);
             if (retval == -1) {
                 VLOG_FATAL("waitpid failed (%s)", ovs_strerror(errno));
@@ -391,6 +392,7 @@ monitor_daemon(pid_t daemon_pid)
                 }
 
                 /* Throttle restarts to no more than once every 10 seconds. */
+                //防止重启过快
                 if (time(NULL) < last_restart + 10) {
                     VLOG_WARN("%s, waiting until 10 seconds since last "
                               "restart", status_msg);
@@ -424,6 +426,7 @@ monitor_daemon(pid_t daemon_pid)
     free(status_msg);
 
     /* Running in new daemon process. */
+    //开启新的deamon
     ovs_cmdl_proctitle_restore();
     set_subprogram_name("");
 }
@@ -460,6 +463,8 @@ daemonize_start(bool access_datapath)//完成demon
     }
 
     if (monitor) {
+    	//这个可以详细分析下，用于再fork一次，并将父进程阻塞在waitpid使其等待子进程挂掉
+    	//如果死于信号，则拉起。
         int saved_daemonize_fd = daemonize_fd;
         pid_t daemon_pid;
 
@@ -502,7 +507,7 @@ daemonize_complete(void)
     if (!detached) {
         detached = true;
 
-        fork_notify_startup(daemonize_fd);
+        fork_notify_startup(daemonize_fd);//知会对端，进程起来了
         daemonize_fd = -1;
         daemonize_post_detach();
     }
@@ -947,7 +952,7 @@ daemon_set_new_user(const char *user_spec)
     uid = getuid();
     gid = getgid();
 
-    if (geteuid() || uid) {
+    if (geteuid() || uid) {//仅root用户可使用变更用户
         VLOG_FATAL("%s: only root can use --user option", pidfile);
     }
 

@@ -238,6 +238,7 @@ void xpthread_join(pthread_t, void **);
 #error
 #endif
 
+//__thread 方式的实现（这种比调函数要好一些）
 #define DEFINE_STATIC_PER_THREAD_DATA(TYPE, NAME, ...)                  \
     typedef TYPE NAME##_type;                                           \
                                                                         \
@@ -271,6 +272,10 @@ void xpthread_join(pthread_t, void **);
 #define DEFINE_EXTERN_PER_THREAD_DATA(NAME, ...)         \
     thread_local NAME##_type NAME##_var = __VA_ARGS__;
 #else  /* no C implementation support for thread-local storage  */
+//定义xx_key的per线程数据
+//定义xx_get_unsafe()来获取per线程数据
+//定义xx_once_init() 来初始化per线程数据
+//定义xx_get() 来获取per线程（如果线程未设置此key,会设置此key,如果未初始化会进行初始化，容许初始化时设置初值)
 #define DEFINE_STATIC_PER_THREAD_DATA(TYPE, NAME, ...)                  \
     typedef TYPE NAME##_type;                                           \
     static pthread_key_t NAME##_key;                                    \
@@ -309,6 +314,8 @@ void xpthread_join(pthread_t, void **);
         }                                                               \
         return value;                                                   \
     }
+//与DEFINE_STATIC_PER_THREAD_DATA大致相同，区别在于DEFINE_EXTERN_PER_THREAD_DATA宏
+//实现了外部的xx_get函数，而DECLARE_EXTERN_PER_THREAD_DATA被用来做xx_get函数的声明
 #define DECLARE_EXTERN_PER_THREAD_DATA(TYPE, NAME)                      \
     typedef TYPE NAME##_type;                                           \
     static pthread_key_t NAME##_key;                                    \
@@ -509,6 +516,7 @@ size_t ovs_thread_stats_next_bucket(const struct ovsthread_stats *, size_t);
 
 bool single_threaded(void);
 
+//断言当前位置时为单线程
 void assert_single_threaded_at(const char *where);
 #define assert_single_threaded() assert_single_threaded_at(OVS_SOURCE_LOCATOR)
 

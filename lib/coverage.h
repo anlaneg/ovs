@@ -33,31 +33,39 @@
 /* Makes coverage_run run every 5000 ms (5 seconds).
  * If this value is redefined, the new value must
  * divide 60000 (1 minute). */
+//每大于此段时间才执行一次coverage_run
 #define COVERAGE_RUN_INTERVAL    5000
 BUILD_ASSERT_DECL(60000 % COVERAGE_RUN_INTERVAL == 0);
 
+//统计间隔，由于统计时会调用get并在其后会置0，故名clear间隔
 #define COVERAGE_CLEAR_INTERVAL  1000
 BUILD_ASSERT_DECL(COVERAGE_RUN_INTERVAL % COVERAGE_CLEAR_INTERVAL == 0);
 
 /* Defines the moving average array length. */
+//一分钟将运行MIN_AVG_LEN次
 #define MIN_AVG_LEN (60000/COVERAGE_RUN_INTERVAL)
-#define HR_AVG_LEN  60
+#define HR_AVG_LEN  60 //我们最长考虑长度是向前60分钟（即1小时以内）
 
 /* A coverage counter. */
 struct coverage_counter {
-    const char *const name;            /* Textual name. */
-    unsigned int (*const count)(void); /* Gets, zeros this thread's count. */
-    unsigned long long int total;      /* Total count. */
+    const char *const name;            /* Textual name. */ //计数器字符名称
+    unsigned int (*const count)(void); /* Gets, zeros this thread's count. */ //计数器get函数（返回计数后，计数将被清0）
+    unsigned long long int total;      /* Total count. */ //计算总数
     unsigned long long int last_total;
     /* The moving average arrays. */
-    unsigned int min[MIN_AVG_LEN];
-    unsigned int hr[HR_AVG_LEN];
+    unsigned int min[MIN_AVG_LEN];//在一分钟内每隔5s放一次计数
+    unsigned int hr[HR_AVG_LEN];//在一小时内，每隔1分钟放一次计数
 };
 
 void coverage_counter_register(struct coverage_counter*);
 
 /* Defines COUNTER.  There must be exactly one such definition at file scope
  * within a program. */
+//定义per线程的计数
+//xx_count用于返回当前计数，并清0
+//xx_add 用于增加计数增量n
+// 定义 coverage_counter类型变量 couter_xx
+// 定义xx_init_coverage函数（constructor期间调用）,并实现为注册此计数器（见coverage_counter_register）
 #define COVERAGE_DEFINE(COUNTER)                                        \
         DEFINE_STATIC_PER_THREAD_DATA(unsigned int,                     \
                                       counter_##COUNTER, 0);            \
@@ -80,6 +88,7 @@ void coverage_counter_register(struct coverage_counter*);
         }
 
 /* Adds 1 to COUNTER. */
+//增加couter计数
 #define COVERAGE_INC(COUNTER) COVERAGE_ADD(COUNTER, 1)
 
 /* Adds AMOUNT to COUNTER. */
