@@ -63,10 +63,11 @@
  */
 struct ovsdb_idl_row {
     struct hmap_node hmap_node; /* In struct ovsdb_idl_table's 'rows'. */
-    struct uuid uuid;           /* Row "_uuid" field. */
+    struct uuid uuid;           /* Row "_uuid" field. */ //行对应的uuid
     struct ovs_list src_arcs;   /* Forward arcs (ovsdb_idl_arc.src_node). */
     struct ovs_list dst_arcs;   /* Backward arcs (ovsdb_idl_arc.dst_node). */
-    struct ovsdb_idl_table *table; /* Containing table. */
+    struct ovsdb_idl_table *table; /* Containing table. */ //属于哪张表
+    //当新插入时，old,new指向同一块数据，更新时，new指向新的数据,old指向原来的数据，删除时new指向null，old指向原来的数据
     struct ovsdb_datum *old;    /* Committed data (null if orphaned). */ //key,valueg键值对的数组类型
 
     /* Transactional data. */
@@ -87,25 +88,25 @@ struct ovsdb_idl_row {
 
 struct ovsdb_idl_column {
     char *name;//列名称
-    struct ovsdb_type type;
+    struct ovsdb_type type;//列类型
     bool mutable;
-    void (*parse)(struct ovsdb_idl_row *, const struct ovsdb_datum *);
-    void (*unparse)(struct ovsdb_idl_row *);
+    void (*parse)(struct ovsdb_idl_row *, const struct ovsdb_datum *);//解析并填充row
+    void (*unparse)(struct ovsdb_idl_row *);//反解析，释放解析占用的资源
 };
 
 //idl = Interface Definition Language
 struct ovsdb_idl_table_class {
     char *name;//表名称
-    bool is_root;
-    const struct ovsdb_idl_column *columns;
+    bool is_root;//是否为根表
+    const struct ovsdb_idl_column *columns;//列信息
     size_t n_columns;//有多少列
-    size_t allocation_size;
-    void (*row_init)(struct ovsdb_idl_row *);
+    size_t allocation_size;//申请多大空间（生成的代码中第一个字段为ovsdb_idl_row
+    void (*row_init)(struct ovsdb_idl_row *);//行初始化
 };
 
 struct ovsdb_idl_table {
     const struct ovsdb_idl_table_class *class;
-    unsigned char *modes;    /* OVSDB_IDL_* bitmasks, indexed by column. */
+    unsigned char *modes;    /* OVSDB_IDL_* bitmasks, indexed by column. */ //表模式
     bool need_table;         /* Monitor table even if no columns are selected
                               * for replication. */
     struct shash columns;    /* Contains "const struct ovsdb_idl_column *"s. */ //按列名称索引
@@ -120,8 +121,8 @@ struct ovsdb_idl_table {
 };
 
 struct ovsdb_idl_class {
-    const char *database;       /* <db-name> for this database. */
-    const struct ovsdb_idl_table_class *tables;//表数组
+    const char *database;       /* <db-name> for this database. */ //库名称
+    const struct ovsdb_idl_table_class *tables;//表元数据数组
     size_t n_tables;//表数目
 };
 

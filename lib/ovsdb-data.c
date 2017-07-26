@@ -1329,6 +1329,7 @@ ovsdb_datum_from_json__(struct ovsdb_datum *datum,
  * If 'symtab' is nonnull, then named UUIDs in 'symtab' are accepted.  Refer to
  * RFC 7047 for information about this, and for the syntax that this function
  * accepts. */
+//将json串解析为datum
 struct ovsdb_error *
 ovsdb_datum_from_json(struct ovsdb_datum *datum,
                       const struct ovsdb_type *type,
@@ -1685,6 +1686,7 @@ ovsdb_datum_hash(const struct ovsdb_datum *datum,
     return basis;
 }
 
+//按类型type比对a,b数组，数组长度为n
 static int
 atom_arrays_compare_3way(const union ovsdb_atom *a,
                          const union ovsdb_atom *b,
@@ -1703,6 +1705,7 @@ atom_arrays_compare_3way(const union ovsdb_atom *a,
     return 0;
 }
 
+//数据比对，检查是否相等
 bool
 ovsdb_datum_equals(const struct ovsdb_datum *a,
                    const struct ovsdb_datum *b,
@@ -1711,6 +1714,7 @@ ovsdb_datum_equals(const struct ovsdb_datum *a,
     return !ovsdb_datum_compare_3way(a, b, type);
 }
 
+//按类型type比对a,b两个数据
 int
 ovsdb_datum_compare_3way(const struct ovsdb_datum *a,
                          const struct ovsdb_datum *b,
@@ -1718,15 +1722,17 @@ ovsdb_datum_compare_3way(const struct ovsdb_datum *a,
 {
     int cmp;
 
-    if (a->n != b->n) {
+    if (a->n != b->n) {//长度不同，不相等
         return a->n < b->n ? -1 : 1;
     }
 
+    //比对key是否相等
     cmp = atom_arrays_compare_3way(a->keys, b->keys, type->key.type, a->n);
     if (cmp) {
-        return cmp;
+        return cmp;//key不相等
     }
 
+    //如果非key,value方式，则返回相等，否则比对values
     return (type->value.type == OVSDB_TYPE_VOID ? 0
             : atom_arrays_compare_3way(a->values, b->values, type->value.type,
                                        a->n));

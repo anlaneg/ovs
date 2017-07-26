@@ -112,6 +112,7 @@ OVS_NO_RETURN void ovs_assert_failure(const char *, const char *, const char *);
 
 /* Given POINTER, the address of the given MEMBER in a STRUCT object, returns
    the STRUCT object. */
+//已知struct类型的成员MEMBER的指针，求struct指针
 #define CONTAINER_OF(POINTER, STRUCT, MEMBER)                           \
         ((STRUCT *) (void *) ((char *) (POINTER) - offsetof (STRUCT, MEMBER)))
 

@@ -26,12 +26,12 @@ struct json;
 
 /* An atomic type: one that OVSDB regards as a single unit of data. */
 enum ovsdb_atomic_type {
-    OVSDB_TYPE_VOID,            /* No value. */
-    OVSDB_TYPE_INTEGER,         /* Signed 64-bit integer. */
-    OVSDB_TYPE_REAL,            /* IEEE 754 double-precision floating point. */
-    OVSDB_TYPE_BOOLEAN,         /* True or false. */
-    OVSDB_TYPE_STRING,          /* UTF-8 string. */
-    OVSDB_TYPE_UUID,            /* RFC 4122 UUID referencing a table row. */
+    OVSDB_TYPE_VOID,            /* No value. */ //空类型
+    OVSDB_TYPE_INTEGER,         /* Signed 64-bit integer. */ //有符号整型
+    OVSDB_TYPE_REAL,            /* IEEE 754 double-precision floating point. */ //浮点型
+    OVSDB_TYPE_BOOLEAN,         /* True or false. */ //布尔型
+    OVSDB_TYPE_STRING,          /* UTF-8 string. */ //字符串类型
+    OVSDB_TYPE_UUID,            /* RFC 4122 UUID referencing a table row. */ //uuid类型
     OVSDB_N_TYPES
 };
 
@@ -51,12 +51,13 @@ enum ovsdb_ref_type {
 
 //标记类型，并指明各类型的取值范围
 struct ovsdb_base_type {
-    enum ovsdb_atomic_type type;//标记union使用哪个字段
+    enum ovsdb_atomic_type type;//类型（按此type可提供约束信息）
 
     /* If nonnull, a datum with keys of type 'type' that expresses all the
      * valid values for this base_type. */
     struct ovsdb_datum *enum_;//枚举类型
 
+    //约束信息
     union {
         struct ovsdb_integer_constraints {
             int64_t min;        /* minInteger or INT64_MIN. */
@@ -124,19 +125,29 @@ static inline bool ovsdb_base_type_is_weak_ref(const struct ovsdb_base_type *);
  * If 'value_type' is OVSDB_TYPE_VOID, 'n_min' is 1, and 'n_max' is 1, then the
  * type is a single atomic 'key_type'.
  *
+ * 当value字段的类型是OVSDB_TYPE_VOID时，如果n_min与n_max同为1，则这此类型是一个单值类型
+ * 它的类型由key指定
+ *
  * If 'value_type' is OVSDB_TYPE_VOID and 'n_min' or 'n_max' (or both) has a
  * value other than 1, then the type is a set of 'key_type'.  If 'n_min' is 0
  * and 'n_max' is 1, then the type can also be considered an optional
  * 'key_type'.
  *
+ * 当value字段是OVSDB_TYPE_VOID时，如果n_min或者n_max（或者它们俩）大于1，那么这个类型是一个key类型的
+ * 集合类型（或者认为是数组），当n_min为0，n_max为1，则此类型可以按可选对待
+ *
  * If 'value_type' is not OVSDB_TYPE_VOID, then the type is a map from
  * 'key_type' to 'value_type'.  If 'n_min' is 0 and 'n_max' is 1, then the type
  * can also be considered an optional pair of 'key_type' and 'value_type'.
+ *
+ * 当value字段不是OVSDB_TYPE_VOID,那么这个类型是一个map,提供自key类型到value类型的映射。
+ * 如果n_min是0并且n_max是1，由此类型型是一个可选键值对。
  */
 struct ovsdb_type {
+	//支持map方式，故存在key,value
     struct ovsdb_base_type key;
     struct ovsdb_base_type value;//如果没有value,则value取值为OVSDB_TYPE_VOID
-    //min,max合起来表示，‘单个’，‘多个，且最多容许多少个','可选，容许0个，但也容许不超过n_max‘
+    //min,max合起来表示，‘单个’，“可选“，‘多个，且最多容许多少个，至少有多少个',
     unsigned int n_min;
     unsigned int n_max;         /* UINT_MAX stands in for "unlimited". */
 };

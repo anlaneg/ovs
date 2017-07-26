@@ -489,6 +489,7 @@ pstream_verify_name(const char *name)
  * to verify connectivity.  For [p]streams which need probes, it can take a
  * long time to notice the connection has been dropped.  Returns 0 if the
  * stream or pstream does not need probes, and -1 if 'name' is not valid. */
+//检查name对应的主动或被动连接方式是否支持探测
 int
 stream_or_pstream_needs_probes(const char *name)
 {

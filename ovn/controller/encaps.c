@@ -135,6 +135,7 @@ exit:
     smap_destroy(&options);
 }
 
+//同时支持多个隧道时，选择一个隧道类型
 static struct sbrec_encap *
 preferred_encap(const struct sbrec_chassis *chassis_rec)
 {
@@ -143,7 +144,7 @@ preferred_encap(const struct sbrec_chassis *chassis_rec)
 
     for (int i = 0; i < chassis_rec->n_encaps; i++) {
         uint32_t tun_type = get_tunnel_type(chassis_rec->encaps[i]->type);
-        if (tun_type > best_type) {
+        if (tun_type > best_type) {//按大小确定最好的tunnel type
             best_type = tun_type;
             best_encap = chassis_rec->encaps[i];
         }
@@ -177,7 +178,9 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     /* Collect all port names into tc.port_names.
      *
      * Collect all the OVN-created tunnels into tc.tunnel_hmap. */
+    //遍历每个br
     OVSREC_BRIDGE_FOR_EACH(br, ctx->ovs_idl) {
+    	//遍历br的每个port
         for (size_t i = 0; i < br->n_ports; i++) {
             const struct ovsrec_port *port = br->ports[i];
             sset_add(&tc.port_names, port->name);
@@ -188,7 +191,7 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
                     struct chassis_node *chassis = xzalloc(sizeof *chassis);
                     chassis->bridge = br;
                     chassis->port = port;
-                    shash_add_assert(&tc.chassis, id, chassis);
+                    shash_add_assert(&tc.chassis, id, chassis);//此chassis获得对应的桥及端口
                 } else {
                     /* Duplicate port for ovn-chassis-id.  Arbitrarily choose
                      * to delete this one. */

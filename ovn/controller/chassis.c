@@ -60,6 +60,7 @@ pop_tunnel_name(uint32_t *type)
     OVS_NOT_REACHED();
 }
 
+//取物理网络与ovs桥之间的映射关系
 static const char *
 get_bridge_mappings(const struct smap *ext_ids)
 {
@@ -82,10 +83,13 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
 
     cfg = ovsrec_open_vswitch_first(ctx->ovs_idl);
     if (!cfg) {
+    	//不存在open_vswitch行
         VLOG_INFO("No Open_vSwitch row defined.");
         return NULL;
     }
 
+    //ovn-encap-type用于指出一个chassis连接到另一个时采用的封装协议，encap_type可能指定多个
+    //每个之间采用','号进行分割。每种encap_type需要对应一个ovn-encap-ip
     encap_type = smap_get(&cfg->external_ids, "ovn-encap-type");
     encap_ip = smap_get(&cfg->external_ids, "ovn-encap-ip");
     if (!encap_type || !encap_ip) {
@@ -93,6 +97,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
         return NULL;
     }
 
+    //收集encap的隧道类型
     char *tokstr = xstrdup(encap_type);
     char *save_ptr = NULL;
     char *token;
@@ -103,22 +108,25 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
         if (!type) {
             VLOG_INFO("Unknown tunnel type: %s", token);
         }
-        req_tunnels |= type;
+        req_tunnels |= type;//容许设置多种封装方式
     }
     free(tokstr);
 
+    //hostname用于chassis table，用于表示当前主机名称
     const char *hostname = smap_get_def(&cfg->external_ids, "hostname", "");
     char hostname_[HOST_NAME_MAX + 1];
     if (!hostname[0]) {
+    	//如果没有配置，则取主机名称
         if (gethostname(hostname_, sizeof hostname_)) {
             hostname_[0] = '\0';
         }
         hostname = hostname_;
     }
 
+    //取物理网络与ovs桥之间的关系
     const char *bridge_mappings = get_bridge_mappings(&cfg->external_ids);
     const char *datapath_type =
-        br_int && br_int->datapath_type ? br_int->datapath_type : "";
+        br_int && br_int->datapath_type ? br_int->datapath_type : "";//br-int的datapath类型
 
     struct ds iface_types = DS_EMPTY_INITIALIZER;
     ds_put_cstr(&iface_types, "");
@@ -126,14 +134,15 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
         ds_put_format(&iface_types, "%s,", cfg->iface_types[j]);
     }
     ds_chomp(&iface_types, ',');
-    const char *iface_types_str = ds_cstr(&iface_types);
+    const char *iface_types_str = ds_cstr(&iface_types);//所有接口类型
 
     const struct sbrec_chassis *chassis_rec
         = get_chassis(ctx->ovnsb_idl, chassis_id);
+    //ovn-encap-csum用于指出是否将encap的checksum下沉到网卡来做（true为不下沉，false为下沉）
     const char *encap_csum = smap_get_def(&cfg->external_ids,
                                           "ovn-encap-csum", "true");
     if (chassis_rec) {
-        if (strcmp(hostname, chassis_rec->hostname)) {
+        if (strcmp(hostname, chassis_rec->hostname)) {//hostname发生变更，更新hostname
             sbrec_chassis_set_hostname(chassis_rec, hostname);
         }
 
@@ -146,6 +155,8 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
             = smap_get_def(&chassis_rec->external_ids, "iface-types", "");
 
         /* If any of the external-ids should change, update them. */
+        //bridge_mappings,chassis_datapath_type,chassis_iface_types任意一个发生变更
+        //更新此项
         if (strcmp(bridge_mappings, chassis_bridge_mappings) ||
             strcmp(datapath_type, chassis_datapath_type) ||
             strcmp(iface_types_str, chassis_iface_types)) {
@@ -155,7 +166,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
             smap_replace(&new_ids, "datapath-type", datapath_type);
             smap_replace(&new_ids, "iface-types", iface_types_str);
             sbrec_chassis_verify_external_ids(chassis_rec);
-            sbrec_chassis_set_external_ids(chassis_rec, &new_ids);
+            sbrec_chassis_set_external_ids(chassis_rec, &new_ids);//更新external_ids
             smap_destroy(&new_ids);
         }
 
@@ -170,14 +181,16 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
                 smap_get_def(&chassis_rec->encaps[i]->options, "csum", ""),
                 encap_csum);
         }
-        same = same && req_tunnels == cur_tunnels;
+        same = same && req_tunnels == cur_tunnels;//这句话的意义？
 
         if (same) {
+        	//无变更
             /* Nothing changed. */
             inited = true;
             ds_destroy(&iface_types);
             return chassis_rec;
-        } else if (!inited) {
+        } else if (!inited) {//如果是第一次走到这里
+        	//打log
             struct ds cur_encaps = DS_EMPTY_INITIALIZER;
             for (int i = 0; i < chassis_rec->n_encaps; i++) {
                 ds_put_format(&cur_encaps, "%s,",

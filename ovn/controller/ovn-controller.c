@@ -89,6 +89,7 @@ get_local_datapath(const struct hmap *local_datapaths, uint32_t tunnel_key)
             : NULL);
 }
 
+//给定chassis_id取chassis
 const struct sbrec_chassis *
 get_chassis(struct ovsdb_idl *ovnsb_idl, const char *chassis_id)
 {
@@ -103,6 +104,7 @@ get_chassis(struct ovsdb_idl *ovnsb_idl, const char *chassis_id)
     return chassis_rec;
 }
 
+//隧道类型名称转编号
 uint32_t
 get_tunnel_type(const char *name)
 {
@@ -117,6 +119,7 @@ get_tunnel_type(const char *name)
     return 0;
 }
 
+//查找指定名称的桥，并返回
 const struct ovsrec_bridge *
 get_bridge(struct ovsdb_idl *ovs_idl, const char *br_name)
 {
@@ -215,6 +218,7 @@ create_br_int(struct controller_ctx *ctx,
     ovsdb_idl_txn_add_comment(ctx->ovs_idl_txn,
             "ovn-controller: creating integration bridge '%s'", bridge_name);
 
+    //创建internal口（与桥名称相同的接口）
     struct ovsrec_interface *iface;
     iface = ovsrec_interface_insert(ctx->ovs_idl_txn);
     ovsrec_interface_set_name(iface, bridge_name);
@@ -225,6 +229,7 @@ create_br_int(struct controller_ctx *ctx,
     ovsrec_port_set_name(port, bridge_name);
     ovsrec_port_set_interfaces(port, &iface, 1);
 
+    //创建桥
     struct ovsrec_bridge *bridge;
     bridge = ovsrec_bridge_insert(ctx->ovs_idl_txn);
     ovsrec_bridge_set_name(bridge, bridge_name);
@@ -233,6 +238,7 @@ create_br_int(struct controller_ctx *ctx,
     ovsrec_bridge_set_other_config(bridge, &oc);
     ovsrec_bridge_set_ports(bridge, &port, 1);
 
+    //更新到数据库
     struct ovsrec_bridge **bridges;
     size_t bytes = sizeof *bridges * cfg->n_bridges;
     bridges = xmalloc(bytes + sizeof *bridges);
@@ -245,6 +251,7 @@ create_br_int(struct controller_ctx *ctx,
     return bridge;
 }
 
+//ovn-bridge配置用于指定内部连接逻辑口的桥（建意使用默认配置）
 static const struct ovsrec_bridge *
 get_br_int(struct controller_ctx *ctx)
 {
@@ -254,17 +261,20 @@ get_br_int(struct controller_ctx *ctx)
         return NULL;
     }
 
+    //自cfg->external_ids中取ovn-bridge,默认名称使用br-int
     const char *br_int_name = smap_get_def(&cfg->external_ids, "ovn-bridge",
                                            DEFAULT_BRIDGE_NAME);
 
     const struct ovsrec_bridge *br;
     br = get_bridge(ctx->ovs_idl, br_int_name);
     if (!br) {
+    	//如果桥不存在，会被默认创建
         return create_br_int(ctx, cfg, br_int_name);
     }
     return br;
 }
 
+//取得chassis名称（这个名称用于chassis表）
 static const char *
 get_chassis_id(const struct ovsdb_idl *ovs_idl)
 {
@@ -272,6 +282,7 @@ get_chassis_id(const struct ovsdb_idl *ovs_idl)
     const char *chassis_id = cfg ? smap_get(&cfg->external_ids, "system-id") : NULL;
 
     if (!chassis_id) {
+    	//未配置chassis名称
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
         VLOG_WARN_RL(&rl, "'system-id' in Open_vSwitch database is missing.");
     }
@@ -305,6 +316,7 @@ update_ssl_config(const struct ovsdb_idl *ovs_idl)
 
 /* Retrieves the OVN Southbound remote location from the
  * "external-ids:ovn-remote" key in 'ovs_idl' and returns a copy of it. */
+//ovn-remote配置项，用于指导ovn-controller自何处取它对应的配置项
 static char *
 get_ovnsb_remote(struct ovsdb_idl *ovs_idl)
 {
@@ -321,6 +333,7 @@ get_ovnsb_remote(struct ovsdb_idl *ovs_idl)
             }
         }
 
+        //还没有ovn-remote的配置，等待数据库变化后重新尝试
         VLOG_INFO("OVN OVSDB remote not specified.  Waiting...");
         ovsdb_idl_wait(ovs_idl);
         poll_block();
@@ -540,7 +553,7 @@ main(int argc, char *argv[])
     ovs_cmdl_proctitle_init(argc, argv);
     set_program_name(argv[0]);
     service_start(&argc, &argv);
-    parse_options(argc, argv);
+    parse_options(argc, argv);//参数解析
     fatal_ignore_sigpipe();
 
     daemonize_start(false);
@@ -554,7 +567,7 @@ main(int argc, char *argv[])
     /* Initialize group ids for loadbalancing. */
     struct group_table group_table;
     group_table.group_ids = bitmap_allocate(MAX_OVN_GROUPS);
-    bitmap_set1(group_table.group_ids, 0); /* Group id 0 is invalid. */
+    bitmap_set1(group_table.group_ids, 0); /* Group id 0 is invalid. */ //将0号置为已分配
     hmap_init(&group_table.desired_groups);
     hmap_init(&group_table.existing_groups);
 
@@ -566,17 +579,17 @@ main(int argc, char *argv[])
 
     /* Connect to OVS OVSDB instance. */
     struct ovsdb_idl_loop ovs_idl_loop = OVSDB_IDL_LOOP_INITIALIZER(
-        ovsdb_idl_create(ovs_remote, &ovsrec_idl_class, false, true));
+        ovsdb_idl_create(ovs_remote, &ovsrec_idl_class, false, true));//open_vswitch数据库
     ctrl_register_ovs_idl(ovs_idl_loop.idl);
-    ovsdb_idl_get_initial_snapshot(ovs_idl_loop.idl);
+    ovsdb_idl_get_initial_snapshot(ovs_idl_loop.idl);//open_vswitch库同步
 
     /* Connect to OVN SB database and get a snapshot. */
     char *ovnsb_remote = get_ovnsb_remote(ovs_idl_loop.idl);
     struct ovsdb_idl_loop ovnsb_idl_loop = OVSDB_IDL_LOOP_INITIALIZER(
-        ovsdb_idl_create(ovnsb_remote, &sbrec_idl_class, true, true));
+        ovsdb_idl_create(ovnsb_remote, &sbrec_idl_class, true, true));//OVN_Southbound数据库
     ovsdb_idl_omit_alert(ovnsb_idl_loop.idl, &sbrec_chassis_col_nb_cfg);
     update_sb_monitors(ovnsb_idl_loop.idl, NULL, NULL, NULL);
-    ovsdb_idl_get_initial_snapshot(ovnsb_idl_loop.idl);
+    ovsdb_idl_get_initial_snapshot(ovnsb_idl_loop.idl);//ovs-southbound库同步
 
     /* Initialize connection tracking zones. */
     struct simap ct_zones = SIMAP_INITIALIZER(&ct_zones);
@@ -596,12 +609,14 @@ main(int argc, char *argv[])
     exiting = false;
     while (!exiting) {
         /* Check OVN SB database. */
-        char *new_ovnsb_remote = get_ovnsb_remote(ovs_idl_loop.idl);
+        char *new_ovnsb_remote = get_ovnsb_remote(ovs_idl_loop.idl);//取ovnsb位置
         if (strcmp(ovnsb_remote, new_ovnsb_remote)) {
+        	//ovnsb位置发生了变更，更新remote
             free(ovnsb_remote);
             ovnsb_remote = new_ovnsb_remote;
             ovsdb_idl_set_remote(ovnsb_idl_loop.idl, ovnsb_remote, true);
         } else {
+        	//位置无变更
             free(new_ovnsb_remote);
         }
 
@@ -612,7 +627,7 @@ main(int argc, char *argv[])
             .ovnsb_idl_txn = ovsdb_idl_loop_run(&ovnsb_idl_loop),
         };
 
-        update_probe_interval(&ctx, ovnsb_remote);
+        update_probe_interval(&ctx, ovnsb_remote);//更新ovn-controller与sb之间的探测间隔
 
         update_ssl_config(ctx.ovs_idl);
 
@@ -627,7 +642,7 @@ main(int argc, char *argv[])
         struct sset local_lports = SSET_INITIALIZER(&local_lports);
         struct sset active_tunnels = SSET_INITIALIZER(&active_tunnels);
 
-        const struct ovsrec_bridge *br_int = get_br_int(&ctx);
+        const struct ovsrec_bridge *br_int = get_br_int(&ctx);//获取br-int桥配置
         const char *chassis_id = get_chassis_id(ctx.ovs_idl);
 
         struct ldatapath_index ldatapaths;
@@ -919,7 +934,7 @@ ovn_controller_exit(struct unixctl_conn *conn, int argc OVS_UNUSED,
              const char *argv[] OVS_UNUSED, void *exiting_)
 {
     bool *exiting = exiting_;
-    *exiting = true;
+    *exiting = true;//标记进程退出
 
     unixctl_command_reply(conn, NULL);
 }
@@ -956,6 +971,7 @@ inject_pkt(struct unixctl_conn *conn, int argc OVS_UNUSED,
 
 /* Get the desired SB probe timer from the OVS database and configure it into
  * the SB database. */
+//ovn-remote-probe-interval用于设置controller与sb之间的探测间隔（用于保持两者间连接活跃）
 static void
 update_probe_interval(struct controller_ctx *ctx, const char *ovnsb_remote)
 {
@@ -968,6 +984,7 @@ update_probe_interval(struct controller_ctx *ctx, const char *ovnsb_remote)
                                 -1);
     }
     if (interval == -1) {
+    	//如果此项没有配置，检查使用的数据库连接协议是否要求探测，如果要求，则探测间隔5s一次，如果不需要，则定为0
         interval = stream_or_pstream_needs_probes(ovnsb_remote)
                    ? DEFAULT_PROBE_INTERVAL_MSEC
                    : 0;

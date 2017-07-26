@@ -50,7 +50,7 @@ struct reconnect {
     char *name;
     int min_backoff;
     int max_backoff;
-    int probe_interval;
+    int probe_interval;//探测间隔
     bool passive;
     enum vlog_level info;       /* Used for informational messages. */
 

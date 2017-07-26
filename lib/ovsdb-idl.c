@@ -86,7 +86,7 @@ enum ovsdb_idl_state {
 };
 
 struct ovsdb_idl {
-    const struct ovsdb_idl_class *class;
+    const struct ovsdb_idl_class *class;//db元数据
     struct jsonrpc_session *session;
     struct uuid uuid;
     //通过名称查table
@@ -280,11 +280,11 @@ ovsdb_idl_create(const char *remote, const struct ovsdb_idl_class *class,
         table->class = tc;
         table->modes = xmalloc(tc->n_columns);
         memset(table->modes, default_mode, tc->n_columns);
-        table->need_table = false;
+        table->need_table = false;//初始化为不需要
         //初始化此表的列信息
         shash_init(&table->columns);
         for (j = 0; j < tc->n_columns; j++) {
-            const struct ovsdb_idl_column *column = &tc->columns[j];
+            const struct ovsdb_idl_column *column = &tc->columns[j];//取列元数据
 
             shash_add_assert(&table->columns, column->name, column);
         }
@@ -306,7 +306,7 @@ ovsdb_idl_create(const char *remote, const struct ovsdb_idl_class *class,
     idl->schema = NULL;
 
     hmap_init(&idl->outstanding_txns);
-    uuid_generate(&idl->uuid);
+    uuid_generate(&idl->uuid);//生成uuid
 
     return idl;
 }
@@ -874,9 +874,11 @@ ovsdb_idl_get_mode(struct ovsdb_idl *idl,
     return &table->modes[column - table->class->columns];
 }
 
+//加入引用表
 static void
 add_ref_table(struct ovsdb_idl *idl, const struct ovsdb_base_type *base)
 {
+	//如果类型为uuid,并且约束里有引用的表名称，则加入其引用的表
     if (base->type == OVSDB_TYPE_UUID && base->u.uuid.refTableName) {
         struct ovsdb_idl_table *table;
 
@@ -904,7 +906,8 @@ void
 ovsdb_idl_add_column(struct ovsdb_idl *idl,
                      const struct ovsdb_idl_column *column)
 {
-    *ovsdb_idl_get_mode(idl, column) = OVSDB_IDL_MONITOR | OVSDB_IDL_ALERT;
+    *ovsdb_idl_get_mode(idl, column) = OVSDB_IDL_MONITOR | OVSDB_IDL_ALERT;//修改表模式
+    //尝试加入此列对应的引用表
     add_ref_table(idl, &column->type.key);
     add_ref_table(idl, &column->type.value);
 }
@@ -932,7 +935,7 @@ ovsdb_idl_add_table(struct ovsdb_idl *idl,
         struct ovsdb_idl_table *table = &idl->tables[i];
 
         if (table->class == tc) {
-            table->need_table = true;
+            table->need_table = true;//表被加入
             return;
         }
     }
@@ -1860,8 +1863,9 @@ ovsdb_idl_process_update(struct ovsdb_idl_table *table,
         if (row) {
             /* XXX perhaps we should check the 'old' values? */
             if (!ovsdb_idl_row_is_orphan(row)) {
-                return ovsdb_idl_modify_row(row, new);
+                return ovsdb_idl_modify_row(row, new);//更新
             } else {
+            	//本地找到了此行，但此行的old及new均为NULL,处理为插入
                 VLOG_WARN_RL(&semantic_rl, "cannot modify missing but "
                              "referenced row "UUID_FMT" in table %s",
                              UUID_ARGS(uuid), table->class->name);
@@ -1869,6 +1873,7 @@ ovsdb_idl_process_update(struct ovsdb_idl_table *table,
                 ovsdb_idl_insert_row(row, new);
             }
         } else {
+        	//本地没有找到，处理为插入
             VLOG_WARN_RL(&semantic_rl, "cannot modify missing row "UUID_FMT" "
                          "in table %s", UUID_ARGS(uuid), table->class->name);
             ovsdb_idl_insert_row(ovsdb_idl_row_create(table, uuid), new);
@@ -1957,8 +1962,9 @@ ovsdb_idl_row_change__(struct ovsdb_idl_row *row, const struct json *row_json,
     bool apply_diff = diff_json != NULL;
     const struct json *json = apply_diff ? diff_json : row_json;
 
+    //遍历json中的所有object
     SHASH_FOR_EACH (node, json_object(json)) {
-        const char *column_name = node->name;
+        const char *column_name = node->name;//列名称
         const struct ovsdb_idl_column *column;
         struct ovsdb_datum datum;
         struct ovsdb_error *error;
@@ -1973,8 +1979,8 @@ ovsdb_idl_row_change__(struct ovsdb_idl_row *row, const struct json *row_json,
             continue;
         }
 
-        column_idx = column - table->class->columns;
-        old = &row->old[column_idx];//列索引
+        column_idx = column - table->class->columns;//列索引
+        old = &row->old[column_idx];//列被变更前的数据（未提交）
 
         error = NULL;
         if (apply_diff) {
@@ -1985,6 +1991,7 @@ ovsdb_idl_row_change__(struct ovsdb_idl_row *row, const struct json *row_json,
             error = ovsdb_transient_datum_from_json(&diff, &column->type,
                                                     node->data);
             if (!error) {
+            	//由diff生成datum
                 error = ovsdb_datum_apply_diff(&datum, old, &diff,
                                                &column->type);
                 ovsdb_datum_destroy(&diff, &column->type);
@@ -1997,7 +2004,8 @@ ovsdb_idl_row_change__(struct ovsdb_idl_row *row, const struct json *row_json,
 
         if (!error) {
             if (!ovsdb_datum_equals(old, &datum, &column->type)) {
-                ovsdb_datum_swap(old, &datum);
+            	//旧数据与新数据检查后，发现不相等
+                ovsdb_datum_swap(old, &datum);//更新old
                 if (table->modes[column_idx] & OVSDB_IDL_ALERT) {
                     changed = true;
                     row->change_seqno[change]
@@ -2020,7 +2028,7 @@ ovsdb_idl_row_change__(struct ovsdb_idl_row *row, const struct json *row_json,
                  * includes every value in a row. */
             }
 
-            ovsdb_datum_destroy(&datum, &column->type);
+            ovsdb_datum_destroy(&datum, &column->type);//释放无用数据
         } else {
             char *s = ovsdb_error_to_string(error);
             VLOG_WARN_RL(&syntax_rl, "error parsing column %s in row "UUID_FMT
@@ -2037,6 +2045,7 @@ static bool
 ovsdb_idl_row_update(struct ovsdb_idl_row *row, const struct json *row_json,
                      enum ovsdb_idl_change change)
 {
+	//更新old项
     return ovsdb_idl_row_change__(row, row_json, NULL, change);
 }
 
@@ -2057,6 +2066,7 @@ ovsdb_idl_row_apply_diff(struct ovsdb_idl_row *row,
  *
  * This function returns true if 'row' is an orphan row, otherwise false.
  */
+//检查此行是否为孤儿行
 static bool
 ovsdb_idl_row_is_orphan(const struct ovsdb_idl_row *row)
 {
@@ -2085,18 +2095,21 @@ ovsdb_idl_row_exists(const struct ovsdb_idl_row *row)
     return row->new != NULL;
 }
 
+//解析并填充old项至row中
 static void
 ovsdb_idl_row_parse(struct ovsdb_idl_row *row)
 {
     const struct ovsdb_idl_table_class *class = row->table->class;
     size_t i;
 
+    //填充所有列
     for (i = 0; i < class->n_columns; i++) {
         const struct ovsdb_idl_column *c = &class->columns[i];
         (c->parse)(row, &row->old[i]);
     }
 }
 
+//反解析以前对此行的解析
 static void
 ovsdb_idl_row_unparse(struct ovsdb_idl_row *row)
 {
@@ -2169,6 +2182,7 @@ ovsdb_idl_row_clear_arcs(struct ovsdb_idl_row *row, bool destroy_dsts)
 }
 
 /* Force nodes that reference 'row' to reparse. */
+//由于row行发生变更，故链接到此行的关系需要重新检查并更新。（有些关联会不再存在，有些关联会建立）
 static void
 ovsdb_idl_row_reparse_backrefs(struct ovsdb_idl_row *row)
 {
@@ -2193,6 +2207,7 @@ ovsdb_idl_row_reparse_backrefs(struct ovsdb_idl_row *row)
     }
 }
 
+//申请class对应的一行数据内存
 static struct ovsdb_idl_row *
 ovsdb_idl_row_create__(const struct ovsdb_idl_table_class *class)
 {
@@ -2302,6 +2317,7 @@ ovsdb_idl_row_destroy_postprocess(struct ovsdb_idl *idl)
     }
 }
 
+//将row_json更新至row中，row->old,row->new指向同一块数据
 static void
 ovsdb_idl_insert_row(struct ovsdb_idl_row *row, const struct json *row_json)
 {
@@ -2312,7 +2328,7 @@ ovsdb_idl_insert_row(struct ovsdb_idl_row *row, const struct json *row_json)
     //对insert操作来说，row->old为默认行
     row->old = row->new = xmalloc(class->n_columns * sizeof *row->old);
     for (i = 0; i < class->n_columns; i++) {
-        ovsdb_datum_init_default(&row->old[i], &class->columns[i].type);
+        ovsdb_datum_init_default(&row->old[i], &class->columns[i].type);//设默认值
     }
 
     ovsdb_idl_row_update(row, row_json, OVSDB_IDL_CHANGE_INSERT);
@@ -2341,10 +2357,10 @@ ovsdb_idl_modify_row(struct ovsdb_idl_row *row, const struct json *row_json)
 {
     bool changed;
 
-    ovsdb_idl_row_unparse(row);
-    ovsdb_idl_row_clear_arcs(row, true);
+    ovsdb_idl_row_unparse(row);//释放掉以前对此行的解析
+    ovsdb_idl_row_clear_arcs(row, true);//释放关联关系
     changed = ovsdb_idl_row_update(row, row_json, OVSDB_IDL_CHANGE_MODIFY);
-    ovsdb_idl_row_parse(row);
+    ovsdb_idl_row_parse(row);//重新解析
 
     return changed;
 }
@@ -2387,6 +2403,7 @@ may_add_arc(const struct ovsdb_idl_row *src, const struct ovsdb_idl_row *dst)
     return arc->src != src;
 }
 
+//table_class - idl->class->tables可得出表索引
 static struct ovsdb_idl_table *
 ovsdb_idl_table_from_class(const struct ovsdb_idl *idl,
                            const struct ovsdb_idl_table_class *table_class)
