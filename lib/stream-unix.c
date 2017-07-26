@@ -57,7 +57,7 @@ unix_open(const char *name, char *suffix, struct stream **streamp,//主动unix s
     }
 
     free(connect_path);
-    return new_fd_stream(name, fd, check_connection_completion(fd),
+    return new_fd_stream(xstrdup(name), fd, check_connection_completion(fd),
                          AF_UNIX, streamp);
 }
 
@@ -102,7 +102,8 @@ punix_open(const char *name OVS_UNUSED, char *suffix,
         return error;
     }
 
-    return new_fd_pstream(name, fd, punix_accept, bind_path, pstreamp);
+    return new_fd_pstream(xstrdup(name), fd,
+                          punix_accept, bind_path, pstreamp);
 }
 
 //unix域服务器端创建client fd对应的stream
@@ -112,14 +113,11 @@ punix_accept(int fd, const struct sockaddr_storage *ss, size_t ss_len,
 {
     const struct sockaddr_un *sun = (const struct sockaddr_un *) ss;
     int name_len = get_unix_name_len(sun, ss_len);
-    char name[128];
-
-    if (name_len > 0) {
-        snprintf(name, sizeof name, "unix:%.*s", name_len, sun->sun_path);//%.*s
-    } else {
-        strcpy(name, "unix");
-    }
-    return new_fd_stream(name, fd, 0, AF_UNIX, streamp);//构造af_unix类型的fd,定义为已连接，name为类型名称
+    char *bound_name = (name_len > 0
+                        ? xasprintf("unix:%.*s", name_len, sun->sun_path)
+                        : xstrdup("unix"));
+    //构造af_unix类型的fd,定义为已连接，name为类型名称
+    return new_fd_stream(bound_name, fd, 0, AF_UNIX, streamp);
 }
 
 const struct pstream_class punix_pstream_class = {
