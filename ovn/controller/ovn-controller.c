@@ -657,7 +657,7 @@ main(int argc, char *argv[])
 
         const struct sbrec_chassis *chassis = NULL;
         if (chassis_id) {
-            chassis = chassis_run(&ctx, chassis_id, br_int);
+            chassis = chassis_run(&ctx, chassis_id, br_int);//检查更新当前的chassis记录
             encaps_run(&ctx, br_int, chassis_id);
             bfd_calculate_active_tunnels(br_int, &active_tunnels);
             binding_run(&ctx, br_int, chassis, &ldatapaths, &lports,
@@ -668,7 +668,7 @@ main(int argc, char *argv[])
             struct shash addr_sets = SHASH_INITIALIZER(&addr_sets);
             addr_sets_init(&ctx, &addr_sets);
 
-            patch_run(&ctx, br_int, chassis);
+            patch_run(&ctx, br_int, chassis);//创建br-int与物理网络对应的桥的连接(采用patch口）
 
             enum mf_field_id mff_ovn_geneve = ofctrl_run(br_int,
                                                          &pending_ct_zones);

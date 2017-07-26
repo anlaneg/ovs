@@ -134,7 +134,7 @@ struct ovsdb_idl_txn {
     enum ovsdb_idl_txn_status status;
     char *error;
     bool dry_run;
-    struct ds comment;
+    struct ds comment;//事务注释说明
 
     /* Increments. */
     const char *inc_table;

@@ -212,6 +212,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
                               chassis_id);
 
     if (!chassis_rec) {
+    	//没有这个chassis,创建，并添加相应的配置项
         struct smap ext_ids = SMAP_INITIALIZER(&ext_ids);
         smap_add(&ext_ids, "ovn-bridge-mappings", bridge_mappings);
         smap_add(&ext_ids, "datapath-type", datapath_type);
@@ -224,7 +225,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
     }
 
     ds_destroy(&iface_types);
-    int n_encaps = count_1bits(req_tunnels);
+    int n_encaps = count_1bits(req_tunnels);//有多少种封装方式
     struct sbrec_encap **encaps = xmalloc(n_encaps * sizeof *encaps);
     const struct smap options = SMAP_CONST1(&options, "csum", encap_csum);
     for (int i = 0; i < n_encaps; i++) {
@@ -232,7 +233,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
 
         encaps[i] = sbrec_encap_insert(ctx->ovnsb_idl_txn);
 
-        sbrec_encap_set_type(encaps[i], type);
+        sbrec_encap_set_type(encaps[i], type);//不同的封装
         sbrec_encap_set_ip(encaps[i], encap_ip);
         sbrec_encap_set_options(encaps[i], &options);
     }

@@ -59,6 +59,7 @@ struct chassis_node {
     const struct ovsrec_bridge *bridge;
 };
 
+//分配tunnel接口名称
 static char *
 tunnel_create_name(struct tunnel_ctx *tc, const char *chassis_id)
 {
@@ -183,16 +184,18 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     	//遍历br的每个port
         for (size_t i = 0; i < br->n_ports; i++) {
             const struct ovsrec_port *port = br->ports[i];
-            sset_add(&tc.port_names, port->name);
+            sset_add(&tc.port_names, port->name);//记录port名称
 
             const char *id = smap_get(&port->external_ids, "ovn-chassis-id");
             if (id) {
+            	//如果port有'ovn-chassis-id'说明port是一个tunnel port，其的值是对端的chassis的id号
                 if (!shash_find(&tc.chassis, id)) {
                     struct chassis_node *chassis = xzalloc(sizeof *chassis);
                     chassis->bridge = br;
                     chassis->port = port;
                     shash_add_assert(&tc.chassis, id, chassis);//此chassis获得对应的桥及端口
                 } else {
+                	//有两个port可以到达同一个chassis,删除掉其中一个
                     /* Duplicate port for ovn-chassis-id.  Arbitrarily choose
                      * to delete this one. */
                     ovsrec_bridge_update_ports_delvalue(br, port);
@@ -203,13 +206,14 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
 
     SBREC_CHASSIS_FOR_EACH(chassis_rec, ctx->ovnsb_idl) {
         if (strcmp(chassis_rec->name, chassis_id)) {
+        	//查找到名称为chassis_id的这条记录，选择一种隧道类型
             /* Create tunnels to the other chassis. */
             const struct sbrec_encap *encap = preferred_encap(chassis_rec);
             if (!encap) {
                 VLOG_INFO("No supported encaps for '%s'", chassis_rec->name);
                 continue;
             }
-            tunnel_add(&tc, chassis_rec->name, encap);
+            tunnel_add(&tc, chassis_rec->name, encap);//配置隧道
         }
     }
 

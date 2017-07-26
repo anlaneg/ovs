@@ -150,7 +150,7 @@ parse_and_store_addresses(const char *address, struct lport_addresses *laddrs,
  * Returns true if at least 'MAC' is found in 'address', false otherwise.
  *
  * The caller must call destroy_lport_addresses(). */
-//解析mac地址，ip地址
+//自address中解析mac地址，ip地址（ofs表示解析到哪个位置了）
 bool
 extract_addresses(const char *address, struct lport_addresses *laddrs,
                   int *ofs)

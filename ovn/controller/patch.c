@@ -40,11 +40,12 @@ match_patch_port(const struct ovsrec_port *port, const char *peer)
     for (size_t i = 0; i < port->n_interfaces; i++) {
         struct ovsrec_interface *iface = port->interfaces[i];
         if (strcmp(iface->type, "patch")) {
+        	//必须是patch口
             continue;
         }
         const char *iface_peer = smap_get(&iface->options, "peer");
         if (iface_peer && !strcmp(iface_peer, peer)) {
-            return true;
+            return true;//port的对端恰好是peer，则返回true
         }
     }
     return false;
@@ -65,6 +66,7 @@ create_patch_port(struct controller_ctx *ctx,
     for (size_t i = 0; i < src->n_ports; i++) {
         if (match_patch_port(src->ports[i], dst_name)) {
             /* Patch port already exists on 'src'. */
+        	//此桥上有一个接口已连接到dst-name口上，将此接口删除掉
             shash_find_and_delete(existing_ports, src->ports[i]->name);
             return;
         }
@@ -78,13 +80,13 @@ create_patch_port(struct controller_ctx *ctx,
     iface = ovsrec_interface_insert(ctx->ovs_idl_txn);
     ovsrec_interface_set_name(iface, src_name);
     ovsrec_interface_set_type(iface, "patch");
-    const struct smap options = SMAP_CONST1(&options, "peer", dst_name);
+    const struct smap options = SMAP_CONST1(&options, "peer", dst_name);//设置对端名称
     ovsrec_interface_set_options(iface, &options);
 
     struct ovsrec_port *port;
     port = ovsrec_port_insert(ctx->ovs_idl_txn);
-    ovsrec_port_set_name(port, src_name);
-    ovsrec_port_set_interfaces(port, &iface, 1);
+    ovsrec_port_set_name(port, src_name);//设置src_name
+    ovsrec_port_set_interfaces(port, &iface, 1);//设置port对应的interface
     const struct smap ids = SMAP_CONST1(&ids, key, value);
     ovsrec_port_set_external_ids(port, &ids);
 
@@ -93,7 +95,7 @@ create_patch_port(struct controller_ctx *ctx,
     memcpy(ports, src->ports, sizeof *ports * src->n_ports);
     ports[src->n_ports] = port;
     ovsrec_bridge_verify_ports(src);
-    ovsrec_bridge_set_ports(src, ports, src->n_ports + 1);
+    ovsrec_bridge_set_ports(src, ports, src->n_ports + 1);//桥上口加1
 
     free(ports);
 }
@@ -150,6 +152,7 @@ add_bridge_mappings(struct controller_ctx *ctx,
     }
 
     /* Parse bridge mappings. */
+    //解析网络与桥的映射关系
     struct shash bridge_mappings = SHASH_INITIALIZER(&bridge_mappings);
     char *cur, *next, *start;
     next = start = xstrdup(mappings_cfg);
@@ -157,7 +160,7 @@ add_bridge_mappings(struct controller_ctx *ctx,
         char *network, *bridge = cur;
         const struct ovsrec_bridge *ovs_bridge;
 
-        network = strsep(&bridge, ":");
+        network = strsep(&bridge, ":");//取出网络名称，桥名称
         if (!bridge || !*network || !*bridge) {
             VLOG_ERR("Invalid ovn-bridge-mappings configuration: '%s'",
                     mappings_cfg);
@@ -166,12 +169,13 @@ add_bridge_mappings(struct controller_ctx *ctx,
 
         ovs_bridge = get_bridge(ctx->ovs_idl, bridge);
         if (!ovs_bridge) {
+        	//配置指出了此桥，但此桥没有创建，继续
             VLOG_WARN("Bridge '%s' not found for network '%s'",
                     bridge, network);
             continue;
         }
 
-        shash_add(&bridge_mappings, network, ovs_bridge);
+        shash_add(&bridge_mappings, network, ovs_bridge);//记录网络与桥之间的对应关系（key为网络名称，value为桥配置）
     }
     free(start);
 
@@ -185,14 +189,17 @@ add_bridge_mappings(struct controller_ctx *ctx,
                 || strcmp(chassis->name, binding->chassis->name)) {
                 /* This L2 gateway port is not bound to this chassis,
                  * so we should not create any patch ports for it. */
+            	//此接口没有绑定到当前chassis上，忽略
                 continue;
             }
             patch_port_id = "ovn-l2gateway-port";
         } else {
             /* not a localnet or L2 gateway port. */
+        	//其它类型，忽略
             continue;
         }
 
+        //取出此接口的网络名称
         const char *network = smap_get(&binding->options, "network_name");
         if (!network) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
@@ -200,6 +207,8 @@ add_bridge_mappings(struct controller_ctx *ctx,
                          binding->type, binding->logical_port);
             continue;
         }
+
+        //通过这个网络名称找到对应的桥
         struct ovsrec_bridge *br_ln = shash_find_data(&bridge_mappings, network);
         if (!br_ln) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
@@ -209,6 +218,7 @@ add_bridge_mappings(struct controller_ctx *ctx,
             continue;
         }
 
+        //创建两个口，自br-int上连接到br-ln上
         char *name1 = patch_port_name(br_int->name, binding->logical_port);
         char *name2 = patch_port_name(binding->logical_port, br_int->name);
         create_patch_port(ctx, patch_port_id, binding->logical_port,
@@ -239,18 +249,19 @@ patch_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     struct shash existing_ports = SHASH_INITIALIZER(&existing_ports);
     const struct ovsrec_port *port;
     OVSREC_PORT_FOR_EACH (port, ctx->ovs_idl) {
-        if (smap_get(&port->external_ids, "ovn-localnet-port")
-            || smap_get(&port->external_ids, "ovn-l2gateway-port")
+        if (smap_get(&port->external_ids, "ovn-localnet-port") //这种类型，实现localnet
+            || smap_get(&port->external_ids, "ovn-l2gateway-port") //这种类型，实现l2gateway
             || smap_get(&port->external_ids, "ovn-l3gateway-port")
             || smap_get(&port->external_ids, "ovn-logical-patch-port")) {
-            shash_add(&existing_ports, port->name, port);
+            shash_add(&existing_ports, port->name, port);//ovn支持的口全部收集起来
         }
     }
 
     /* Create in the database any patch ports that should exist.  Remove from
      * 'existing_ports' any patch ports that do exist in the database and
      * should be there. */
-    add_bridge_mappings(ctx, br_int, &existing_ports, chassis);
+    //两种类型（1。ovn-localnet-port 2. ovn-l2gateway-port)
+    add_bridge_mappings(ctx, br_int, &existing_ports, chassis);//实现br-int与br-ln之间的连接
 
     /* Now 'existing_ports' only still contains patch ports that exist in the
      * database but shouldn't.  Delete them from the database. */
@@ -258,7 +269,7 @@ patch_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     SHASH_FOR_EACH_SAFE (port_node, port_next_node, &existing_ports) {
         struct ovsrec_port *port = port_node->data;
         shash_delete(&existing_ports, port_node);
-        remove_port(ctx, port);
+        remove_port(ctx, port);//移除掉已存在的桥
     }
     shash_destroy(&existing_ports);
 }

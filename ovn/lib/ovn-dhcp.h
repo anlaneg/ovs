@@ -87,11 +87,12 @@ dhcp_opts_find(const struct hmap *dhcp_opts, char *opt_name)
     return NULL;
 }
 
+//加入dhcp 选项
 static inline void
 dhcp_opt_add(struct hmap *dhcp_opts, char *opt_name, size_t code, char *type)
 {
     struct dhcp_opts_map *dhcp_opt = xzalloc(sizeof *dhcp_opt);
-    dhcp_opt->name = xstrdup(opt_name);
+    dhcp_opt->name = xstrdup(opt_name);//名称
     dhcp_opt->code = code;
     dhcp_opt->type = xstrdup(type);
     hmap_insert(dhcp_opts, &dhcp_opt->hmap_node, dhcp_opt_hash(opt_name));

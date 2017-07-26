@@ -1056,6 +1056,7 @@ pinctrl_run(struct controller_ctx *ctx, const struct lport_index *lports,
     }
 
     run_put_mac_bindings(ctx, lports);
+    //为接口与nat考虑arp发送
     send_garp_run(br_int, chassis, lports, chassis_index, local_datapaths,
                   active_tunnels);
 }
@@ -1189,7 +1190,7 @@ run_put_mac_binding(struct controller_ctx *ctx,
     }
 
     /* Convert ethernet argument to string form for database. */
-    char mac_string[ETH_ADDR_STRLEN + 1];
+    char mac_string[ETH_ADDR_STRLEN + 1];//生成字符串格式的mac地址
     snprintf(mac_string, sizeof mac_string,
              ETH_ADDR_FMT, ETH_ADDR_ARGS(pmb->mac));
 
@@ -1200,7 +1201,7 @@ run_put_mac_binding(struct controller_ctx *ctx,
     const struct sbrec_mac_binding *b;
     SBREC_MAC_BINDING_FOR_EACH (b, ctx->ovnsb_idl) {
         if (!strcmp(b->logical_port, pb->logical_port)
-            && !strcmp(b->ip, pmb->ip_s)) {
+            && !strcmp(b->ip, pmb->ip_s)) {//接口相同，ip相同时，检查并更新mac绑定表
             if (strcmp(b->mac, mac_string)) {
                 sbrec_mac_binding_set_mac(b, mac_string);
             }
@@ -1209,6 +1210,7 @@ run_put_mac_binding(struct controller_ctx *ctx,
     }
 
     /* Add new IP-MAC binding for this logical port. */
+    //添加一个新的mac绑定信息
     b = sbrec_mac_binding_insert(ctx->ovnsb_idl_txn);
     sbrec_mac_binding_set_logical_port(b, pb->logical_port);
     sbrec_mac_binding_set_ip(b, pmb->ip_s);
@@ -1228,7 +1230,7 @@ run_put_mac_bindings(struct controller_ctx *ctx,
     HMAP_FOR_EACH (pmb, hmap_node, &put_mac_bindings) {
         run_put_mac_binding(ctx, lports, pmb);
     }
-    flush_put_mac_bindings();
+    flush_put_mac_bindings();//清空put_mac_bindings表
 }
 
 static void
@@ -1257,15 +1259,15 @@ flush_put_mac_bindings(void)
  * and ARP tables.
  */
 struct garp_data {
-    struct eth_addr ea;          /* Ethernet address of port. */
+    struct eth_addr ea;          /* Ethernet address of port. */ //免费arp的mac地址
     ovs_be32 ipv4;               /* Ipv4 address of port. */
-    long long int announce_time; /* Next announcement in ms. */
+    long long int announce_time; /* Next announcement in ms. */ //通告间隔
     int backoff;                 /* Backoff for the next announcement. */
-    ofp_port_t ofport;           /* ofport used to output this GARP. */
+    ofp_port_t ofport;           /* ofport used to output this GARP. */ //自哪个口进行通告
 };
 
 /* Contains GARPs to be sent. */
-static struct shash send_garp_data;
+static struct shash send_garp_data;//记录有哪些免费arp需要被发送
 
 /* Next GARP announcement in ms. */
 static long long int send_garp_time;
@@ -1283,6 +1285,7 @@ destroy_send_garps(void)
     shash_destroy_free_data(&send_garp_data);
 }
 
+//构造garp信息，并加入send_garp_data表
 static void
 add_garp(const char *name, ofp_port_t ofport,
          const struct eth_addr ea, ovs_be32 ip)
@@ -1317,6 +1320,7 @@ send_garp_update(const struct sbrec_port_binding *binding_rec,
      * "l3gateway" for logical switch ports attached to gateway routers, and
      * port bindings with type "patch" for logical switch ports attached to
      * distributed gateway ports. */
+    //首先尝试更新nat情况下的免费arp
     if (!strcmp(binding_rec->type, "l3gateway")
         || !strcmp(binding_rec->type, "patch")) {
         struct lport_addresses *laddrs = NULL;
@@ -1342,13 +1346,15 @@ send_garp_update(const struct sbrec_port_binding *binding_rec,
     }
 
     /* Update GARP for vif if it exists. */
+    //检查garp是否已缓存
     garp = shash_find_data(&send_garp_data, binding_rec->logical_port);
     if (garp) {
-        garp->ofport = ofport;
+        garp->ofport = ofport;//更新免费arp的发送接口
         return;
     }
 
     /* Add GARP for new vif. */
+    //需要加一个新的免费arp
     int i;
     for (i = 0; i < binding_rec->n_mac; i++) {
         struct lport_addresses laddrs;
@@ -1430,7 +1436,7 @@ get_localnet_vifs_l3gwports(const struct ovsrec_bridge *br_int,
     for (int i = 0; i < br_int->n_ports; i++) {
         const struct ovsrec_port *port_rec = br_int->ports[i];
         if (!strcmp(port_rec->name, br_int->name)) {
-            continue;
+            continue;//跳过internal口
         }
         const char *chassis_id = smap_get(&port_rec->external_ids,
                                           "ovn-chassis-id");
@@ -1534,11 +1540,14 @@ extract_addresses_with_port(const char *addresses,
 {
     int ofs;
     if (!extract_addresses(addresses, laddrs, &ofs)) {
+    	//解析失败
         return false;
     } else if (ofs >= strlen(addresses)) {
+    	//解析成功，且将字符串用完了，返回true
         return true;
     }
 
+    //解析成功，但字符串没有用完，解析lport
     struct lexer lexer;
     lexer_init(&lexer, addresses + ofs);
     lexer_get(&lexer);
@@ -1611,10 +1620,10 @@ consider_nat_address(const char *nat_address,
     for (i = 0; i < laddrs->n_ipv4_addrs; i++) {
         char *name = xasprintf("%s-%s", pb->logical_port,
                                         laddrs->ipv4_addrs[i].addr_s);
-        sset_add(nat_address_keys, name);
+        sset_add(nat_address_keys, name);//记录某个logic口上有nat地址xx
         free(name);
     }
-    shash_add(nat_addresses, pb->logical_port, laddrs);
+    shash_add(nat_addresses, pb->logical_port, laddrs);//记录logical口上有一组nat地址
 }
 
 static void
@@ -1685,6 +1694,7 @@ send_garp_run(const struct ovsrec_bridge *br_int,
                                chassis, chassis_index, active_tunnels,
                                &nat_addresses);
     /* For deleted ports and deleted nat ips, remove from send_garp_data. */
+    //删除掉不再存在的接口及ip,不再对宣告它们的免费arp了
     struct shash_node *iter, *next;
     SHASH_FOR_EACH_SAFE (iter, next, &send_garp_data) {
         if (!sset_contains(&localnet_vifs, iter->name) &&
@@ -1694,6 +1704,7 @@ send_garp_run(const struct ovsrec_bridge *br_int,
     }
 
     /* Update send_garp_data. */
+    //更新为某接口发送免费arp
     const char *iface_id;
     SSET_FOR_EACH (iface_id, &localnet_vifs) {
         const struct sbrec_port_binding *pb = lport_lookup_by_name(lports,
@@ -1705,6 +1716,7 @@ send_garp_run(const struct ovsrec_bridge *br_int,
     }
 
     /* Update send_garp_data for nat-addresses. */
+    //更新为nat地址发送免费arp
     const char *gw_port;
     SSET_FOR_EACH (gw_port, &local_l3gw_ports) {
         const struct sbrec_port_binding *pb = lport_lookup_by_name(lports,

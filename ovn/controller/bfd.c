@@ -66,6 +66,7 @@ bfd_calculate_active_tunnels(const struct ovsrec_bridge *br_int,
         const struct ovsrec_port *port_rec = br_int->ports[i];
 
         if (!strcmp(port_rec->name, br_int->name)) {
+        	//跳过internal口
             continue;
         }
 

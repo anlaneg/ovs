@@ -149,6 +149,7 @@ lport_index_destroy(struct lport_index *lports)
 
 /* Finds and returns the lport with the given 'name', or NULL if no such lport
  * exists. */
+//给定名称找到此port对应的binding信息
 const struct sbrec_port_binding *
 lport_lookup_by_name(const struct lport_index *lports, const char *name)
 {

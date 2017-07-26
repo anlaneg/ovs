@@ -156,12 +156,13 @@ add_logical_flows(struct controller_ctx *ctx, const struct lport_index *lports,
     struct hmap dhcp_opts = HMAP_INITIALIZER(&dhcp_opts);
     struct hmap dhcpv6_opts = HMAP_INITIALIZER(&dhcpv6_opts);
     const struct sbrec_dhcp_options *dhcp_opt_row;
+    //dhcp v4选项添加
     SBREC_DHCP_OPTIONS_FOR_EACH(dhcp_opt_row, ctx->ovnsb_idl) {
         dhcp_opt_add(&dhcp_opts, dhcp_opt_row->name, dhcp_opt_row->code,
                      dhcp_opt_row->type);
     }
 
-
+    //dhcp v6选项添加
     const struct sbrec_dhcpv6_options *dhcpv6_opt_row;
     SBREC_DHCPV6_OPTIONS_FOR_EACH(dhcpv6_opt_row, ctx->ovnsb_idl) {
        dhcp_opt_add(&dhcpv6_opts, dhcpv6_opt_row->name, dhcpv6_opt_row->code,
@@ -347,6 +348,7 @@ put_load(const uint8_t *data, size_t len,
     bitwise_one(ofpact_set_field_mask(sf), sf->field->n_bytes, ofs, n_bits);
 }
 
+//匹配领居flow,实现同网段时目的mac替换
 static void
 consider_neighbor_flow(const struct lport_index *lports,
                        const struct sbrec_mac_binding *b,
@@ -367,13 +369,14 @@ consider_neighbor_flow(const struct lport_index *lports,
 
     struct match match = MATCH_CATCHALL_INITIALIZER;
     if (strchr(b->ip, '.')) {
+    	//确认是ipv4地址
         ovs_be32 ip;
         if (!ip_parse(b->ip, &ip)) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
             VLOG_WARN_RL(&rl, "bad 'ip' %s", b->ip);
             return;
         }
-        match_set_reg(&match, 0, ntohl(ip));
+        match_set_reg(&match, 0, ntohl(ip));//将ip地址放在0号寄存器
     } else {
         struct in6_addr ip6;
         if (!ipv6_parse(b->ip, &ip6)) {
@@ -387,11 +390,11 @@ consider_neighbor_flow(const struct lport_index *lports,
     }
 
     match_set_metadata(&match, htonll(pb->datapath->tunnel_key));
-    match_set_reg(&match, MFF_LOG_OUTPORT - MFF_REG0, pb->tunnel_key);
+    match_set_reg(&match, MFF_LOG_OUTPORT - MFF_REG0, pb->tunnel_key);//将tunnel_key放在x号寄存器上
 
     uint64_t stub[1024 / 8];
     struct ofpbuf ofpacts = OFPBUF_STUB_INITIALIZER(stub);
-    put_load(mac.ea, sizeof mac.ea, MFF_ETH_DST, 0, 48, &ofpacts);
+    put_load(mac.ea, sizeof mac.ea, MFF_ETH_DST, 0, 48, &ofpacts);//填充目的mac(如果ip命中，则直接改目的mac地址）
     ofctrl_add_flow(flow_table, OFTABLE_MAC_BINDING, 100, 0, &match, &ofpacts);
     ofpbuf_uninit(&ofpacts);
 }
@@ -405,6 +408,7 @@ add_neighbor_flows(struct controller_ctx *ctx,
                    struct hmap *flow_table)
 {
     const struct sbrec_mac_binding *b;
+    //遍历mac binding表
     SBREC_MAC_BINDING_FOR_EACH (b, ctx->ovnsb_idl) {
         consider_neighbor_flow(lports, b, flow_table);
     }
@@ -427,7 +431,7 @@ lflow_run(struct controller_ctx *ctx,
     add_logical_flows(ctx, lports, mcgroups, chassis_index, local_datapaths,
                       group_table, chassis, addr_sets, flow_table,
                       active_tunnels);
-    add_neighbor_flows(ctx, lports, flow_table);
+    add_neighbor_flows(ctx, lports, flow_table);//添加领居表项
 }
 
 void

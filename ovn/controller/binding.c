@@ -144,8 +144,10 @@ add_local_datapath__(const struct ldatapath_index *ldatapaths,
     for (size_t i = 0; i < ld->ldatapath->n_lports; i++) {
         const struct sbrec_port_binding *pb = ld->ldatapath->lports[i];
         if (!strcmp(pb->type, "patch")) {
+        	//只关心patch口
             const char *peer_name = smap_get(&pb->options, "peer");
             if (peer_name) {
+            	//patch口必须有peer
                 const struct sbrec_port_binding *peer = lport_lookup_by_name(
                     lports, peer_name);
                 if (peer && peer->datapath) {
