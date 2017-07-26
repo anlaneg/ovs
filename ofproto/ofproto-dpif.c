@@ -4675,7 +4675,7 @@ packet_xlate_revert(struct ofproto *ofproto OVS_UNUSED,
 static void
 ofproto_dpif_xcache_execute(struct ofproto_dpif *ofproto,
                             struct xlate_cache *xcache,
-                            const struct dpif_flow_stats *stats)
+                            struct dpif_flow_stats *stats)
     OVS_REQUIRES(ofproto_mutex)
 {
     struct xc_entry *entry;
@@ -4708,6 +4708,7 @@ ofproto_dpif_xcache_execute(struct ofproto_dpif *ofproto,
         case XC_GROUP:
         case XC_TNL_NEIGH:
         case XC_CONTROLLER:
+        case XC_TUNNEL_HEADER:
             xlate_push_stats_entry(entry, stats);
             break;
         default:

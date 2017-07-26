@@ -113,6 +113,9 @@ static struct odp_support dp_netdev_support = {
     .ct_zone = true,
     .ct_mark = true,
     .ct_label = true,
+    .ct_state_nat = true,
+    .ct_orig_tuple = true,
+    .ct_orig_tuple6 = true,
 };
 
 /* Stores a miniflow with inline values */
@@ -5239,24 +5242,8 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
 
     case OVS_ACTION_ATTR_TUNNEL_PUSH://隧道报文封装，由各dev自主处理
         if (*depth < MAX_RECIRC_DEPTH) {
-            struct dp_packet_batch tnl_pkt;
-            struct dp_packet_batch *orig_packets_ = packets_;
-            int err;
-
-            if (!may_steal) {
-                dp_packet_batch_clone(&tnl_pkt, packets_);//clone一份报文tnl_pkt
-                packets_ = &tnl_pkt;
-                dp_packet_batch_reset_cutlen(orig_packets_);
-            }
-
             dp_packet_batch_apply_cutlen(packets_);
-
-            err = push_tnl_action(pmd, a, packets_);//执行push　tunnel动作
-            if (!err) {
-                (*depth)++;
-                dp_netdev_recirculate(pmd, packets_);//隧道封装好了，重走报文解析流程，进行新的外层匹配
-                (*depth)--;
-            }
+            push_tnl_action(pmd, a, packets_);//执行push　tunnel动作
             return;
         }
         break;

@@ -636,10 +636,10 @@ pstream_get_bound_port(const struct pstream *pstream)
  * After calling this function, stream_close() must be used to destroy
  * 'stream', otherwise resources will be leaked.
  *
- * The caller retains ownership of 'name'. */
+ * Takes ownership of 'name'. */
 void
 stream_init(struct stream *stream, const struct stream_class *class,
-            int connect_status, const char *name)
+            int connect_status, char *name)
 {
     memset(stream, 0, sizeof *stream);
     stream->class = class;//class
@@ -647,17 +647,18 @@ stream_init(struct stream *stream, const struct stream_class *class,
                     : !connect_status ? SCS_CONNECTED
                     : SCS_DISCONNECTED);//设置connect状态
     stream->error = connect_status;//设置错误状态
-    stream->name = xstrdup(name);//设置名称
+    stream->name = name;//设置名称
     ovs_assert(stream->state != SCS_CONNECTING || class->connect);
 }
 
+/* Takes ownership of 'name'. */
 void
 pstream_init(struct pstream *pstream, const struct pstream_class *class,
-            const char *name)
+            char *name)
 {
     memset(pstream, 0, sizeof *pstream);
     pstream->class = class;
-    pstream->name = xstrdup(name);
+    pstream->name = name;
 }
 
 void
