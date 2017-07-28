@@ -72,6 +72,7 @@ struct hmap {
 /* Initializer for an immutable struct hmap 'HMAP' that contains 'N' nodes
  * linked together starting at 'NODE'.  The hmap only has a single chain of
  * hmap_nodes, so 'N' should be small. */
+//hmap的初始化列表,将buckets设置为one,将node设置为none,将mask置为0，将节点数置为N
 #define HMAP_CONST(HMAP, N, NODE) {                                 \
         CONST_CAST(struct hmap_node **, &(HMAP)->one), NODE, 0, N }
 

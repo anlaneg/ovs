@@ -39,6 +39,7 @@ ldatapath_index_init(struct ldatapath_index *ldatapaths,
         uint32_t dp_key = pb->datapath->tunnel_key;
         struct ldatapath *ld = ldatapath_lookup_by_key__(ldatapaths, dp_key);
         if (!ld) {
+        	//不存在，新建
             ld = xzalloc(sizeof *ld);
             hmap_insert(&ldatapaths->by_key, &ld->by_key_node, dp_key);
             ld->db = pb->datapath;
@@ -68,6 +69,7 @@ ldatapath_index_destroy(struct ldatapath_index *ldatapaths)
     hmap_destroy(&ldatapaths->by_key);
 }
 
+//检查ldatapaths集合里是否包含dp_key
 static struct ldatapath *ldatapath_lookup_by_key__(
     const struct ldatapath_index *ldatapaths, uint32_t dp_key)
 {
@@ -86,9 +88,9 @@ const struct ldatapath *ldatapath_lookup_by_key(
 
 /* A logical port. */
 struct lport {
-    struct hmap_node name_node; /* Index by name. */
-    struct hmap_node key_node;  /* Index by (dp_key, port_key). */
-    const struct sbrec_port_binding *pb;
+    struct hmap_node name_node; /* Index by name. */ //按名称索引
+    struct hmap_node key_node;  /* Index by (dp_key, port_key). */ //按(dp_key,port_key)索引
+    const struct sbrec_port_binding *pb;//数据库中的port绑定
 };
 
 void
@@ -103,21 +105,27 @@ lport_index_init(struct lport_index *lports, struct ovsdb_idl *ovnsb_idl)
             continue;
         }
 
+        //按名称查
         if (lport_lookup_by_name(lports, pb->logical_port)) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
             VLOG_WARN_RL(&rl, "duplicate logical port name '%s'",
                          pb->logical_port);
+            //已存在，忽略
             continue;
         }
+
+        //按datapath的tunnel-key 加上 port的tunnel_key查
         if (lport_lookup_by_key(lports, pb->datapath->tunnel_key,
                                 pb->tunnel_key)) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
             VLOG_WARN_RL(&rl, "duplicate logical port %"PRId64" in logical "
                          "datapath %"PRId64,
                          pb->tunnel_key, pb->datapath->tunnel_key);
+            //已存在，忽略
             continue;
         }
 
+        //加入by_name,by_key链
         struct lport *p = xmalloc(sizeof *p);
         hmap_insert(&lports->by_name, &p->name_node,
                     hash_string(pb->logical_port, 0));
@@ -183,6 +191,7 @@ struct mcgroup {
     const struct sbrec_multicast_group *mg;
 };
 
+//mcgroup索引创建
 void
 mcgroup_index_init(struct mcgroup_index *mcgroups, struct ovsdb_idl *ovnsb_idl)
 {
@@ -195,12 +204,13 @@ mcgroup_index_init(struct mcgroup_index *mcgroups, struct ovsdb_idl *ovnsb_idl)
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
             VLOG_WARN_RL(&rl, "datapath "UUID_FMT" contains duplicate "
                          "multicast group '%s'", UUID_ARGS(dp_uuid), mg->name);
+            //已存在，忽略
             continue;
         }
 
         struct mcgroup *m = xmalloc(sizeof *m);
         hmap_insert(&mcgroups->by_dp_name, &m->dp_name_node,
-                    hash_string(mg->name, uuid_hash(dp_uuid)));
+                    hash_string(mg->name, uuid_hash(dp_uuid)));//加入
         m->mg = mg;
     }
 }
@@ -221,6 +231,7 @@ mcgroup_index_destroy(struct mcgroup_index *mcgroups)
     hmap_destroy(&mcgroups->by_dp_name);
 }
 
+//按name,datapath.uuid来查询mcgroup
 const struct sbrec_multicast_group *
 mcgroup_lookup_by_dp_name(const struct mcgroup_index *mcgroups,
                           const struct sbrec_datapath_binding *dp,

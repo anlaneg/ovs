@@ -189,8 +189,8 @@ consider_logical_flow(const struct lport_index *lports,
                       const struct hmap *local_datapaths,
                       struct group_table *group_table,
                       const struct sbrec_chassis *chassis,
-                      struct hmap *dhcp_opts,
-                      struct hmap *dhcpv6_opts,
+                      struct hmap *dhcp_opts,//dhcp选项
+                      struct hmap *dhcpv6_opts,//dhcpv6选项
                       uint32_t *conj_id_ofs,
                       const struct shash *addr_sets,
                       struct hmap *flow_table,

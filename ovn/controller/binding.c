@@ -82,6 +82,7 @@ get_local_iface_ids(const struct ovsrec_bridge *br_int,
         int j;
 
         if (!strcmp(port_rec->name, br_int->name)) {
+        	//跳过local
             continue;
         }
 
@@ -93,8 +94,8 @@ get_local_iface_ids(const struct ovsrec_bridge *br_int,
             int64_t ofport = iface_rec->n_ofport ? *iface_rec->ofport : 0;
 
             if (iface_id && ofport > 0) {
-                shash_add(lport_to_iface, iface_id, iface_rec);
-                sset_add(local_lports, iface_id);
+                shash_add(lport_to_iface, iface_id, iface_rec);//lport_to_iface中以iface_id为索引，查iface_rec
+                sset_add(local_lports, iface_id);//local_lports中收集iface_id
             }
 
             /* Check if this is a tunnel interface. */
@@ -126,6 +127,7 @@ add_local_datapath__(const struct ldatapath_index *ldatapaths,
         return;
     }
 
+    //如果不存在，则将其加入
     ld = xzalloc(sizeof *ld);
     hmap_insert(local_datapaths, &ld->hmap_node, dp_key);
     ld->datapath = datapath;
@@ -152,7 +154,8 @@ add_local_datapath__(const struct ldatapath_index *ldatapaths,
                     lports, peer_name);
                 if (peer && peer->datapath) {
                     add_local_datapath__(ldatapaths, lports, peer->datapath,
-                                         false, depth + 1, local_datapaths);
+                                         false, depth + 1, local_datapaths);//加入对端的datapath
+                    //将这个datapath记为自已的对端（自已可以有多个对端）
                     ld->n_peer_dps++;
                     ld->peer_dps = xrealloc(
                             ld->peer_dps,
@@ -261,7 +264,7 @@ setup_qos(const char *egress_iface, struct hmap *queue_map)
         return;
     }
 
-    int error = netdev_open(egress_iface, NULL, &netdev_phy);
+    int error = netdev_open(egress_iface, NULL, &netdev_phy);//打开此接口
     if (error) {
         VLOG_WARN_RL(&rl, "%s: could not open netdev (%s)",
                      egress_iface, ovs_strerror(error));
@@ -470,6 +473,7 @@ consider_localnet_port(const struct sbrec_port_binding *binding_rec,
         = get_local_datapath(local_datapaths,
                              binding_rec->datapath->tunnel_key);
     if (!ld) {
+    	//查local_datapaths不存在
         return;
     }
 
@@ -496,6 +500,7 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
             struct hmap *local_datapaths, struct sset *local_lports)
 {
     if (!chassis_rec) {
+    	//此chassis无记录时，不处理
         return;
     }
 
@@ -531,6 +536,7 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
         }
     }
 
+    //qos处理
     if (!sset_is_empty(&egress_ifaces)
         && set_noop_qos(ctx, &egress_ifaces)) {
         const char *entry;

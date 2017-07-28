@@ -8393,6 +8393,7 @@ ofpacts_format(const struct ofpact *ofpacts, size_t ofpacts_len,
 /* Internal use by helpers. */
 
 /* Implementation of ofpact_put_<ENUM>(). */
+//申请一段空间，空出指定大小
 void *
 ofpact_put(struct ofpbuf *ofpacts, enum ofpact_type type, size_t len)
 {

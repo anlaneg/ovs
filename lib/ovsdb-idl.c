@@ -2580,6 +2580,7 @@ ovsdb_idl_is_mutable(const struct ovsdb_idl_row *row,
 /* Returns false if 'row' was obtained from the IDL, true if it was initialized
  * to all-zero-bits by some other entity.  If 'row' was set up some other way
  * then the return value is indeterminate. */
+//检查是否合成的行（即无对应的表）
 bool
 ovsdb_idl_row_is_synthetic(const struct ovsdb_idl_row *row)
 {

@@ -40,14 +40,14 @@ struct sbrec_port_binding;
  */
 
 struct ldatapath {
-    struct hmap_node by_key_node; /* Index by tunnel key. */
-    const struct sbrec_datapath_binding *db;
+    struct hmap_node by_key_node; /* Index by tunnel key. */ //挂载用节点
+    const struct sbrec_datapath_binding *db;//记录
     const struct sbrec_port_binding **lports;
-    size_t n_lports, allocated_lports;
+    size_t n_lports, allocated_lports;//存入lports中的数目，lports表可存放的最大数目
 };
 
 struct ldatapath_index {
-    struct hmap by_key;
+    struct hmap by_key;//按key分类
 };
 
 void ldatapath_index_init(struct ldatapath_index *, struct ovsdb_idl *);

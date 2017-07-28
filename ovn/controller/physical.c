@@ -114,6 +114,7 @@ put_move(enum mf_field_id src, int src_ofs,
     move->dst.n_bits = n_bits;
 }
 
+//填充resubmit参数
 static void
 put_resubmit(uint8_t table_id, struct ofpbuf *ofpacts)
 {

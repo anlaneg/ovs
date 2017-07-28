@@ -34,11 +34,12 @@ bfd_register_ovs_idl(struct ovsdb_idl *ovs_idl)
 {
     /* NOTE: this assumes that binding.c has added the
      * ovsrec_interface table */
-    ovsdb_idl_add_column(ovs_idl, &ovsrec_interface_col_bfd);
-    ovsdb_idl_add_column(ovs_idl, &ovsrec_interface_col_bfd_status);
+    ovsdb_idl_add_column(ovs_idl, &ovsrec_interface_col_bfd);//添加bfd列
+    ovsdb_idl_add_column(ovs_idl, &ovsrec_interface_col_bfd_status);//添加bfd_status列
 }
 
 
+//设置bfd列的取值
 static void
 interface_set_bfd(const struct ovsrec_interface *iface, bool bfd_setting)
 {
@@ -47,15 +48,17 @@ interface_set_bfd(const struct ovsrec_interface *iface, bool bfd_setting)
     if (current_setting && !strcmp(current_setting, new_setting)) {
         /* If already set to the desired setting we skip setting it again
          * to avoid flapping to bfd initialization state */
+    	//已设置，且无变化
         return;
     }
-    const struct smap bfd = SMAP_CONST1(&bfd, "enable", new_setting);
+    const struct smap bfd = SMAP_CONST1(&bfd, "enable", new_setting);//初始化enable的值为new_setting
     ovsrec_interface_verify_bfd(iface);
-    ovsrec_interface_set_bfd(iface, &bfd);
+    ovsrec_interface_set_bfd(iface, &bfd);//设置列
     VLOG_INFO("%s BFD on interface %s", bfd_setting ? "Enabled" : "Disabled",
                                         iface->name);
 }
 
+//收庥活跃的tunnel
 void
 bfd_calculate_active_tunnels(const struct ovsrec_bridge *br_int,
                              struct sset *active_tunnels)
@@ -79,14 +82,17 @@ bfd_calculate_active_tunnels(const struct ovsrec_bridge *br_int,
             if (smap_get(&iface_rec->options, "remote_ip")) {
                 /* Add ovn-chassis-id if the bfd_status of the tunnel
                  * is active */
+            	//仅关注隧道接口
                 const char *bfd = smap_get(&iface_rec->bfd, "enable");
                 if (bfd && !strcmp(bfd, "true")) {
+                	//接口的bfd列是开启的，取bfd_status字段
                     const char *status = smap_get(&iface_rec->bfd_status,
                                                   "state");
                     if (status && !strcmp(status, "up")) {
                         const char *id = smap_get(&port_rec->external_ids,
                                                   "ovn-chassis-id");
                         if (id) {
+                        	//添加up的ovn-chassis-id
                             sset_add(active_tunnels, id);
                         }
                     }

@@ -69,11 +69,13 @@ OVS_NO_RETURN void ovs_assert_failure(const char *, const char *, const char *);
  * The cast to int is present only to suppress an "expression using sizeof
  * bool" warning from "sparse" (see
  * http://permalink.gmane.org/gmane.comp.parsers.sparse/2967). */
+//确保pointer可以强转为type类型
 #define BUILD_ASSERT_TYPE(POINTER, TYPE) \
     ((void) sizeof ((int) ((POINTER) == (TYPE) (POINTER))))
 
 /* Casts 'pointer' to 'type' and issues a compiler warning if the cast changes
  * anything other than an outermost "const" or "volatile" qualifier. */
+//pointer指针强转为type类型
 #define CONST_CAST(TYPE, POINTER)                               \
     (BUILD_ASSERT_TYPE(POINTER, TYPE),                          \
      (TYPE) (POINTER))

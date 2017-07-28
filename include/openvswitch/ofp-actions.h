@@ -129,6 +129,7 @@ struct vl_mff_map;
 
 /* enum ofpact_type, with a member OFPACT_<ENUM> for each action. */
 enum OVS_PACKED_ENUM ofpact_type {
+	//定义OFPACT_XX的枚举
 #define OFPACT(ENUM, STRUCT, MEMBER, NAME) OFPACT_##ENUM,
     OFPACTS
 #undef OFPACT
@@ -1078,6 +1079,10 @@ void *ofpact_finish(struct ofpbuf *, struct ofpact *);
  *     a variable-length action, this is the offset to the variable-length
  *     part.
  */
+//定义ofpact_get_XX 将ofpact强转为struct类型
+//定义ofpact_get_XX_nullable 将ofpact强转为struct (可为NULL)
+//定义ofpact_put_XX 将ofpact 申请一段空间，并存入类型及数据长度（无数据），返回数据类型位置
+//定义ofpact_put_XX 将ofpact 不申请空间，存放类型及数据长度（无数据）填充为0,无返回
 #define OFPACT(ENUM, STRUCT, MEMBER, NAME)                              \
     BUILD_ASSERT_DECL(offsetof(struct STRUCT, ofpact) == 0);            \
                                                                         \

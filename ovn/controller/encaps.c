@@ -54,6 +54,7 @@ struct tunnel_ctx {
     const struct ovsrec_bridge *br_int;
 };
 
+//那个桥，哪个口属于此chassis节点
 struct chassis_node {
     const struct ovsrec_port *port;
     const struct ovsrec_bridge *bridge;
@@ -84,10 +85,10 @@ tunnel_add(struct tunnel_ctx *tc, const char *new_chassis_id,
            const struct sbrec_encap *encap)
 {
     struct smap options = SMAP_INITIALIZER(&options);
-    smap_add(&options, "remote_ip", encap->ip);
+    smap_add(&options, "remote_ip", encap->ip);//对端ip地址
     smap_add(&options, "key", "flow");
     const char *csum = smap_get(&encap->options, "csum");
-    if (csum && (!strcmp(csum, "true") || !strcmp(csum, "false"))) {
+    if (csum && (!strcmp(csum, "true") || !strcmp(csum, "false"))) {//checksum谁来处理
         smap_add(&options, "csum", csum);
     }
 
@@ -128,7 +129,7 @@ tunnel_add(struct tunnel_ctx *tc, const char *new_chassis_id,
     const struct smap id = SMAP_CONST1(&id, "ovn-chassis-id", new_chassis_id);
     ovsrec_port_set_external_ids(port, &id);
 
-    ovsrec_bridge_update_ports_addvalue(tc->br_int, port);
+    ovsrec_bridge_update_ports_addvalue(tc->br_int, port);//向ovsdb中添加这个接口
 
     sset_add_and_free(&tc->port_names, port_name);
 
@@ -154,6 +155,7 @@ preferred_encap(const struct sbrec_chassis *chassis_rec)
     return best_encap;
 }
 
+//隧道接口处理
 void
 encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
            const char *chassis_id)

@@ -73,7 +73,7 @@ struct ovsdb_idl_row {
     /* Transactional data. */
     struct ovsdb_datum *new;    /* Modified data (null to delete row). */ //更新或者新插入行时，此字符不为null
     unsigned long int *prereqs; /* Bitmap of columns to verify in "old". */
-    unsigned long int *written; /* Bitmap of columns from "new" to write. */
+    unsigned long int *written; /* Bitmap of columns from "new" to write. */ //标记行哪些字段被更新了
     struct hmap_node txn_node;  /* Node in ovsdb_idl_txn's list. */
     unsigned long int *map_op_written; /* Bitmap of columns pending map ops. */
     struct map_op_list **map_op_lists; /* Per-column map operations. */

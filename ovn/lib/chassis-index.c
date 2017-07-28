@@ -47,6 +47,7 @@ chassis_index_init(struct chassis_index *chassis_index,
 {
     hmap_init(&chassis_index->by_name);
 
+    //按name创建chassis索引
     const struct sbrec_chassis *chassis;
     SBREC_CHASSIS_FOR_EACH (chassis, sb_idl) {
         if (!chassis->name) {

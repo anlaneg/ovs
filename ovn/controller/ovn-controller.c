@@ -479,6 +479,7 @@ restore_ct_zones(struct ovsdb_idl *ovs_idl,
     if (!br_int) {
         /* If the integration bridge hasn't been defined, assume that
          * any existing ct-zone definitions aren't valid. */
+    	//br-int不存在，不处理
         return;
     }
 
@@ -614,7 +615,7 @@ main(int argc, char *argv[])
         	//ovnsb位置发生了变更，更新remote
             free(ovnsb_remote);
             ovnsb_remote = new_ovnsb_remote;
-            ovsdb_idl_set_remote(ovnsb_idl_loop.idl, ovnsb_remote, true);
+            ovsdb_idl_set_remote(ovnsb_idl_loop.idl, ovnsb_remote, true);//与数据建立连接
         } else {
         	//位置无变更
             free(new_ovnsb_remote);
@@ -642,28 +643,29 @@ main(int argc, char *argv[])
         struct sset local_lports = SSET_INITIALIZER(&local_lports);
         struct sset active_tunnels = SSET_INITIALIZER(&active_tunnels);
 
-        const struct ovsrec_bridge *br_int = get_br_int(&ctx);//获取br-int桥配置
-        const char *chassis_id = get_chassis_id(ctx.ovs_idl);
+        const struct ovsrec_bridge *br_int = get_br_int(&ctx);//获取br-int桥配置（如果br-int不存在，则创建）
+        const char *chassis_id = get_chassis_id(ctx.ovs_idl);//获取chassis-id
 
         struct ldatapath_index ldatapaths;
         struct lport_index lports;
         struct mcgroup_index mcgroups;
         struct chassis_index chassis_index;
 
-        ldatapath_index_init(&ldatapaths, ctx.ovnsb_idl);
-        lport_index_init(&lports, ctx.ovnsb_idl);
-        mcgroup_index_init(&mcgroups, ctx.ovnsb_idl);
-        chassis_index_init(&chassis_index, ctx.ovnsb_idl);
+        ldatapath_index_init(&ldatapaths, ctx.ovnsb_idl);//建立按tunnel-key索引的datapath表
+        lport_index_init(&lports, ctx.ovnsb_idl);//建立lports索引表
+        mcgroup_index_init(&mcgroups, ctx.ovnsb_idl);//建立mcgroups索引表
+        chassis_index_init(&chassis_index, ctx.ovnsb_idl);//建立chassis索引表
 
         const struct sbrec_chassis *chassis = NULL;
         if (chassis_id) {
             chassis = chassis_run(&ctx, chassis_id, br_int);//检查更新当前的chassis记录
-            encaps_run(&ctx, br_int, chassis_id);
-            bfd_calculate_active_tunnels(br_int, &active_tunnels);
+            encaps_run(&ctx, br_int, chassis_id);//处理隧道接口
+            bfd_calculate_active_tunnels(br_int, &active_tunnels);//收集活跃的隧道口
             binding_run(&ctx, br_int, chassis, &ldatapaths, &lports,
                         &chassis_index, &active_tunnels, &local_datapaths,
                         &local_lports);
         }
+
         if (br_int && chassis) {
             struct shash addr_sets = SHASH_INITIALIZER(&addr_sets);
             addr_sets_init(&ctx, &addr_sets);

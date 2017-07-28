@@ -59,6 +59,7 @@ struct smap_node {
  *
  * The 'KEY', 'K1', 'K2' arguments are evaluated multiple times.
  */
+//初始化构造smap
 #define SMAP_CONST1(SMAP, KEY, VALUE) (const struct smap) { \
             HMAP_CONST(&(SMAP)->map, 1, SMAP_NODE(KEY, VALUE, NULL)) \
         }
@@ -66,6 +67,7 @@ struct smap_node {
             HMAP_CONST(&(SMAP)->map, 2,                             \
                        SMAP_NODE(K1, V1, SMAP_NODE(K2, V2, NULL)))  \
         }
+//初始化smap_node
 #define SMAP_NODE(KEY, VALUE, NEXT)             \
         &(struct smap_node) {                   \
             .node = {                           \
