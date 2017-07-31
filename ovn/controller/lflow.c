@@ -193,11 +193,11 @@ consider_logical_flow(const struct lport_index *lports,
                       struct hmap *dhcpv6_opts,//dhcpv6选项
                       uint32_t *conj_id_ofs,
                       const struct shash *addr_sets,
-                      struct hmap *flow_table,
+                      struct hmap *flow_table,//存放生成好的flow
                       struct sset *active_tunnels)
 {
     /* Determine translation of logical table IDs to physical table IDs. */
-    bool ingress = !strcmp(lflow->pipeline, "ingress");
+    bool ingress = !strcmp(lflow->pipeline, "ingress");//检查属于哪种pipeline
 
     const struct sbrec_datapath_binding *ldp = lflow->logical_datapath;
     if (!ldp) {
@@ -386,7 +386,7 @@ consider_neighbor_flow(const struct lport_index *lports,
         }
         ovs_be128 value;
         memcpy(&value, &ip6, sizeof(value));
-        match_set_xxreg(&match, 0, ntoh128(value));
+        match_set_xxreg(&match, 0, ntoh128(value));//将ipv6地址放在o号寄存器中
     }
 
     match_set_metadata(&match, htonll(pb->datapath->tunnel_key));

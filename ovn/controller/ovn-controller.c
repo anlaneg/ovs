@@ -377,10 +377,10 @@ update_ct_zones(struct sset *lports, const struct hmap *local_datapaths,
             pending->state = CT_ZONE_DB_QUEUED; /* Skip flushing zone. */
             pending->zone = ct_zone->data;
             pending->add = false;
-            shash_add(pending_ct_zones, ct_zone->name, pending);
+            shash_add(pending_ct_zones, ct_zone->name, pending);//加入到pending表
 
-            bitmap_set0(ct_zone_bitmap, ct_zone->data);
-            simap_delete(ct_zones, ct_zone);
+            bitmap_set0(ct_zone_bitmap, ct_zone->data);//移除ct_zone占用的bitmap
+            simap_delete(ct_zones, ct_zone);//移除已处理的ct_zone
         }
     }
 
@@ -486,10 +486,20 @@ restore_ct_zones(struct ovsdb_idl *ovs_idl,
     struct smap_node *node;
     SMAP_FOR_EACH(node, &br_int->external_ids) {
         if (strncmp(node->key, "ct-zone-", 8)) {
+        	//ct-zone-* 为解决ovn-controller重启问题
+        	//external_ids:ct-zone-* in the Bridge table
+            //Logical ports and gateway routers are assigned a  connec-
+            //tion  tracking  zone  by ovn-controller for stateful ser-
+            //vices. To keep state across restarts  of  ovn-controller,
+            //these  keys are stored in the integration bridge's Bridge
+            //table. The name contains a prefix of ct-zone- followed by
+            //the  name  of  the  logical port or gateway router's zone
+            //key. The value for this key identifies the zone used  for
+            //this port.
             continue;
         }
 
-        const char *user = node->key + 8;
+        const char *user = node->key + 8;//8字节后是port名称
         int zone = atoi(node->value);
 
         if (user[0] && zone) {
@@ -683,7 +693,7 @@ main(int argc, char *argv[])
                 if (ofctrl_can_put()) {
                     commit_ct_zones(br_int, &pending_ct_zones);
 
-                    struct hmap flow_table = HMAP_INITIALIZER(&flow_table);
+                    struct hmap flow_table = HMAP_INITIALIZER(&flow_table);//收集生成的流规则
                     lflow_run(&ctx, chassis, &lports, &mcgroups,
                               &chassis_index, &local_datapaths, &group_table,
                               &addr_sets, &flow_table, &active_tunnels);
@@ -941,6 +951,7 @@ ovn_controller_exit(struct unixctl_conn *conn, int argc OVS_UNUSED,
     unixctl_command_reply(conn, NULL);
 }
 
+//显示ct_zone
 static void
 ct_zone_list(struct unixctl_conn *conn, int argc OVS_UNUSED,
              const char *argv[] OVS_UNUSED, void *ct_zones_)

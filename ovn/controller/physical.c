@@ -167,6 +167,7 @@ struct zone_ids {
     int snat;                   /* MFF_LOG_SNAT_ZONE. */
 };
 
+//获取binding口的zone_ids(nat信息）
 static struct zone_ids
 get_zone_ids(const struct sbrec_port_binding *binding,
              const struct simap *ct_zones)
@@ -177,11 +178,11 @@ get_zone_ids(const struct sbrec_port_binding *binding,
 
     const struct uuid *key = &binding->datapath->header_.uuid;
 
-    char *dnat = alloc_nat_zone_key(key, "dnat");
+    char *dnat = alloc_nat_zone_key(key, "dnat");//生成格式：$uuid_dnat
     zone_ids.dnat = simap_get(ct_zones, dnat);
     free(dnat);
 
-    char *snat = alloc_nat_zone_key(key, "snat");
+    char *snat = alloc_nat_zone_key(key, "snat");//生成格式：$uuid_snat
     zone_ids.snat = simap_get(ct_zones, snat);
     free(snat);
 
@@ -321,10 +322,12 @@ consider_port_binding(enum mf_field_id mff_ovn_geneve,
         const struct sbrec_port_binding *peer = lport_lookup_by_name(
             lports, peer_name);
         if (!peer || strcmp(peer->type, binding->type)) {
+        	//如果未找到对端或者对对端类型与binding不一致，则不处理
             return;
         }
         const char *peer_peer_name = smap_get(&peer->options, "peer");
         if (!peer_peer_name || strcmp(peer_peer_name, binding->logical_port)) {
+        	//两端必须一致
             return;
         }
 
@@ -877,7 +880,7 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
     for (int i = 0; i < br_int->n_ports; i++) {
         const struct ovsrec_port *port_rec = br_int->ports[i];
         if (!strcmp(port_rec->name, br_int->name)) {
-            continue;
+            continue;//跳过同名port
         }
 
         const char *chassis_id = smap_get(&port_rec->external_ids,

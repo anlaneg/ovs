@@ -603,6 +603,7 @@ ofctrl_recv(const struct ofp_header *oh, enum ofptype type)
  * sent to the switch until a later call to ofctrl_put().
  *
  * The caller should initialize its own hmap to hold the flows. */
+//将流加入到desired_flows(如果流在desired_flows中已存在，则丢弃）
 void
 ofctrl_add_flow(struct hmap *desired_flows,
                 uint8_t table_id, uint16_t priority, uint64_t cookie,
@@ -610,15 +611,16 @@ ofctrl_add_flow(struct hmap *desired_flows,
                 const struct ofpbuf *actions)
 {
     struct ovn_flow *f = xmalloc(sizeof *f);
-    f->table_id = table_id;
+    f->table_id = table_id;//下发到哪个表
     f->priority = priority;
     f->match = *match;
     f->ofpacts = xmemdup(actions->data, actions->size);
     f->ofpacts_len = actions->size;
-    f->hmap_node.hash = ovn_flow_hash(f);
+    f->hmap_node.hash = ovn_flow_hash(f);//计算一条flow的hash
     f->cookie = cookie;
 
     if (ovn_flow_lookup(desired_flows, f)) {
+    	//流已存在，丢弃
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
         if (!VLOG_DROP_INFO(&rl)) {
             char *s = ovn_flow_to_string(f);
@@ -630,6 +632,7 @@ ofctrl_add_flow(struct hmap *desired_flows,
         return;
     }
 
+    //将流加入到desired_flows
     hmap_insert(desired_flows, &f->hmap_node, f->hmap_node.hash);
 }
 
@@ -637,6 +640,7 @@ ofctrl_add_flow(struct hmap *desired_flows,
 /* ovn_flow. */
 
 /* Returns a hash of the key in 'f'. */
+//计算一条flow的hash
 static uint32_t
 ovn_flow_hash(const struct ovn_flow *f)
 {

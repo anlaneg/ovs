@@ -154,12 +154,14 @@ match_set_actset_output(struct match *match, ofp_port_t actset_output)
     match->flow.actset_output = actset_output;
 }
 
+//设置匹配的matadata及matadata的掩码
 void
 match_set_metadata(struct match *match, ovs_be64 metadata)
 {
     match_set_metadata_masked(match, metadata, OVS_BE64_MAX);
 }
 
+//设置匹配的matadata及matadata的掩码
 void
 match_set_metadata_masked(struct match *match,
                           ovs_be64 metadata, ovs_be64 mask)
