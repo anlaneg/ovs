@@ -23,13 +23,13 @@ struct uuid;
 
 struct ipv4_netaddr {
     ovs_be32 addr;            /* 192.168.10.123 */
-    ovs_be32 mask;            /* 255.255.255.0 */
+    ovs_be32 mask;            /* 255.255.255.0 */ //由plen生成而成
     ovs_be32 network;         /* 192.168.10.0 */
     unsigned int plen;        /* CIDR Prefix: 24. */
 
-    char addr_s[INET_ADDRSTRLEN + 1];     /* "192.168.10.123" */
-    char network_s[INET_ADDRSTRLEN + 1];  /* "192.168.10.0" */
-    char bcast_s[INET_ADDRSTRLEN + 1];    /* "192.168.10.255" */
+    char addr_s[INET_ADDRSTRLEN + 1];     /* "192.168.10.123" */ //addr生成的字符串
+    char network_s[INET_ADDRSTRLEN + 1];  /* "192.168.10.0" */ //network生成的字符串
+    char bcast_s[INET_ADDRSTRLEN + 1];    /* "192.168.10.255" */ //使主机位为全1得出的字符串
 };
 
 struct ipv6_netaddr {
@@ -48,7 +48,7 @@ struct lport_addresses {
     char ea_s[ETH_ADDR_STRLEN + 1];//mac地址字符串形式
     struct eth_addr ea;//mac地址
     size_t n_ipv4_addrs;
-    struct ipv4_netaddr *ipv4_addrs;
+    struct ipv4_netaddr *ipv4_addrs;//ipv4地址
     size_t n_ipv6_addrs;
     struct ipv6_netaddr *ipv6_addrs;
 };

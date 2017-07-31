@@ -423,10 +423,10 @@ struct ovn_datapath {
      * NAT on a distributed router.  This "distributed gateway port" is
      * populated only when there is a "redirect-chassis" specified for one of
      * the ports on the logical router.  Otherwise this will be NULL. */
-    struct ovn_port *l3dgw_port;
+    struct ovn_port *l3dgw_port;//如果某个op具有redirect-chassis属性，则它即为l3dgw_port
     /* The "derived" OVN port representing the instance of l3dgw_port on
      * the "redirect-chassis". */
-    struct ovn_port *l3redirect_port;
+    struct ovn_port *l3redirect_port;//通过l3dgw_port会构造一个l3redirect-port
 };
 
 struct macam_node {
@@ -1398,6 +1398,7 @@ join_logical_ports(struct northd_context *ctx,
                     uint32_t queue_id = smap_get_int(&op->sb->options,
                                                      "qdisc_queue_id", 0);
                     if (queue_id && op->sb->chassis) {
+                    	//有queue id，将其加入到chassis_qdisc_queues集合中
                         add_chassis_queue(
                              chassis_qdisc_queues, &op->sb->chassis->header_.uuid,
                              queue_id);
@@ -1481,7 +1482,7 @@ join_logical_ports(struct northd_context *ctx,
                     = od->nbr->ports[i];
 
                 struct lport_addresses lrp_networks;
-                if (!extract_lrp_networks(nbrp, &lrp_networks)) {
+                if (!extract_lrp_networks(nbrp, &lrp_networks)) {//解析接口ip
                     static struct vlog_rate_limit rl
                         = VLOG_RATE_LIMIT_INIT(5, 1);
                     VLOG_WARN_RL(&rl, "bad 'mac' %s", nbrp->mac);
@@ -1489,7 +1490,7 @@ join_logical_ports(struct northd_context *ctx,
                 }
 
                 if (!lrp_networks.n_ipv4_addrs && !lrp_networks.n_ipv6_addrs) {
-                    continue;
+                    continue;//接口上还没有配置ip地址，不处理
                 }
 
                 struct ovn_port *op = ovn_port_find(ports, nbrp->name);
@@ -1522,7 +1523,7 @@ join_logical_ports(struct northd_context *ctx,
                 const char *redirect_chassis = smap_get(&op->nbrp->options,
                                                         "redirect-chassis");
                 if (redirect_chassis || op->nbrp->n_gateway_chassis) {
-                	//此port有redirect-chassis属性
+                	    //此port有redirect-chassis属性
                     /* Additional "derived" ovn_port crp represents the
                      * instance of op on the "redirect-chassis". */
                     const char *gw_chassis = smap_get(&op->od->nbr->options,
@@ -1544,6 +1545,7 @@ join_logical_ports(struct northd_context *ctx,
                         continue;
                     }
 
+                    //构造重定向接口名称，构造重定向接口
                     char *redirect_name = chassis_redirect_name(nbrp->name);
                     struct ovn_port *crp = ovn_port_find(ports, redirect_name);
                     if (crp) {

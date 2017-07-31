@@ -238,7 +238,7 @@ extract_lrp_networks(const struct nbrec_logical_router_port *lrp,
                 continue;
             }
 
-            add_ipv4_netaddr(laddrs, ip4, plen);
+            add_ipv4_netaddr(laddrs, ip4, plen);//添加解析的ipv4地址
             continue;
         }
         free(error);
