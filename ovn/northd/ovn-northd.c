@@ -423,10 +423,10 @@ struct ovn_datapath {
      * NAT on a distributed router.  This "distributed gateway port" is
      * populated only when there is a "redirect-chassis" specified for one of
      * the ports on the logical router.  Otherwise this will be NULL. */
-    struct ovn_port *l3dgw_port;//如果某个op具有redirect-chassis属性，则它即为l3dgw_port
+    struct ovn_port *l3dgw_port;//如果某个op具有redirect-chassis属性，则它即为l3dgw_port（就是gq口）
     /* The "derived" OVN port representing the instance of l3dgw_port on
      * the "redirect-chassis". */
-    struct ovn_port *l3redirect_port;//通过l3dgw_port会构造一个l3redirect-port
+    struct ovn_port *l3redirect_port;//通过l3dgw_port会构造一个l3redirect-port(sg口）
 };
 
 struct macam_node {
@@ -1523,7 +1523,7 @@ join_logical_ports(struct northd_context *ctx,
                 const char *redirect_chassis = smap_get(&op->nbrp->options,
                                                         "redirect-chassis");
                 if (redirect_chassis || op->nbrp->n_gateway_chassis) {
-                	    //此port有redirect-chassis属性
+                	//此port有redirect-chassis属性,属于router的gateway接口
                     /* Additional "derived" ovn_port crp represents the
                      * instance of op on the "redirect-chassis". */
                     const char *gw_chassis = smap_get(&op->od->nbr->options,
@@ -2739,6 +2739,7 @@ build_dhcpv4_action(struct ovn_port *op, ovs_be32 offer_ip,
         &op->nbsp->dhcpv4_options->options, "lease_time");
 
     if (!(server_ip && server_mac && lease_time)) {
+    	//必须提供这几项配置
         /* "server_id", "server_mac" and "lease_time" should be
          * present in the dhcp_options. */
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
@@ -2758,10 +2759,11 @@ build_dhcpv4_action(struct ovn_port *op, ovs_be32 offer_ip,
 
     ds_put_format(options_action,
                   REGBIT_DHCP_OPTS_RESULT" = put_dhcp_opts(offerip = "
-                  IP_FMT", ", IP_ARGS(offer_ip));
+                  IP_FMT", ", IP_ARGS(offer_ip));//提供那个offerip地址
 
     /* We're not using SMAP_FOR_EACH because we want a consistent order of the
      * options on different architectures (big or little endian, SSE4.2) */
+    //将选项合入
     const struct smap_node **sorted_opts = smap_sort(&dhcpv4_options);
     for (size_t i = 0; i < smap_count(&dhcpv4_options); i++) {
         const struct smap_node *node = sorted_opts[i];
@@ -3513,6 +3515,7 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
 
     /* Logical switch ingress table 0: Admission control framework (priority
      * 100). */
+    //报文入口检查：1。丢掉含vlan的报文;2.丢掉源mac是广播，组播的报文
     HMAP_FOR_EACH (od, key_node, datapaths) {
         if (!od->nbs) {
             continue;
@@ -3616,6 +3619,7 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
             continue;
         }
 
+        //收到对这个ip地址的请求，进行响应
         for (size_t i = 0; i < op->n_lsp_addrs; i++) {
             for (size_t j = 0; j < op->lsp_addrs[i].n_ipv4_addrs; j++) {
                 ds_clear(&match);
@@ -3727,9 +3731,11 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
                 struct ds options_action = DS_EMPTY_INITIALIZER;
                 struct ds response_action = DS_EMPTY_INITIALIZER;
                 struct ds ipv4_addr_match = DS_EMPTY_INITIALIZER;
+                //构造dhcpv4的动作
                 if (build_dhcpv4_action(
                         op, op->lsp_addrs[i].ipv4_addrs[j].addr,
                         &options_action, &response_action, &ipv4_addr_match)) {
+                	//确认是对应的主机发送的，dhcp报文后，执行相应动作
                     struct ds match = DS_EMPTY_INITIALIZER;
                     ds_put_format(
                         &match, "inport == %s && eth.src == %s && "
@@ -3810,6 +3816,7 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
     /* Logical switch ingress table 13 and 14: DNS lookup and response
      * priority 100 flows.
      */
+    //dns查询处理
     HMAP_FOR_EACH (od, key_node, datapaths) {
         if (!od->nbs || !ls_has_dns_records(od->nbs)) {
            continue;
@@ -3878,6 +3885,7 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
     }
 
     /* Ingress table 13: Destination lookup, unicast handling (priority 50), */
+    //模拟mac表查询
     HMAP_FOR_EACH (op, key_node, ports) {
         if (!op->nbsp) {
             continue;
@@ -4915,7 +4923,7 @@ build_lrouter_flows(struct hmap *datapaths, struct hmap *ports,
          * l3dgw_port (router has a port with "redirect-chassis"
          * specified). */
         if (!smap_get(&od->nbr->options, "chassis") && !od->l3dgw_port) {
-            continue;//无gateway情况下不处理
+            continue;//无gateway情况下不处理,出不去。不做nat
         }
 
         ovs_be32 snat_ip;
@@ -4970,9 +4978,10 @@ build_lrouter_flows(struct hmap *datapaths, struct hmap *ports,
              * satisfies the conditions for distributed NAT processing. */
             bool distributed = false;
             struct eth_addr mac;
+            //当前od有gateway且做dnat_and_snat实现一一映射，且配置有外部mac
             if (od->l3dgw_port && !strcmp(nat->type, "dnat_and_snat") &&
                 nat->logical_port && nat->external_mac) {
-                if (eth_addr_from_string(nat->external_mac, &mac)) {//取代理的mac地址
+                if (eth_addr_from_string(nat->external_mac, &mac)) {
                     distributed = true;//标明为分布式处理
                 } else {
                     static struct vlog_rate_limit rl =
@@ -5338,6 +5347,7 @@ build_lrouter_flows(struct hmap *datapaths, struct hmap *ports,
         /* A set to hold all ips that need defragmentation and tracking. */
         struct sset all_ips = SSET_INITIALIZER(&all_ips);
 
+        //做所有load_balancer的nat处理
         for (int i = 0; i < od->nbr->n_load_balancer; i++) {
             struct nbrec_load_balancer *lb = od->nbr->load_balancer[i];
             struct smap *vips = &lb->vips;

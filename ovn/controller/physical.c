@@ -152,6 +152,7 @@ put_stack(enum mf_field_id field, struct ofpact_stack *stack)
     stack->subfield.n_bits = stack->subfield.field->n_bits;
 }
 
+//返回对应datapath的localnet_port
 static const struct sbrec_port_binding*
 get_localnet_port(struct hmap *local_datapaths, int64_t tunnel_key)
 {
