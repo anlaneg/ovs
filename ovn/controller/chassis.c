@@ -74,22 +74,23 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
             const struct ovsrec_bridge *br_int)
 {
     if (!ctx->ovnsb_idl_txn) {
-        return NULL;
+        return NULL;//无南向连接，不处理
     }
 
     const struct ovsrec_open_vswitch *cfg;
     const char *encap_type, *encap_ip;
     static bool inited = false;
 
+    //查本机配置
     cfg = ovsrec_open_vswitch_first(ctx->ovs_idl);
     if (!cfg) {
-    	//不存在open_vswitch行
         VLOG_INFO("No Open_vSwitch row defined.");
         return NULL;
     }
 
-    //ovn-encap-type用于指出一个chassis连接到另一个时采用的封装协议，encap_type可能指定多个
-    //每个之间采用','号进行分割。每种encap_type需要对应一个ovn-encap-ip
+    //取出本机关于ovn封装协议，及封装ip的配置
+    //ovn-encap-type用于指出一个chassis连接到另一个时采用的封装协议。
+    //encap_type可能指定多个,每个之间采用','号进行分割。每种encap_type需要对应一个ovn-encap-ip
     encap_type = smap_get(&cfg->external_ids, "ovn-encap-type");
     encap_ip = smap_get(&cfg->external_ids, "ovn-encap-ip");
     if (!encap_type || !encap_ip) {
@@ -97,7 +98,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
         return NULL;
     }
 
-    //收集encap的隧道类型
+    //开始解析封装用的隧道类型
     char *tokstr = xstrdup(encap_type);
     char *save_ptr = NULL;
     char *token;
@@ -112,22 +113,23 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
     }
     free(tokstr);
 
-    //hostname用于chassis table，用于表示当前主机名称
+    //在配置中取当前主机的名称配置
     const char *hostname = smap_get_def(&cfg->external_ids, "hostname", "");
     char hostname_[HOST_NAME_MAX + 1];
     if (!hostname[0]) {
-    	//如果没有配置，则取主机名称
+    	//如果没有配置，则说明第一次配置，取主机名称
         if (gethostname(hostname_, sizeof hostname_)) {
             hostname_[0] = '\0';
         }
         hostname = hostname_;
     }
 
-    //取物理网络与ovs桥之间的关系
+    //取当前物理网络与ovs桥之间的映射配置
     const char *bridge_mappings = get_bridge_mappings(&cfg->external_ids);
     const char *datapath_type =
         br_int && br_int->datapath_type ? br_int->datapath_type : "";//br-int的datapath类型
 
+    //取接口类型配置
     struct ds iface_types = DS_EMPTY_INITIALIZER;
     ds_put_cstr(&iface_types, "");
     for (int j = 0; j < cfg->n_iface_types; j++) {
@@ -136,13 +138,17 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
     ds_chomp(&iface_types, ',');
     const char *iface_types_str = ds_cstr(&iface_types);//所有接口类型
 
+    //向sb库检查是否包含本chassis的配置
     const struct sbrec_chassis *chassis_rec
         = get_chassis(ctx->ovnsb_idl, chassis_id);
+
     //ovn-encap-csum用于指出是否将encap的checksum下沉到网卡来做（true为不下沉，false为下沉）
     const char *encap_csum = smap_get_def(&cfg->external_ids,
                                           "ovn-encap-csum", "true");
     if (chassis_rec) {
-        if (strcmp(hostname, chassis_rec->hostname)) {//hostname发生变更，更新hostname
+    	//sb库中有本chassis的配置
+        if (strcmp(hostname, chassis_rec->hostname)) {
+        	//hostname发生变更，更新hostname
             sbrec_chassis_set_hostname(chassis_rec, hostname);
         }
 
@@ -156,7 +162,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
 
         /* If any of the external-ids should change, update them. */
         //bridge_mappings,chassis_datapath_type,chassis_iface_types任意一个发生变更
-        //更新此项
+        //则更新这些配置项
         if (strcmp(bridge_mappings, chassis_bridge_mappings) ||
             strcmp(datapath_type, chassis_datapath_type) ||
             strcmp(iface_types_str, chassis_iface_types)) {
@@ -181,7 +187,8 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
                 smap_get_def(&chassis_rec->encaps[i]->options, "csum", ""),
                 encap_csum);
         }
-        same = same && req_tunnels == cur_tunnels;//这句话的意义？
+
+        same = same && req_tunnels == cur_tunnels;//这句话的意义？（无意义代码）
 
         if (same) {
         	//无变更
@@ -189,8 +196,8 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
             inited = true;
             ds_destroy(&iface_types);
             return chassis_rec;
-        } else if (!inited) {//如果是第一次走到这里
-        	//打log
+        } else if (!inited) {
+        	//如果是第一次走到这里，打log
             struct ds cur_encaps = DS_EMPTY_INITIALIZER;
             for (int i = 0; i < chassis_rec->n_encaps; i++) {
                 ds_put_format(&cur_encaps, "%s,",
@@ -207,6 +214,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
         }
     }
 
+    //向南向库中注册本chassis
     ovsdb_idl_txn_add_comment(ctx->ovnsb_idl_txn,
                               "ovn-controller: registering chassis '%s'",
                               chassis_id);
@@ -217,7 +225,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
         smap_add(&ext_ids, "ovn-bridge-mappings", bridge_mappings);
         smap_add(&ext_ids, "datapath-type", datapath_type);
         smap_add(&ext_ids, "iface-types", iface_types_str);
-        chassis_rec = sbrec_chassis_insert(ctx->ovnsb_idl_txn);
+        chassis_rec = sbrec_chassis_insert(ctx->ovnsb_idl_txn);//向南向库中加入chassis_rec(相当于注册agent)
         sbrec_chassis_set_name(chassis_rec, chassis_id);
         sbrec_chassis_set_hostname(chassis_rec, hostname);
         sbrec_chassis_set_external_ids(chassis_rec, &ext_ids);

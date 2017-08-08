@@ -58,7 +58,7 @@ interface_set_bfd(const struct ovsrec_interface *iface, bool bfd_setting)
                                         iface->name);
 }
 
-//收庥活跃的tunnel
+//收集活跃的tunnel（即从自身出发可以到达那些chassis)
 void
 bfd_calculate_active_tunnels(const struct ovsrec_bridge *br_int,
                              struct sset *active_tunnels)

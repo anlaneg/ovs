@@ -42,7 +42,7 @@ struct sbrec_port_binding;
 struct ldatapath {
     struct hmap_node by_key_node; /* Index by tunnel key. */ //挂载用节点
     const struct sbrec_datapath_binding *db;//记录
-    const struct sbrec_port_binding **lports;
+    const struct sbrec_port_binding **lports;//属于ld的port
     size_t n_lports, allocated_lports;//存入lports中的数目，lports表可存放的最大数目
 };
 

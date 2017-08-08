@@ -202,6 +202,7 @@ status_ovsdb () {
   fi
 }
 
+#启动northd进程
 start_northd () {
     if [ ! -e $ovn_northd_db_conf_file ]; then
         if test X"$OVN_MANAGE_OVSDB" = Xyes; then

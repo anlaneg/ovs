@@ -68,6 +68,10 @@ binding_register_ovs_idl(struct ovsdb_idl *ovs_idl)
     ovsdb_idl_add_column(ovs_idl, &ovsrec_qos_col_type);
 }
 
+//收集本机br-int的接口信息
+//lport_to_iface中以iface_id为索引，查iface_rec
+//local_lports中收集iface_id
+//egress_ifaces是存在属性tunnel_egress_iface的tunnel口
 static void
 get_local_iface_ids(const struct ovsrec_bridge *br_int,
                     struct shash *lport_to_iface,
@@ -99,6 +103,7 @@ get_local_iface_ids(const struct ovsrec_bridge *br_int,
             }
 
             /* Check if this is a tunnel interface. */
+            //egress_ifaces是存在属性tunnel_egress_iface的tunnel口
             if (smap_get(&iface_rec->options, "remote_ip")) {
                 const char *tunnel_iface
                     = smap_get(&iface_rec->status, "tunnel_egress_iface");
@@ -143,13 +148,15 @@ add_local_datapath__(const struct ldatapath_index *ldatapaths,
     }
 
     /* Recursively add logical datapaths to which this one patches. */
+    //遍历ldatapath上所有的port
     for (size_t i = 0; i < ld->ldatapath->n_lports; i++) {
         const struct sbrec_port_binding *pb = ld->ldatapath->lports[i];
         if (!strcmp(pb->type, "patch")) {
         	//只关心patch口
             const char *peer_name = smap_get(&pb->options, "peer");
             if (peer_name) {
-            	//patch口必须有peer
+            	//通过peer_name取得对端的port记录，如果对端也有相应的datapath，在本机
+            	//递归加入此datapath
                 const struct sbrec_port_binding *peer = lport_lookup_by_name(
                     lports, peer_name);
                 if (peer && peer->datapath) {
@@ -168,6 +175,7 @@ add_local_datapath__(const struct ldatapath_index *ldatapaths,
     }
 }
 
+//添加一个local_datapath
 static void
 add_local_datapath(const struct ldatapath_index *ldatapaths,
                    const struct lport_index *lports,
@@ -178,12 +186,13 @@ add_local_datapath(const struct ldatapath_index *ldatapaths,
                          local_datapaths);
 }
 
+//记录qos配置
 static void
 get_qos_params(const struct sbrec_port_binding *pb, struct hmap *queue_map)
 {
     uint32_t max_rate = smap_get_int(&pb->options, "qos_max_rate", 0);
     uint32_t burst = smap_get_int(&pb->options, "qos_burst", 0);
-    uint32_t queue_id = smap_get_int(&pb->options, "qdisc_queue_id", 0);
+    uint32_t queue_id = smap_get_int(&pb->options, "qdisc_queue_id", 0);//这个是唯一的吗？与port一一映射？
 
     if ((!max_rate && !burst) || !queue_id) {
         /* Qos is not configured for this port. */
@@ -370,16 +379,16 @@ setup_qos(const char *egress_iface, struct hmap *queue_map)
 
 static void
 consider_local_datapath(struct controller_ctx *ctx,
-                        const struct ldatapath_index *ldatapaths,
-                        const struct lport_index *lports,
-                        const struct chassis_index *chassis_index,
-                        struct sset *active_tunnels,
-                        const struct sbrec_chassis *chassis_rec,
-                        const struct sbrec_port_binding *binding_rec,
+                        const struct ldatapath_index *ldatapaths,//sb库中ldatapath情况
+                        const struct lport_index *lports,//sb库中lport情况
+                        const struct chassis_index *chassis_index,//sb库中chassis情况
+                        struct sset *active_tunnels,//从本机出发可到达哪些chassis
+                        const struct sbrec_chassis *chassis_rec,//本机的chassis记录
+                        const struct sbrec_port_binding *binding_rec,//一条port的绑定记录
                         struct hmap *qos_map,
-                        struct hmap *local_datapaths,
-                        struct shash *lport_to_iface,
-                        struct sset *local_lports)
+                        struct hmap *local_datapaths,//出参
+                        struct shash *lport_to_iface,//本机现有的port-id到iface的映射
+                        struct sset *local_lports)//本机现有的所有port-id
 {
     const struct ovsrec_interface *iface_rec
         = shash_find_data(lport_to_iface, binding_rec->logical_port);
@@ -389,10 +398,12 @@ consider_local_datapath(struct controller_ctx *ctx,
     if (iface_rec
         || (binding_rec->parent_port && binding_rec->parent_port[0] &&
             sset_contains(local_lports, binding_rec->parent_port))) {
+    	//本机有binding_rec->logical_port，或者binding_rec->parent_port在本机中存在。
         if (binding_rec->parent_port && binding_rec->parent_port[0]) {
             /* Add child logical port to the set of all local ports. */
-            sset_add(local_lports, binding_rec->logical_port);
+            sset_add(local_lports, binding_rec->logical_port);//确保本机有binding_rec->logical_port接口。
         }
+        //在集合local_datapths中添加此datapath及与其相连的datapath
         add_local_datapath(ldatapaths, lports, binding_rec->datapath,
                            false, local_datapaths);
         if (iface_rec && qos_map && ctx->ovs_idl_txn) {
@@ -492,15 +503,17 @@ consider_localnet_port(const struct sbrec_port_binding *binding_rec,
 
 void
 binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
-            const struct sbrec_chassis *chassis_rec,
-            const struct ldatapath_index *ldatapaths,
-            const struct lport_index *lports,
-            const struct chassis_index *chassis_index,
-            struct sset *active_tunnels,
-            struct hmap *local_datapaths, struct sset *local_lports)
+            const struct sbrec_chassis *chassis_rec,//自身的chassis记录
+            const struct ldatapath_index *ldatapaths,//sb库中datapath情况
+            const struct lport_index *lports,//sb库中port情况
+            const struct chassis_index *chassis_index,//sb库中所有chassis情况
+            struct sset *active_tunnels,//从自身出发可以到达那些chassis
+            struct hmap *local_datapaths,//出参
+			struct sset *local_lports //出参
+			)
 {
     if (!chassis_rec) {
-    	//此chassis无记录时，不处理
+    	//无自身chassis无记录时，不处理
         return;
     }
 
@@ -511,6 +524,10 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
 
     hmap_init(&qos_map);
     if (br_int) {
+    	//收集本机的br-int信息
+    	//lport_to_iface中以iface_id为索引，查iface_rec
+    	//local_lports中收集iface_id
+    	//egress_ifaces是存在属性tunnel_egress_iface的tunnel口
         get_local_iface_ids(br_int, &lport_to_iface, local_lports,
                             &egress_ifaces);
     }
@@ -518,6 +535,7 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     /* Run through each binding record to see if it is resident on this
      * chassis and update the binding accordingly.  This includes both
      * directly connected logical ports and children of those ports. */
+    //遍历每个port binding记录
     SBREC_PORT_BINDING_FOR_EACH(binding_rec, ctx->ovnsb_idl) {
         consider_local_datapath(ctx, ldatapaths, lports, chassis_index,
                                 active_tunnels, chassis_rec, binding_rec,

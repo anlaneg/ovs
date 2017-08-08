@@ -390,9 +390,9 @@ port_has_qos_params(const struct smap *opts)
 struct ipam_info {
     uint32_t start_ipv4;//起始ip地址
     size_t total_ipv4s;//掩码的反序（即有多少个ip地址）
-    unsigned long *allocated_ipv4s; /* A bitmap of allocated IPv4s */
-    bool ipv6_prefix_set;
-    struct in6_addr ipv6_prefix;
+    unsigned long *allocated_ipv4s; /* A bitmap of allocated IPv4s */ //一个bitmap结构，用于进行ip地址申请释放
+    bool ipv6_prefix_set;//是否设置了ipv6前缀
+    struct in6_addr ipv6_prefix;//ipv6前缀信息
 };
 
 /* The 'key' comes from nbs->header_.uuid or nbr->header_.uuid or
@@ -411,13 +411,13 @@ struct ovn_datapath {
     struct ovn_port **router_ports;
     size_t n_router_ports;
 
-    struct hmap port_tnlids;
-    uint32_t port_key_hint;
+    struct hmap port_tnlids;//分配port-id的hash表
+    uint32_t port_key_hint;//上一次分配的id号
 
     bool has_unknown;
 
     /* IPAM data. */
-    struct ipam_info *ipam_info;//此网段的ipadm_info
+    struct ipam_info *ipam_info;//此网段的ipadm_info（用于进行ip分配）
 
     /* OVN northd only needs to know about the logical router gateway port for
      * NAT on a distributed router.  This "distributed gateway port" is
@@ -602,7 +602,7 @@ init_ipam_info_for_datapath(struct ovn_datapath *od)
         start = MAX(od->ipam_info->start_ipv4, start);
         end = MIN(od->ipam_info->start_ipv4 + od->ipam_info->total_ipv4s, end);
         if (end > start) {
-        	//将end与start对应的bit标记为1
+        	//将end与start对应的bit标记为1（标记为占用）
             bitmap_set_multiple(od->ipam_info->allocated_ipv4s,
                                 start - od->ipam_info->start_ipv4,
                                 end - start, 1);
@@ -618,7 +618,7 @@ init_ipam_info_for_datapath(struct ovn_datapath *od)
     lexer_destroy(&lexer);
 }
 
-//更新od的南库字段
+//更新od的南库external_ids字段
 static void
 ovn_datapath_update_external_ids(struct ovn_datapath *od)
 {
@@ -638,10 +638,10 @@ ovn_datapath_update_external_ids(struct ovn_datapath *od)
 
     /* Set external-ids. */
     struct smap ids = SMAP_INITIALIZER(&ids);
-    smap_add(&ids, key, uuid_s);//存入此row对应的uuid
-    smap_add(&ids, "name", name);//名称
+    smap_add(&ids, key, uuid_s);//存入此row对应的uuid（即虚设备id号）
+    smap_add(&ids, "name", name);//存放虚设备名称
     if (name2 && name2[0]) {
-        smap_add(&ids, "name2", name2);//如"neutron:network_name"
+        smap_add(&ids, "name2", name2);//存入虚设备name2,如"neutron:network_name"规定的名称
     }
     sbrec_datapath_binding_set_external_ids(od->sb, &ids);//更新至南库对应的行
     smap_destroy(&ids);
@@ -658,10 +658,11 @@ join_datapaths(struct northd_context *ctx, struct hmap *datapaths,
     ovs_list_init(nb_only);
     ovs_list_init(both);
 
-    //遍历sb库，产生sb_only链表，并填充datapaths表
     const struct sbrec_datapath_binding *sb, *sb_next;
+    //遍历sb库，生成datapaths表，优先认为是sb_only的。
     SBREC_DATAPATH_BINDING_FOR_EACH_SAFE (sb, sb_next, ctx->ovnsb_idl) {
         struct uuid key;
+
         if (!smap_get_uuid(&sb->external_ids, "logical-switch", &key) &&
             !smap_get_uuid(&sb->external_ids, "logical-router", &key)) {
         	//错误的行（即不是vs,也不是vr)，将其删除掉
@@ -691,8 +692,9 @@ join_datapaths(struct northd_context *ctx, struct hmap *datapaths,
         ovs_list_push_back(sb_only, &od->list);
     }
 
-    //遍历北向库中的switch，将已存在于datapaths集合里的从sb_only中移除，并加入到both
-    //新建在datapaths中不存在的。
+    //遍历北向库中的switch,如果此siwtch在datapaths中存在，则其不应为sb_only,而应为both(南北向均存在）
+    //故会自sb_only上移除，在both上添加。
+    //另外：如果北向库的switch在datapath中不存在，则为nb_only,这个datapath需要同步到南向库
     const struct nbrec_logical_switch *nbs;
     NBREC_LOGICAL_SWITCH_FOR_EACH (nbs, ctx->ovnnb_idl) {
     	//检查datapaths中是否有此条记录
@@ -704,16 +706,17 @@ join_datapaths(struct northd_context *ctx, struct hmap *datapaths,
             ovs_list_push_back(both, &od->list);//加入both链
             ovn_datapath_update_external_ids(od);
         } else {
-        	//创建switch对应的od
+        	//创建nb_only的switch
             od = ovn_datapath_create(datapaths, &nbs->header_.uuid,
                                      nbs, NULL, NULL);
             ovs_list_push_back(nb_only, &od->list);//仅nb库中有，加入
         }
 
-        init_ipam_info_for_datapath(od);
+        init_ipam_info_for_datapath(od);//初始化datapath的ipam
     }
 
-    //遍历北向库的router
+    //遍历北向库的router,如果此router在datapath中存在，则其不应为sb_only,而应为both
+    //另外：如果北向库的router在datapath中不存在，则为nb_only,这个datapath需要同步到南向库
     const struct nbrec_logical_router *nbr;
     NBREC_LOGICAL_ROUTER_FOR_EACH (nbr, ctx->ovnnb_idl) {
         if (!lrouter_is_enabled(nbr)) {
@@ -731,7 +734,7 @@ join_datapaths(struct northd_context *ctx, struct hmap *datapaths,
                 ovn_datapath_update_external_ids(od);
             } else {
             	//如注释言，不可能发生，遍历到router对应的记录，但发现此项有nbs标记，
-            	//应挂掉
+            	//应挂掉，这段代码应删除（估计是bug调试代码）
                 /* Can't happen! */
                 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
                 VLOG_WARN_RL(&rl,
@@ -769,8 +772,8 @@ build_datapaths(struct northd_context *ctx, struct hmap *datapaths)
     //遍历数据库，找出所有的datapaths,并区分出北向库仅有，南向库仅有，及南北向库共有的datapaths
     join_datapaths(ctx, datapaths, &sb_only, &nb_only, &both);
 
+    //有新增内容，先在dp_tnlids中记录已经存在的tunnel_key,然后依据dp_tnlids来分配新的tunnel_key
     if (!ovs_list_is_empty(&nb_only)) {
-    	//有新增内容，先在dp_tnlids中记录已经存在的tunnel_key,然后依据dp_tnlids来分配新的tunnel_key
         /* First index the in-use datapath tunnel IDs. */
         struct hmap dp_tnlids = HMAP_INITIALIZER(&dp_tnlids);
         struct ovn_datapath *od;
@@ -786,7 +789,7 @@ build_datapaths(struct northd_context *ctx, struct hmap *datapaths)
                 break;
             }
 
-            //构造sb
+            //在sb库中插入记录(datapath_binding记录），并更新tunnel_key
             od->sb = sbrec_datapath_binding_insert(ctx->ovnsb_txn);
             ovn_datapath_update_external_ids(od);
             sbrec_datapath_binding_set_tunnel_key(od->sb, tunnel_key);
@@ -800,7 +803,7 @@ build_datapaths(struct northd_context *ctx, struct hmap *datapaths)
     LIST_FOR_EACH_SAFE (od, next, list, &sb_only) {
         ovs_list_remove(&od->list);
         sbrec_datapath_binding_delete(od->sb);
-        ovn_datapath_destroy(datapaths, od);
+        ovn_datapath_destroy(datapaths, od);//sb_only的datapath将自datapaths中移除
     }
 }
 
@@ -902,6 +905,7 @@ ovn_port_find(struct hmap *ports, const char *name)
     return NULL;
 }
 
+//申请port-id
 static uint32_t
 ovn_port_allocate_key(struct ovn_datapath *od)
 {
@@ -1038,6 +1042,7 @@ ipam_add_port_addresses(struct ovn_datapath *od, struct ovn_port *op)
             return;
         }
 
+        //占用相应的ip地址
         for (size_t i = 0; i < lrp_networks.n_ipv4_addrs; i++) {
             uint32_t ip = ntohl(lrp_networks.ipv4_addrs[i].addr);
             ipam_insert_ip(op->peer->od, ip);
@@ -1173,6 +1178,7 @@ build_ipam(struct hmap *datapaths, struct hmap *ports)
             continue;
         }
 
+        //遍历op的所有port
         struct ovn_port *op;
         for (size_t i = 0; i < od->nbs->n_ports; i++) {
             const struct nbrec_logical_switch_port *nbsp =
@@ -1193,6 +1199,7 @@ build_ipam(struct hmap *datapaths, struct hmap *ports)
             for (size_t j = 0; j < nbsp->n_addresses; j++) {
                 if (is_dynamic_lsp_address(nbsp->addresses[j])
                     && !nbsp->dynamic_addresses) {
+                	//仅标明动态地址的为其分配ip地址
                     if (!ipam_allocate_addresses(od, op, nbsp->addresses[j])
                         || !extract_lsp_addresses(nbsp->dynamic_addresses,
                                         &op->lsp_addrs[op->n_lsp_addrs])) {
@@ -1298,6 +1305,7 @@ tag_alloc_create_new_tag(struct hmap *tag_alloc_table,
         int64_t tag;
         tag_alloc_node = tag_alloc_get_node(tag_alloc_table,
                                             nbsp->parent_name);
+        //取出一个未用的tag
         tag = bitmap_scan(tag_alloc_node->allocated_tags, 0, 1, MAX_OVN_TAGS);
         if (tag == MAX_OVN_TAGS) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
@@ -1363,7 +1371,7 @@ join_logical_ports(struct northd_context *ctx,
     ovs_list_init(both);
 
     const struct sbrec_port_binding *sb;
-    //加载南向库中已有的port信息
+    //加载南向库中已有的port信息(优先认为它是sb_only的）
     SBREC_PORT_BINDING_FOR_EACH (sb, ctx->ovnsb_idl) {
         struct ovn_port *op = ovn_port_create(ports, sb->logical_port,
                                               NULL, NULL, sb);
@@ -1374,16 +1382,16 @@ join_logical_ports(struct northd_context *ctx,
     struct ovn_datapath *od;
     HMAP_FOR_EACH (od, key_node, datapaths) {
         if (od->nbs) {
-        	//此ovn_datapath是switch,遍历这个siwtch的所有port
+        	//处理datapath是交换机的情况。针对此datapath上的每个port
+        	//查询port表，如果port表中存在，则此port在南北向库中均存在
+        	//记为both,如果不存在，则此port仅在nb_only上存在，需要同步到南向库。
             for (size_t i = 0; i < od->nbs->n_ports; i++) {
                 const struct nbrec_logical_switch_port *nbsp
                     = od->nbs->ports[i];
-                //检查此port是否在ports中已存在（当前南向库刚建立了它）
                 struct ovn_port *op = ovn_port_find(ports, nbsp->name);
                 if (op) {
-                	//op被查询是到了，说明两个库都应存在
                     if (op->nbsp || op->nbrp) {
-                    	//一个接口不能即属于switch又属于router
+                    	//调试类代码，忽略
                         static struct vlog_rate_limit rl
                             = VLOG_RATE_LIMIT_INIT(5, 1);
                         VLOG_WARN_RL(&rl, "duplicate logical port %s",
@@ -1496,7 +1504,6 @@ join_logical_ports(struct northd_context *ctx,
                 struct ovn_port *op = ovn_port_find(ports, nbrp->name);
                 if (op) {
                     if (op->nbsp || op->nbrp) {
-                    	//错误的op
                         static struct vlog_rate_limit rl
                             = VLOG_RATE_LIMIT_INIT(5, 1);
                         VLOG_WARN_RL(&rl, "duplicate logical router port %s",
@@ -1529,6 +1536,7 @@ join_logical_ports(struct northd_context *ctx,
                     const char *gw_chassis = smap_get(&op->od->nbr->options,
                                                    "chassis");
                     if (gw_chassis) {
+                    	//redirect-chassis与chassis是互斥的
                         static struct vlog_rate_limit rl
                             = VLOG_RATE_LIMIT_INIT(1, 1);
                         VLOG_WARN_RL(&rl, "Bad configuration: "
@@ -1537,6 +1545,7 @@ join_logical_ports(struct northd_context *ctx,
                         continue;
                     }
                     if (od->l3dgw_port || od->l3redirect_port) {
+                    	//od已存在l3dgw_port或者l3redirect_port了，不容许存在多个
                         static struct vlog_rate_limit rl
                             = VLOG_RATE_LIMIT_INIT(1, 1);
                         VLOG_WARN_RL(&rl, "Bad configuration: multiple ports "
@@ -1545,11 +1554,11 @@ join_logical_ports(struct northd_context *ctx,
                         continue;
                     }
 
-                    //构造重定向接口名称，构造重定向接口
+                    //构造重定向接口名称，构造重定向接口 cr-%s
                     char *redirect_name = chassis_redirect_name(nbrp->name);
                     struct ovn_port *crp = ovn_port_find(ports, redirect_name);
                     if (crp) {
-                        crp->derived = true;
+                        crp->derived = true;//标记此口是内部生成的
                         crp->nbrp = nbrp;
                         ovs_list_remove(&crp->list);
                         ovs_list_push_back(both, &crp->list);
@@ -1919,10 +1928,12 @@ ovn_port_update_sbrec(struct northd_context *ctx,
          * and its port type is "l3gateway". */
         const char *chassis = smap_get(&op->od->nbr->options, "chassis");
         if (op->derived) {
+        	//如果此port是人为添加的，则将其类型更改为chassisredirect
             sbrec_port_binding_set_type(op->sb, "chassisredirect");
         } else if (chassis) {
             sbrec_port_binding_set_type(op->sb, "l3gateway");
         } else {
+        	//如果路由器选项中没有'chassis‘配置，则接口类型为patch口
             sbrec_port_binding_set_type(op->sb, "patch");
         }
 
@@ -1951,6 +1962,7 @@ ovn_port_update_sbrec(struct northd_context *ctx,
                 /* Handle ports that had redirect-chassis option attached
                  * to them, and for backwards compatibility convert them
                  * to a single Gateway_Chassis entry */
+            	//找出要重定向到哪个chassis
                 const struct sbrec_chassis *chassis =
                     chassis_lookup_by_name(chassis_index, redirect_chassis);
                 if (chassis) {
@@ -1963,6 +1975,7 @@ ovn_port_update_sbrec(struct northd_context *ctx,
                         /* Construct a single Gateway_Chassis entry on the
                          * Port_Binding attached to the redirect_chassis
                          * name */
+                    	//创建单个gateway_chassis
                         struct sbrec_gateway_chassis *gw_chassis =
                             sbrec_gateway_chassis_insert(ctx->ovnsb_txn);
 
@@ -1991,6 +2004,8 @@ ovn_port_update_sbrec(struct northd_context *ctx,
                     }
                 }
             }
+
+            //添加distributed-port为nbrp的名称
             smap_add(&new, "distributed-port", op->nbrp->name);
         } else {
             const char *peer = op->peer ? op->peer->key : "<error>";
@@ -2009,6 +2024,7 @@ ovn_port_update_sbrec(struct northd_context *ctx,
         struct smap ids = SMAP_INITIALIZER(&ids);
         sbrec_port_binding_set_external_ids(op->sb, &ids);
     } else {
+    	//op属于交换机上的接口
         if (strcmp(op->nbsp->type, "router")) {
             uint32_t queue_id = smap_get_int(
                     &op->sb->options, "qdisc_queue_id", 0);
@@ -3022,6 +3038,7 @@ build_pre_lb(struct ovn_datapath *od, struct hmap *lflows)
 
     struct sset all_ips = SSET_INITIALIZER(&all_ips);
     bool vip_configured = false;
+    //收集所有格式正确的vip
     for (int i = 0; i < od->nbs->n_load_balancer; i++) {
         struct nbrec_load_balancer *lb = od->nbs->load_balancer[i];
         struct smap *vips = &lb->vips;
@@ -3093,6 +3110,7 @@ build_acls(struct ovn_datapath *od, struct hmap *lflows)
     /* Ingress and Egress ACL Table (Priority 0): Packets are allowed by
      * default.  A related rule at priority 1 is added below if there
      * are any stateful ACLs in this datapath. */
+    //添加默认规则，默认容许通过
     ovn_lflow_add(lflows, od, S_SWITCH_IN_ACL, 0, "1", "next;");
     ovn_lflow_add(lflows, od, S_SWITCH_OUT_ACL, 0, "1", "next;");
 
@@ -3132,6 +3150,7 @@ build_acls(struct ovn_datapath *od, struct hmap *lflows)
          * for deletion (bit 0 of ct_label is set).
          *
          * This is enforced at a higher priority than ACLs can be defined. */
+        //状态有误，优先丢
         ovn_lflow_add(lflows, od, S_SWITCH_IN_ACL, UINT16_MAX,
                       "ct.inv || (ct.est && ct.rpl && ct_label.blocked == 1)",
                       "drop;");
@@ -3180,11 +3199,13 @@ build_acls(struct ovn_datapath *od, struct hmap *lflows)
         /* Ingress and Egress ACL Table (Priority 65535).
          *
          * Not to do conntrack on ND packets. */
+        //nd报文无条件通
         ovn_lflow_add(lflows, od, S_SWITCH_IN_ACL, UINT16_MAX, "nd", "next;");
         ovn_lflow_add(lflows, od, S_SWITCH_OUT_ACL, UINT16_MAX, "nd", "next;");
     }
 
     /* Ingress or Egress ACL Table (Various priorities). */
+    //处理配置的acl
     for (size_t i = 0; i < od->nbs->n_acls; i++) {
         struct nbrec_acl *acl = od->nbs->acls[i];
         bool ingress = !strcmp(acl->direction, "from-lport") ? true :false;
@@ -3217,6 +3238,7 @@ build_acls(struct ovn_datapath *od, struct hmap *lflows)
                  * by ct_commit in the "stateful" stage) to indicate that the
                  * connection should be allowed to resume.
                  */
+                //新连接时进行匹配
                 ds_put_format(&match, "((ct.new && !ct.est)"
                                       " || (!ct.new && ct.est && !ct.rpl "
                                            "&& ct_label.blocked == 1)) "
@@ -3234,6 +3256,7 @@ build_acls(struct ovn_datapath *od, struct hmap *lflows)
                  * connection is still allowed by the currently defined
                  * policy. */
                 ds_clear(&match);
+                //非新连接时，blocked == 0时进行匹配
                 ds_put_format(&match,
                               "!ct.new && ct.est && !ct.rpl"
                               " && ct_label.blocked == 0 && (%s)",
@@ -3251,6 +3274,7 @@ build_acls(struct ovn_datapath *od, struct hmap *lflows)
 
             /* XXX Need to support "reject", treat it as "drop;" for now. */
             if (!strcmp(acl->action, "reject")) {
+            	//目前不支持reject动作
                 VLOG_INFO("reject is not a supported action");
             }
 
@@ -3307,6 +3331,7 @@ build_acls(struct ovn_datapath *od, struct hmap *lflows)
     /* Add 34000 priority flow to allow DHCP reply from ovn-controller to all
      * logical ports of the datapath if the CMS has configured DHCPv4 options.
      * */
+    //容许acl,dns通
     for (size_t i = 0; i < od->nbs->n_ports; i++) {
         if (od->nbs->ports[i]->dhcpv4_options) {
             const char *server_id = smap_get(
@@ -3504,7 +3529,7 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
             continue;//非交换机配置，不处理（即跳过路由器配置）
         }
 
-        build_pre_acls(od, lflows);
+        build_pre_acls(od, lflows);//acl的整体架子，优先保证需要的通（使规则不能影响）
         build_pre_lb(od, lflows);
         build_pre_stateful(od, lflows);
         build_acls(od, lflows);
@@ -5770,7 +5795,7 @@ build_lflows(struct northd_context *ctx, struct hmap *datapaths,
     struct hmap lflows = HMAP_INITIALIZER(&lflows);
     struct hmap mcgroups = HMAP_INITIALIZER(&mcgroups);
 
-    build_lswitch_flows(datapaths, ports, &lflows, &mcgroups);
+    build_lswitch_flows(datapaths, ports, &lflows, &mcgroups);//构造交换机的flow
     build_lrouter_flows(datapaths, ports, &lflows);
 
     /* Push changes to the Logical_Flow table to database. */
@@ -6013,9 +6038,9 @@ ovnnb_db_run(struct northd_context *ctx, struct chassis_index *chassis_index,
         return;
     }
     struct hmap datapaths, ports;
-    build_datapaths(ctx, &datapaths);//同步datapath
+    build_datapaths(ctx, &datapaths);//同步datapath（增加新的dp,删除无用的dp)
     build_ports(ctx, &datapaths, chassis_index, &ports);//同步port信息(注：删除的port地址什么时候回收）
-    build_ipam(&datapaths, &ports);//为port申请ip
+    build_ipam(&datapaths, &ports);//为要求动态地址的port申请ip
     build_lflows(ctx, &datapaths, &ports);
 
     sync_address_sets(ctx);

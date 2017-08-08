@@ -190,7 +190,7 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
 
             const char *id = smap_get(&port->external_ids, "ovn-chassis-id");
             if (id) {
-            	//如果port有'ovn-chassis-id'说明port是一个tunnel port，其的值是对端的chassis的id号
+            	//如果port有'ovn-chassis-id'说明port是一个tunnel port，值是对端的chassis的id号
                 if (!shash_find(&tc.chassis, id)) {
                     struct chassis_node *chassis = xzalloc(sizeof *chassis);
                     chassis->bridge = br;
@@ -208,14 +208,15 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
 
     SBREC_CHASSIS_FOR_EACH(chassis_rec, ctx->ovnsb_idl) {
         if (strcmp(chassis_rec->name, chassis_id)) {
-        	//查找到名称为chassis_id的这条记录，选择一种隧道类型
+        	//查找到名称为chassis_id的这条记录(即属于本agent的记录），选择一种隧道类型
             /* Create tunnels to the other chassis. */
             const struct sbrec_encap *encap = preferred_encap(chassis_rec);
             if (!encap) {
                 VLOG_INFO("No supported encaps for '%s'", chassis_rec->name);
                 continue;
             }
-            tunnel_add(&tc, chassis_rec->name, encap);//配置隧道
+            tunnel_add(&tc, chassis_rec->name, encap);//配置此隧道接口
+            //这里应直接跳出才对啊？每个chassis只有一条记录！
         }
     }
 

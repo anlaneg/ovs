@@ -534,7 +534,7 @@ ip_parse_masked_len(const char *s, int *n, ovs_be32 *ip,
  *
  * Returns NULL if successful, otherwise an error message that the caller must
  * free(). */
-//解析网段信息
+//解析ipv4网段信息
 char * OVS_WARN_UNUSED_RESULT
 ip_parse_masked(const char *s, ovs_be32 *ip, ovs_be32 *mask)
 {
@@ -586,7 +586,7 @@ ip_parse_cidr(const char *s, ovs_be32 *ip, unsigned int *plen)
 
 /* Parses string 's', which must be an IPv6 address.  Stores the IPv6 address
  * into '*ip'.  Returns true if successful, otherwise false. */
-//字符串转换为ip地址
+//字符串转换为ipv6地址
 bool
 ipv6_parse(const char *s, struct in6_addr *ip)
 {

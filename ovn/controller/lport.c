@@ -25,6 +25,7 @@ VLOG_DEFINE_THIS_MODULE(lport);
 static struct ldatapath *ldatapath_lookup_by_key__(
     const struct ldatapath_index *, uint32_t dp_key);
 
+//收集所有sb库中所有ld记录，并将其组织在ldatapaths表中
 void
 ldatapath_index_init(struct ldatapath_index *ldatapaths,
                      struct ovsdb_idl *ovnsb_idl)

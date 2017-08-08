@@ -80,6 +80,7 @@ struct pending_pkt {
 
 static char *ovs_remote;
 
+//检查集合local_datapaths中是否存在指定tunnel_key的datapath
 struct local_datapath *
 get_local_datapath(const struct hmap *local_datapaths, uint32_t tunnel_key)
 {
@@ -282,7 +283,7 @@ get_chassis_id(const struct ovsdb_idl *ovs_idl)
     const char *chassis_id = cfg ? smap_get(&cfg->external_ids, "system-id") : NULL;
 
     if (!chassis_id) {
-    	//未配置chassis名称
+    	//未配置chassis名称,每一个ovn-controller均需要在openvswitch表中配置自已本地的system-id
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
         VLOG_WARN_RL(&rl, "'system-id' in Open_vSwitch database is missing.");
     }
@@ -661,15 +662,16 @@ main(int argc, char *argv[])
         struct mcgroup_index mcgroups;
         struct chassis_index chassis_index;
 
-        ldatapath_index_init(&ldatapaths, ctx.ovnsb_idl);//建立按tunnel-key索引的datapath表
-        lport_index_init(&lports, ctx.ovnsb_idl);//建立lports索引表
-        mcgroup_index_init(&mcgroups, ctx.ovnsb_idl);//建立mcgroups索引表
-        chassis_index_init(&chassis_index, ctx.ovnsb_idl);//建立chassis索引表
+        ldatapath_index_init(&ldatapaths, ctx.ovnsb_idl);//建立按tunnel-key索引的datapath表(SB表情况）
+        lport_index_init(&lports, ctx.ovnsb_idl);//建立lports索引表（依SB表情况建立）
+        mcgroup_index_init(&mcgroups, ctx.ovnsb_idl);//建立mcgroups索引表（依据SB中的datapath及组播组name建立）
+        chassis_index_init(&chassis_index, ctx.ovnsb_idl);//建立chassis索引表（依SB中的所有chassis情况建立）
 
         const struct sbrec_chassis *chassis = NULL;
         if (chassis_id) {
-            chassis = chassis_run(&ctx, chassis_id, br_int);//检查更新当前的chassis记录
-            encaps_run(&ctx, br_int, chassis_id);//处理隧道接口
+        	//检查更新当前的chassis记录,如果chassis在南向库中不存在，则注册自身
+            chassis = chassis_run(&ctx, chassis_id, br_int);
+            encaps_run(&ctx, br_int, chassis_id);//配置本端的隧道接口
             bfd_calculate_active_tunnels(br_int, &active_tunnels);//收集活跃的隧道口
             binding_run(&ctx, br_int, chassis, &ldatapaths, &lports,
                         &chassis_index, &active_tunnels, &local_datapaths,

@@ -121,14 +121,14 @@ parse_and_store_addresses(const char *address, struct lport_addresses *laddrs,
         buf_index = 0;
         error = ip_parse_cidr_len(buf, &buf_index, &ip4, &plen);
         if (!error) {
-            add_ipv4_netaddr(laddrs, ip4, plen);
+            add_ipv4_netaddr(laddrs, ip4, plen);//增加新识别出来的ipv4地址
             buf += buf_index;
             continue;
         }
         free(error);
-        error = ipv6_parse_cidr_len(buf, &buf_index, &ip6, &plen);
+        error = ipv6_parse_cidr_len(buf, &buf_index, &ip6, &plen);//尝试着ipv6地址解析
         if (!error) {
-            add_ipv6_netaddr(laddrs, ip6, plen);
+            add_ipv6_netaddr(laddrs, ip6, plen);//增加识别出来的ipv6地址
         } else {
             free(error);
             break;
