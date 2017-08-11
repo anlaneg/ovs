@@ -94,7 +94,7 @@ struct lex_token {
     char *s;
 
     /* LEX_T_INTEGER, LEX_T_MASKED_INTEGER only. */
-    enum lex_format format;
+    enum lex_format format;//由于没有将ipv4,ipv6上升到type方面，故需要在integer中引入format来区分
 
     union {
         /* LEX_T_INTEGER, LEX_T_MASKED_INTEGER only. */
@@ -121,9 +121,13 @@ const char *lex_token_parse(struct lex_token *, const char *input,
 
 /* A lexical analyzer. */
 struct lexer {
+	//输入信息（读写头位置）
     const char *input;          /* Remaining input (not owned by lexer). */
+    //当前token的识别是从start位置开始到input为至）
     const char *start;          /* Start of current token in 'input'. */
+    //产生的token值
     struct lex_token token;     /* Current token (owned by lexer). */
+    //解析中产生的错误消息
     char *error;                /* Error message, if any (owned by lexer). */
 };
 

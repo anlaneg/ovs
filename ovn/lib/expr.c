@@ -999,6 +999,7 @@ expr_addr_sets_destroy(struct shash *addr_sets)
     }
 }
 
+//构造e,此时给出的是接口名称
 static struct expr *
 parse_chassis_resident(struct expr_context *ctx)
 {
@@ -1042,6 +1043,7 @@ expr_parse_primary(struct expr_context *ctx, bool *atomic)
         struct expr_constant_set c;
 
         if (lexer_lookahead(ctx->lexer) == LEX_T_LPAREN) {
+        	//遇到'is_chassis_resident',跳过'('，直接构造表达式
             if (lexer_match_id(ctx->lexer, "is_chassis_resident")) {
                 lexer_get(ctx->lexer); /* Skip "(". */
                 *atomic = true;

@@ -45,6 +45,7 @@ add_ct_bit(const char *name, int index, struct shash *symtab)
     free(expansion);
 }
 
+//初始化符号表（绑定符号对应的MFF)
 void
 ovn_init_symtab(struct shash *symtab)
 {
@@ -53,8 +54,8 @@ ovn_init_symtab(struct shash *symtab)
     /* Reserve a pair of registers for the logical inport and outport.  A full
      * 32-bit register each is bigger than we need, but the expression code
      * doesn't yet support string fields that occupy less than a full OXM. */
-    expr_symtab_add_string(symtab, "inport", MFF_LOG_INPORT, NULL);
-    expr_symtab_add_string(symtab, "outport", MFF_LOG_OUTPORT, NULL);
+    expr_symtab_add_string(symtab, "inport", MFF_LOG_INPORT, NULL);//inport对应14号寄存器
+    expr_symtab_add_string(symtab, "outport", MFF_LOG_OUTPORT, NULL);//output对应15号寄存器
 
     /* Logical registers:
      *     128-bit xxregs
@@ -65,7 +66,7 @@ ovn_init_symtab(struct shash *symtab)
      * unless they're formally defined as subfields.  It's a little awkward. */
     for (int xxi = 0; xxi < MFF_N_LOG_REGS / 4; xxi++) {
         char *xxname = xasprintf("xxreg%d", xxi);
-        expr_symtab_add_field(symtab, xxname, MFF_XXREG0 + xxi, NULL, false);
+        expr_symtab_add_field(symtab, xxname, MFF_XXREG0 + xxi, NULL, false);//xxreg%d 与寄存器绑定
         free(xxname);
     }
     for (int xi = 0; xi < MFF_N_LOG_REGS / 2; xi++) {
@@ -74,7 +75,7 @@ ovn_init_symtab(struct shash *symtab)
         if (xxi < MFF_N_LOG_REGS / 4) {
             add_subregister(xname, "xxreg", xxi, 64, 1 - xi % 2, symtab);
         } else {
-            expr_symtab_add_field(symtab, xname, MFF_XREG0 + xi, NULL, false);
+            expr_symtab_add_field(symtab, xname, MFF_XREG0 + xi, NULL, false);//xxreg寄存器绑定
         }
         free(xname);
     }

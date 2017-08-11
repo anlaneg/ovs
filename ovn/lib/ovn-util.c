@@ -133,7 +133,7 @@ parse_and_store_addresses(const char *address, struct lport_addresses *laddrs,
             free(error);
             break;
         }
-        buf += buf_index;
+        buf += buf_index;//尝试解析下一个ip地址
     }
 
     *ofs = buf - start;

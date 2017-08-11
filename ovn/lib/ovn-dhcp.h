@@ -28,6 +28,7 @@ struct dhcp_opts_map {
     size_t code;
 };
 
+//设置dhcp选项（名称，类型，code)
 #define DHCP_OPTION(NAME, CODE, TYPE) \
     {.name = NAME, .code = CODE, .type = TYPE}
 

@@ -156,19 +156,20 @@ add_logical_flows(struct controller_ctx *ctx, const struct lport_index *lports,
     struct hmap dhcp_opts = HMAP_INITIALIZER(&dhcp_opts);
     struct hmap dhcpv6_opts = HMAP_INITIALIZER(&dhcpv6_opts);
     const struct sbrec_dhcp_options *dhcp_opt_row;
-    //dhcp v4选项添加
+    //自sb数据库中取出dhcp_options记录，并组装填充到dhcp_opts中（这里记录的是我们支持的dhcp选项）
     SBREC_DHCP_OPTIONS_FOR_EACH(dhcp_opt_row, ctx->ovnsb_idl) {
         dhcp_opt_add(&dhcp_opts, dhcp_opt_row->name, dhcp_opt_row->code,
                      dhcp_opt_row->type);
     }
 
-    //dhcp v6选项添加
+    //dhcp v6选项添加（同上，v6版本）
     const struct sbrec_dhcpv6_options *dhcpv6_opt_row;
     SBREC_DHCPV6_OPTIONS_FOR_EACH(dhcpv6_opt_row, ctx->ovnsb_idl) {
        dhcp_opt_add(&dhcpv6_opts, dhcpv6_opt_row->name, dhcpv6_opt_row->code,
                     dhcpv6_opt_row->type);
     }
 
+    //遍历flow表
     SBREC_LOGICAL_FLOW_FOR_EACH (lflow, ctx->ovnsb_idl) {
         consider_logical_flow(lports, mcgroups, chassis_index,
                               lflow, local_datapaths,
@@ -197,24 +198,27 @@ consider_logical_flow(const struct lport_index *lports,
                       struct sset *active_tunnels)
 {
     /* Determine translation of logical table IDs to physical table IDs. */
-    bool ingress = !strcmp(lflow->pipeline, "ingress");//检查属于哪种pipeline
+    bool ingress = !strcmp(lflow->pipeline, "ingress");//指明是否为ingress方向
 
     const struct sbrec_datapath_binding *ldp = lflow->logical_datapath;
     if (!ldp) {
+    	//配置错误的流
         return;
     }
     if (!get_local_datapath(local_datapaths, ldp->tunnel_key)) {
+    	//流对应的datapath不存在，不处理
         return;
     }
 
     /* Determine translation of logical table IDs to physical table IDs. */
+    //如果是ingress方向，则首表是8，如果是egress方向，则首表为40
     uint8_t first_ptable = (ingress
                             ? OFTABLE_LOG_INGRESS_PIPELINE
                             : OFTABLE_LOG_EGRESS_PIPELINE);
-    uint8_t ptable = first_ptable + lflow->table_id;
+    uint8_t ptable = first_ptable + lflow->table_id;//规则对应的表的绝对位置
     uint8_t output_ptable = (ingress
                              ? OFTABLE_REMOTE_OUTPUT
-                             : OFTABLE_SAVE_INPORT);
+                             : OFTABLE_SAVE_INPORT);//igress输出表为32，egress输出表为64
 
     /* Parse OVN logical actions.
      *
@@ -233,6 +237,7 @@ consider_logical_flow(const struct lport_index *lports,
     struct expr *prereqs;
     char *error;
 
+    //action转换
     error = ovnacts_parse_string(lflow->actions, &pp, &ovnacts, &prereqs);
     if (error) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
@@ -273,6 +278,7 @@ consider_logical_flow(const struct lport_index *lports,
     struct hmap matches;
     struct expr *expr;
 
+    //解析match
     expr = expr_parse_string(lflow->match, &symtab, addr_sets, &error);
     if (!error) {
         if (prereqs) {

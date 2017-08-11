@@ -410,6 +410,7 @@ consider_local_datapath(struct controller_ctx *ctx,
             get_qos_params(binding_rec, qos_map);
         }
         /* This port is in our chassis unless it is a localport. */
+        //如果port类型为localport,则认为其存在我们的机框内（localport提供dhcp,metadata功能）
 	    if (strcmp(binding_rec->type, "localport")) {
             our_chassis = true;
         }

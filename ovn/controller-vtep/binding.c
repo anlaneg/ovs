@@ -177,8 +177,10 @@ binding_run(struct controller_vtep_ctx *ctx)
                                             "vtep-physical-switch");
         const char *vtep_lswitch = smap_get(&port_binding_rec->options,
                                             "vtep-logical-switch");
+        //根据名称查找物理交换机
         struct ps *ps
             = vtep_pswitch ? shash_find_data(&ps_map, vtep_pswitch) : NULL;
+        //根据名称查找逻辑交换机
         bool found_ls
             = ps && vtep_lswitch && shash_find(&ps->ls_to_pb, vtep_lswitch);
 

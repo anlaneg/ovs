@@ -695,7 +695,8 @@ main(int argc, char *argv[])
                 if (ofctrl_can_put()) {
                     commit_ct_zones(br_int, &pending_ct_zones);
 
-                    struct hmap flow_table = HMAP_INITIALIZER(&flow_table);//收集生成的流规则
+                    //收集生成的流规则
+                    struct hmap flow_table = HMAP_INITIALIZER(&flow_table);
                     lflow_run(&ctx, chassis, &lports, &mcgroups,
                               &chassis_index, &local_datapaths, &group_table,
                               &addr_sets, &flow_table, &active_tunnels);

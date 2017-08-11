@@ -267,18 +267,22 @@ static void
 parse_NEXT(struct action_context *ctx)
 {
     if (!ctx->pp->n_tables) {
+    	//只有0个表，则拒绝next指令
         lexer_error(ctx->lexer, "\"next\" action not allowed here.");
         return;
     }
 
-    int pipeline = ctx->pp->pipeline;
-    int table = ctx->pp->cur_ltable + 1;
+    int pipeline = ctx->pp->pipeline;//提取当前pipeline
+    int table = ctx->pp->cur_ltable + 1;//获得下一个表
     if (lexer_match(ctx->lexer, LEX_T_LPAREN)) {
+    	//遇到'next (',解析给出的table参数
         if (lexer_is_int(ctx->lexer)) {
             lexer_get_int(ctx->lexer, &table);
         } else {
+        	//识别语法：pipeline = xx , table = xx
             do {
                 if (lexer_match_id(ctx->lexer, "pipeline")) {
+                	//遇到'pipeline =',解析pipeline
                     if (!lexer_force_match(ctx->lexer, LEX_T_EQUALS)) {
                         return;
                     }
@@ -287,32 +291,38 @@ parse_NEXT(struct action_context *ctx)
                     } else if (lexer_match_id(ctx->lexer, "egress")) {
                         pipeline = OVNACT_P_EGRESS;
                     } else {
+                    	//语法错误，pipeline参数有误
                         lexer_syntax_error(
                             ctx->lexer, "expecting \"ingress\" or \"egress\"");
                         return;
                     }
                 } else if (lexer_match_id(ctx->lexer, "table")) {
+                	//遇到 'table' ,尝试‘table=xx‘ 格式和'table xx‘两种格式
                     if (!lexer_force_match(ctx->lexer, LEX_T_EQUALS) ||
                         !lexer_force_int(ctx->lexer, &table)) {
                         return;
                     }
                 } else {
+                	//语法错误，未知语法
                     lexer_syntax_error(ctx->lexer,
                                        "expecting \"pipeline\" or \"table\"");
                     return;
                 }
             } while (lexer_match(ctx->lexer, LEX_T_COMMA));
         }
+        //期待')‘
         if (!lexer_force_match(ctx->lexer, LEX_T_RPAREN)) {
             return;
         }
     }
 
+    //action中的pipeline与context中的pipeline不一致
     if (pipeline == OVNACT_P_EGRESS && ctx->pp->pipeline == OVNACT_P_INGRESS) {
         lexer_error(ctx->lexer,
                     "\"next\" action cannot advance from ingress to egress "
                     "pipeline (use \"output\" action instead)");
     } else if (table >= ctx->pp->n_tables) {
+    	//语议检查不通过，表超过限制
         lexer_error(ctx->lexer,
                     "\"next\" action cannot advance beyond table %d.",
                     ctx->pp->n_tables - 1);
@@ -1805,6 +1815,7 @@ parse_action(struct action_context *ctx)
         || lookahead == LEX_T_LSQUARE) {
         parse_set_action(ctx);
     } else if (lexer_match_id(ctx->lexer, "next")) {
+    	//遇到next指令
         parse_NEXT(ctx);
     } else if (lexer_match_id(ctx->lexer, "output")) {
         ovnact_put_OUTPUT(ctx->ovnacts);
@@ -1853,6 +1864,7 @@ parse_actions(struct action_context *ctx, enum lex_type sentinel)
     if (ctx->lexer->token.type == LEX_T_ID
         && !strcmp(ctx->lexer->token.s, "drop")
         && lexer_lookahead(ctx->lexer) == LEX_T_SEMICOLON) {
+    	//遇到drop;
         lexer_get(ctx->lexer);  /* Skip "drop". */
         lexer_get(ctx->lexer);  /* Skip ";". */
         lexer_force_match(ctx->lexer, sentinel);
@@ -1860,6 +1872,7 @@ parse_actions(struct action_context *ctx, enum lex_type sentinel)
     }
 
     while (!lexer_match(ctx->lexer, sentinel)) {
+    	//如果语义不匹配，则解析action
         if (!parse_action(ctx)) {
             return;
         }
@@ -1920,7 +1933,7 @@ ovnacts_parse_string(const char *s, const struct ovnact_parse_params *pp,
     struct lexer lexer;
 
     lexer_init(&lexer, s);
-    lexer_get(&lexer);
+    lexer_get(&lexer);//使lexer提前识别一个token
     ovnacts_parse(&lexer, pp, ofpacts, prereqsp);
     char *error = lexer_steal_error(&lexer);
     lexer_destroy(&lexer);

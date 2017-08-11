@@ -240,7 +240,7 @@ const char *expr_level_to_string(enum expr_level);
  * which are acceptable.
  */
 struct expr_symbol {
-    char *name;
+    char *name;//符号名称
     int width;
 
     const struct mf_field *field;     /* Fields only, otherwise NULL. */

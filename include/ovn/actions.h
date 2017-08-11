@@ -412,13 +412,13 @@ BUILD_ASSERT_DECL(sizeof(struct action_header) == 8);
 struct ovnact_parse_params {
     /* A table of "struct expr_symbol"s to support (as one would provide to
      * expr_parse()). */
-    const struct shash *symtab;
+    const struct shash *symtab;//解析器对应的符号表
 
     /* hmap of 'struct dhcp_opts_map' to support 'put_dhcp_opts' action */
-    const struct hmap *dhcp_opts;
+    const struct hmap *dhcp_opts;//dhcp选项表
 
     /* hmap of 'struct dhcp_opts_map'  to support 'put_dhcpv6_opts' action */
-    const struct hmap *dhcpv6_opts;
+    const struct hmap *dhcpv6_opts;//dhcpv6选项表
 
     /* Each OVN flow exists in a logical table within a logical pipeline.
      * These parameters express this context for a set of OVN actions being
@@ -437,9 +437,9 @@ struct ovnact_parse_params {
      *       which 'next' will jump.  If 'pipeline' is OVNACT_P_EGRESS, then
      *       'next' will also be able to jump into the ingress pipeline, but
      *       the reverse is not true. */
-    enum ovnact_pipeline pipeline; /* Logical pipeline. */
-    uint8_t n_tables;              /* Number of logical flow tables. */
-    uint8_t cur_ltable;            /* 0 <= cur_ltable < n_tables. */
+    enum ovnact_pipeline pipeline; /* Logical pipeline. */ //方向
+    uint8_t n_tables;              /* Number of logical flow tables. */ //使用多少个表
+    uint8_t cur_ltable;            /* 0 <= cur_ltable < n_tables. */ //当前表
 };
 
 bool ovnacts_parse(struct lexer *, const struct ovnact_parse_params *,

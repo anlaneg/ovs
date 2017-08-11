@@ -52,6 +52,7 @@ gateway_chassis_get_ordered(const struct sbrec_port_binding *binding,
     redir_chassis_str = smap_get(&binding->options, "redirect-chassis");
 
     if (redir_chassis_str) {
+    	//有机框名称，则取此机框记录
         redirect_chassis = chassis_lookup_by_name(chassis_index,
                                                   redir_chassis_str);
         if (!redirect_chassis) {

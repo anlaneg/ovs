@@ -56,6 +56,7 @@ lex_token_init(struct lex_token *token)
 void
 lex_token_destroy(struct lex_token *token)
 {
+	//未使用内部buffer，则释放其内容
     if (token->s != token->buffer) {
         free(token->s);
     }
@@ -378,20 +379,23 @@ lex_parse_integer__(const char *p, struct lex_token *token)
         }
         end++;
     }
-    size_t len = end - start;
+    size_t len = end - start;//从end到start,之间只有字母，数字及':','.'号
 
     int n;
     struct eth_addr mac;
 
     if (!len) {
+    	//长度为0，期待的是数字，报错
         lex_error(token, "Integer constant expected.");
     } else if (len == 17
                && ovs_scan(start, ETH_ADDR_SCAN_FMT"%n",
                            ETH_ADDR_SCAN_ARGS(mac), &n)
                && n == len) {
+    	//尝试识别为mac地址且成功
         token->value.mac = mac;
         token->format = LEX_F_ETHERNET;
     } else if (start + strspn(start, "0123456789") == end) {
+    	//按整数进行识别
         if (p[0] == '0' && len > 1) {
             lex_error(token, "Decimal constants must not have leading zeros.");
         } else {
@@ -408,12 +412,14 @@ lex_parse_integer__(const char *p, struct lex_token *token)
             }
         }
     } else if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+    	//按16进制数字进行识别
         if (len > 2) {
             lex_parse_hex_integer(start + 2, len - 2, token);
         } else {
             lex_error(token, "Hex digits expected following 0%c.", p[1]);
         }
     } else if (len < INET6_ADDRSTRLEN) {
+    	//按ip地址进行识别
         char copy[INET6_ADDRSTRLEN];
         memcpy(copy, p, len);
         copy[len] = '\0';
@@ -534,6 +540,7 @@ lex_parse_string(const char *p, struct lex_token *token)
     }
 }
 
+//检查是否合法的id符号
 static bool
 lex_is_id1(unsigned char c)
 {
@@ -541,12 +548,14 @@ lex_is_id1(unsigned char c)
             || c == '_' || c == '.');
 }
 
+//检查是否为合法的id符号或者数字
 static bool
 lex_is_idn(unsigned char c)
 {
     return lex_is_id1(c) || (c >= '0' && c <= '9');
 }
 
+//解析id
 static const char *
 lex_parse_id(const char *p, enum lex_type type, struct lex_token *token)
 {
@@ -577,6 +586,7 @@ lex_parse_addr_set(const char *p, struct lex_token *token)
  * null-terminated string 'p' into 'token'.  Stores a pointer to the start of
  * the token (after skipping white space and comments, if any) into '*startp'.
  * Returns the character position at which to begin parsing the next token. */
+//识别一个token
 const char *
 lex_token_parse(struct lex_token *token, const char *p, const char **startp)
 {
@@ -586,13 +596,17 @@ next:
     *startp = p;
     switch (*p) {
     case '\0':
+    	//指明到达输入结尾
         token->type = LEX_T_END;
         return p;
 
+    //跳过空字符
     case ' ': case '\t': case '\n': case '\r': case '\v': case '\f':
         p++;
         goto next;
 
+    //处理'//'注释符（一直注释到行结尾）
+    //处理'/*'注释符 （一直注释到'*/')
     case '/':
         p++;
         if (*p == '/') {
@@ -615,11 +629,13 @@ next:
             }
             goto next;
         } else {
+        	//遇到单个'/',语法错误
             lex_error(token,
                       "`/' is only valid as part of `//' or `/*'.");
         }
         break;
 
+    //误别终结符，左括号
     case '(':
         token->type = LEX_T_LPAREN;
         p++;
@@ -650,6 +666,7 @@ next:
         p++;
         break;
 
+    //识别终结符'==',与终结符'='
     case '=':
         p++;
         if (*p == '=') {
@@ -660,6 +677,7 @@ next:
         }
         break;
 
+    //识别终结符'!=','!'
     case '!':
         p++;
         if (*p == '=') {
@@ -670,12 +688,14 @@ next:
         }
         break;
 
+    //识别终结符'&&'
     case '&':
         p++;
         if (*p == '&') {
             token->type = LEX_T_LOG_AND;
             p++;
         } else {
+        	//词法错误，'&'符号
             lex_error(token, "`&' is only valid as part of `&&'.");
         }
         break;
@@ -690,6 +710,7 @@ next:
         }
         break;
 
+    //识别终结符'<=','<->','<'
     case '<':
         p++;
         if (*p == '=') {
@@ -713,6 +734,7 @@ next:
         }
         break;
 
+    //识别终结符'..'
     case '.':
         p++;
         if (*p == '.') {
@@ -743,6 +765,7 @@ next:
         }
         break;
 
+    //识别宏符号
     case '$':
         p = lex_parse_addr_set(p, token);
         break;
@@ -760,6 +783,7 @@ next:
         p = lex_parse_integer(p, token);
         break;
 
+    //识别字符串
     case '"':
         p = lex_parse_string(p, token);
         break;
@@ -776,6 +800,8 @@ next:
         break;
 
     default:
+    	//如果*p是合法id,则按id进行识别
+    	//如果不是合法id进行词法报错
         if (lex_is_id1(*p)) {
             p = lex_parse_id(p, LEX_T_ID, token);
         } else {
@@ -818,6 +844,7 @@ lexer_destroy(struct lexer *lexer)
 /* Obtains the next token from 'lexer' into 'lexer->token', and returns the
  * token's type.  The caller may examine 'lexer->token' directly to obtain full
  * information about the token. */
+//向前识别一个token,返回token的类型
 enum lex_type
 lexer_get(struct lexer *lexer)
 {
@@ -828,6 +855,7 @@ lexer_get(struct lexer *lexer)
 
 /* Returns the type of the next token that will be fetched by lexer_get(),
  * without advancing 'lexer->token' to that token. */
+//向前看一个token
 enum lex_type
 lexer_lookahead(const struct lexer *lexer)
 {
@@ -843,6 +871,7 @@ lexer_lookahead(const struct lexer *lexer)
 
 /* If 'lexer''s current token has the given 'type', advances 'lexer' to the
  * next token and returns true.  Otherwise returns false. */
+//如果词法类型匹配，则尝试继续识别，否则返回false
 bool
 lexer_match(struct lexer *lexer, enum lex_type type)
 {
@@ -854,6 +883,7 @@ lexer_match(struct lexer *lexer, enum lex_type type)
     }
 }
 
+//检查当前类型是否匹配，如果不匹配返回语法错误，如果匹配，lexer向前移动
 bool
 lexer_force_match(struct lexer *lexer, enum lex_type t)
 {
@@ -924,6 +954,7 @@ lexer_force_end(struct lexer *lexer)
     if (lexer->token.type == LEX_T_END) {
         return true;
     } else {
+    	//语法错误
         lexer_syntax_error(lexer, "expecting end of input");
         return false;
     }
