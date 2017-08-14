@@ -90,7 +90,8 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
 
     //取出本机关于ovn封装协议，及封装ip的配置
     //ovn-encap-type用于指出一个chassis连接到另一个时采用的封装协议。
-    //encap_type可能指定多个,每个之间采用','号进行分割。每种encap_type需要对应一个ovn-encap-ip
+    //encap_type可能指定多个,每个之间采用','号进行分割。每种encap_type需要对应一个ovn-encap-ip,即
+    //向对端发送报文时，自已的ip
     encap_type = smap_get(&cfg->external_ids, "ovn-encap-type");
     encap_ip = smap_get(&cfg->external_ids, "ovn-encap-ip");
     if (!encap_type || !encap_ip) {

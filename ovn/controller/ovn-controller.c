@@ -655,7 +655,7 @@ main(int argc, char *argv[])
         struct sset active_tunnels = SSET_INITIALIZER(&active_tunnels);
 
         const struct ovsrec_bridge *br_int = get_br_int(&ctx);//获取br-int桥配置（如果br-int不存在，则创建）
-        const char *chassis_id = get_chassis_id(ctx.ovs_idl);//获取chassis-id
+        const char *chassis_id = get_chassis_id(ctx.ovs_idl);//获取自身的chassis-id
 
         struct ldatapath_index ldatapaths;
         struct lport_index lports;

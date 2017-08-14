@@ -182,6 +182,7 @@ add_logical_flows(struct controller_ctx *ctx, const struct lport_index *lports,
     dhcp_opts_destroy(&dhcpv6_opts);
 }
 
+//解析并转换流表
 static void
 consider_logical_flow(const struct lport_index *lports,
                       const struct mcgroup_index *mcgroups,

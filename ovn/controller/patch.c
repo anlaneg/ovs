@@ -66,7 +66,8 @@ create_patch_port(struct controller_ctx *ctx,
     for (size_t i = 0; i < src->n_ports; i++) {
         if (match_patch_port(src->ports[i], dst_name)) {
             /* Patch port already exists on 'src'. */
-        	//此桥上有一个接口已连接到dst-name口上，将此接口删除掉
+        	//此桥上有一个接口已连接到dst-name口上，我们将其从existing_port中移除，故
+        	//existing_ports中将剩余需要自本机删除的接口（sb中已没有了）
             shash_find_and_delete(existing_ports, src->ports[i]->name);
             return;
         }
@@ -134,6 +135,7 @@ remove_port(struct controller_ctx *ctx,
 /* Obtains external-ids:ovn-bridge-mappings from OVSDB and adds patch ports for
  * the local bridge mappings.  Removes any patch ports for bridge mappings that
  * already existed from 'existing_ports'. */
+//实现与bridge-mappings桥的连接(br-int 到br-ln)
 static void
 add_bridge_mappings(struct controller_ctx *ctx,
                     const struct ovsrec_bridge *br_int,
@@ -152,7 +154,7 @@ add_bridge_mappings(struct controller_ctx *ctx,
     }
 
     /* Parse bridge mappings. */
-    //解析网络与桥的映射关系
+    //解析网络与桥的映射关系,保存在bridge_mappings中，key为network,value为ovs_bridge
     struct shash bridge_mappings = SHASH_INITIALIZER(&bridge_mappings);
     char *cur, *next, *start;
     next = start = xstrdup(mappings_cfg);
@@ -232,6 +234,7 @@ add_bridge_mappings(struct controller_ctx *ctx,
     shash_destroy(&bridge_mappings);
 }
 
+//实现br-int 与br-ln桥之间的接口维护
 void
 patch_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
           const struct sbrec_chassis *chassis)
@@ -265,6 +268,7 @@ patch_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
 
     /* Now 'existing_ports' only still contains patch ports that exist in the
      * database but shouldn't.  Delete them from the database. */
+    //仍存在于existing_ports中的接口是在数据库中已不存在的数，需要将其自br-int中移除
     struct shash_node *port_node, *port_next_node;
     SHASH_FOR_EACH_SAFE (port_node, port_next_node, &existing_ports) {
         struct ovsrec_port *port = port_node->data;

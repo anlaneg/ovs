@@ -85,10 +85,13 @@ tunnel_add(struct tunnel_ctx *tc, const char *new_chassis_id,
            const struct sbrec_encap *encap)
 {
     struct smap options = SMAP_INITIALIZER(&options);
-    smap_add(&options, "remote_ip", encap->ip);//对端ip地址
+    //encap->ip是new_chassis_id,对外发送报文时的ip,向任何同一虚拟network中的主机向此encap->ip
+    //发包，可使得报文到达new_chassis_id
+    smap_add(&options, "remote_ip", encap->ip);
     smap_add(&options, "key", "flow");
     const char *csum = smap_get(&encap->options, "csum");
-    if (csum && (!strcmp(csum, "true") || !strcmp(csum, "false"))) {//checksum谁来处理
+    if (csum && (!strcmp(csum, "true") || !strcmp(csum, "false"))) {
+    	//checksum谁来处理
         smap_add(&options, "csum", csum);
     }
 
@@ -102,6 +105,7 @@ tunnel_add(struct tunnel_ctx *tc, const char *new_chassis_id,
         && chassis->port->n_interfaces == 1
         && !strcmp(chassis->port->interfaces[0]->type, encap->type)
         && smap_equal(&chassis->port->interfaces[0]->options, &options)) {
+    	//依除chassis，无需变更（通过依除tc->chassis中就剩下需要删除的chassis了）
         shash_find_and_delete(&tc->chassis, new_chassis_id);
         free(chassis);
         goto exit;
@@ -119,13 +123,14 @@ tunnel_add(struct tunnel_ctx *tc, const char *new_chassis_id,
     }
 
     struct ovsrec_interface *iface = ovsrec_interface_insert(tc->ovs_txn);
-    ovsrec_interface_set_name(iface, port_name);
-    ovsrec_interface_set_type(iface, encap->type);
-    ovsrec_interface_set_options(iface, &options);
+    ovsrec_interface_set_name(iface, port_name);//设置隧道名称
+    ovsrec_interface_set_type(iface, encap->type);//设置隧道封装协议
+    ovsrec_interface_set_options(iface, &options);//接口类型
 
     struct ovsrec_port *port = ovsrec_port_insert(tc->ovs_txn);
     ovsrec_port_set_name(port, port_name);
-    ovsrec_port_set_interfaces(port, &iface, 1);
+    ovsrec_port_set_interfaces(port, &iface, 1);//引用interface
+    //指明此隧道可以到达new_chassis_id
     const struct smap id = SMAP_CONST1(&id, "ovn-chassis-id", new_chassis_id);
     ovsrec_port_set_external_ids(port, &id);
 
@@ -190,7 +195,9 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
 
             const char *id = smap_get(&port->external_ids, "ovn-chassis-id");
             if (id) {
-            	//如果port有'ovn-chassis-id'说明port是一个tunnel port，值是对端的chassis的id号
+            	//如果port有'ovn-chassis-id'说明port是一个tunnel port，值为对端的chassis-id
+            	//通过查找id,找到其对应的chassis,如果chassis不存在，则在chassis中插入(br,port)
+            	//指明通过本端的br的port口可以到达chassis。//这个注释看起不正确？
                 if (!shash_find(&tc.chassis, id)) {
                     struct chassis_node *chassis = xzalloc(sizeof *chassis);
                     chassis->bridge = br;
@@ -206,6 +213,7 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
         }
     }
 
+    //遍历南向库中的chassis记录
     SBREC_CHASSIS_FOR_EACH(chassis_rec, ctx->ovnsb_idl) {
         if (strcmp(chassis_rec->name, chassis_id)) {
         	//查找到名称为chassis_id的这条记录(即属于本agent的记录），选择一种隧道类型
@@ -221,6 +229,7 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     }
 
     /* Delete any existing OVN tunnels that were not still around. */
+    //删除掉不再需要了tunnel口
     struct shash_node *node, *next_node;
     SHASH_FOR_EACH_SAFE (node, next_node, &tc.chassis) {
         struct chassis_node *chassis = node->data;

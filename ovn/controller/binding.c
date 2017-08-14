@@ -115,6 +115,7 @@ get_local_iface_ids(const struct ovsrec_bridge *br_int,
     }
 }
 
+//添加本机的datapath
 static void
 add_local_datapath__(const struct ldatapath_index *ldatapaths,
                      const struct lport_index *lports,
@@ -126,6 +127,7 @@ add_local_datapath__(const struct ldatapath_index *ldatapaths,
 
     struct local_datapath *ld = get_local_datapath(local_datapaths, dp_key);
     if (ld) {
+    	//本机存在此ld
         if (has_local_l3gateway) {
             ld->has_local_l3gateway = true;
         }
@@ -384,7 +386,7 @@ consider_local_datapath(struct controller_ctx *ctx,
                         const struct chassis_index *chassis_index,//sb库中chassis情况
                         struct sset *active_tunnels,//从本机出发可到达哪些chassis
                         const struct sbrec_chassis *chassis_rec,//本机的chassis记录
-                        const struct sbrec_port_binding *binding_rec,//一条port的绑定记录
+                        const struct sbrec_port_binding *binding_rec,//***要考虑的一条port的绑定记录
                         struct hmap *qos_map,
                         struct hmap *local_datapaths,//出参
                         struct shash *lport_to_iface,//本机现有的port-id到iface的映射
@@ -398,11 +400,13 @@ consider_local_datapath(struct controller_ctx *ctx,
     if (iface_rec
         || (binding_rec->parent_port && binding_rec->parent_port[0] &&
             sset_contains(local_lports, binding_rec->parent_port))) {
-    	//本机有binding_rec->logical_port，或者binding_rec->parent_port在本机中存在。
+    	//本机存在iface_rec的记录，或者本机存在iface_rec父接口的记录
         if (binding_rec->parent_port && binding_rec->parent_port[0]) {
             /* Add child logical port to the set of all local ports. */
-            sset_add(local_lports, binding_rec->logical_port);//确保本机有binding_rec->logical_port接口。
+        	//确保本机有binding_rec->logical_port接口。
+            sset_add(local_lports, binding_rec->logical_port);
         }
+
         //在集合local_datapths中添加此datapath及与其相连的datapath
         add_local_datapath(ldatapaths, lports, binding_rec->datapath,
                            false, local_datapaths);
@@ -415,6 +419,7 @@ consider_local_datapath(struct controller_ctx *ctx,
             our_chassis = true;
         }
     } else if (!strcmp(binding_rec->type, "l2gateway")) {
+    	//如果是l2gateway类型，则检查是否为本chassis,如果是添加local_datapath
         const char *chassis_id = smap_get(&binding_rec->options,
                                           "l2gateway-chassis");
         our_chassis = chassis_id && !strcmp(chassis_id, chassis_rec->name);
@@ -424,11 +429,12 @@ consider_local_datapath(struct controller_ctx *ctx,
                                false, local_datapaths);
         }
     } else if (!strcmp(binding_rec->type, "chassisredirect")) {
+    	//我们生成的redirect-port就是这种类型
         gateway_chassis = gateway_chassis_get_ordered(binding_rec,
                                                        chassis_index);
         if (gateway_chassis &&
             gateway_chassis_contains(gateway_chassis, chassis_rec)) {
-
+        	//如果chassisredirect类型的口，恰好在此chassis上，则添加对应local_datapath
             our_chassis = gateway_chassis_is_active(
                 gateway_chassis, chassis_rec, active_tunnels);
 
@@ -454,6 +460,7 @@ consider_local_datapath(struct controller_ctx *ctx,
     if (ctx->ovnsb_idl_txn) {
         if (our_chassis) {
             if (binding_rec->chassis != chassis_rec) {
+            	//如果绑定发生了变化
                 if (binding_rec->chassis) {
                     VLOG_INFO("Changing chassis for lport %s from %s to %s.",
                               binding_rec->logical_port,
@@ -467,6 +474,7 @@ consider_local_datapath(struct controller_ctx *ctx,
                     VLOG_INFO("%s: Claiming %s",
                               binding_rec->logical_port, binding_rec->mac[i]);
                 }
+                //更新数据库记录
                 sbrec_port_binding_set_chassis(binding_rec, chassis_rec);
             }
         } else if (binding_rec->chassis == chassis_rec) {
@@ -536,7 +544,7 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     /* Run through each binding record to see if it is resident on this
      * chassis and update the binding accordingly.  This includes both
      * directly connected logical ports and children of those ports. */
-    //遍历每个port binding记录
+    //遍历sb库中每个port binding记录，获得本机需要创建那些local_datapaths
     SBREC_PORT_BINDING_FOR_EACH(binding_rec, ctx->ovnsb_idl) {
         consider_local_datapath(ctx, ldatapaths, lports, chassis_index,
                                 active_tunnels, chassis_rec, binding_rec,
@@ -549,6 +557,7 @@ binding_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     /* Run through each binding record to see if it is a localnet port
      * on local datapaths discovered from above loop, and update the
      * corresponding local datapath accordingly. */
+    //绑定localnet
     SBREC_PORT_BINDING_FOR_EACH (binding_rec, ctx->ovnsb_idl) {
         if (!strcmp(binding_rec->type, "localnet")) {
             consider_localnet_port(binding_rec, local_datapaths);
