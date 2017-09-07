@@ -2306,13 +2306,14 @@ is_admissible(struct xlate_ctx *ctx, struct xport *in_port,
     /* Drop frames for reserved multicast addresses
      * only if forward_bpdu option is absent. */
     if (!xbridge->forward_bpdu && eth_addr_is_reserved(flow->dl_dst)) {
-    	//预留mac，且不转发bpdu的，直接丢。
+    	    //预留mac，且不转发bpdu的，直接丢。
         xlate_report(ctx, OFT_DETAIL,
                      "packet has reserved destination MAC, dropping");
         return false;
     }
 
     if (in_xbundle->bond) {
+    	    //入接口是bond,检查bond是否容许进入
         struct mac_entry *mac;
 
         switch (bond_check_admissibility(in_xbundle->bond, in_port->ofport,
@@ -2332,6 +2333,8 @@ is_admissible(struct xlate_ctx *ctx, struct xport *in_port,
                 && mac_entry_get_port(xbridge->ml, mac) != in_xbundle->ofbundle//查到了，并且出接口不是入接口
                 && (!is_gratuitous_arp(flow, ctx->wc)//非免费arp
                     || mac_entry_is_grat_arp_locked(mac))) {
+            	    //此报文其fdb表项指出由另一个口进入，现在它由in_xbundle进入，认为是底下的交换机将此报文flood了，由于可以学习到
+            	    //mac地址，故两口肯定是属于同一vlan,担心重复造成loop处理，丢包。
                 ovs_rwlock_unlock(&xbridge->ml->rwlock);
                 xlate_report(ctx, OFT_DETAIL,
                              "SLB bond thinks this packet looped back, "
@@ -3081,6 +3084,7 @@ process_special(struct xlate_ctx *ctx, const struct xport *xport)
         slow = SLOW_BFD;
     } else if (xport->xbundle && xport->xbundle->lacp
                && flow->dl_type == htons(ETH_TYPE_LACP)) {
+    	    //此接口是xbundle,且开启了lacp,且收到lacp报文
         if (packet) {
             lacp_process_packet(xport->xbundle->lacp, xport->ofport, packet);//lacp协议处理
         }

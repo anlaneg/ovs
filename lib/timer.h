@@ -23,7 +23,7 @@
 #include "util.h"
 
 struct timer {
-    long long int t;
+    long long int t;//到期时间
 };
 
 long long int timer_msecs_until_expired(const struct timer *);
@@ -33,6 +33,7 @@ void timer_wait_at(const struct timer *, const char *where);
 /* Causes 'timer' to expire when 'duration' milliseconds have passed.
  *
  * May be used to initialize 'timer'. */
+//设置定时器到期时间
 static inline void
 timer_set_duration(struct timer *timer, long long int duration)
 {
@@ -58,6 +59,7 @@ timer_set_expired(struct timer *timer)
 }
 
 /* True if 'timer' has expired. */
+//检查timer是否已到期
 static inline bool
 timer_expired(const struct timer *timer)
 {

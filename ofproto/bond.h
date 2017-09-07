@@ -44,7 +44,7 @@ struct bond_settings {
     uint32_t basis;             /* Flow hashing basis. */
 
     /* Balancing configuration. */
-    enum bond_mode balance;
+    enum bond_mode balance;//balance模式
     int rebalance_interval;     /* Milliseconds between rebalances.
                                    Zero to disable rebalancing. */
 

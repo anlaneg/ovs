@@ -1005,6 +1005,7 @@ port_configure(struct port *port)
     s.name = port->name;
 
     /* Get slaves. */
+    //申请slaves空间，并将所有interface填充进去
     s.n_slaves = 0;
     s.slaves = xmalloc(ovs_list_size(&port->ifaces) * sizeof *s.slaves);
     LIST_FOR_EACH (iface, port_elem, &port->ifaces) {
@@ -1020,6 +1021,7 @@ port_configure(struct port *port)
     /* Get VLAN trunks. */
     s.trunks = NULL;
     if (cfg->n_trunks) {
+    		//cfg->trunks采用数组形式记录了多个vlan
         s.trunks = vlan_bitmap_from_array(cfg->trunks, cfg->n_trunks);
     }
 
@@ -1029,6 +1031,7 @@ port_configure(struct port *port)
     }
 
     /* Get VLAN mode. */
+    //取vlan模式
     if (cfg->vlan_mode) {
         if (!strcmp(cfg->vlan_mode, "access")) {
             s.vlan_mode = PORT_VLAN_ACCESS;
@@ -1069,6 +1072,7 @@ port_configure(struct port *port)
     /* Get LACP settings. */
     s.lacp = port_configure_lacp(port, &lacp_settings);
     if (s.lacp) {
+    		//有lacp配置
         size_t i = 0;
 
         s.lacp_slaves = xmalloc(s.n_slaves * sizeof *s.lacp_slaves);
@@ -1084,6 +1088,7 @@ port_configure(struct port *port)
         s.bond = &bond_settings;
         port_configure_bond(port, &bond_settings);
     } else {
+    		//无bond
         s.bond = NULL;
         LIST_FOR_EACH (iface, port_elem, &port->ifaces) {
             netdev_set_miimon_interval(iface->netdev, 0);
@@ -1906,6 +1911,7 @@ iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg,
     /* Get or create the port structure. */
     port = port_lookup(br, port_cfg->name);
     if (!port) {
+    		//port不存在时，创建port
         port = port_create(br, port_cfg);
     }
 
@@ -4207,6 +4213,7 @@ port_destroy(struct port *port)
     }
 }
 
+//通过名称查找port
 static struct port *
 port_lookup(const struct bridge *br, const char *name)
 {
@@ -4221,6 +4228,7 @@ port_lookup(const struct bridge *br, const char *name)
     return NULL;
 }
 
+//检查此port是否开启了lacp,如果开启，返回采用主动方式，还是被动方式
 static bool
 enable_lacp(struct port *port, bool *activep)
 {
@@ -4243,6 +4251,7 @@ enable_lacp(struct port *port, bool *activep)
     }
 }
 
+//解析port的lacp配置
 static struct lacp_settings *
 port_configure_lacp(struct port *port, struct lacp_settings *s)
 {
@@ -4255,6 +4264,7 @@ port_configure_lacp(struct port *port, struct lacp_settings *s)
 
     s->name = port->name;
 
+    //取system-id设置到s->id上，如果未指定system-id，则取local口的mac地址
     system_id = smap_get(&port->cfg->other_config, "lacp-system-id");
     if (system_id) {
         if (!ovs_scan(system_id, ETH_ADDR_SCAN_FMT,
@@ -4273,6 +4283,7 @@ port_configure_lacp(struct port *port, struct lacp_settings *s)
     }
 
     /* Prefer bondable links if unspecified. */
+    //提取优先级
     priority = smap_get_int(&port->cfg->other_config, "lacp-system-priority",
                             0);
     s->priority = (priority > 0 && priority <= UINT16_MAX
@@ -4316,6 +4327,7 @@ iface_configure_lacp(struct iface *iface, struct lacp_slave_settings *s)
     s->key = key;
 }
 
+//设置bond的一些参数，填充到s中
 static void
 port_configure_bond(struct port *port, struct bond_settings *s)
 {
@@ -4325,7 +4337,7 @@ port_configure_bond(struct port *port, struct bond_settings *s)
     int miimon_interval;
 
     s->name = port->name;
-    s->balance = BM_AB;
+    s->balance = BM_AB;//默认active-backup
     if (port->cfg->bond_mode) {
         if (!bond_mode_from_string(&s->balance, port->cfg->bond_mode)) {
             VLOG_WARN("port %s: unknown bond_mode %s, defaulting to %s",

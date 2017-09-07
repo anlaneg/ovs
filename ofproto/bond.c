@@ -195,6 +195,7 @@ static void update_recirc_rules__(struct bond *bond);
 /* Attempts to parse 's' as the name of a bond balancing mode.  If successful,
  * stores the mode in '*balance' and returns true.  Otherwise returns false
  * without modifying '*balance'. */
+//按字符串解析balance模式
 bool
 bond_mode_from_string(enum bond_mode *balance, const char *s)
 {
@@ -262,6 +263,7 @@ bond_ref(const struct bond *bond_)
 }
 
 /* Frees 'bond'. */
+//移除bond
 void
 bond_unref(struct bond *bond)
 {
@@ -478,8 +480,9 @@ bond_reconfigure(struct bond *bond, const struct bond_settings *s)
     return revalidate;
 }
 
+//通过mac地址找bond_slave
 static struct bond_slave *
-bond_find_slave_by_mac(const struct bond *bond, const struct eth_addr mac)//通过mac地址找bond_slave
+bond_find_slave_by_mac(const struct bond *bond, const struct eth_addr mac)
 {
     struct bond_slave *slave;
 
@@ -783,7 +786,7 @@ bond_check_admissibility(struct bond *bond, const void *slave_,
 
     ovs_rwlock_rdlock(&rwlock);
     slave = bond_slave_lookup(bond, slave_);
-    if (!slave) {
+    if (!slave) {//入接口必须属于bond
         goto out;
     }
 

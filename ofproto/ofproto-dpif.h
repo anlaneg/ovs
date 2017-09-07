@@ -269,8 +269,8 @@ struct ofproto_dpif {
     struct hmap bundles;        /* Contains "struct ofbundle"s. */
     struct mac_learning *ml;//mac学习表
     struct mcast_snooping *ms;//组播学习表
-    bool has_bonded_bundles;
-    bool lacp_enabled;
+    bool has_bonded_bundles;//此交换机上有bond的口
+    bool lacp_enabled;//lacp是否开启（默认不开启）
     struct mbridge *mbridge;
 
     struct ovs_mutex stats_mutex;

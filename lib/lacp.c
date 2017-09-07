@@ -37,14 +37,14 @@
 VLOG_DEFINE_THIS_MODULE(lacp);
 
 /* Masks for lacp_info state member. */
-#define LACP_STATE_ACT  0x01 /* Activity. Active or passive? */
-#define LACP_STATE_TIME 0x02 /* Timeout. Short or long timeout? */
-#define LACP_STATE_AGG  0x04 /* Aggregation. Is the link is bondable? */
-#define LACP_STATE_SYNC 0x08 /* Synchronization. Is the link in up to date? */
+#define LACP_STATE_ACT  0x01 /* Activity. Active or passive? */ //自身是active还是passive模式
+#define LACP_STATE_TIME 0x02 /* Timeout. Short or long timeout? */ //发送方是否认为超时
+#define LACP_STATE_AGG  0x04 /* Aggregation. Is the link is bondable? */ //发送方认为链路是否为聚合
+#define LACP_STATE_SYNC 0x08 /* Synchronization. Is the link in up to date? */ //发送方是否认为处理同步状态
 #define LACP_STATE_COL  0x10 /* Collecting. Is the link receiving frames? */
 #define LACP_STATE_DIST 0x20 /* Distributing. Is the link sending frames? */
-#define LACP_STATE_DEF  0x40 /* Defaulted. Using default partner info? */
-#define LACP_STATE_EXP  0x80 /* Expired. Using expired partner info? */
+#define LACP_STATE_DEF  0x40 /* Defaulted. Using default partner info? */ //发送方认为partner信息是空
+#define LACP_STATE_EXP  0x80 /* Expired. Using expired partner info? */ //发送方认为partner超时
 
 #define LACP_FAST_TIME_TX 1000  /* Fast transmission rate. */
 #define LACP_SLOW_TIME_TX 30000 /* Slow transmission rate. */
@@ -104,7 +104,7 @@ struct lacp {
 
     bool fast;               /* True if using fast probe interval. */
     bool negotiated;         /* True if LACP negotiations were successful. */
-    bool update;             /* True if lacp_update() needs to be called. */
+    bool update;             /* True if lacp_update() needs to be called. */ //对端是否更新配置
     bool fallback_ab; /* True if fallback to active-backup on LACP failure. */
 
     struct ovs_refcount ref_cnt;
@@ -122,14 +122,14 @@ struct slave {
 
     enum slave_status status;     /* Slave status. */
     bool attached;                /* Attached. Traffic may flow. */
-    struct lacp_info partner;     /* Partner information. */
-    struct lacp_info ntt_actor;   /* Used to decide if we Need To Transmit. */
-    struct timer tx;              /* Next message transmission timer. */
-    struct timer rx;              /* Expected message receive timer. */
+    struct lacp_info partner;     /* Partner information. */ //对端信息
+    struct lacp_info ntt_actor;   /* Used to decide if we Need To Transmit. */ //partner发送的对端（即我们）
+    struct timer tx;              /* Next message transmission timer. */ //周期性pdu发送定时器
+    struct timer rx;              /* Expected message receive timer. */ //收超时定时器
 
-    uint32_t count_rx_pdus;       /* dot3adAggPortStatsLACPDUsRx */
-    uint32_t count_rx_pdus_bad;   /* dot3adAggPortStatsIllegalRx */
-    uint32_t count_tx_pdus;       /* dot3adAggPortStatsLACPDUsTx */
+    uint32_t count_rx_pdus;       /* dot3adAggPortStatsLACPDUsRx */ //收到pdu计数
+    uint32_t count_rx_pdus_bad;   /* dot3adAggPortStatsIllegalRx */ //收到错误pdu计数
+    uint32_t count_tx_pdus;       /* dot3adAggPortStatsLACPDUsTx */ //发送pdu计数
 };
 
 static struct ovs_mutex mutex;
@@ -181,11 +181,13 @@ compose_lacp_pdu(const struct lacp_info *actor,
  * returns NULL if 'b' is malformed, or does not represent a LACP PDU format
  * supported by OVS.  Otherwise, it returns a pointer to the lacp_pdu contained
  * within 'b'. */
+//解析lacp的pdu报文
 static const struct lacp_pdu *
 parse_lacp_packet(const struct dp_packet *p)
 {
     const struct lacp_pdu *pdu;
 
+    //lacp报文是定长协议
     pdu = dp_packet_at(p, (uint8_t *)dp_packet_l3(p) - (uint8_t *)dp_packet_data(p),
                     LACP_PDU_LEN);
 
@@ -274,11 +276,12 @@ lacp_unref(struct lacp *lacp) OVS_EXCLUDED(mutex)
 }
 
 /* Configures 'lacp' with settings from 's'. */
+//lacp配置设置（s是自用户配置解析来的lacp配置）
 void
 lacp_configure(struct lacp *lacp, const struct lacp_settings *s)
     OVS_EXCLUDED(mutex)
 {
-    ovs_assert(!eth_addr_is_zero(s->id));
+    ovs_assert(!eth_addr_is_zero(s->id));//system-id一定是配置了
 
     lacp_lock();
     if (!lacp->name || strcmp(s->name, lacp->name)) {
@@ -330,7 +333,7 @@ lacp_process_packet(struct lacp *lacp, const void *slave_,
     struct slave *slave;
 
     lacp_lock();
-    slave = slave_lookup(lacp, slave_);
+    slave = slave_lookup(lacp, slave_);//检查是否存在slave_接口
     if (!slave) {
         goto out;
     }
@@ -343,7 +346,7 @@ lacp_process_packet(struct lacp *lacp, const void *slave_,
         goto out;
     }
 
-    slave->status = LACP_CURRENT;
+    slave->status = LACP_CURRENT;//对端主动更新
     tx_rate = lacp->fast ? LACP_FAST_TIME_TX : LACP_SLOW_TIME_TX;
     timer_set_duration(&slave->rx, LACP_RX_MULTIPLIER * tx_rate);
 
@@ -352,6 +355,7 @@ lacp_process_packet(struct lacp *lacp, const void *slave_,
     /* Update our information about our partner if it's out of date.  This may
      * cause priorities to change so re-calculate attached status of all
      * slaves.  */
+    //检查对端是否更新了配置
     if (memcmp(&slave->partner, &pdu->actor, sizeof pdu->actor)) {
         lacp->update = true;
         slave->partner = pdu->actor;
@@ -465,6 +469,7 @@ out:
     lacp_unlock();
 }
 
+//连接且同步 或者 开启lacp但未连接上，但指明失败时采用ab模式
 static bool
 slave_may_enable__(struct slave *slave) OVS_REQUIRES(mutex)
 {
@@ -522,13 +527,17 @@ lacp_run(struct lacp *lacp, lacp_send_pdu *send_pdu) OVS_EXCLUDED(mutex)
     lacp_lock();
     HMAP_FOR_EACH (slave, node, &lacp->slaves) {
         if (timer_expired(&slave->rx)) {
+        		//收定时器到期，超时期内未收到新的lacp报文
             enum slave_status old_status = slave->status;
 
             if (slave->status == LACP_CURRENT) {
+            		//原来是最新状态，现在这个状态未在规定时间内维护，故过期了
                 slave_set_expired(slave);
             } else if (slave->status == LACP_EXPIRED) {
+            		//仍过期，指明状态无效，促使更新
                 slave_set_defaulted(slave);
             }
+            //指明动态配置变更
             if (slave->status != old_status) {
                 seq_change(connectivity_seq_get());
             }
@@ -546,16 +555,18 @@ lacp_run(struct lacp *lacp, lacp_send_pdu *send_pdu) OVS_EXCLUDED(mutex)
             continue;
         }
 
+        //填充本方信息
         slave_get_actor(slave, &actor);
 
         if (timer_expired(&slave->tx)
             || !info_tx_equal(&actor, &slave->ntt_actor)) {
+        		//发送超时或者对端宣称的partner不是我们，我们要回应它
             long long int duration;
             struct lacp_pdu pdu;
 
-            slave->ntt_actor = actor;
+            slave->ntt_actor = actor;//还原
             compose_lacp_pdu(&actor, &slave->partner, &pdu);
-            send_pdu(slave->aux, &pdu, sizeof pdu);
+            send_pdu(slave->aux, &pdu, sizeof pdu);//发送pdu报文
             slave->count_tx_pdus++;
 
             duration = (slave->partner.state & LACP_STATE_TIME
@@ -611,6 +622,7 @@ lacp_update_attached(struct lacp *lacp) OVS_REQUIRES(mutex)
 
         /* XXX: In the future allow users to configure the expected system ID.
          * For now just special case loopback. */
+        //对端与自已的sys_id相同，认为无效
         if (eth_addr_equals(slave->partner.sys_id, slave->lacp->sys_id)) {
             VLOG_WARN_RL(&rl, "slave %s: Loopback detected. Slave is "
                          "connected to its own bond", slave->name);
@@ -632,15 +644,18 @@ lacp_update_attached(struct lacp *lacp) OVS_REQUIRES(mutex)
             || enable > lead_enable
             || (enable == lead_enable
                 && memcmp(&pri, &lead_pri, sizeof pri) < 0)) {
-            lead = slave;
-            lead_enable = enable;
-            lead_pri = pri;
+            lead = slave;//按优先级选择出lead
+
+            //后面这两个变量用于选举lead
+            lead_enable = enable;//lead是否开启
+            lead_pri = pri;//lead的优先级
         }
     }
 
     lacp->negotiated = lead != NULL;
 
     if (lead) {
+    	    //lead决定了key,sys_id,用于辅肋选举
         HMAP_FOR_EACH (slave, node, &lacp->slaves) {
             if ((lacp->fallback_ab && slave->status == LACP_DEFAULTED)
                 || lead->partner.key != slave->partner.key
@@ -685,6 +700,7 @@ slave_set_defaulted(struct slave *slave) OVS_REQUIRES(mutex)
     slave->status = LACP_DEFAULTED;
 }
 
+//对端未维护状态，现在状态过期
 static void
 slave_set_expired(struct slave *slave) OVS_REQUIRES(mutex)
 {

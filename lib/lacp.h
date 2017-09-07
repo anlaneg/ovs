@@ -31,9 +31,9 @@ enum lacp_status {
 
 struct lacp_settings {
     char *name;                       /* Name (for debugging). */
-    struct eth_addr id;               /* System ID. Must be nonzero. */
+    struct eth_addr id;               /* System ID. Must be nonzero. */ //system-id
     uint16_t priority;                /* System priority. */
-    bool active;                      /* Active or passive mode? */
+    bool active;                      /* Active or passive mode? */ //lacp是主动方式还是被动方式
     bool fast;                        /* Fast or slow probe interval. */
     bool fallback_ab_cfg;             /* Fallback to BM_SLB on LACP failure. */
 };
@@ -54,7 +54,7 @@ struct lacp_slave_settings {
     char *name;                       /* Name (for debugging). */
     uint16_t id;                      /* Port ID. */
     uint16_t priority;                /* Port priority. */
-    uint16_t key;                     /* Aggregation key. */
+    uint16_t key;                     /* Aggregation key. */ //也称之为adminkey
 };
 
 void lacp_slave_register(struct lacp *, void *slave_,

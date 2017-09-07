@@ -1688,11 +1688,12 @@ run(struct ofproto *ofproto_)
 
         ofproto->change_seq = new_seq;
     }
+    //如果ofproto开启了lacp,或者未开启lacp，但有bond
     if (ofproto->lacp_enabled || ofproto->has_bonded_bundles) {
         struct ofbundle *bundle;
 
         HMAP_FOR_EACH (bundle, hmap_node, &ofproto->bundles) {
-            bundle_run(bundle);
+            bundle_run(bundle);//处理每一个bundle
         }
     }
 
@@ -3043,6 +3044,7 @@ bundle_destroy(struct ofbundle *bundle)//bundle口销毁
 }
 
 //bundle口更新(增，删除，改）
+//aux即为port
 static int
 bundle_set(struct ofproto *ofproto_, void *aux,
            const struct ofproto_bundle_settings *s)
@@ -3066,7 +3068,8 @@ bundle_set(struct ofproto *ofproto_, void *aux,
     ovs_assert((s->lacp != NULL) == (s->lacp_slaves != NULL));
 
     bundle = bundle_lookup(ofproto, aux);
-    if (!bundle) {//bundle还没有创建
+    if (!bundle) {
+    	    //bundle还没有创建,构造一个默认的bundle
         bundle = xmalloc(sizeof *bundle);
 
         bundle->ofproto = ofproto;
@@ -3098,6 +3101,7 @@ bundle_set(struct ofproto *ofproto_, void *aux,
 
     /* LACP. */
     if (s->lacp) {
+    	    //有bond开启了lacp,知会ofproto
         ofproto->lacp_enabled = true;
         if (!bundle->lacp) {
             ofproto->backer->need_revalidate = REV_RECONFIGURE;
@@ -3142,6 +3146,7 @@ bundle_set(struct ofproto *ofproto_, void *aux,
         return EINVAL;
     }
 
+    //bundle接口，vlan等属性配置
     /* Set VLAN tagging mode */
     if (s->vlan_mode != bundle->vlan_mode
         || s->use_priority_tags != bundle->use_priority_tags) {
@@ -3229,6 +3234,7 @@ bundle_set(struct ofproto *ofproto_, void *aux,
 
     /* Bonding. */
     if (!ovs_list_is_short(&bundle->ports)) {
+    	    //存在bond配置
         bundle->ofproto->has_bonded_bundles = true;
         if (bundle->bond) {
             if (bond_reconfigure(bundle->bond, s->bond)) {
@@ -3257,6 +3263,7 @@ bundle_set(struct ofproto *ofproto_, void *aux,
     /* If we changed something that would affect MAC learning, un-learn
      * everything on this port and force flow revalidation. */
     if (need_flush) {
+    		//无效mac表项，无效igmp snooping表项 （这些场景应注册回调来处理要好一些）
         bundle_flush_macs(bundle, false);
         mcast_snooping_flush_bundle(ofproto->ms, bundle);
     }
@@ -3364,6 +3371,7 @@ static void
 bundle_run(struct ofbundle *bundle)
 {
     if (bundle->lacp) {
+    		//此bundle开启了lacp,处理pdu发送
         lacp_run(bundle->lacp, send_pdu_cb);
     }
     if (bundle->bond) {

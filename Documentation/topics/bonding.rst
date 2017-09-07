@@ -38,7 +38,7 @@ configuration error, etc. would cause a bond to have only one slave, the port
 becomes an ordinary port, not a bonded port, and none of the special features
 of bonded ports described in this section apply.
 
-ovs-vswitchd实现了SLB bonding
+ovs-vswitchd实现了SLB bonding(按源mac进行分发）
 There are many forms of bonding of which ovs-vswitchd implements only a few.
 The most complex bond ovs-vswitchd implements is called "source load balancing"
 or SLB bonding.  SLB bonding divides traffic among the slaves based on the

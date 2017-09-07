@@ -29,6 +29,7 @@ vlan_bitmap_from_array(const int64_t *vlans, size_t n_vlans)
         return NULL;
     }
 
+    //申请bitmap,并按vlans数组说明，设置相应位
     b = bitmap_allocate(4096);
     if (!vlan_bitmap_from_array__(vlans, n_vlans, b)) {
         free(b);
@@ -48,8 +49,9 @@ vlan_bitmap_from_array__(const int64_t *vlans, size_t n_vlans,
 
     n = 0;
     for (i = 0; i < n_vlans; i++) {
-        int64_t vlan = vlans[i];
+        int64_t vlan = vlans[i];//取出一个vlan配置
 
+        	//如果此vlan有效，则在bitmap中设置
         if (vlan >= 0 && vlan < 4096 && !bitmap_is_set(b, vlan)) {
             bitmap_set1(b, vlan);
             n++;
