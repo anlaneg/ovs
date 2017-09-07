@@ -4037,8 +4037,9 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
                 if (op->peer->od->l3dgw_port
                     && op->peer == op->peer->od->l3dgw_port
                     && op->peer->od->l3redirect_port) {
-                	//与之相连的路由器有l3dgw_port，且对端就是l3dgw_port且对端已有l3redirect_port
+                	//与之相连的路由器有l3dgw_port，且对端就是l3dgw_port，且对端已生成l3redirect_port
                 	//则仅在redirect-chassis上下发此规则
+                	//其它对外的l3dgw_port不能输出
                     /* The destination lookup flow for the router's
                      * distributed gateway port MAC address should only be
                      * programmed on the "redirect-chassis". */
@@ -4056,6 +4057,7 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
                 if (op->peer->od->l3dgw_port
                     && op->peer == op->peer->od->l3dgw_port) {
                 	//与之相连的是l3dgw_port,注入其代理的nat mac地址
+                	//恰仅redirect回复
                     for (int i = 0; i < op->peer->od->nbr->n_nat; i++) {
                         const struct nbrec_nat *nat
                                                   = op->peer->od->nbr->nat[i];
@@ -4573,8 +4575,9 @@ build_lrouter_flows(struct hmap *datapaths, struct hmap *ports,
                       op->lrp_networks.ea_s, op->json_key);
         if (op->od->l3dgw_port && op == op->od->l3dgw_port
             && op->od->l3redirect_port) {
-        	//如果此接口是gateway,则此报文需要被此接口收取
-            /* Traffic with eth.dst = l3dgw_port->lrp_networks.ea_s
+        	//如果入接口是l3dgw_port且mac为本接口mac,则仅容许redirect-chassis收取此报文。
+        	//其它l3dgw_port不收取目的mac是l3dgw_port的报文
+        	/* Traffic with eth.dst = l3dgw_port->lrp_networks.ea_s
              * should only be received on the "redirect-chassis". */
             ds_put_format(&match, " && is_chassis_resident(%s)",
                           op->od->l3redirect_port->json_key);
