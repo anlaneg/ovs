@@ -60,7 +60,7 @@ struct unixctl_server {
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
 
-static struct shash commands = SHASH_INITIALIZER(&commands);//保存所有的command
+static struct shash commands = SHASH_INITIALIZER(&commands);//保存所有的command(unixctl命令）
 
 //列出所有命令
 static void
@@ -242,9 +242,10 @@ unixctl_server_create(const char *path, struct unixctl_server **serverp)
 #else
         abs_path = xstrdup(path);
 #endif
-        punix_path = xasprintf("punix:%s", abs_path);
+        punix_path = xasprintf("punix:%s", abs_path);//添加路径协议头
         free(abs_path);
     } else {
+    	//未指定path,自已构造path
 #ifndef _WIN32
         punix_path = xasprintf("punix:%s/%s.%ld.ctl", ovs_rundir(),
                                program_name, (long int) getpid());
@@ -265,9 +266,10 @@ unixctl_server_create(const char *path, struct unixctl_server **serverp)
     //注册显示版本
     unixctl_command_register("version", "", 0, 0, unixctl_version, NULL);
 
+    //创建unix-server
     server = xmalloc(sizeof *server);
     server->listener = listener;
-    ovs_list_init(&server->conns);
+    ovs_list_init(&server->conns);//初始化与客户端的连接
     *serverp = server;
 
 exit:
@@ -287,6 +289,7 @@ process_command(struct unixctl_conn *conn, struct jsonrpc_msg *request)
     COVERAGE_INC(unixctl_received);
     conn->request_id = json_clone(request->id);
 
+    //log显示
     if (VLOG_IS_DBG_ENABLED()) {
         char *params_s = json_to_string(request->params, 0);
         char *id_s = json_to_string(request->id, 0);
@@ -299,11 +302,14 @@ process_command(struct unixctl_conn *conn, struct jsonrpc_msg *request)
     params = json_array(request->params);
     command = shash_find_data(&commands, request->method);//找出要调用的命令，并进行简单的参数检查
     if (!command) {
+    	//无此对应的命令
         error = xasprintf("\"%s\" is not a valid command", request->method);
     } else if (params->n < command->min_args) {
+    	//参数过少
         error = xasprintf("\"%s\" command requires at least %d arguments",
                           request->method, command->min_args);
     } else if (params->n > command->max_args) {
+    	//参数过多
         error = xasprintf("\"%s\" command takes at most %d arguments",
                           request->method, command->max_args);
     } else {
@@ -332,12 +338,13 @@ process_command(struct unixctl_conn *conn, struct jsonrpc_msg *request)
 
     //如果都没有调回调，就发生错误，则直接返回错误
     if (error) {
+    	//有错误，则返回错误，否则由命令回复客户端
         unixctl_command_reply_error(conn, error);
         free(error);
     }
 }
 
-//自对应连接上收取数据，并解析jsonrpc形成命令
+//自对应连接上收取数据，并解析jsonrpc形成命令，执行命令
 static int
 run_connection(struct unixctl_conn *conn)//自此连接收取并处理消息
 {
@@ -358,7 +365,9 @@ run_connection(struct unixctl_conn *conn)//自此连接收取并处理消息
 
         jsonrpc_recv(conn->rpc, &msg);
         if (msg) {
-            if (msg->type == JSONRPC_REQUEST) {//rpc请求消息
+        	//收取到一个消息
+            if (msg->type == JSONRPC_REQUEST) {
+            	//rpc请求消息
                 process_command(conn, msg);//处理命令行
             } else {
                 VLOG_WARN_RL(&rl, "%s: received unexpected %s message",
@@ -395,10 +404,11 @@ unixctl_server_run(struct unixctl_server *server)//unixctl-server处理
         return;
     }
 
-    for (i = 0; i < 10; i++) {//尝试着接入几个unixctl
+    for (i = 0; i < 10; i++) {//尝试着接入几个unixctl客户端
         struct stream *stream;
         int error;
 
+        //由于socket被设置为非阻塞，故这里accept不会阻塞
         error = pstream_accept(server->listener, &stream);
         if (!error) {
             struct unixctl_conn *conn = xzalloc(sizeof *conn);

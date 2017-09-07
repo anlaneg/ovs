@@ -87,6 +87,7 @@ punix_open(const char *name OVS_UNUSED, char *suffix,
     int fd, error;
 
     bind_path = abs_file_name(ovs_rundir(), suffix);
+    //对于unix socket这里直接将socket置为非阻塞，这样在accept新连接时才不会阻塞
     fd = make_unix_socket(SOCK_STREAM, true, bind_path, NULL);//创建server类型的unix socket
     if (fd < 0) {
         VLOG_ERR("%s: binding failed: %s", bind_path, ovs_strerror(errno));
@@ -102,6 +103,7 @@ punix_open(const char *name OVS_UNUSED, char *suffix,
         return error;
     }
 
+    //设置pstream的accept回调
     return new_fd_pstream(xstrdup(name), fd,
                           punix_accept, bind_path, pstreamp);
 }

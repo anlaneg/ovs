@@ -6792,9 +6792,10 @@ main(int argc, char *argv[])
             check_and_update_rbac(&ctx);
         }
 
-        unixctl_server_run(unixctl);
-        unixctl_server_wait(unixctl);
+        unixctl_server_run(unixctl);//执行unixctl命令
+        unixctl_server_wait(unixctl);//构造等待时间
         if (exiting) {
+        	//如果要退出，则等待时间为0
             poll_immediate_wake();
         }
         ovsdb_idl_loop_commit_and_wait(&ovnnb_idl_loop);
