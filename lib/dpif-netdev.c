@@ -4751,7 +4751,7 @@ emc_processing(struct dp_netdev_pmd_thread *pmd,
         flow = (cur_min == 0) ? NULL: emc_lookup(flow_cache, key);//检查emc是否可以命中
         if (OVS_LIKELY(flow)) {
             //如果emc命中，则尝试将packet_batch 归类到flow_batch中
-        	dp_netdev_queue_batches(packet, flow, &key->mf, batches,
+          	dp_netdev_queue_batches(packet, flow, &key->mf, batches,
                                     n_batches);
         } else {
             /* Exact match cache missed. Group missed packets together at
@@ -4874,7 +4874,7 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
 
     for (i = 0; i < cnt; i++) {
         /* Key length is needed in all the cases, hash computed on demand. */
-    	//设置在emc中解释后key解释出来的数据长度
+    	    //设置在emc中解释后key解释出来的数据长度
         keys[i].len = netdev_flow_key_size(miniflow_n_values(&keys[i].mf));
     }
 
