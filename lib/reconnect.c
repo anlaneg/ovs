@@ -25,6 +25,7 @@
 
 VLOG_DEFINE_THIS_MODULE(reconnect);
 
+//void 无状态，BACKOFF 首状态
 #define STATES                                  \
     STATE(VOID, 1 << 0)                         \
     STATE(BACKOFF, 1 << 1)                      \
@@ -47,16 +48,16 @@ is_connected_state(enum state state)
 
 struct reconnect {
     /* Configuration. */
-    char *name;
+    char *name;//连接地址
     int min_backoff;
     int max_backoff;
     int probe_interval;//探测间隔
-    bool passive;
+    bool passive;//是否为被动端（server端）
     enum vlog_level info;       /* Used for informational messages. */
 
     /* State. */
     enum state state;
-    long long int state_entered;
+    long long int state_entered;//进入此状态的时间
     int backoff;
     //最后一次发现活跃的时间
     long long int last_activity;
@@ -292,6 +293,7 @@ void
 reconnect_enable(struct reconnect *fsm, long long int now)
 {
     if (fsm->state == S_VOID && reconnect_may_retry(fsm)) {
+    	//空状态，且可以进行重连尝试，则进行重连
         reconnect_transition__(fsm, now, S_BACKOFF);
         fsm->backoff = 0;
     }
@@ -421,7 +423,7 @@ reconnect_listening(struct reconnect *fsm, long long int now)
 {
     if (fsm->state != S_LISTENING) {
         VLOG(fsm->info, "%s: listening...", fsm->name);
-        reconnect_transition__(fsm, now, S_LISTENING);
+        reconnect_transition__(fsm, now, S_LISTENING);//进入listing状态
     }
 }
 
@@ -694,6 +696,7 @@ reconnect_get_stats(const struct reconnect *fsm, long long int now,
     stats->state_elapsed = now - fsm->state_entered;
 }
 
+//是否达到最大尝试次数，true 未达到，可以尝试，false达到，不能再尝试
 static bool
 reconnect_may_retry(struct reconnect *fsm)
 {

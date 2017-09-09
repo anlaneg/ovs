@@ -67,6 +67,7 @@ new_fd_stream(char *name, int fd, int connect_status, int fd_type,
     struct stream_fd *s;
 
     s = xmalloc(sizeof *s);
+    //使用stream_fd_class
     stream_init(&s->stream, &stream_fd_class, connect_status, name);
     s->fd = fd;
     s->fd_type = fd_type;
@@ -240,6 +241,7 @@ pfd_close(struct pstream *pstream)//pstream关闭函数
     free(ps);
 }
 
+//fd方式通用的accept
 static int
 pfd_accept(struct pstream *pstream, struct stream **new_streamp)//接受一个新的stream
 {
@@ -249,6 +251,9 @@ pfd_accept(struct pstream *pstream, struct stream **new_streamp)//接受一个�
     int new_fd;
     int retval;
 
+    //If no pending connections are present on the queue, and the socket is not marked as nonblocking,
+    //accept() blocks the caller until a connection is present.  If the socket is marked nonblocking
+    //and no pending connections are present on the queue, accept() fails with the error EAGAIN or EWOULDBLOCK.
     new_fd = accept(ps->fd, (struct sockaddr *) &ss, &ss_len);//尝试着接受一个新的fd
     if (new_fd < 0) {//accept失败
         retval = sock_errno();
@@ -269,6 +274,7 @@ pfd_accept(struct pstream *pstream, struct stream **new_streamp)//接受一个�
         return retval;
     }
 
+    //然后调用上层的accept_cb(如unix_ctl注入的accept)
     return ps->accept_cb(new_fd, &ss, ss_len, new_streamp);
 }
 

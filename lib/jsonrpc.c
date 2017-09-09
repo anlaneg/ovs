@@ -38,11 +38,11 @@ VLOG_DEFINE_THIS_MODULE(jsonrpc);
 struct jsonrpc {
     struct stream *stream;
     char *name;
-    int status;
+    int status;//初始化为0，非0时，为错误状态
 
     /* Input. */
-    struct byteq input;
-    uint8_t input_buffer[512];
+    struct byteq input;//用于访问buffer
+    uint8_t input_buffer[512];//rpc内置buffer
     struct json_parser *parser;
 
     /* Output. */
@@ -79,6 +79,7 @@ jsonrpc_pstream_open(const char *name, struct pstream **pstreamp, uint8_t dscp)
 
 /* Returns a new JSON-RPC stream that uses 'stream' for input and output.  The
  * new jsonrpc object takes ownership of 'stream'. */
+//初始化jsonrpc
 struct jsonrpc *
 jsonrpc_open(struct stream *stream)
 {
@@ -108,7 +109,7 @@ jsonrpc_close(struct jsonrpc *rpc)
 }
 
 /* Performs periodic maintenance on 'rpc', such as flushing output buffers. */
-//向外发送
+//执行stream的周期性维护，将rcp未发送的数据向外发送
 void
 jsonrpc_run(struct jsonrpc *rpc)
 {
@@ -150,7 +151,7 @@ jsonrpc_wait(struct jsonrpc *rpc)
     if (!rpc->status) {
         stream_run_wait(rpc->stream);
         if (!ovs_list_is_empty(&rpc->output)) {
-            stream_send_wait(rpc->stream);
+            stream_send_wait(rpc->stream);//如果有需要发送的，则等待时间为0
         }
     }
 }
@@ -261,7 +262,7 @@ jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
 
     buf = xmalloc(sizeof *buf);
     ofpbuf_use_ds(buf, &ds);//将ds封装成ofpbuf
-    ovs_list_push_back(&rpc->output, &buf->list_node);
+    ovs_list_push_back(&rpc->output, &buf->list_node);//将消息入队（一会集中发送）
     rpc->output_count++;
     rpc->backlog += length;
 
@@ -293,6 +294,7 @@ jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
  *     or another error fatal to the connection.  'rpc' will not send or
  *     receive any more messages.
  */
+//自rpc中读取消息，如果消息读取成功，则填充到msgp中
 int
 jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
 {
@@ -314,7 +316,7 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
             int retval;
 
             chunk = byteq_headroom(&rpc->input);//顺序向后，有多少字节可以填充
-            retval = stream_recv(rpc->stream, byteq_head(&rpc->input), chunk);
+            retval = stream_recv(rpc->stream, byteq_head(&rpc->input), chunk);//尽量收这些字节
             if (retval < 0) {
                 if (retval == -EAGAIN) {//要求重试，暂时还没有数据
                     return EAGAIN;
@@ -769,8 +771,8 @@ jsonrpc_msg_to_json(struct jsonrpc_msg *m)
 struct jsonrpc_session {
     struct reconnect *reconnect;
     struct jsonrpc *rpc;
-    struct stream *stream;
-    struct pstream *pstream;
+    struct stream *stream;//到对端的连接（主动模式时生效）
+    struct pstream *pstream;//本端的监听（被动模式时生效）
     int last_error;
     unsigned int seqno;
     uint8_t dscp;
@@ -806,13 +808,16 @@ jsonrpc_session_open(const char *name, bool retry)
     s->dscp = 0;
     s->last_error = 0;
 
+    //检查name是否为pstream(被动socket，即server端)
     if (!pstream_verify_name(name)) {
         reconnect_set_passive(s->reconnect, true, time_msec());
     } else if (!retry) {
+    	//不容许重试时，将最大重连置为1
         reconnect_set_max_tries(s->reconnect, 1);
         reconnect_set_backoff(s->reconnect, INT_MAX, INT_MAX);
     }
 
+    //如支持周期性控测，则设置周期性探测间隔
     if (!stream_or_pstream_needs_probes(name)) {
         reconnect_set_probe_interval(s->reconnect, 0);
     }
@@ -880,6 +885,7 @@ jsonrpc_session_connect(struct jsonrpc_session *s)
 
     jsonrpc_session_disconnect(s);
     if (!reconnect_is_passive(s->reconnect)) {
+    	//非被动模式，则主动打开
         error = jsonrpc_stream_open(name, &s->stream, s->dscp);
         if (!error) {
             reconnect_connecting(s->reconnect, time_msec());
@@ -897,7 +903,7 @@ jsonrpc_session_connect(struct jsonrpc_session *s)
     if (error) {
         reconnect_connect_failed(s->reconnect, time_msec(), error);
     }
-    s->seqno++;
+    s->seqno++;//增加序列号
 }
 
 void
@@ -914,10 +920,10 @@ jsonrpc_session_run(struct jsonrpc_session *s)
                 VLOG_INFO_RL(&rl,
                              "%s: new connection replacing active connection",
                              reconnect_get_name(s->reconnect));
-                jsonrpc_session_disconnect(s);
+                jsonrpc_session_disconnect(s);//客户端重连了，替换旧的rpc
             }
             reconnect_connected(s->reconnect, time_msec());
-            s->rpc = jsonrpc_open(stream);
+            s->rpc = jsonrpc_open(stream);//构造与client间的rpc
         } else if (error != EAGAIN) {
         	//发生错误，关闭pstream
             reconnect_listen_error(s->reconnect, time_msec(), error);

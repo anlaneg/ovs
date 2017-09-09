@@ -143,6 +143,7 @@ static inline void pstream_assert_class(const struct pstream *pstream,
     ovs_assert(pstream->class == class);
 }
 
+//服务器端class
 struct pstream_class {
     /* Prefix for connection names, e.g. "ptcp", "pssl", "punix". */
     const char *name;

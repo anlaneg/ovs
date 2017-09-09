@@ -1027,15 +1027,18 @@ char *
 abs_file_name(const char *dir, const char *file_name)
 {
     if (file_name[0] == '/') {
+    	//文件名如果已是绝对路径，则直接返回
         return xstrdup(file_name);
 #ifdef _WIN32
     } else if (strchr(file_name, ':')) {
         return xstrdup(file_name);
 #endif
     } else if (dir && dir[0]) {
+    	//如果目录不以'/'结尾，就添加'/'
         char *separator = dir[strlen(dir) - 1] == '/' ? "" : "/";
         return xasprintf("%s%s%s", dir, separator, file_name);
     } else {
+    	//取cwd为dir
         char *cwd = get_cwd();
         if (cwd) {
             char *abs_name = xasprintf("%s/%s", cwd, file_name);

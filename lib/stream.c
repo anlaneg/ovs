@@ -46,8 +46,11 @@ COVERAGE_DEFINE(stream_open);
 
 /* State of an active stream.*/
 enum stream_state {
+	//正在连接
     SCS_CONNECTING,             /* Underlying stream is not connected. */
+	//连接
     SCS_CONNECTED,              /* Connection established. */
+	//断开
     SCS_DISCONNECTED            /* Connection failed or connection closed. */
 };
 
@@ -217,6 +220,7 @@ stream_open(const char *name, struct stream **streamp, uint8_t dscp)
     COVERAGE_INC(stream_open);
 
     /* Look up the class. */
+    //找name指定的协议class
     error = stream_lookup_class(name, &class);
     if (!class) {
         goto error;
@@ -224,6 +228,7 @@ stream_open(const char *name, struct stream **streamp, uint8_t dscp)
 
     /* Call class's "open" function. */
     suffix_copy = xstrdup(strchr(name, ':') + 1);
+    //打开到此name的连接
     error = class->open(name, suffix_copy, &stream, dscp);
     free(suffix_copy);
     if (error) {
@@ -318,6 +323,7 @@ stream_connect(struct stream *stream)
 {
     enum stream_state last_state;
 
+    //发起连接，一直到连接成功
     do {
         last_state = stream->state;
         switch (stream->state) {
@@ -452,6 +458,7 @@ stream_get_peer_id(const struct stream *stream)
  * named "TYPE" into '*classp' and returns 0.  Returns EAFNOSUPPORT and stores
  * a null pointer into '*classp' if 'name' is in the wrong form or if no such
  * class exists. */
+//通过协议头，获取采用哪种pstream来进行解析
 static int
 pstream_lookup_class(const char *name, const struct pstream_class **classp)
 {
@@ -461,7 +468,7 @@ pstream_lookup_class(const char *name, const struct pstream_class **classp)
     check_stream_classes();
 
     *classp = NULL;
-    prefix_len = strcspn(name, ":");
+    prefix_len = strcspn(name, ":");//取协议头长度
     if (name[prefix_len] == '\0') {
         return EAFNOSUPPORT;
     }
@@ -512,6 +519,7 @@ stream_or_pstream_needs_probes(const char *name)
  * Returns 0 if successful, otherwise a positive errno value.  If successful,
  * stores a pointer to the new connection in '*pstreamp', otherwise a null
  * pointer.  */
+//按name规定的地址打开一个pstream(被动socket)
 int
 pstream_open(const char *name, struct pstream **pstreamp, uint8_t dscp)
 {
@@ -572,6 +580,7 @@ pstream_close(struct pstream *pstream)
  *
  * pstream_accept() will not block waiting for a connection.  If no connection
  * is ready to be accepted, it returns EAGAIN immediately. */
+//按入客户端连接
 int
 pstream_accept(struct pstream *pstream, struct stream **new_stream)
 {
@@ -668,6 +677,8 @@ pstream_set_bound_port(struct pstream *pstream, ovs_be16 port)
     pstream->bound_port = port;
 }
 
+
+//按':'号分隔字符串，返回可分隔的片数
 static int
 count_fields(const char *s_)
 {
@@ -687,6 +698,7 @@ count_fields(const char *s_)
 
 /* Like stream_open(), but the port defaults to 'default_port' if no port
  * number is given. */
+//打开到name_的连接
 int
 stream_open_with_default_port(const char *name_,
                               uint16_t default_port,
@@ -698,6 +710,7 @@ stream_open_with_default_port(const char *name_,
 
     if ((!strncmp(name_, "tcp:", 4) || !strncmp(name_, "ssl:", 4))
         && count_fields(name_) < 3) {
+    	//tcp或者ssl协议，且仅有未指定端口号（小于3片）
         if (default_port == OFP_PORT) {
             VLOG_WARN_ONCE("The default OpenFlow port number has changed "
                            "from %d to %d",
@@ -707,10 +720,13 @@ stream_open_with_default_port(const char *name_,
                            "from %d to %d",
                            OVSDB_OLD_PORT, OVSDB_PORT);
         }
+        //使用默认地址，并拼新串
         name = xasprintf("%s:%d", name_, default_port);
     } else {
         name = xstrdup(name_);
     }
+
+    //打开到name的连接，返回streamp
     error = stream_open(name, streamp, dscp);
     free(name);
 
@@ -719,6 +735,7 @@ stream_open_with_default_port(const char *name_,
 
 /* Like pstream_open(), but port defaults to 'default_port' if no port
  * number is given. */
+//监听指定端口
 int
 pstream_open_with_default_port(const char *name_,
                                uint16_t default_port,
