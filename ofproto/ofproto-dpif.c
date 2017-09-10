@@ -3245,6 +3245,7 @@ bundle_set(struct ofproto *ofproto_, void *aux,
             ofproto->backer->need_revalidate = REV_RECONFIGURE;
         }
 
+        //bundle有多个port,将bundle中的port加入到bond中
         LIST_FOR_EACH (port, bundle_node, &bundle->ports) {
             bond_slave_register(bundle->bond, port,
                                 port->up.ofp_port, port->up.netdev);

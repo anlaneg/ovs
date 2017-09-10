@@ -746,10 +746,10 @@ BUILD_ASSERT_DECL(IGMPV3_RECORD_LEN == sizeof(struct igmpv3_record));
 /*
  * IGMPv3 and MLDv2 use the same codes.
  */
-#define IGMPV3_MODE_IS_INCLUDE 1
-#define IGMPV3_MODE_IS_EXCLUDE 2
-#define IGMPV3_CHANGE_TO_INCLUDE_MODE 3
-#define IGMPV3_CHANGE_TO_EXCLUDE_MODE 4
+#define IGMPV3_MODE_IS_INCLUDE 1 //include
+#define IGMPV3_MODE_IS_EXCLUDE 2 //exclude
+#define IGMPV3_CHANGE_TO_INCLUDE_MODE 3 //change to include
+#define IGMPV3_CHANGE_TO_EXCLUDE_MODE 4 //change to exclude
 #define IGMPV3_ALLOW_NEW_SOURCES 5
 #define IGMPV3_BLOCK_OLD_SOURCES 6
 

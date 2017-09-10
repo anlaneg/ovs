@@ -83,7 +83,7 @@ struct bond_entry {
 struct bond_slave {
     struct hmap_node hmap_node; /* In struct bond's slaves hmap. */
     struct ovs_list list_node;  /* In struct bond's enabled_slaves list. */
-    struct bond *bond;          /* The bond that contains this slave. */
+    struct bond *bond;          /* The bond that contains this slave. *///从属于那个bond
     void *aux;                  /* Client-provided handle for this slave. */
 
     struct netdev *netdev;      /* Network device, owned by the client. */
@@ -105,8 +105,8 @@ struct bond_slave {
 /* A bond, that is, a set of network devices grouped to improve performance or
  * robustness.  */
 struct bond {
-    struct hmap_node hmap_node; /* In 'all_bonds' hmap. */
-    char *name;                 /* Name provided by client. */
+    struct hmap_node hmap_node; /* In 'all_bonds' hmap. */ //用于挂载到all_bonds
+    char *name;                 /* Name provided by client. */ //bond接口名称
     struct ofproto_dpif *ofproto; /* The bridge this bond belongs to. */
 
     /* Slaves. */
@@ -1253,7 +1253,7 @@ done:
 }
 
 /* Bonding unixctl user interface functions. */
-
+//给出名称，找bond
 static struct bond *
 bond_find(const char *name) OVS_REQ_RDLOCK(rwlock)
 {
@@ -1631,6 +1631,7 @@ bond_unixctl_hash(struct unixctl_conn *conn, int argc, const char *argv[],
     }
 }
 
+//bond命令行注册
 void
 bond_init(void)
 {

@@ -459,7 +459,7 @@ mcast_snooping_add_report(struct mcast_snooping *ms,
     }
     ngrp = ntohs(igmpv3->ngrp);
     offset += IGMPV3_HEADER_LEN;
-    while (ngrp--) {
+    while (ngrp--) {//遍历所有组播组
         bool ret;
         record = dp_packet_at(p, offset, sizeof(struct igmpv3_record));
         if (!record) {
@@ -468,6 +468,7 @@ mcast_snooping_add_report(struct mcast_snooping *ms,
         /* Only consider known record types. */
         if (record->type < IGMPV3_MODE_IS_INCLUDE
             || record->type > IGMPV3_BLOCK_OLD_SOURCES) {
+        	    //只处理认识的类型
             continue;
         }
         ip4 = get_16aligned_be32(&record->maddr);
@@ -478,8 +479,10 @@ mcast_snooping_add_report(struct mcast_snooping *ms,
         if (ntohs(record->nsrcs) == 0
             && (record->type == IGMPV3_MODE_IS_INCLUDE
                 || record->type == IGMPV3_CHANGE_TO_INCLUDE_MODE)) {
+        	    //没有指定源，但指定了include,则移除已学习到的所有
             ret = mcast_snooping_leave_group4(ms, ip4, vlan, port);
         } else {
+        	    //指定了源，处理为include
             ret = mcast_snooping_add_group4(ms, ip4, vlan, port);
         }
         if (ret) {
