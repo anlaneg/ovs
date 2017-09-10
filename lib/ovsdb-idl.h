@@ -232,19 +232,23 @@ bool ovsdb_idl_row_is_synthetic(const struct ovsdb_idl_row *);
  *    step 1.  Only a call to ovsdb_idl_run() will change the return value of
  *    ovsdb_idl_get_seqno().  (ovsdb_idl_txn_commit_block() calls
  *    ovsdb_idl_run().)
+ *
+ *    生命周期：1。创建事务并取seq;2.通过ovsdb_idl_txn_*修改数据库
+ *            3.提交事务，如果TXN_INCOMPLETE,需要一直调用直到true
+ *            4.如果最终状态是TXN_TRY_AGAIN,重启事务
  */
 
 enum ovsdb_idl_txn_status {
     TXN_UNCOMMITTED,            /* Not yet committed or aborted. */
-    TXN_UNCHANGED,              /* Transaction didn't include any changes. */
-    TXN_INCOMPLETE,             /* Commit in progress, please wait. */
+    TXN_UNCHANGED,              /* Transaction didn't include any changes. */ //事务处理完成，但对数据库无变更
+    TXN_INCOMPLETE,             /* Commit in progress, please wait. */ //事务正在处理，但还未完成
     TXN_ABORTED,                /* ovsdb_idl_txn_abort() called. */
     TXN_SUCCESS,                /* Commit successful. */
     TXN_TRY_AGAIN,              /* Commit failed because a "verify" operation
                                  * reported an inconsistency, due to a network
                                  * problem, or other transient failure.  Wait
                                  * for a change, then try again. */
-    TXN_NOT_LOCKED,             /* Server hasn't given us the lock yet. */
+    TXN_NOT_LOCKED,             /* Server hasn't given us the lock yet. */ //数据库配置为要加锁，但未获取锁
     TXN_ERROR                   /* Commit failed due to a hard error. */
 };
 

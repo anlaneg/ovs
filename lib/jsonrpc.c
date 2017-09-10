@@ -812,7 +812,7 @@ jsonrpc_session_open(const char *name, bool retry)
     if (!pstream_verify_name(name)) {
         reconnect_set_passive(s->reconnect, true, time_msec());
     } else if (!retry) {
-    	//不容许重试时，将最大重连置为1
+       	//不容许重试时，将最大重连置为1
         reconnect_set_max_tries(s->reconnect, 1);
         reconnect_set_backoff(s->reconnect, INT_MAX, INT_MAX);
     }

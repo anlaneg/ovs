@@ -3004,7 +3004,7 @@ bridge_run(void)
     if_notifier_run();//来自kernel的信息
 
     if (ovsdb_idl_is_lock_contended(idl)) {
-    	//我们没有拿到锁
+    		//我们没有拿到锁
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
         struct bridge *br, *next_br;
 
@@ -3022,7 +3022,7 @@ bridge_run(void)
         return;
     } else if (!ovsdb_idl_has_lock(idl)
                || !ovsdb_idl_has_ever_connected(idl)) {
-    	//没有拿到锁或者没有连接上。
+    		//没有拿到锁或者没有连接上。
         /* Returns if not holding the lock or not done retrieving db
          * contents. */
         return;
@@ -3032,7 +3032,7 @@ bridge_run(void)
 
     if (cfg) {
         netdev_set_flow_api_enabled(&cfg->other_config);
-    	//dpdk配置（取出数据库中的other_config)
+    		//dpdk配置（取出数据库中的other_config)
         dpdk_init(&cfg->other_config);
     }
 
