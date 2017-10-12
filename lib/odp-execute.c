@@ -340,6 +340,7 @@ odp_execute_set_action(struct dp_packet *packet, const struct nlattr *a)
         break;
 
     case OVS_KEY_ATTR_MPLS:
+    		//设置最多层的mpls头
         set_mpls_lse(packet, nl_attr_get_be32(a));
         break;
 
@@ -395,6 +396,7 @@ odp_execute_set_action(struct dp_packet *packet, const struct nlattr *a)
 
 #define get_mask(a, type) ((const type *)(const void *)(a + 1) + 1)
 
+//设置具体的字段，采用mask方式，先将报文中的相应字段与mask与，然后将结果或给相应字段
 static void
 odp_execute_masked_set_action(struct dp_packet *packet,
                               const struct nlattr *a)
@@ -554,17 +556,22 @@ odp_execute_clone(void *dp, struct dp_packet_batch *batch, bool steal,
          * 'actions' are only applied to the clone.  'odp_execute_actions'
          * will free the clone.  */
         struct dp_packet_batch clone_pkt_batch;
+        //创建一个batch的副本
         dp_packet_batch_clone(&clone_pkt_batch, batch);
+        //完成batch的截短
         dp_packet_batch_reset_cutlen(batch);
+        //对batch副本执行剩余动作
         odp_execute_actions(dp, &clone_pkt_batch, true, nl_attr_get(actions),
                         nl_attr_get_size(actions), dp_execute_action);
     }
     else {
+    		//直接利用之前的报文执行剩余动作
         odp_execute_actions(dp, batch, true, nl_attr_get(actions),
                             nl_attr_get_size(actions), dp_execute_action);
     }
 }
 
+//依据netlink属性类型，获取其是否需要datapath协助
 static bool
 requires_datapath_assistance(const struct nlattr *a)
 {
@@ -613,16 +620,18 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
     const struct nlattr *a;
     unsigned int left;
 
+    //遍历actions中的netlink格式的属性
     NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
-        int type = nl_attr_type(a);
+        int type = nl_attr_type(a);//属性类型
         bool last_action = (left <= NLA_ALIGN(a->nla_len));//是否最后一个action
 
-        if (requires_datapath_assistance(a)) {//是否需要datapath协助
+        if (requires_datapath_assistance(a)) {//是否需要datapath协助,立即执行
             if (dp_execute_action) {
                 /* Allow 'dp_execute_action' to steal the packet data if we do
                  * not need it any more. */
                 bool may_steal = steal && last_action;
 
+                //执行a属性对应的动作
                 dp_execute_action(dp, batch, a, may_steal);
 
                 if (last_action) {
@@ -634,14 +643,17 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             continue;
         }
 
+        //不需要datapath协助的工作
         switch ((enum ovs_action_attr) type) {
         case OVS_ACTION_ATTR_HASH: {
+        	    //按报文计算hash值
             const struct ovs_action_hash *hash_act = nl_attr_get(a);
 
             /* Calculate a hash value directly.  This might not match the
              * value computed by the datapath, but it is much less expensive,
              * and the current use case (bonding) does not require a strict
              * match to work properly. */
+            //目前仅支持这一种hash算法
             if (hash_act->hash_alg == OVS_HASH_ALG_L4) {
                 struct flow flow;
                 uint32_t hash;
@@ -650,6 +662,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
                     /* RSS hash can be used here instead of 5tuple for
                      * performance reasons. */
                     if (dp_packet_rss_valid(packet)) {
+                    		//rss hash有效，取rsshash
                         hash = dp_packet_get_rss_hash(packet);
                         hash = hash_int(hash, hash_act->hash_basis);
                     } else {
@@ -666,7 +679,8 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
         }
 
-        case OVS_ACTION_ATTR_PUSH_VLAN: {//加vlan
+        case OVS_ACTION_ATTR_PUSH_VLAN: {
+        		//在原有的以太头的目的mac后加一层vlan头
             const struct ovs_action_push_vlan *vlan = nl_attr_get(a);
 
             DP_PACKET_BATCH_FOR_EACH (packet, batch) {
@@ -676,13 +690,15 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         }
 
         case OVS_ACTION_ATTR_POP_VLAN:
-            //解vlan
+            //将dstmac后的vlan取除，取除办法是丢掉dstmac后的eth-type,采用vlan头里的eth-type
             DP_PACKET_BATCH_FOR_EACH (packet, batch) {
                 eth_pop_vlan(packet);
             }
             break;
 
         case OVS_ACTION_ATTR_PUSH_MPLS: {
+        		//在l3层前加入mpls标签及ethertype
+        		//如果报文已有mpls标签，则放置在最外层
             const struct ovs_action_push_mpls *mpls = nl_attr_get(a);
 
             DP_PACKET_BATCH_FOR_EACH (packet, batch) {
@@ -692,6 +708,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
          }
 
         case OVS_ACTION_ATTR_POP_MPLS:
+        		//移除最外层的mpls标签
             DP_PACKET_BATCH_FOR_EACH (packet, batch) {
                 pop_mpls(packet, nl_attr_get_be16(a));
             }
@@ -705,8 +722,8 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
 
         case OVS_ACTION_ATTR_SET_MASKED:
+             	//对报文或者元数据进行修改（mask方式，或操作赋值）
             DP_PACKET_BATCH_FOR_EACH(packet, batch) {
-                //对报文或者元数据进行修改（mask方式）
                 odp_execute_masked_set_action(packet, nl_attr_get(a));
             }
             break;
@@ -726,6 +743,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
 
         case OVS_ACTION_ATTR_TRUNC: {
+        		//完成报文内容截短
             const struct ovs_action_trunc *trunc =
                         nl_attr_get_unspec(a, sizeof *trunc);
 
@@ -737,6 +755,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         }
 
         case OVS_ACTION_ATTR_CLONE:
+        		//实现报文clone,clone出的报文将继续执行剩下的action
             odp_execute_clone(dp, batch, steal && last_action, a,
                                                 dp_execute_action);
             if (last_action) {
@@ -748,6 +767,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             /* Not implemented yet. */
             break;
         case OVS_ACTION_ATTR_PUSH_ETH: {
+        		//在报文外层加一层以太头，（14字节长度），eth-type来源于报文的packet_type字段
             const struct ovs_action_push_eth *eth = nl_attr_get(a);
 
             DP_PACKET_BATCH_FOR_EACH (packet, batch) {
@@ -758,6 +778,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         }
 
         case OVS_ACTION_ATTR_POP_ETH:
+        		//扔掉外层的以太头（14长度），packet_type将持有原来的eth-type
             DP_PACKET_BATCH_FOR_EACH (packet, batch) {
                 pop_eth(packet);
             }

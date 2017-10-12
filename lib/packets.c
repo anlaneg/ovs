@@ -206,10 +206,15 @@ eth_push_vlan(struct dp_packet *packet, ovs_be16 tpid, ovs_be16 tci)
     struct vlan_eth_header *veh;
 
     /* Insert new 802.1Q header. */
+    //由于要增加802.1q的头部，故data左移VLAN_HEADER_LEN长度
     veh = dp_packet_resize_l2(packet, VLAN_HEADER_LEN);
+    //将eth-header 前移到新的位置（旧位置将被空开，正好放veh）
     memmove(veh, (char *)veh + VLAN_HEADER_LEN, 2 * ETH_ADDR_LEN);
+    //设置本层eth_type
     veh->veth_type = tpid;
+    //vlan及优先级
     veh->veth_tci = tci & htons(~VLAN_CFI);
+    //注：这里没有设置下层的eth_type,下次廷用之前的type
 }
 
 /* Removes outermost VLAN header (if any is present) from 'packet'.
@@ -224,8 +229,9 @@ eth_pop_vlan(struct dp_packet *packet)
 
     if (veh && dp_packet_size(packet) >= sizeof *veh
         && eth_type_vlan(veh->veth_type)) {
-
+    		//是vlan头部，将srcmac,dstmac向后移4个字节
         memmove((char *)veh + VLAN_HEADER_LEN, veh, 2 * ETH_ADDR_LEN);
+        //更新offset
         dp_packet_resize_l2(packet, -VLAN_HEADER_LEN);
     }
 }
@@ -272,6 +278,7 @@ pop_eth(struct dp_packet *packet)
 }
 
 /* Set ethertype of the packet. */
+//直接设置ethertype
 static void
 set_ethertype(struct dp_packet *packet, ovs_be16 eth_type)
 {
@@ -282,13 +289,16 @@ set_ethertype(struct dp_packet *packet, ovs_be16 eth_type)
     }
 
     if (eth_type_vlan(eh->eth_type)) {
+    		//报文含有vlan
         ovs_be16 *p;
         char *l2_5 = dp_packet_l2_5(packet);
 
         p = ALIGNED_CAST(ovs_be16 *,
                          (l2_5 ? l2_5 : (char *)dp_packet_l3(packet)) - 2);
+        //修改旧的eth_type (防止双vlan报文）
         *p = eth_type;
     } else {
+    		//无vlan,直接修改
         eh->eth_type = eth_type;
     }
 }
@@ -363,6 +373,20 @@ set_mpls_lse(struct dp_packet *packet, ovs_be32 mpls_lse)
 void
 push_mpls(struct dp_packet *packet, ovs_be16 ethtype, ovs_be32 lse)
 {
+	/*
+	 * MPLS报文头由32比特组成，分为四个部分：
+	1.标签值，2.实验位,通常为优先级，3.栈底标志位，4.TTL
+
+	1.标签值（占其中20比特）
+	2.实验位（占其中3个比特，一共8个值），目前，
+	在IP网络中，该字段通常用来传递分组的服务类别，如IPV4头部的优先级。
+	3.栈底标志位（占其中一个比特），表示当前标签是否位于栈底了。
+	这样就允许多个标签被编码到同一个数据包中，形成标签栈。
+	可以把普通的IPV4报文理解为深度为0的标签栈数据包。
+	4.TTL，存活时间字段（占其中的8个比特，一共255个值），
+	如果标签数据包的出发TTL值为0，那么该数据包在网络中的生命期被认为已经过期了。
+	无论是以标签的形式还是不带标签的形式，该报文都不应该继续被转发。
+	 */
     char * header;
     size_t len;
 
@@ -375,13 +399,17 @@ push_mpls(struct dp_packet *packet, ovs_be16 ethtype, ovs_be32 lse)
         packet->l2_5_ofs = packet->l3_ofs;
     }
 
+    //这里采用的是set-ethertype,也就是说，原有的ethtype将
+    //被overwrite,从这点上来看，mpls只能用于封装0x8000报文
     set_ethertype(packet, ethtype);
 
     /* Push new MPLS shim header onto packet. */
     len = packet->l2_5_ofs;
+    //左移MPLS_HLEN
     header = dp_packet_resize_l2_5(packet, MPLS_HLEN);
+    //将3层之前的内容向左移，空出mpls位置
     memmove(header, header + MPLS_HLEN, len);
-    memcpy(header + len, &lse, sizeof lse);
+    memcpy(header + len, &lse, sizeof lse);//在空出来的位置填写标签
 }
 
 /* If 'packet' is an MPLS packet, removes its outermost MPLS label stack entry.
@@ -395,7 +423,7 @@ pop_mpls(struct dp_packet *packet, ovs_be16 ethtype)
         struct mpls_hdr *mh = dp_packet_l2_5(packet);
         size_t len = packet->l2_5_ofs;
 
-        set_ethertype(packet, ethtype);
+        set_ethertype(packet, ethtype);//设置新的ethtype
         if (get_16aligned_be32(&mh->mpls_lse) & htonl(MPLS_BOS_MASK)) {
             dp_packet_set_l2_5(packet, NULL);//置l2_5无效
         }

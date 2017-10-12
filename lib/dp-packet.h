@@ -55,7 +55,7 @@ struct dp_packet {
 #else
     void *base_;                /* First byte of allocated space. */
     uint16_t allocated_;        /* Number of bytes allocated. */
-    uint16_t data_ofs;          /* First byte actually in use. */
+    uint16_t data_ofs;          /* First byte actually in use. */ //数据首字节到base_的偏移量
     uint32_t size_;             /* Number of bytes in use. */
     uint32_t rss_hash;          /* Packet hash. */
     bool rss_hash_valid;        /* Is the 'rss_hash' valid? */
@@ -68,7 +68,7 @@ struct dp_packet {
                                     * or UINT16_MAX. */ //data到网络层起始的偏移量
     uint16_t l4_ofs;               /* Transport-level header offset,
                                       or UINT16_MAX. */ //data到传输层起始位置的偏移量
-    uint32_t cutlen;               /* length in bytes to cut from the end. */ //报文要切成多大长度
+    uint32_t cutlen;               /* length in bytes to cut from the end. */ //报文要被截掉多少长度（从尾部算起）
     ovs_be32 packet_type;          /* Packet type as defined in OpenFlow */
     union {
         struct pkt_metadata md;//剥离隧道时，隧道报文中获取的信息，存放在此
@@ -534,9 +534,9 @@ dp_packet_set_cutlen(struct dp_packet *b, uint32_t max_len)
     }
 
     if (max_len >= dp_packet_size(b)) {
-        b->cutlen = 0;
+        b->cutlen = 0;//实际截了多少长度
     } else {
-        b->cutlen = dp_packet_size(b) - max_len;
+        b->cutlen = dp_packet_size(b) - max_len;//实际截掉的长度
     }
     return b->cutlen;
 }
@@ -747,9 +747,10 @@ dp_packet_batch_clone(struct dp_packet_batch *dst,
 
     dp_packet_batch_init(dst);
     DP_PACKET_BATCH_FOR_EACH (packet, src) {
+    		//完成对packet的clone,并将创建的新报文加入到dst中
         dp_packet_batch_add(dst, dp_packet_clone(packet));
     }
-    dst->trunc = src->trunc;
+    dst->trunc = src->trunc;//trunc动作copy
 }
 
 static inline void
@@ -774,11 +775,11 @@ dp_packet_batch_apply_cutlen(struct dp_packet_batch *batch)
         DP_PACKET_BATCH_FOR_EACH (packet, batch) {
             uint32_t cutlen = dp_packet_get_cutlen(packet);
 
-            //截断报文大小
+            //重设报文大小，完成报文截断
             dp_packet_set_size(packet, dp_packet_size(packet) - cutlen);
-            dp_packet_reset_cutlen(packet);
+            dp_packet_reset_cutlen(packet);//设为0，完成截断
         }
-        batch->trunc = false;
+        batch->trunc = false;//不再需要截断
     }
 }
 

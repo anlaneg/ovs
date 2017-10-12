@@ -680,7 +680,7 @@ struct ovs_action_push_mpls {
  * by %OVS_ACTION_ATTR_POP_VLAN from having surprising results.
  */
 struct ovs_action_push_vlan {
-	__be16 vlan_tpid;	/* 802.1Q or 802.1ad TPID. */
+	__be16 vlan_tpid;	/* 802.1Q or 802.1ad TPID. */ //下一层type
 	__be16 vlan_tci;	/* 802.1Q TCI (VLAN ID and priority). */
 };
 
@@ -878,7 +878,7 @@ enum ovs_action_attr {//action类型
 	OVS_ACTION_ATTR_OUTPUT,	      /* u32 port number. */ //输出包到某个端口
 	OVS_ACTION_ATTR_USERSPACE,    /* Nested OVS_USERSPACE_ATTR_*. */ //送到userspace进行处理（用户态）
 	OVS_ACTION_ATTR_SET,          /* One nested OVS_KEY_ATTR_*. */ //对报文或者元数据进行修改（直接赋值方式）
-	OVS_ACTION_ATTR_PUSH_VLAN,    /* struct ovs_action_push_vlan. */ //在报文最外侧插入vlan头
+	OVS_ACTION_ATTR_PUSH_VLAN,    /* struct ovs_action_push_vlan. */ //在报文最外侧插入vlan头（内层type沿用之前的）
 	OVS_ACTION_ATTR_POP_VLAN,     /* No argument. */ //移除掉vlan头
 	OVS_ACTION_ATTR_SAMPLE,       /* Nested OVS_SAMPLE_ATTR_*. */
 	OVS_ACTION_ATTR_RECIRC,       /* u32 recirc_id. */ //变更recirc_id,并重新使报文进入inport

@@ -599,7 +599,7 @@ struct dp_netdev_pmd_thread {
      * threads, and thusly need to be protected by 'non_pmd_mutex'.  Every
      * other instance will only be accessed by its own pmd thread. */
     struct hmap tnl_port_cache;
-    struct hmap send_port_cache;
+    struct hmap send_port_cache;//记录了当前pmd可发送的所有port
 
     /* Only a pmd thread can write on its own 'cycles' and 'stats'.
      * The main thread keeps 'stats_zero' and 'cycles_zero' as base
@@ -5244,21 +5244,23 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
     uint32_t *depth = recirc_depth_get();
     struct dp_netdev_pmd_thread *pmd = aux->pmd;
     struct dp_netdev *dp = pmd->dp;
-    int type = nl_attr_type(a);
+    int type = nl_attr_type(a);//检查动作类型
     long long now = aux->now;
     struct tx_port *p;
 
     switch ((enum ovs_action_attr)type) {
-    case OVS_ACTION_ATTR_OUTPUT:
+    case OVS_ACTION_ATTR_OUTPUT://完成输出到指定接口的动作
         //自cache中取port
         p = pmd_send_port_cache_lookup(pmd, nl_attr_get_odp_port(a));
         if (OVS_LIKELY(p)) {
+        		//存在此port
             int tx_qid;
             bool dynamic_txqs;
 
             //取出自哪个队列发送，并自此队列发送
             dynamic_txqs = p->port->dynamic_txqs;
             if (dynamic_txqs) {
+            		//自动选择发送队列
                 tx_qid = dpif_netdev_xps_get_tx_qid(pmd, p, now);
             } else {
                 tx_qid = pmd->static_tx_qid;
@@ -5317,6 +5319,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         break;
 
     case OVS_ACTION_ATTR_USERSPACE:
+    		//送userspace层面处理，执行upcall
         if (!fat_rwlock_tryrdlock(&dp->upcall_rwlock)) {
             struct dp_packet_batch *orig_packets_ = packets_;
             const struct nlattr *userdata;
@@ -5384,6 +5387,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         break;
 
     case OVS_ACTION_ATTR_CT: {
+    		//连接跟踪动作
         const struct nlattr *b;
         bool force = false;
         bool commit = false;
@@ -5520,6 +5524,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                             time_msec());
         break;
 
+    //下面的action在上层函数中已执行
     case OVS_ACTION_ATTR_PUSH_VLAN:
     case OVS_ACTION_ATTR_POP_VLAN:
     case OVS_ACTION_ATTR_PUSH_MPLS:

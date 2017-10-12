@@ -141,6 +141,7 @@ dp_packet_new(size_t size)
 
 /* Creates and returns a new dp_packet with an initial capacity of 'size +
  * headroom' bytes, reserving the first 'headroom' bytes as headroom. */
+//申请一个报文空间，申请时预留给定的headroom大小
 struct dp_packet *
 dp_packet_new_with_headroom(size_t size, size_t headroom)
 {
@@ -165,9 +166,11 @@ dp_packet_clone_with_headroom(const struct dp_packet *buffer, size_t headroom)//
 {
     struct dp_packet *new_buffer;
 
+    //创建buffer的一份幅本，幅本建立时预留headroom大小。
     new_buffer = dp_packet_clone_data_with_headroom(dp_packet_data(buffer),
                                                  dp_packet_size(buffer),
                                                  headroom);
+    //控制变量copy
     new_buffer->l2_pad_size = buffer->l2_pad_size;
     new_buffer->l2_5_ofs = buffer->l2_5_ofs;
     new_buffer->l3_ofs = buffer->l3_ofs;
@@ -208,7 +211,7 @@ struct dp_packet *
 dp_packet_clone_data_with_headroom(const void *data, size_t size, size_t headroom)
 {
     struct dp_packet *b = dp_packet_new_with_headroom(size, headroom);
-    dp_packet_put(b, data, size);
+    dp_packet_put(b, data, size);//完成报文copy
     return b;
 }
 
@@ -402,8 +405,9 @@ dp_packet_reserve_with_tailroom(struct dp_packet *b, size_t headroom,
 /* Prefixes 'size' bytes to the head end of 'b', reallocating and copying its
  * data if necessary.  Returns a pointer to the first byte of the data's
  * location in the dp_packet.  The new data is left uninitialized. */
+//在packet头部先空出size大小，不初始化。
 void *
-dp_packet_push_uninit(struct dp_packet *b, size_t size)//在packet头部先空出size大小
+dp_packet_push_uninit(struct dp_packet *b, size_t size)
 {
     dp_packet_prealloc_headroom(b, size);
     dp_packet_set_data(b, (char*)dp_packet_data(b) - size);//调速data偏移量
@@ -487,8 +491,9 @@ dp_packet_resize_l2_5(struct dp_packet *b, int increment)//调整报文数据占
 /* Adjust the size of the l2 portion of the dp_packet, updating the l2
  * pointer and the layer offsets.  The caller is responsible for
  * modifying the contents. */
+//更新报文空间占用，更新l3,l4 offset
 void *
-dp_packet_resize_l2(struct dp_packet *b, int increment)//更新报文空间占用，更新l3,l4 offset
+dp_packet_resize_l2(struct dp_packet *b, int increment)
 {
     dp_packet_resize_l2_5(b, increment);
     dp_packet_adjust_layer_offset(&b->l2_5_ofs, increment);//变更l2_5_ofs
