@@ -150,29 +150,33 @@ enum nl_attr_type
 };
 
 /* Netlink attribute iteration. */
+//下一个属性
 static inline struct nlattr *
 nl_attr_next(const struct nlattr *nla)
 {
     return (void *) ((uint8_t *) nla + NLA_ALIGN(nla->nla_len));
 }
 
+//属性是否有效
 static inline bool
 nl_attr_is_valid(const struct nlattr *nla, size_t maxlen)
 {
-    return (maxlen >= sizeof *nla
-            && nla->nla_len >= sizeof *nla
-            && nla->nla_len <= maxlen);
+    return (maxlen >= sizeof *nla //长度大于最小长度
+            && nla->nla_len >= sizeof *nla //消息内记录的长度最小长度（即含头部）
+            && nla->nla_len <= maxlen);//消息内记录的长度小于总消息最大长度
 }
 
+//算上消息长度pad后的长度
 static inline size_t
 nl_attr_len_pad(const struct nlattr *nla, size_t maxlen)
 {
-    size_t len = NLA_ALIGN(nla->nla_len);
+    size_t len = NLA_ALIGN(nla->nla_len);//消息长度加上pad后的长度
 
     return len <= maxlen ? len : nla->nla_len;
 }
 
 /* This macro is careful to check for attributes with bad lengths. */
+//遍历netlink attribute
 #define NL_ATTR_FOR_EACH(ITER, LEFT, ATTRS, ATTRS_LEN)                  \
     for ((ITER) = (ATTRS), (LEFT) = (ATTRS_LEN);                        \
          nl_attr_is_valid(ITER, LEFT);                                  \

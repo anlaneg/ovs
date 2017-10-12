@@ -4985,6 +4985,7 @@ ofproto_rule_create(struct ofproto *ofproto, struct cls_rule *cr,
     ovs_mutex_unlock(&rule->mutex);
 
     /* Construct rule, initializing derived state. */
+    //构造规则
     error = ofproto->ofproto_class->rule_construct(rule);
     if (error) {
         ofproto_rule_destroy__(rule);

@@ -43,11 +43,13 @@ DEFINE_STATIC_PER_THREAD_DATA(uint32_t, seed, 0);
 
 static uint32_t random_next(void);
 
+//产生seed
 void
 random_init(void)
 {
     uint32_t *seedp = seed_get();
     while (!*seedp) {
+    	//当前线程未设置seed,设置seed,由于这种设置可能会产生0，故采用while处理
         struct timeval tv;
         uint32_t entropy;
         pthread_t self;
@@ -87,6 +89,7 @@ random_bytes(void *p_, size_t n)
 }
 
 
+//初始化并产生一个32bit的种子
 uint32_t
 random_uint32(void)
 {
@@ -106,6 +109,7 @@ random_uint64(void)
     return x;
 }
 
+//产生一个另一个种子
 static uint32_t
 random_next(void)
 {

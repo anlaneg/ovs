@@ -172,12 +172,15 @@ nl_msg_put(struct ofpbuf *msg, const void *data, size_t size)
 /* Appends 'size' bytes of data, plus Netlink padding if needed, to the tail
  * end of 'msg', reallocating and copying its data if necessary.  Returns a
  * pointer to the first byte of the new data, which is left uninitialized. */
+//考虑对齐，并预分配size字节
 void *
 nl_msg_put_uninit(struct ofpbuf *msg, size_t size)
 {
+	//由于netlink消息要求按4字节对齐，故这里计算出需要pad的字节数
     size_t pad = PAD_SIZE(size, NLMSG_ALIGNTO);
     char *p = ofpbuf_put_uninit(msg, size + pad);
     if (pad) {
+    	//将pad初始化为0
         memset(p + size, 0, pad);
     }
     return p;
@@ -210,15 +213,16 @@ nl_msg_push_uninit(struct ofpbuf *msg, size_t size)
  * data as its payload, plus Netlink padding if needed, to the tail end of
  * 'msg', reallocating and copying its data if necessary.  Returns a pointer to
  * the first byte of data in the attribute, which is left uninitialized. */
+//考虑netlink消息头，分配size长度的负载段，并返回负载起始位置
 void *
 nl_msg_put_unspec_uninit(struct ofpbuf *msg, uint16_t type, size_t size)
 {
-    size_t total_size = NLA_HDRLEN + size;
+    size_t total_size = NLA_HDRLEN + size;//加上消息头
     struct nlattr* nla = nl_msg_put_uninit(msg, total_size);
     ovs_assert(!nl_attr_oversized(size));
-    nla->nla_len = total_size;
-    nla->nla_type = type;
-    return nla + 1;
+    nla->nla_len = total_size;//填写消息长度（包含头部长度）
+    nla->nla_type = type;//填写消息类型
+    return nla + 1;//返回负载起始指针
 }
 
 /* Appends a Netlink attribute of the given 'type' and room for 'size' bytes of
@@ -237,14 +241,16 @@ nl_msg_put_unspec_zero(struct ofpbuf *msg, uint16_t type, size_t size)
  * 'data' as its payload, to the tail end of 'msg', reallocating and copying
  * its data if necessary.  Returns a pointer to the first byte of data in the
  * attribute, which is left uninitialized. */
+//附加一段netlink消息，类型为type,负载长度为size,负载内容为data
 void
 nl_msg_put_unspec(struct ofpbuf *msg, uint16_t type,
                   const void *data, size_t size)
 {
     void *ptr;
 
+    //空出size字节，并返回超始指针
     ptr = nl_msg_put_unspec_uninit(msg, type, size);
-    nullable_memcpy(ptr, data, size);
+    nullable_memcpy(ptr, data, size);//填充这段数据
 }
 
 /* Appends a Netlink attribute of the given 'type' and no payload to 'msg'.
@@ -274,6 +280,7 @@ nl_msg_put_u16(struct ofpbuf *msg, uint16_t type, uint16_t value)
 
 /* Appends a Netlink attribute of the given 'type' and the given 32-bit host
  * byte order 'value' to 'msg'. */
+//附加netlink属性，类型为type,内容为value,长度为u32
 void
 nl_msg_put_u32(struct ofpbuf *msg, uint16_t type, uint32_t value)
 {
@@ -485,21 +492,24 @@ nl_msg_push_string(struct ofpbuf *msg, uint16_t type, const char *value)
  * the content for the nested Netlink attribute to 'msg' (e.g. using the other
  * nl_msg_*() functions), and then pass the returned offset to
  * nl_msg_end_nested() to finish up the nested attributes. */
+//添加一个无数据的type,并返回type起始位置（用于暂时还不知道长度，需要构造完成后才知道长度）
 size_t
 nl_msg_start_nested(struct ofpbuf *msg, uint16_t type)
 {
     size_t offset = msg->size;
+    //仅一个type,无数据
     nl_msg_put_unspec_uninit(msg, type, 0);
     return offset;
 }
 
 /* Finalizes a nested Netlink attribute in 'msg'.  'offset' should be the value
  * returned by nl_msg_start_nested(). */
-//设置attr的长度
+//设置attr的长度，完成nested写
 void
 nl_msg_end_nested(struct ofpbuf *msg, size_t offset)
 {
     struct nlattr *attr = ofpbuf_at_assert(msg, offset, sizeof *attr);
+    //设置消息长度
     attr->nla_len = msg->size - offset;
 }
 
@@ -582,6 +592,7 @@ nl_attr_oversized(size_t payload_size)
 int
 nl_attr_type(const struct nlattr *nla)
 {
+	//最上面的2bit目前被丢弃
     return nla->nla_type & NLA_TYPE_MASK;
 }
 
@@ -594,11 +605,12 @@ nl_attr_get(const struct nlattr *nla)
 }
 
 /* Returns the number of bytes in the payload of attribute 'nla'. */
+//返回nla负载长度
 size_t
 nl_attr_get_size(const struct nlattr *nla)
 {
-    ovs_assert(nla->nla_len >= NLA_HDRLEN);
-    return nla->nla_len - NLA_HDRLEN;
+    ovs_assert(nla->nla_len >= NLA_HDRLEN);//属性必须大于等于最小长度
+    return nla->nla_len - NLA_HDRLEN;//负载的长度
 }
 
 /* Asserts that 'nla''s payload is at least 'size' bytes long, and returns the

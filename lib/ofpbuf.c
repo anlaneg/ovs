@@ -47,6 +47,7 @@ ofpbuf_use__(struct ofpbuf *b, void *base, size_t allocated, size_t size,
  * memory starting at 'base'.  'base' should be the first byte of a region
  * obtained from malloc().  It will be freed (with free()) if 'b' is resized or
  * freed. */
+//使用一个alloc()的内存,其超始地址是base,长度为allocated,使用了0长度
 static void
 ofpbuf_use(struct ofpbuf *b, void *base, size_t allocated)
 {
@@ -80,6 +81,7 @@ ofpbuf_use_ds(struct ofpbuf *b, const struct ds *ds)
 void
 ofpbuf_use_stack(struct ofpbuf *b, void *base, size_t allocated)
 {
+	//使用栈上的一段内存长度为allcated,超始地址为base,来初始化ofpbuf
     ofpbuf_use__(b, base, allocated, 0, OFPBUF_STACK);
 }
 
@@ -249,7 +251,7 @@ ofpbuf_resize__(struct ofpbuf *b, size_t new_headroom, size_t new_tailroom)//空
         }
         break;
 
-    case OFPBUF_STACK://栈的就不能够扩大了
+    case OFPBUF_STACK://栈的就不能够扩大了，挂掉
         OVS_NOT_REACHED();
 
     case OFPBUF_STUB://stub这种可以进行变化为malloc，当空间不足时
@@ -363,8 +365,8 @@ ofpbuf_put_uninit(struct ofpbuf *b, size_t size)//提前预支出一个size大�
 {
     void *p;
     ofpbuf_prealloc_tailroom(b, size);//尝试扩大空间
-    p = ofpbuf_tail(b);
-    b->size += size;
+    p = ofpbuf_tail(b);//偏移到位部的指针
+    b->size += size;//增加已有长度
     return p;
 }
 

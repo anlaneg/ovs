@@ -57,12 +57,15 @@ extern const uint8_t flow_segment_u64s[];
 /* Configured maximum VLAN headers. */
 extern int flow_vlan_limit;
 
+//FIELD在struct flow结构体中的偏移量对应的是第几个8字节（见sizeof(uint64_t)）
 #define FLOW_U64_OFFSET(FIELD)                          \
     (offsetof(struct flow, FIELD) / sizeof(uint64_t))
+//FIELD在struct flow结构体中的偏移量会映射到8个字节(8bit)的第几个字节
 #define FLOW_U64_OFFREM(FIELD)                          \
     (offsetof(struct flow, FIELD) % sizeof(uint64_t))
 
 /* Number of 64-bit units spanned by a 'FIELD'. */
+//FIELD在struct flow结构体中跨过多几个8字节组
 #define FLOW_U64_SIZE(FIELD)                                            \
     DIV_ROUND_UP(FLOW_U64_OFFREM(FIELD) + MEMBER_SIZEOF(struct flow, FIELD), \
                  sizeof(uint64_t))
@@ -294,6 +297,11 @@ static inline unsigned int flowmap_n_1bits(struct flowmap);
 #define FLOWMAP_HAS_FIELD(FM, FIELD)                                    \
     flowmap_are_set(FM, FLOW_U64_OFFSET(FIELD), FLOW_U64_SIZE(FIELD))
 
+//FIELD可能比较大，如果它大于uint64,则它占用多个bit,这里按offset，设置对应的bit
+//举个例子，如果FIELD在flow中的偏移量是94,则其相对8字节而言，偏移相对值为94/8=11
+//假设FIELD长度为4字节，则「94％8 ＋ 4 +7」/8 ＝ 1,即FIELD将自第11bit开始填写，且填写1bit
+//对于偏移量位于98位置处理字段，偏移相对值为98/8=12
+//对于偏移量位寺93位置的字段，偏移相对为93/8=11,其长度为1，则「93%8+1+7」/8 = 1,则填写11bit 与之前的FIELD重合。
 #define FLOWMAP_SET(FM, FIELD)                                      \
     flowmap_set(FM, FLOW_U64_OFFSET(FIELD), FLOW_U64_SIZE(FIELD))
 
@@ -325,11 +333,13 @@ static inline bool flowmap_next_index(struct flowmap_aux *, size_t *idx);
 /* Iterate through all struct flow u64 indices specified by 'MAP'.  This is a
  * slower but easier version of the FLOWMAP_FOR_EACH_MAP() &
  * MAP_FOR_EACH_INDEX() combination. */
+//找到一个map中被记为'1'的bit位的位置
 #define FLOWMAP_FOR_EACH_INDEX(IDX, MAP)                            \
     for (struct flowmap_aux aux__ = FLOWMAP_AUX_INITIALIZER(MAP);   \
          flowmap_next_index(&aux__, &(IDX));)
 
 /* Flowmap inline implementations. */
+//flowmap清0
 static inline void
 flowmap_init(struct flowmap *fm)
 {
@@ -480,10 +490,13 @@ flowmap_next_index(struct flowmap_aux *aux, size_t *idx)
     for (;;) {
         map_t *map = &aux->map.bits[aux->unit];
         if (*map) {
+        	//找到‘1’所在的位置
             *idx = aux->unit * MAP_T_BITS + raw_ctz(*map);
+            //清掉已找到的'1',方便下次循环
             *map = zero_rightmost_1bit(*map);
             return true;
         }
+        //当前aux->unit位置没有出现字段，直接跳过，当然还要防止遍历超限
         if (++aux->unit >= FLOWMAP_UNITS) {
             return false;
         }
@@ -586,6 +599,7 @@ flow_values_get_next_in_maps(struct flow_for_each_in_maps_aux *aux,
     size_t idx;
 
     if (flowmap_next_index(&aux->map_aux, &idx)) {
+    	//取出了idx,拿idx取对应的值
         *value = flow_u64_value(aux->flow, idx);
         return true;
     }
@@ -593,6 +607,7 @@ flow_values_get_next_in_maps(struct flow_for_each_in_maps_aux *aux,
 }
 
 /* Iterate through all flow u64 values specified by 'MAPS'. */
+//通过MAPS提取flow中的对应的值
 #define FLOW_FOR_EACH_IN_MAPS(VALUE, FLOW, MAPS)            \
     for (struct flow_for_each_in_maps_aux aux__             \
              = { (FLOW), FLOWMAP_AUX_INITIALIZER(MAPS) };   \
@@ -686,17 +701,24 @@ miniflow_get__(const struct miniflow *mf, size_t idx)
     const uint64_t *values = miniflow_get_values(mf);
     const map_t *map = mf->map.bits;
 
+    //由于miniflow中是按bit位进行存放的，所以需要知道idx之前有多少个bit被设置了‘1’
+    //这样才知道在miniflow的buf中，取下标为几的参数，返回对应的下标值
+    //实现时value实际被移动了
     while (idx >= MAP_T_BITS) {
         idx -= MAP_T_BITS;
         values += count_1bits(*map++);
     }
+    //返回对应的值
     return miniflow_values_get__(values, *map, idx);
 }
 
+//检查要提取的IDX是否被设置了
 #define MINIFLOW_IN_MAP(MF, IDX) flowmap_is_set(&(MF)->map, IDX)
 
 /* Get the value of the struct flow 'FIELD' as up to 8 byte wide integer type
  * 'TYPE' from miniflow 'MF'. */
+//首先检查此FIELD是否被设置了，如果未设置，则返回0，如果有则返回
+//由于需要支持不同的类型，故返回的指针会被看起数组，然后按类型来提取数据
 #define MINIFLOW_GET_TYPE(MF, TYPE, FIELD)                              \
     (MINIFLOW_IN_MAP(MF, FLOW_U64_OFFSET(FIELD))                        \
      ? ((OVS_FORCE const TYPE *)miniflow_get__(MF, FLOW_U64_OFFSET(FIELD))) \
@@ -716,6 +738,7 @@ miniflow_get__(const struct miniflow *mf, size_t idx)
     MINIFLOW_GET_TYPE(FLOW, uint16_t, FIELD)
 #define MINIFLOW_GET_BE16(FLOW, FIELD)          \
     MINIFLOW_GET_TYPE(FLOW, ovs_be16, FIELD)
+//自flow中提取FIELD，并将其解释为U32类型
 #define MINIFLOW_GET_U32(FLOW, FIELD)           \
     MINIFLOW_GET_TYPE(FLOW, uint32_t, FIELD)
 #define MINIFLOW_GET_BE32(FLOW, FIELD)          \

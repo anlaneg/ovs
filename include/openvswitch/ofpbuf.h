@@ -63,7 +63,7 @@ struct ofpbuf {
     void *header;               /* OpenFlow header. */
     void *msg;                  /* message's body */
     struct ovs_list list_node;  /* Private list element for use by owner. */
-    enum ofpbuf_source source;  /* Source of memory allocated as 'base'. */
+    enum ofpbuf_source source;  /* Source of memory allocated as 'base'. */ //base内存来源
 };
 
 /* An initializer for a struct ofpbuf that will be initially empty and uses the
@@ -183,6 +183,7 @@ static inline void *ofpbuf_at(const struct ofpbuf *b, size_t offset,
 
 /* Returns a pointer to byte 'offset' in 'b', which must contain at least
  * 'offset + size' bytes of data. */
+//返回b偏移offset后的位置指针
 static inline void *ofpbuf_at_assert(const struct ofpbuf *b, size_t offset,
                                      size_t size)
 {

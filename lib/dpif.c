@@ -923,14 +923,14 @@ dpif_flow_hash(const struct dpif *dpif OVS_UNUSED,
                const void *key, size_t key_len, ovs_u128 *hash)
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
-    static uint32_t secret;
+    static uint32_t secret;//安全码
 
     if (ovsthread_once_start(&once)) {
         secret = random_uint32();
         ovsthread_once_done(&once);
     }
-    hash_bytes128(key, key_len, secret, hash);
-    uuid_set_bits_v4((struct uuid *)hash);
+    hash_bytes128(key, key_len, secret, hash);//取key的hash
+    uuid_set_bits_v4((struct uuid *)hash);//指明此值为uuid
 }
 
 /* Deletes all flows from 'dpif'.  Returns 0 if successful, otherwise a
@@ -967,6 +967,7 @@ dpif_probe_feature(struct dpif *dpif, const char *name,
     /* Use DPIF_FP_MODIFY to cover the case where ovs-vswitchd is killed (and
      * restarted) at just the right time such that feature probes from the
      * previous run are still present in the datapath. */
+    //尝试着下发这条流，如果其不存，则要求创建，如果已需要则容许修改，
     error = dpif_flow_put(dpif, DPIF_FP_CREATE | DPIF_FP_MODIFY | DPIF_FP_PROBE,
                           key->data, key->size, NULL, 0,
                           nl_actions, nl_actions_size,
@@ -1037,6 +1038,7 @@ dpif_flow_put(struct dpif *dpif, enum dpif_flow_put_flags flags,
     struct dpif_op *opp;
     struct dpif_op op;
 
+    //构造dpif_op结构体，执行flow_put动作
     op.type = DPIF_OP_FLOW_PUT;
     op.u.flow_put.flags = flags;
     op.u.flow_put.key = key;
@@ -1347,6 +1349,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops)
         /* Count 'chunk', the number of ops that can be executed without
          * needing any help.  Ops that need help should be rare, so we
          * expect this to ordinarily be 'n_ops', that is, all the ops. */
+        //遍历每个op,如果遇到execute needs help,则先执行到chunk
         for (chunk = 0; chunk < n_ops; chunk++) {
             struct dpif_op *op = ops[chunk];
 
@@ -1361,6 +1364,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops)
              * handle itself, without help. */
             size_t i;
 
+            //对于netdev 执行dpif_netdev_operate，执行ops，恰执行chunk个
             dpif->dpif_class->operate(dpif, ops, chunk);
 
             for (i = 0; i < chunk; i++) {
@@ -1410,7 +1414,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops)
                 }
             }
 
-            ops += chunk;
+            ops += chunk;//跳过已执行的chunk
             n_ops -= chunk;
         } else {
             /* Help the dpif provider to execute one op. */

@@ -1533,18 +1533,21 @@ flow_wildcards_init_catchall(struct flow_wildcards *wc)
  * the packet headers extracted to 'flow'.  It will not set the mask for fields
  * that do not make sense for the packet type.  OpenFlow-only metadata is
  * wildcarded, but other metadata is unconditionally exact-matched. */
+//依据flow设置精确匹配的通配符
 void
 flow_wildcards_init_for_packet(struct flow_wildcards *wc,
                                const struct flow *flow)
 {
     ovs_be16 dl_type = OVS_BE16_MAX;
 
+    //清空mask
     memset(&wc->masks, 0x0, sizeof wc->masks);
 
     /* Update this function whenever struct flow changes. */
     BUILD_ASSERT_DECL(FLOW_WC_SEQ == 39);
 
     if (flow_tnl_dst_is_set(&flow->tunnel)) {
+    	//设置tunnel精确匹配
         if (flow->tunnel.flags & FLOW_TNL_F_KEY) {
             WC_MASK_FIELD(wc, tunnel.tun_id);
         }
@@ -1573,6 +1576,7 @@ flow_wildcards_init_for_packet(struct flow_wildcards *wc,
                    flow->tunnel.metadata.present.len);
         }
     } else if (flow->tunnel.tun_id) {
+    	//精确配置tun_id
         WC_MASK_FIELD(wc, tunnel.tun_id);
     }
 
@@ -1678,6 +1682,9 @@ flow_wildcards_init_for_packet(struct flow_wildcards *wc,
  * optimal.
  *
  * This is a less precise version of flow_wildcards_init_for_packet() above. */
+//返回与flow相同类型的一个报文，可能出现的字段map,这些可以出现的字段在map中将被置‘1’
+//举个例子，比如当前报文为ipv4,则其仅可能出现srcip等，不可能出现target-ip{arp}
+//故我们会给srcip打标记，不会为target-ip打标记
 void
 flow_wc_map(const struct flow *flow, struct flowmap *map)
 {
@@ -1700,6 +1707,7 @@ flow_wc_map(const struct flow *flow, struct flowmap *map)
     }
 
     /* Metadata fields that can appear on packet input. */
+    //在map中标记各字段对应的bit
     FLOWMAP_SET(map, skb_priority);
     FLOWMAP_SET(map, pkt_mark);
     FLOWMAP_SET(map, recirc_id);
@@ -1717,6 +1725,7 @@ flow_wc_map(const struct flow *flow, struct flowmap *map)
 
     /* Ethertype-dependent fields. */
     if (OVS_LIKELY(flow->dl_type == htons(ETH_TYPE_IP))) {
+    	//如果是ip报文，则标记ip层对应的bit
         FLOWMAP_SET(map, nw_src);
         FLOWMAP_SET(map, nw_dst);
         FLOWMAP_SET(map, nw_proto);
@@ -1737,6 +1746,7 @@ flow_wc_map(const struct flow *flow, struct flowmap *map)
             FLOWMAP_SET(map, tcp_flags);
         }
     } else if (flow->dl_type == htons(ETH_TYPE_IPV6)) {
+    	//如果是ipv6报文，则标记ipv6层对应的bit
         FLOWMAP_SET(map, ipv6_src);
         FLOWMAP_SET(map, ipv6_dst);
         FLOWMAP_SET(map, ipv6_label);
