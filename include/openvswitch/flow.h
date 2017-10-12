@@ -92,6 +92,7 @@ BUILD_ASSERT_DECL(FLOW_MAX_VLAN_HEADERS % 2 == 0);
  *
  * NOTE: Order of the fields is significant, any change in the order must be
  * reflected in miniflow_extract()!
+ * 注意，这些字段的顺序非常重要，
  */
 struct flow {
     /* Metadata */
@@ -114,8 +115,8 @@ struct flow {
     ofp_port_t actset_output;   /* Output port in action set. */
 
     /* L2, Order the same as in the Ethernet header! (64-bit aligned) */
-    struct eth_addr dl_dst;     /* Ethernet destination address. */ //目的mac,源mac
-    struct eth_addr dl_src;     /* Ethernet source address. */
+    struct eth_addr dl_dst;     /* Ethernet destination address. */ //目的mac
+    struct eth_addr dl_src;     /* Ethernet source address. */ //源mac
     ovs_be16 dl_type;           /* Ethernet frame type. //帧格式
                                    Note: This also holds the Ethertype for L3
                                    packets of type PACKET_TYPE(1, Ethertype) */

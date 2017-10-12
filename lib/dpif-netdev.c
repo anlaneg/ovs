@@ -100,6 +100,7 @@ static struct shash dp_netdevs OVS_GUARDED_BY(dp_netdev_mutex)
 
 static struct vlog_rate_limit upcall_rl = VLOG_RATE_LIMIT_INIT(600, 600);
 
+//支持的状态
 #define DP_NETDEV_CS_SUPPORTED_MASK (CS_NEW | CS_ESTABLISHED | CS_RELATED \
                                      | CS_INVALID | CS_REPLY_DIR | CS_TRACKED \
                                      | CS_SRC_NAT | CS_DST_NAT)
@@ -121,8 +122,8 @@ static struct odp_support dp_netdev_support = {
 /* Stores a miniflow with inline values */
 
 struct netdev_flow_key {
-    uint32_t hash;       /* Hash function differs for different users. */
-    uint32_t len;        /* Length of the following miniflow (incl. map). */
+    uint32_t hash;       /* Hash function differs for different users. */ //不同miniflow，不同hash(依据miniflow生成）,
+    uint32_t len;        /* Length of the following miniflow (incl. map). */ //从mf位置开始含buf里的内容
     struct miniflow mf;//mask的稀疏bitmap
     //缓存bitmap中指定的数据（例如３1位是第一被标记的位，且３１位是一个u32_t的数据，那么这个数据将是buf中的第一个）
     uint64_t buf[FLOW_MAX_PACKET_U64S];
@@ -1958,6 +1959,7 @@ netdev_flow_key_clone(struct netdev_flow_key *dst,
 }
 
 /* Initialize a netdev_flow_key 'mask' from 'match'. */
+//依据match中的flow初始化mask,填充miniflow
 static inline void
 netdev_flow_mask_init(struct netdev_flow_key *mask,
                       const struct match *match)
@@ -1971,48 +1973,54 @@ netdev_flow_mask_init(struct netdev_flow_key *mask,
     flow_wc_map(&match->flow, &fmap);
     flowmap_init(&mask->mf.map);
 
+    //fmap已被标记为当前flow可能出现的字段map,这里我们遍历这个map
+    //返回的idx是当前flow对应的报文中可出现的字段
     FLOWMAP_FOR_EACH_INDEX(idx, fmap) {
         uint64_t mask_u64 = flow_u64_value(&match->wc.masks, idx);
 
         if (mask_u64) {
+        	//在mask中出现了对此字符的限制，设置mask->mf.map
             flowmap_set(&mask->mf.map, idx, 1);
-            *dst++ = mask_u64;
-            hash = hash_add64(hash, mask_u64);
+            *dst++ = mask_u64;//填充mask对应的值
+            hash = hash_add64(hash, mask_u64);//变更hash值
         }
     }
 
     map_t map;
 
+    //变更hash值
     FLOWMAP_FOR_EACH_MAP (map, mask->mf.map) {
         hash = hash_add64(hash, map);
     }
 
-    size_t n = dst - miniflow_get_values(&mask->mf);
+    size_t n = dst - miniflow_get_values(&mask->mf);//填充了多少字段
 
     mask->hash = hash_finish(hash, n * 8);
-    mask->len = netdev_flow_key_size(n);
+    mask->len = netdev_flow_key_size(n);//更新有效长度
 }
 
 /* Initializes 'dst' as a copy of 'flow' masked with 'mask'. */
+//填充dst,使其等于flow ＆ mask之后的结果（如果是严格匹配的话，其值为flow)
 static inline void
 netdev_flow_key_init_masked(struct netdev_flow_key *dst,
                             const struct flow *flow,
                             const struct netdev_flow_key *mask)
 {
-    uint64_t *dst_u64 = miniflow_values(&dst->mf);
-    const uint64_t *mask_u64 = miniflow_get_values(&mask->mf);
+    uint64_t *dst_u64 = miniflow_values(&dst->mf);//flow的miniflow起始位置
+    const uint64_t *mask_u64 = miniflow_get_values(&mask->mf);//mask的miniflow起始位置
     uint32_t hash = 0;
     uint64_t value;
 
     dst->len = mask->len;
     dst->mf = mask->mf;   /* Copy maps. */
 
+    //获取对应的值
     FLOW_FOR_EACH_IN_MAPS(value, flow, mask->mf.map) {
-        *dst_u64 = value & *mask_u64++;
-        hash = hash_add64(hash, *dst_u64++);
+        *dst_u64 = value & *mask_u64++;//实现mask与value的与操作，得出结果，将其填充到dst_u64
+        hash = hash_add64(hash, *dst_u64++);//更新hash值
     }
     dst->hash = hash_finish(hash,
-                            (dst_u64 - miniflow_get_values(&dst->mf)) * 8);
+                            (dst_u64 - miniflow_get_values(&dst->mf)) * 8);//更新hash值
 }
 
 /* Iterate through netdev_flow_key TNL u64 values specified by 'FLOWMAP'. */
@@ -2145,11 +2153,14 @@ dp_netdev_pmd_lookup_flow(struct dp_netdev_pmd_thread *pmd,
 {
     struct dpcls *cls;
     struct dpcls_rule *rule;
+    //提取in_port
     odp_port_t in_port = u32_to_odp(MINIFLOW_GET_U32(&key->mf, in_port));
     struct dp_netdev_flow *netdev_flow = NULL;
 
+    //返回入接口为in_port对应的表
     cls = dp_netdev_pmd_lookup_dpcls(pmd, in_port);
     if (OVS_LIKELY(cls)) {
+    	//在相应的表中查询
         dpcls_lookup(cls, key, &rule, 1, lookup_num_p);
         netdev_flow = dp_netdev_flow_cast(rule);
     }
@@ -2266,6 +2277,7 @@ dpif_netdev_mask_from_nlattrs(const struct nlattr *key, uint32_t key_len,
 
     fitness = odp_flow_key_to_mask(mask_key, mask_key_len, wc, flow);
     if (fitness) {
+    	//解析不成功，报错
         if (!probe) {
             /* This should not happen: it indicates that
              * odp_flow_key_from_mask() and odp_flow_key_to_mask()
@@ -2291,11 +2303,13 @@ dpif_netdev_mask_from_nlattrs(const struct nlattr *key, uint32_t key_len,
     return 0;
 }
 
+//将key中的内容解析到flow中，如果解析成功返回0
 static int
 dpif_netdev_flow_from_nlattrs(const struct nlattr *key, uint32_t key_len,
                               struct flow *flow, bool probe)
 {
     if (odp_flow_key_to_flow(key, key_len, flow)) {
+    	//解析不是完全成功，报错
         if (!probe) {
             /* This should not happen: it indicates that
              * odp_flow_key_from_flow() and odp_flow_key_to_flow() disagree on
@@ -2317,6 +2331,7 @@ dpif_netdev_flow_from_nlattrs(const struct nlattr *key, uint32_t key_len,
     }
 
     if (flow->ct_state & DP_NETDEV_CS_UNSUPPORTED_MASK) {
+    	//如果ct_state中设置的值与我们的存在不一致，则解析失败
         return EINVAL;
     }
 
@@ -2473,24 +2488,28 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
 }
 
 static int
-flow_put_on_pmd(struct dp_netdev_pmd_thread *pmd,
-                struct netdev_flow_key *key,
-                struct match *match,
-                ovs_u128 *ufid,
-                const struct dpif_flow_put *put,
+flow_put_on_pmd(struct dp_netdev_pmd_thread *pmd,//要下发到哪个pmd上
+                struct netdev_flow_key *key,//匹配时的比对结果
+                struct match *match,//匹配时的匹配条件
+                ovs_u128 *ufid,//cookie值
+                const struct dpif_flow_put *put,//要下发的规则
                 struct dpif_flow_stats *stats)
 {
     struct dp_netdev_flow *netdev_flow;
     int error = 0;
 
     if (stats) {
+    	//如果要收集状态，则清空状态
         memset(stats, 0, sizeof *stats);
     }
 
-    ovs_mutex_lock(&pmd->flow_mutex);
+    ovs_mutex_lock(&pmd->flow_mutex);//加锁
+    //在此pmd上查询此key
     netdev_flow = dp_netdev_pmd_lookup_flow(pmd, key, NULL);
     if (!netdev_flow) {
+    	//没有找到此flow
         if (put->flags & DPIF_FP_CREATE) {
+        	//容许创建，且没有达到flow最大数，则进行创建
             if (cmap_count(&pmd->flow_table) < MAX_FLOWS) {
                 dp_netdev_flow_add(pmd, match, ufid, put->actions,
                                    put->actions_len);
@@ -2502,6 +2521,7 @@ flow_put_on_pmd(struct dp_netdev_pmd_thread *pmd,
             error = ENOENT;
         }
     } else {
+    	//找到了此flow，如果容许修改，则直接修改action
         if (put->flags & DPIF_FP_MODIFY) {
             struct dp_netdev_actions *new_actions;
             struct dp_netdev_actions *old_actions;
@@ -2552,33 +2572,42 @@ dpif_netdev_flow_put(struct dpif *dpif, const struct dpif_flow_put *put)
     bool probe = put->flags & DPIF_FP_PROBE;
 
     if (put->stats) {
+    	//如果put中设置了stats，则将其置0
         memset(put->stats, 0, sizeof *put->stats);
     }
+    //将put中的key解析到match.flow中
     error = dpif_netdev_flow_from_nlattrs(put->key, put->key_len, &match.flow,
                                           probe);
     if (error) {
+    	//解析失败
         return error;
     }
+    //将put中的mask解析到match.wc中
     error = dpif_netdev_mask_from_nlattrs(put->key, put->key_len,
                                           put->mask, put->mask_len,
                                           &match.flow, &match.wc, probe);
     if (error) {
+    	//解析失败
         return error;
     }
 
     if (put->ufid) {
         ufid = *put->ufid;
     } else {
+    	//没有为此flow填写ufid,生成一个ufid
         dpif_flow_hash(dpif, &match.flow, sizeof match.flow, &ufid);
     }
 
     /* Must produce a netdev_flow_key for lookup.
      * Use the same method as employed to create the key when adding
      * the flow to the dplcs to make sure they match. */
+    //采用match填充mask
     netdev_flow_mask_init(&mask, &match);
+    //实现match.flow & mask后，将其结果存放在key中
     netdev_flow_key_init_masked(&key, &match.flow, &mask);
 
     if (put->pmd_id == PMD_ID_NULL) {
+    	//如果没有指定pmd_id,则为每个pmd下发此flow
         if (cmap_count(&dp->poll_threads) == 0) {
             return EINVAL;
         }
@@ -2589,7 +2618,7 @@ dpif_netdev_flow_put(struct dpif *dpif, const struct dpif_flow_put *put)
             pmd_error = flow_put_on_pmd(pmd, &key, &match, &ufid, put,
                                         &pmd_stats);
             if (pmd_error) {
-                error = pmd_error;
+                error = pmd_error;//出错了，继续下发（这里应打一句log)
             } else if (put->stats) {
                 put->stats->n_packets += pmd_stats.n_packets;
                 put->stats->n_bytes += pmd_stats.n_bytes;
@@ -2598,6 +2627,7 @@ dpif_netdev_flow_put(struct dpif *dpif, const struct dpif_flow_put *put)
             }
         }
     } else {
+    	//指定了pmd_id,找到这个pmd_id,并为其下发此flow
         pmd = dp_netdev_get_pmd(dp, put->pmd_id);
         if (!pmd) {
             return EINVAL;
@@ -2894,6 +2924,7 @@ dpif_netdev_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops)
     for (i = 0; i < n_ops; i++) {
         struct dpif_op *op = ops[i];
 
+        //按类型操作
         switch (op->type) {
         case DPIF_OP_FLOW_PUT:
             op->error = dpif_netdev_flow_put(dpif, &op->u.flow_put);

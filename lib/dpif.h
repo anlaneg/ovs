@@ -755,7 +755,7 @@ struct dpif_flow_get {
 int dpif_execute(struct dpif *, struct dpif_execute *);
 
 struct dpif_op {
-    enum dpif_op_type type;
+    enum dpif_op_type type;//指明操作类型，对应相应的u值
     int error;
     union {
         struct dpif_flow_put flow_put;

@@ -153,6 +153,7 @@ BUILD_ASSERT_DECL(FLOW_WC_SEQ == 39);
  * key.  An array of "struct nlattr" might not, in theory, be sufficiently
  * aligned because it only contains 16-bit types. */
 struct odputil_keybuf {
+	//按4字节对齐的最大flow_key
     uint32_t keybuf[DIV_ROUND_UP(ODPUTIL_FLOW_KEY_BYTES, 4)];
 };
 

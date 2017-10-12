@@ -716,9 +716,10 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
     const char *name;
     int error;
 
-    //是否存在
+    //检查是否已创建
     backer = shash_find_data(&all_dpif_backers, type);
-    if (backer) {//如果找到，则仅增加引用计数
+    if (backer) {
+    	//如果找到，则仅增加引用计数
         backer->refcount++;
         *backerp = backer;
         return 0;
@@ -804,7 +805,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
 
     shash_add(&all_dpif_backers, type, backer);//加入此backer
 
-    check_support(backer);
+    check_support(backer);//获取后端功能支持
     atomic_count_init(&backer->tnl_count, 0);
 
     error = dpif_recv_set(backer->dpif, backer->recv_set_enable);
@@ -1351,6 +1352,7 @@ check_ct_eventmask(struct dpif_backer *backer)
     return !error;
 }
 
+//检查指定功能是否支持
 #define CHECK_FEATURE__(NAME, SUPPORT, FIELD, VALUE, ETHTYPE)               \
 static bool                                                                 \
 check_##NAME(struct dpif_backer *backer)                                    \
@@ -1367,11 +1369,14 @@ check_##NAME(struct dpif_backer *backer)                                    \
     };                                                                      \
                                                                             \
     memset(&flow, 0, sizeof flow);                                          \
+    /*填充要check的字段及其应具有的值*/											\
     flow.FIELD = VALUE;                                                     \
     flow.dl_type = htons(ETHTYPE);                                          \
                                                                             \
     ofpbuf_use_stack(&key, &keybuf, sizeof keybuf);                         \
+    /*将odp_parms中有key编码进key中，这里实际上仅将SUPPORT支持的编入*/				\
     odp_flow_key_from_flow(&odp_parms, &key);                               \
+    /*通过下发此flow探测功能，不设置action,不设置flow cookie*/                    \
     enable = dpif_probe_feature(backer->dpif, #NAME, &key, NULL, NULL);     \
                                                                             \
     if (enable) {                                                           \
@@ -1422,6 +1427,7 @@ check_support(struct dpif_backer *backer)
     backer->support.odp.ct_mark = check_ct_mark(backer);
     backer->support.odp.ct_label = check_ct_label(backer);
 
+    //测试nat连接状态
     backer->support.odp.ct_state_nat = check_ct_state_nat(backer);
     backer->support.odp.ct_orig_tuple = check_ct_orig_tuple(backer);
     backer->support.odp.ct_orig_tuple6 = check_ct_orig_tuple6(backer);
@@ -4477,6 +4483,7 @@ rule_construct(struct rule *rule_)
     struct rule_dpif *rule = rule_dpif_cast(rule_);
     int error;
 
+    //检查规则
     error = rule_check(rule_);
     if (error) {
         return error;

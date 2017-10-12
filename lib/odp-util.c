@@ -1939,6 +1939,7 @@ static const struct attr_len_tbl ovs_tun_key_attr_lens[OVS_TUNNEL_KEY_ATTR_MAX +
     [OVS_TUNNEL_KEY_ATTR_IPV6_DST]      = { .len = 16 },
 };
 
+//ovs各key属性长度定义
 static const struct attr_len_tbl ovs_flow_key_attr_lens[OVS_KEY_ATTR_MAX + 1] = {
     [OVS_KEY_ATTR_ENCAP]     = { .len = ATTR_LEN_NESTED },
     [OVS_KEY_ATTR_PRIORITY]  = { .len = 4 },
@@ -1976,6 +1977,7 @@ static const struct attr_len_tbl ovs_flow_key_attr_lens[OVS_KEY_ATTR_MAX + 1] = 
  * specified 'type', ATTR_LEN_INVALID if 'type' is unknown, ATTR_LEN_VARIABLE
  * if the attribute's payload is variable length, or ATTR_LEN_NESTED if the
  * payload is a nested type. */
+//得出指定类型type的key的属性长度
 static int
 odp_key_attr_len(const struct attr_len_tbl tbl[], int max_len, uint16_t type)
 {
@@ -2125,6 +2127,7 @@ odp_tun_key_from_attr(const struct nlattr *attr, struct flow_tnl *tun)
     return odp_tun_key_from_attr__(attr, false, tun);
 }
 
+//填充OVS_KEY_ATTR_TUNNEL，将tunnel_key的信息封装在a中
 static void
 tun_key_to_attr(struct ofpbuf *a, const struct flow_tnl *tun_key,
                 const struct flow_tnl *tun_flow_key,
@@ -2179,7 +2182,7 @@ tun_key_to_attr(struct ofpbuf *a, const struct flow_tnl *tun_key,
     }
     tun_metadata_to_geneve_nlattr(tun_key, tun_flow_key, key_buf, a);
 
-    nl_msg_end_nested(a, tun_key_ofs);
+    nl_msg_end_nested(a, tun_key_ofs);//完成tunnelnested写
 }
 
 static bool
@@ -4475,8 +4478,10 @@ odp_flow_key_from_flow__(const struct odp_flow_key_parms *parms,
     const struct flow *mask = parms->mask;
     const struct flow *data = export_mask ? mask : flow;
 
+    //填加属性及其值（qos优先级）
     nl_msg_put_u32(buf, OVS_KEY_ATTR_PRIORITY, data->skb_priority);
 
+    //填加tunnel相关属性
     if (flow_tnl_dst_is_set(&flow->tunnel) || export_mask) {
         tun_key_to_attr(buf, &data->tunnel, &parms->flow->tunnel,
                         parms->key_buf);
@@ -4485,6 +4490,7 @@ odp_flow_key_from_flow__(const struct odp_flow_key_parms *parms,
     nl_msg_put_u32(buf, OVS_KEY_ATTR_SKB_MARK, data->pkt_mark);
 
     if (parms->support.ct_state) {
+    	//如果支持就进行编码
         nl_msg_put_u32(buf, OVS_KEY_ATTR_CT_STATE,
                        ovs_to_odp_ct_state(data->ct_state));
     }
@@ -4701,6 +4707,7 @@ unencap:
  *
  * 'buf' must have at least ODPUTIL_FLOW_KEY_BYTES bytes of space, or be
  * capable of being expanded to allow for that much space. */
+//将parms中flow,编码进buf中
 void
 odp_flow_key_from_flow(const struct odp_flow_key_parms *parms,
                        struct ofpbuf *buf)
@@ -4713,6 +4720,7 @@ odp_flow_key_from_flow(const struct odp_flow_key_parms *parms,
  *
  * 'buf' must have at least ODPUTIL_FLOW_KEY_BYTES bytes of space, or be
  * capable of being expanded to allow for that much space. */
+//将parm中的mask，编码进buf中
 void
 odp_flow_key_from_mask(const struct odp_flow_key_parms *parms,
                        struct ofpbuf *buf)
@@ -4953,10 +4961,11 @@ odp_to_ovs_frag(uint8_t odp_frag, bool is_mask)
         :  FLOW_NW_FRAG_ANY | FLOW_NW_FRAG_LATER;
 }
 
+//将key指向的netlink attr进行解析，将解析出来的内容存入在attrs中，attrs长度大于等于OVS_KEY_ATTR_MAX
 static bool
 parse_flow_nlattrs(const struct nlattr *key, size_t key_len,
-                   const struct nlattr *attrs[], uint64_t *present_attrsp,
-                   int *out_of_range_attrp)
+                   const struct nlattr *attrs[], uint64_t *present_attrsp,//那些属性出现了
+                   int *out_of_range_attrp)//是否有type超过范围，是哪个type (由于不是一遇到就停下来，故报出的为最后一个）
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
     const struct nlattr *nla;
@@ -4966,13 +4975,16 @@ parse_flow_nlattrs(const struct nlattr *key, size_t key_len,
     BUILD_ASSERT(OVS_KEY_ATTR_MAX < CHAR_BIT * sizeof present_attrs);
     present_attrs = 0;
     *out_of_range_attrp = 0;
+    //遍历key指向的netlink消息属性
     NL_ATTR_FOR_EACH (nla, left, key, key_len) {
         uint16_t type = nl_attr_type(nla);
         size_t len = nl_attr_get_size(nla);
+        //取得当前type的属性长度
         int expected_len = odp_key_attr_len(ovs_flow_key_attr_lens,
                                             OVS_KEY_ATTR_MAX, type);
 
         if (len != expected_len && expected_len >= 0) {
+        	//负载的长度与期待的长度不符，消息格式有误，解析失败
             char namebuf[OVS_KEY_ATTR_BUFSIZE];
 
             VLOG_ERR_RL(&rl, "attribute %s has length %"PRIuSIZE" but should have "
@@ -4983,9 +4995,11 @@ parse_flow_nlattrs(const struct nlattr *key, size_t key_len,
         }
 
         if (type > OVS_KEY_ATTR_MAX) {
+        	//此类型超出我们定义的最大属性
             *out_of_range_attrp = type;
         } else {
             if (present_attrs & (UINT64_C(1) << type)) {
+            	//此属性已出现过了，报错，解析失败
                 char namebuf[OVS_KEY_ATTR_BUFSIZE];
 
                 VLOG_ERR_RL(&rl, "duplicate %s attribute in flow key",
@@ -4994,8 +5008,9 @@ parse_flow_nlattrs(const struct nlattr *key, size_t key_len,
                 return false;
             }
 
+            //标记，我们已遇到过此属性
             present_attrs |= UINT64_C(1) << type;
-            attrs[type] = nla;
+            attrs[type] = nla;//记录此属性头
         }
     }
     if (left) {
@@ -5034,13 +5049,14 @@ check_expectations(uint64_t present_attrs, int out_of_range_attr,
     return ODP_FIT_PERFECT;
 }
 
+//解以太类型
 static bool
 parse_ethertype(const struct nlattr *attrs[OVS_KEY_ATTR_MAX + 1],
                 uint64_t present_attrs, uint64_t *expected_attrs,
                 struct flow *flow, const struct flow *src_flow)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
-    bool is_mask = flow != src_flow;
+    bool is_mask = flow != src_flow;//是否正在解mask
 
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_ETHERTYPE)) {
         flow->dl_type = nl_attr_get_be16(attrs[OVS_KEY_ATTR_ETHERTYPE]);
@@ -5393,6 +5409,7 @@ parse_8021q_onward(const struct nlattr *attrs[OVS_KEY_ATTR_MAX + 1],
         }
         expected_attrs = 0;
 
+        //内层的ethertype解析
         if (!parse_ethertype(attrs, present_attrs, &expected_attrs,
                              flow, src_flow)) {
             return ODP_FIT_ERROR;
@@ -5409,6 +5426,7 @@ parse_8021q_onward(const struct nlattr *attrs[OVS_KEY_ATTR_MAX + 1],
     return MAX(fitness, encap_fitness);
 }
 
+//完成netlink attr的解码,用key中的内容填充flow，mask(is_mask为true如果有的话）
 static enum odp_key_fitness
 odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
                        struct flow *flow, const struct flow *src_flow)
@@ -5417,22 +5435,25 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     uint64_t expected_attrs;
     uint64_t present_attrs;
     int out_of_range_attr;
-    bool is_mask = src_flow != flow;
+    bool is_mask = src_flow != flow;//检查当前填充的是否为mask
 
     memset(flow, 0, sizeof *flow);
 
     /* Parse attributes. */
     if (!parse_flow_nlattrs(key, key_len, attrs, &present_attrs,
                             &out_of_range_attr)) {
+    	//解析失败，返回错误
         return ODP_FIT_ERROR;
     }
     expected_attrs = 0;
 
     /* Metadata. */
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_RECIRC_ID)) {
+    	//如果出现了此属性，在flow中设置此属性
         flow->recirc_id = nl_attr_get_u32(attrs[OVS_KEY_ATTR_RECIRC_ID]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_RECIRC_ID;
     } else if (is_mask) {
+    	//如果填充的是mask,则如果此属性出现，则直接设置为全1
         /* Always exact match recirc_id if it is not specified. */
         flow->recirc_id = UINT32_MAX;
     }
@@ -5546,6 +5567,8 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     if (is_mask
         ? (src_flow->vlans[0].tci & htons(VLAN_CFI)) != 0
         : eth_type_vlan(src_flow->dl_type)) {
+    	//如果正在解mask,则是否解802.1q看flow上是否有vlan标记
+    	//如果正在解flow,则只需要看dl_type是否是期待的type
         return parse_8021q_onward(attrs, present_attrs, out_of_range_attr,
                                   expected_attrs, flow, key, key_len, src_flow);
     }
@@ -5558,6 +5581,7 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
             expected_attrs |= (UINT64_C(1) << OVS_KEY_ATTR_VLAN);
         }
     }
+    //解2-5层
     return parse_l2_5_onward(attrs, present_attrs, out_of_range_attr,
                              expected_attrs, flow, key, key_len, src_flow);
 }
@@ -5577,6 +5601,7 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
  * protocol in OVS_KEY_ATTR_IPV4 or OVS_KEY_ATTR_IPV6 is IPPROTO_TCP then we
  * know that a OVS_KEY_ATTR_TCP attribute must appear and that otherwise it
  * must be absent. */
+//解码，将key中的内容解码到flow中
 enum odp_key_fitness
 odp_flow_key_to_flow(const struct nlattr *key, size_t key_len,
                      struct flow *flow)
@@ -5589,17 +5614,20 @@ odp_flow_key_to_flow(const struct nlattr *key, size_t key_len,
  * corresponding to 'mask' and similarly flow_key/flow_key_len must be the
  * attributes from that flow.  Returns an ODP_FIT_* value that indicates how
  * well 'key' fits our expectations for what a flow key should contain. */
+//解码，将mask_key中的内容解码到mask中，src_flow为之前解出的flow
 enum odp_key_fitness
 odp_flow_key_to_mask(const struct nlattr *mask_key, size_t mask_key_len,
                      struct flow_wildcards *mask, const struct flow *src_flow)
 {
     if (mask_key_len) {
+    	//有mask内容，解析
         return odp_flow_key_to_flow__(mask_key, mask_key_len,
                                       &mask->masks, src_flow);
 
     } else {
         /* A missing mask means that the flow should be exact matched.
          * Generate an appropriate exact wildcard for the flow. */
+    	//无mask内容，需要精确匹配，产生一个严格的通配符
         flow_wildcards_init_for_packet(mask, src_flow);
 
         return ODP_FIT_PERFECT;
