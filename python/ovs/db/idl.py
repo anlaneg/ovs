@@ -1455,6 +1455,7 @@ class Transaction(object):
                                 Transaction.UNCHANGED)
         inserted_row = self._inserted_rows.get(uuid)
         if inserted_row:
+            #返回插入行真实的uuid
             return inserted_row.real
         return None
 
@@ -1509,7 +1510,9 @@ class Transaction(object):
         UUID assigned by ovsdb-server."""
         assert self._status == Transaction.UNCOMMITTED
         if new_uuid is None:
+            #如果未指定uuid,则创建一个新的uuid
             new_uuid = uuid.uuid4()
+        #生成一个Row对象
         row = Row(self.idl, table, new_uuid, None)
         table.rows[row.uuid] = row
         self._txn_rows[row.uuid] = row
@@ -1709,8 +1712,10 @@ class SchemaHelper(object):
         if schema_json is None:
             if location is None:
                 location = "%s/vswitch.ovsschema" % ovs.dirs.PKGDATADIR
+            #将输入串按json串进行解析
             schema_json = ovs.json.from_file(location)
 
+        #保存解析出来的json对象
         self.schema_json = schema_json
         self._tables = {}
         self._readonly = {}
@@ -1755,17 +1760,20 @@ class SchemaHelper(object):
         object based on columns registered using the register_columns()
         function."""
 
+        #我们已经拿到了远端db的元数据，这里将其解析出来
         schema = ovs.db.schema.DbSchema.from_json(self.schema_json)
         self.schema_json = None
 
         if not self._all:
             schema_tables = {}
+            #解析表，解析列
             for table, columns in six.iteritems(self._tables):
                 schema_tables[table] = (
                     self._keep_table_columns(schema, table, columns))
 
             schema.tables = schema_tables
         schema.readonly = self._readonly
+        #返回结构结果
         return schema
 
     def _keep_table_columns(self, schema, table_name, columns):

@@ -58,6 +58,7 @@ def from_stream(stream):
 
 
 def from_file(name):
+    #打开文件$name
     stream = open(name, "r")
     try:
         return from_stream(stream)
@@ -82,6 +83,7 @@ def from_string(s):
 
 
 class Parser(object):
+    #这个是json的解析代码吗？
     # Maximum height of parsing stack. #
     MAX_HEIGHT = 1000
 
