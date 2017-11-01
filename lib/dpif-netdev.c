@@ -3904,7 +3904,7 @@ reload:
                                                       : PMD_CYCLES_IDLE);
         }
 
-        //做些维护
+        //做些维护（每1024次进去一次）
         if (lc++ > 1024) {
             bool reload;
 
