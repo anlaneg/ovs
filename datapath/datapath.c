@@ -272,6 +272,7 @@ void ovs_dp_process_packet(struct sk_buff *skb, struct sw_flow_key *key)
 	flow = ovs_flow_tbl_lookup_stats(&dp->table, key, skb_get_hash(skb),
 					 &n_mask_hit);
 	if (unlikely(!flow)) {
+		//未命中流表
 		struct dp_upcall_info upcall;
 		int error;
 
@@ -279,6 +280,7 @@ void ovs_dp_process_packet(struct sk_buff *skb, struct sw_flow_key *key)
 		upcall.cmd = OVS_PACKET_CMD_MISS;
 		upcall.portid = ovs_vport_find_upcall_portid(p, skb);
 		upcall.mru = OVS_CB(skb)->mru;
+		//处理upcall
 		error = ovs_dp_upcall(dp, skb, key, &upcall, 0);
 		if (unlikely(error))
 			kfree_skb(skb);
@@ -290,6 +292,7 @@ void ovs_dp_process_packet(struct sk_buff *skb, struct sw_flow_key *key)
 
 	ovs_flow_stats_update(flow, key->tp.flags, skb);
 	sf_acts = rcu_dereference(flow->sf_acts);
+	//执行对应的规则
 	ovs_execute_actions(dp, skb, sf_acts, key);
 
 	stats_counter = &stats->n_hit;

@@ -88,6 +88,8 @@ struct destination {
     char *pattern OVS_GUARDED_BY(pattern_rwlock); /* Current pattern. */
     bool default_pattern;       /* Whether current pattern is the default. */
 };
+
+//指明输出目的的名称，模式
 static struct destination destinations[VLF_N_DESTINATIONS] = {
 #define VLOG_DESTINATION(NAME, PATTERN) {#NAME, PATTERN, true},
     VLOG_DESTINATIONS
@@ -110,6 +112,7 @@ static bool log_async OVS_GUARDED_BY(log_file_mutex);
 static struct syslogger *syslogger = NULL;
 
 /* The log modules. */
+//记录所有需要log的模块
 static struct ovs_list vlog_modules OVS_GUARDED_BY(log_file_mutex)
     = OVS_LIST_INITIALIZER(&vlog_modules);
 
@@ -198,6 +201,7 @@ vlog_get_destination_name(enum vlog_destination destination)
 
 /* Returns the logging destination named 'name', or VLF_N_DESTINATIONS if
  * 'name' is not the name of a logging destination. */
+//通过名称获知输出方式
 enum vlog_destination
 vlog_get_destination_val(const char *name)
 {
@@ -211,6 +215,7 @@ vlog_get_destination_val(const char *name)
     return i;
 }
 
+//将log模块加入到系统log_modules表中
 void
 vlog_insert_module(struct ovs_list *vlog)
 {
@@ -228,6 +233,7 @@ vlog_get_module_name(const struct vlog_module *module)
 
 /* Returns the logging module named 'name', or NULL if 'name' is not the name
  * of a logging module. */
+//通过名称返回模块
 struct vlog_module *
 vlog_module_from_name(const char *name)
 {
@@ -279,11 +285,13 @@ set_destination_level(enum vlog_destination destination,
     assert(level < VLL_N_LEVELS);
 
     ovs_mutex_lock(&log_file_mutex);
+	//未指定模块，则为所有模块
     if (!module) {
         struct vlog_module *mp;
+        //遍历所有模块日志对象,并设置其level
         LIST_FOR_EACH (mp, list, &vlog_modules) {
             mp->levels[destination] = level;
-            update_min_level(mp);
+            update_min_level(mp);//更新此模块的最小level
         }
     } else {
         module->levels[destination] = level;
@@ -301,12 +309,14 @@ vlog_set_levels(struct vlog_module *module, enum vlog_destination destination,
 {
     assert(destination < VLF_N_DESTINATIONS ||
            destination == VLF_ANY_DESTINATION);
+    //如果是设置所有输出目的地，则循环设置
     if (destination == VLF_ANY_DESTINATION) {
         for (destination = 0; destination < VLF_N_DESTINATIONS;
              destination++) {
             set_destination_level(destination, module, level);
         }
     } else {
+    	//设置单个目的地
         set_destination_level(destination, module, level);
     }
 }
@@ -510,38 +520,48 @@ vlog_set_levels_from_string(const char *s_)
 
         for (; word != NULL; word = strtok_r(NULL, " ,:\t", &save_ptr)) {
             if (!strcasecmp(word, "ANY")) {
+            	//如果遇到ANY,则跳过
                 continue;
             } else if (vlog_get_destination_val(word) != VLF_N_DESTINATIONS) {
+            	//将word尝试着解析为destination,解析成功后，检查是否已指定，如果指定，则报错
                 if (destination != VLF_N_DESTINATIONS) {
                     msg = xstrdup("cannot specify multiple destinations");
                     goto exit;
                 }
+
                 destination = vlog_get_destination_val(word);
             } else if (vlog_get_level_val(word) != VLL_N_LEVELS) {
+            	//将word尝试解析为level,如果解析成功后，检查是否已指定，如果已指定，则报错
                 if (level != VLL_N_LEVELS) {
                     msg = xstrdup("cannot specify multiple levels");
                     goto exit;
                 }
                 level = vlog_get_level_val(word);
             } else if (vlog_module_from_name(word)) {
+            	//将word尝试解析为module,如果解析成功，则检查是否已指定，如果已指定，则报错
                 if (module) {
                     msg = xstrdup("cannot specify multiple modules");
                     goto exit;
                 }
                 module = vlog_module_from_name(word);
             } else {
+            	//处理不被成功识别的word
                 msg = xasprintf("no destination, level, or module \"%s\"",
                                 word);
                 goto exit;
             }
         }
 
+        //如果未指定destination,则使用ANY
         if (destination == VLF_N_DESTINATIONS) {
             destination = VLF_ANY_DESTINATION;
         }
+        //如果未指定level，则使用dbg
         if (level == VLL_N_LEVELS) {
             level = VLL_DBG;
         }
+
+        //设置对应的module,如果module为NULL,则所有
         vlog_set_levels(module, destination, level);
     }
 

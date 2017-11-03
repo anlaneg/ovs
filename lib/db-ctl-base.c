@@ -93,10 +93,12 @@ static struct option *
 add_option(struct option **optionsp, size_t *n_optionsp,
            size_t *allocated_optionsp)
 {
+	//如果空间不足，则增加空间
     if (*n_optionsp >= *allocated_optionsp) {
         *optionsp = x2nrealloc(*optionsp, allocated_optionsp,
                                sizeof **optionsp);
     }
+    //将选项存入
     return &(*optionsp)[(*n_optionsp)++];
 }
 
@@ -141,6 +143,7 @@ print_command_arguments(const struct ctl_command_syntax *command)
     bool in_repeated = false;
     bool whole_word_is_optional = false;
 
+    //反方向遍历
     for (const char *inp = arguments + length; inp > arguments; ) {
         switch (*--inp) {
         case ']':
@@ -153,7 +156,7 @@ print_command_arguments(const struct ctl_command_syntax *command)
             /* Checks if the whole word is optional, and sets the
              * 'whole_word_is_optional' accordingly. */
             if ((inp == arguments || inp[-1] == ' ') && oew_stack & 1) {
-                *--outp = in_repeated ? '*' : '?';
+                *--outp = in_repeated ? '*' : '?';//可选时，如果可重复，输出＊，如果不可重复，输出？
                 whole_word_is_optional = true;
             } else {
                 *--outp = '?';
@@ -178,7 +181,7 @@ print_command_arguments(const struct ctl_command_syntax *command)
         }
     }
     if (arguments[0] != '[' && outp != output + 2 * length - 1) {
-        *--outp = in_repeated ? '+' : '!';
+        *--outp = in_repeated ? '+' : '!';//如果可重复，输出+,如果不可重复输出!
     }
     printf("%s", outp);
     free(output);
@@ -1616,6 +1619,8 @@ parse_command(int argc, char *argv[], struct shash *local_options,
             break;
         }
 
+        //如果有'='号，则遇到key,value格式
+        //如果无'='号，则遇到key格式，value为空
         equals = strchr(option, '=');
         if (equals) {
             key = xmemdup0(option, equals - option);
@@ -1626,8 +1631,11 @@ parse_command(int argc, char *argv[], struct shash *local_options,
         }
 
         if (shash_find(&command->options, key)) {
+        	//选项出现多次，报错
             ctl_fatal("'%s' option specified multiple times", argv[i]);
         }
+
+        //增加选项及选项取值
         shash_add_nocopy(&command->options, key, value);
     }
     //没有发现command串
@@ -1926,6 +1934,7 @@ ctl_add_cmd_options(struct option **options_p, size_t *n_options_p,
             char *name;
             char *s;
 
+            //所有选项采用','号分隔
             s = xstrdup(p->options);
             for (name = strtok_r(s, ",", &save_ptr); name != NULL;
                  name = strtok_r(NULL, ",", &save_ptr)) {
@@ -2015,6 +2024,7 @@ ctl_print_commands(void)
 {
     const struct shash_node *node;
 
+    //遍历并显示已注册的所有命令
     SHASH_FOR_EACH (node, &all_commands) {
         const struct ctl_command_syntax *p = node->data;
         char *options = xstrdup(p->options);
@@ -2023,11 +2033,14 @@ ctl_print_commands(void)
 
         for (item = strsep(&options, ","); item != NULL;
              item = strsep(&options, ",")) {
+        	//选项输出
             if (item[0] != '\0') {
                 printf("[%s] ", item);
             }
         }
+        //命令名称输出
         printf(",%s,", p->name);
+        //命令参数输出
         print_command_arguments(p);
         printf("\n");
 

@@ -78,15 +78,15 @@ OVS_NO_RETURN void ctl_fatal(const char *, ...) OVS_PRINTF_FORMAT(1, 2);
  * path:
  *
  *   1. parses user command-line input and finds the corresponding syntax
- *      structures.
+ *      structures.　命令行解析
  *
  *   2. calls prerequisites() for getting the columns or tables used by each
- *      command.
+ *      command.　获得表或者列
  *
- *   3. calls run() to execute each command and to generate output.
+ *   3. calls run() to execute each command and to generate output.　运行cmd
  *
  *   4. calls postprocess() after output has been committed.  (Only needed
- *      by 'create' command sofar)
+ *      by 'create' command sofar) 输出提交后
  *
  * Execution Context
  * =================
@@ -99,14 +99,14 @@ OVS_NO_RETURN void ctl_fatal(const char *, ...) OVS_PRINTF_FORMAT(1, 2);
  *
  * */
 struct ctl_command_syntax {
-    const char *name;           /* e.g. "add-br" */
-    int min_args;               /* Min number of arguments following name. */
-    int max_args;               /* Max number of arguments following name. */
+    const char *name;           /* e.g. "add-br" */ //命令名称
+    int min_args;               /* Min number of arguments following name. */ //参数最小数目
+    int max_args;               /* Max number of arguments following name. */ //参数最大数目
 
     /* Names that roughly describe the arguments that the command
      * uses.  These should be similar to the names displayed in the
      * man page or in the help output. */
-    const char *arguments;
+    const char *arguments;//命令的参数描述信息（用于向用户提供帮助）
 
     /* If nonnull, calls ovsdb_idl_add_column() or ovsdb_idl_add_table() for
      * each column or table in ctx->idl that it uses. */
@@ -141,6 +141,7 @@ struct ctl_command_syntax {
     //命令对应的参数
     const char *options;
 
+    //命令是否修改数据库
     enum { RO, RW } mode;   /* Does this command modify the database? */
 };
 

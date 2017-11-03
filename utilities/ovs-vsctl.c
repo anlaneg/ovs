@@ -138,11 +138,13 @@ main(int argc, char *argv[])
     size_t n_commands;
     char *args;
 
-    set_program_name(argv[0]);
+    set_program_name(argv[0]);//程序名称
     fatal_ignore_sigpipe();
+    //设置console口的输出级别为告警
     vlog_set_levels(NULL, VLF_CONSOLE, VLL_WARN);
     vlog_set_levels_from_string_assert("reconnect:warn");
 
+    //vsctl的命令添加
     vsctl_cmd_init();
 
     /* Log our arguments.  This is often valuable for debugging systems. */
@@ -154,7 +156,8 @@ main(int argc, char *argv[])
     shash_init(&local_options);
     //解析选项ovs-ctrl注册的命令option参数均放在local_options中
     parse_options(argc, argv, &local_options);
-    //从argv＋optind这句可知，需要先写选项，再写命令
+
+    //从argv＋optind这句可知，需要先写选项，再写命令,解析命令
     commands = ctl_parse_commands(argc - optind, argv + optind, &local_options,
                                   &n_commands);
 
@@ -213,6 +216,8 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         TABLE_OPTION_ENUMS,
         SSL_OPTION_ENUMS,
     };
+
+    //全局长选项
     static const struct option global_long_options[] = {
         {"db", required_argument, NULL, OPT_DB},
         {"no-syslog", no_argument, NULL, OPT_NO_SYSLOG},
@@ -232,6 +237,7 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         {"peer-ca-cert", required_argument, NULL, OPT_PEER_CA_CERT},
         {NULL, 0, NULL, 0},
     };
+    //长选项的数目
     const int n_global_long_options = ARRAY_SIZE(global_long_options) - 1;
     char *tmp, *short_options;
 
@@ -240,6 +246,7 @@ parse_options(int argc, char *argv[], struct shash *local_options)
     size_t n_options;
     size_t i;
 
+    //由全局长选项，生成全局短选项（记为short_options)
     tmp = ovs_cmdl_long_options_to_short_options(global_long_options);
     short_options = xasprintf("+%s", tmp);
     free(tmp);
@@ -248,9 +255,13 @@ parse_options(int argc, char *argv[], struct shash *local_options)
      * getopt_long() isn't too convenient for the job.  We copy our global
      * options into a dynamic array, then append all of the command-specific
      * options. */
+    //我们需要将global_long_options中的选项于commands中定义的选项合在一处，采用options来
+    //存储合起来后的选项，用n_options记录合起来后的选项数目，用allocated_options记录当前申请的
+    //选项数目，用于保证在空间不够时可以立即补上。
     options = xmemdup(global_long_options, sizeof global_long_options);
     allocated_options = ARRAY_SIZE(global_long_options);
     n_options = n_global_long_options;
+
     //将已注册的命令合入到全局选项中
     ctl_add_cmd_options(&options, &n_options, &allocated_options, OPT_LOCAL);
 
@@ -274,6 +285,7 @@ parse_options(int argc, char *argv[], struct shash *local_options)
             break;
 
         case OPT_NO_SYSLOG:
+        	//置为syslog为告警级别
             vlog_set_levels(&this_module, VLF_SYSLOG, VLL_WARN);
             break;
 
@@ -287,8 +299,9 @@ parse_options(int argc, char *argv[], struct shash *local_options)
 
         //此选项是所有注册命令的选项
         case OPT_LOCAL:
-        	//local_options用于标记选项是否已给出过。
+        	//通过检查local_options，确认选项是否已给出过。
             if (shash_find(local_options, options[idx].name)) {
+            	//多次给出，则报错
                 ctl_fatal("'%s' option specified multiple times",
                             options[idx].name);
             }
@@ -302,14 +315,17 @@ parse_options(int argc, char *argv[], struct shash *local_options)
             usage();
 
         case OPT_COMMANDS:
+        	//显示已注册的命令行
             ctl_print_commands();
             /* fall through */
 
         case OPT_OPTIONS:
+        	//输出支持的选项
             ctl_print_options(global_long_options);
             /* fall through */
 
         case 'V':
+        	//输出版本
             ovs_print_version(0, 0);
             printf("DB Schema %s\n", ovsrec_get_db_version());
             exit(EXIT_SUCCESS);
@@ -1166,7 +1182,7 @@ cmd_add_br(struct ctl_context *ctx)
     int vlan;
 
     br_name = ctx->argv[1];
-    if (!br_name[0]) {
+    if (!br_name[0]) {//桥名称
         ctl_fatal("bridge name must not be empty string");
     }
     if (ctx->argc == 2) {
@@ -1174,7 +1190,7 @@ cmd_add_br(struct ctl_context *ctx)
         vlan = 0;
     } else if (ctx->argc == 4) {
         parent_name = ctx->argv[2];
-        vlan = atoi(ctx->argv[3]);
+        vlan = atoi(ctx->argv[3]);//vlan
         if (vlan < 0 || vlan > 4095) {
             ctl_fatal("%s: vlan must be between 0 and 4095", ctx->argv[0]);
         }
@@ -1187,6 +1203,7 @@ cmd_add_br(struct ctl_context *ctx)
     if (may_exist) {
         struct vsctl_bridge *br;
 
+        //先对此桥进行查询
         br = find_bridge(vsctl_ctx, br_name, false);
         if (br) {
             if (!parent_name) {
@@ -1214,6 +1231,8 @@ cmd_add_br(struct ctl_context *ctx)
             return;
         }
     }
+
+    //名称冲突检查
     check_conflicts(vsctl_ctx, br_name,
                     xasprintf("cannot create a bridge named %s", br_name));
 
@@ -1259,7 +1278,7 @@ cmd_add_br(struct ctl_context *ctx)
         ovsrec_interface_set_name(iface, br_name);
         ovsrec_interface_set_type(iface, "internal");
 
-        port = ovsrec_port_insert(ctx->txn);
+        port = ovsrec_port_insert(ctx->txn);//将internal接口加入
         ovsrec_port_set_name(port, br_name);
         ovsrec_port_set_interfaces(port, &iface, 1);
         ovsrec_port_set_fake_bridge(port, true);
@@ -2736,7 +2755,7 @@ static const struct ctl_command_syntax vsctl_commands[] = {
 
     /* Bridge commands. */
     {"add-br", 1, 3, "NEW-BRIDGE [PARENT] [NEW-VLAN]", pre_get_info,
-     cmd_add_br, NULL, "--may-exist", RW},
+     cmd_add_br, NULL, "--may-exist", RW},//桥添加命令处理
     {"del-br", 1, 1, "BRIDGE", pre_get_info, cmd_del_br,
      NULL, "--if-exists", RW},
     {"list-br", 0, 0, "", pre_get_info, cmd_list_br, NULL, "--real,--fake",

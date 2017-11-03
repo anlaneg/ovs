@@ -29,8 +29,9 @@ VLOG_DEFINE_THIS_MODULE(command_line);
 /* Given the GNU-style long options in 'options', returns a string that may be
  * passed to getopt() with the corresponding short options.  The caller is
  * responsible for freeing the string. */
+//长选项变更为短选项，如果选项有o-val,则以o-val为准，如果有参数增加":“，如有多个参数加"::"
 char *
-ovs_cmdl_long_options_to_short_options(const struct option options[])//长选项变更为短选项
+ovs_cmdl_long_options_to_short_options(const struct option options[])
 {
     char short_options[UCHAR_MAX * 3 + 1];
     char *p = short_options;

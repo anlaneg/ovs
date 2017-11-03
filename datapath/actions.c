@@ -1110,7 +1110,7 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 		int err = 0;
 
 		switch (nla_type(a)) {
-		case OVS_ACTION_ATTR_OUTPUT: {
+		case OVS_ACTION_ATTR_OUTPUT: {//output动作
 			int port = nla_get_u32(a);
 			struct sk_buff *clone;
 
@@ -1132,7 +1132,7 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 			break;
 		}
 
-		case OVS_ACTION_ATTR_TRUNC: {
+		case OVS_ACTION_ATTR_TRUNC: {//处理截断
 			struct ovs_action_trunc *trunc = nla_data(a);
 
 			if (skb->len > trunc->max_len)
@@ -1140,7 +1140,7 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 			break;
 		}
 
-		case OVS_ACTION_ATTR_USERSPACE:
+		case OVS_ACTION_ATTR_USERSPACE://上送至userspace
 			output_userspace(dp, skb, key, a, attr,
 						     len, OVS_CB(skb)->cutlen);
 			OVS_CB(skb)->cutlen = 0;
@@ -1348,6 +1348,7 @@ int ovs_execute_actions(struct datapath *dp, struct sk_buff *skb,
 		goto out;
 	}
 
+	//执行action
 	err = do_execute_actions(dp, skb, key,
 				 acts->actions, acts->actions_len);
 
