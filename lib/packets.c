@@ -937,6 +937,7 @@ eth_compose(struct dp_packet *b, const struct eth_addr eth_dst,
     return data;
 }
 
+//修改packet的ip地址，考虑ip地址变化引起的checksum计算
 void
 packet_set_ipv4_addr(struct dp_packet *packet,
                      ovs_16aligned_be32 *addr, ovs_be32 new_addr)

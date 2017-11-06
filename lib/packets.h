@@ -92,6 +92,7 @@ flow_tnl_equal(const struct flow_tnl *a, const struct flow_tnl *b)
 
 /* Datapath packet metadata */
 struct pkt_metadata {
+	//用于实现跳到指定表查询（目前未找到使用的位置，如果找到，请备注此处）
     uint32_t recirc_id;         /* Recirculation id carried with the
                                    recirculating packets. 0 for packets
                                    received from the wire. */
@@ -107,7 +108,7 @@ struct pkt_metadata {
     union {                     /* Populated only for non-zero 'ct_state'. */
         struct ovs_key_ct_tuple_ipv4 ipv4;
         struct ovs_key_ct_tuple_ipv6 ipv6;   /* Used only if                */
-    } ct_orig_tuple;                         /* 'ct_orig_tuple_ipv6' is set */
+    } ct_orig_tuple; //连接信息               /* 'ct_orig_tuple_ipv6' is set */
     union flow_in_port in_port; /* Input port. */
     struct flow_tnl tunnel;     /* Encapsulating tunnel parameters. Note that
                                  * if 'ip_dst' == 0, the rest of the fields may
@@ -806,10 +807,10 @@ BUILD_ASSERT_DECL(TCP_HEADER_LEN == sizeof(struct tcp_header));
 #define CS_STATES                               \
     CS_STATE(NEW,         0, "new")             \
     CS_STATE(ESTABLISHED, 1, "est")             \
-    CS_STATE(RELATED,     2, "rel")             \
+    CS_STATE(RELATED,     2, "rel")  /*关联状态，例如icmp 错误报文*/           \
     CS_STATE(REPLY_DIR,   3, "rpl")             \
     CS_STATE(INVALID,     4, "inv")             \
-    CS_STATE(TRACKED,     5, "trk")             \
+    CS_STATE(TRACKED,     5, "trk")  /*无效状态*/           \
     CS_STATE(SRC_NAT,     6, "snat")            \
     CS_STATE(DST_NAT,     7, "dnat")
 

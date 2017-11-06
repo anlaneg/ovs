@@ -368,6 +368,7 @@ struct dp_netdev_port {
     //由于发队列在实现上要求与pmd等数量，故可能遇到网卡不支持的队列数量，XPS解决此问题，实现队列
     //小于pmd数量时为True
     bool dynamic_txqs;          /* If true XPS will be used. */
+    //每个tx队列，被多少个thread使用
     unsigned *txq_used;         /* Number of threads that use each tx queue. */
     struct ovs_mutex txq_used_mutex;
     char *type;                 /* Port type as requested by user. */ //netdev class类型
@@ -507,8 +508,8 @@ struct rxq_poll {
  * 'tnl_port_cache' or 'tx_ports'. */
 struct tx_port {
     struct dp_netdev_port *port;//port从属的设备
-    int qid;
-    long long last_used;
+    int qid;//tx队列的队列id
+    long long last_used;//最近一次使用的时间点
     struct hmap_node node;
 };
 
@@ -5106,6 +5107,7 @@ dpif_netdev_xps_revalidate_pmd(const struct dp_netdev_pmd_thread *pmd,
         if (!tx->port->dynamic_txqs) {
             continue;
         }
+        //支持XPS的所有txport，如果间隔过大，或者要拔出，则无效qid
         interval = now - tx->last_used;
         if (tx->qid >= 0 && (purge || interval >= XPS_TIMEOUT_MS)) {
             port = tx->port;
@@ -5132,7 +5134,7 @@ dpif_netdev_xps_get_tx_qid(const struct dp_netdev_pmd_thread *pmd,
     interval = now - tx->last_used;
     tx->last_used = now;
 
-    //选定后，XPS_TIMEOUT_MS时间内有效
+    //选定后，间隔在XPS_TIMEOUT_MS时间内有效
     if (OVS_LIKELY(tx->qid >= 0 && interval < XPS_TIMEOUT_MS)) {
         return tx->qid;
     }
@@ -5141,13 +5143,15 @@ dpif_netdev_xps_get_tx_qid(const struct dp_netdev_pmd_thread *pmd,
 
     ovs_mutex_lock(&port->txq_used_mutex);
     if (tx->qid >= 0) {
-        //使上次选择失效
+        //减少tx->qid队列的使用计数，无效上次选定的qid
     		port->txq_used[tx->qid]--;
         tx->qid = -1;
     }
 
     min_cnt = -1;
     min_qid = 0;
+    //遍历当前netdev的所有tx队列，如果其使用计数，最小，则记录其队列id
+    //选择出port中使用计数最小的tx队列
     for (i = 0; i < netdev_n_txq(port->netdev); i++) {
         if (port->txq_used[i] < min_cnt || min_cnt == -1) {
             min_cnt = port->txq_used[i];
@@ -5155,6 +5159,7 @@ dpif_netdev_xps_get_tx_qid(const struct dp_netdev_pmd_thread *pmd,
         }
     }
 
+    //选中对应的队列id
     port->txq_used[min_qid]++;
     tx->qid = min_qid;
 
@@ -5193,11 +5198,11 @@ push_tnl_action(const struct dp_netdev_pmd_thread *pmd,
 
     data = nl_attr_get(attr);
 
-    //搞清楚从那个netdev发送隧道报文
+    //搞清楚从那个netdev发送隧道报文（由那个port负责封装）
     tun_port = pmd_tnl_port_cache_lookup(pmd, data->tnl_port);
     //隧道接口已被删除
     if (!tun_port) {
-        //隧道接口已被删除
+        //隧道接口已被删除，或者不存在，参数有误
         err = -EINVAL;
         goto error;
     }
@@ -5260,7 +5265,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             //取出自哪个队列发送，并自此队列发送
             dynamic_txqs = p->port->dynamic_txqs;
             if (dynamic_txqs) {
-            		//自动选择发送队列
+            		//选择发送队列
                 tx_qid = dpif_netdev_xps_get_tx_qid(pmd, p, now);
             } else {
                 tx_qid = pmd->static_tx_qid;
@@ -5273,18 +5278,19 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         }
         break;
 
-    case OVS_ACTION_ATTR_TUNNEL_PUSH://隧道报文封装，由各dev自主处理
+    case OVS_ACTION_ATTR_TUNNEL_PUSH://隧道报文封装，由指定的port来处理，而port依据自已的隧道类型处理
         if (*depth < MAX_RECIRC_DEPTH) {
             dp_packet_batch_apply_cutlen(packets_);
             push_tnl_action(pmd, a, packets_);//执行push　tunnel动作
+            //加隧道后，不重查规则，按action继续走
             return;
         }
         break;
 
-    case OVS_ACTION_ATTR_TUNNEL_POP:
+    case OVS_ACTION_ATTR_TUNNEL_POP://隧道报文解封装
         if (*depth < MAX_RECIRC_DEPTH) {
             struct dp_packet_batch *orig_packets_ = packets_;
-            odp_port_t portno = nl_attr_get_odp_port(a);
+            odp_port_t portno = nl_attr_get_odp_port(a);//由那个接口来解封装
 
             p = pmd_tnl_port_cache_lookup(pmd, portno);
             if (p) {
@@ -5293,9 +5299,11 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 if (!may_steal) {
                     dp_packet_batch_clone(&tnl_pkt, packets_);
                     packets_ = &tnl_pkt;
+                    //原报文trun应用
                     dp_packet_batch_reset_cutlen(orig_packets_);
                 }
 
+                //被操作报文trun应用
                 dp_packet_batch_apply_cutlen(packets_);
 
                 //调用pop弹出隧道头
@@ -5310,6 +5318,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                     packet->md.in_port.odp_port = portno;
                 }
 
+                //增加递归深度，重查
                 (*depth)++;
                 dp_netdev_recirculate(pmd, packets_);
                 (*depth)--;
@@ -5340,6 +5349,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                     dp_packet_batch_reset_cutlen(orig_packets_);
                 }
 
+                //应用报文截短
                 dp_packet_batch_apply_cutlen(packets_);
             }
 
@@ -5347,6 +5357,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             DP_PACKET_BATCH_FOR_EACH (packet, packets_) {
                 flow_extract(packet, &flow);
                 dpif_flow_hash(dp->dpif, &flow, sizeof flow, &ufid);
+                //走上送流程
                 dp_execute_userspace_action(pmd, packet, may_steal, &flow,
                                             &ufid, &actions, userdata, now);
             }
@@ -5398,8 +5409,9 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         const struct ovs_key_ct_labels *setlabel = NULL;
         struct nat_action_info_t nat_action_info;
         struct nat_action_info_t *nat_action_info_ref = NULL;
-        bool nat_config = false;
+        bool nat_config = false;//是否配置了nat
 
+        //遍历CT action中的小动作
         NL_ATTR_FOR_EACH_UNSAFE (b, left, nl_attr_get(a),
                                  nl_attr_get_size(a)) {
             enum ovs_ct_attr sub_type = nl_attr_type(b);
@@ -5407,15 +5419,19 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             //必要的几个参数设置，需要查下文档，看下面注释
             switch(sub_type) {
             case OVS_CT_ATTR_FORCE_COMMIT:
+            		//force为true,则表示此报文方向必须为请求方向，如果为应答方向，则将连接无效掉
                 force = true;
                 /* fall through. */
             case OVS_CT_ATTR_COMMIT:
+            		//commit为true,则表示容许此报文在链接跟踪表里添加新表项
                 commit = true;
                 break;
             case OVS_CT_ATTR_ZONE:
+            		//看起来是为了隔离，为了多租户？
                 zone = nl_attr_get_u16(b);
                 break;
             case OVS_CT_ATTR_HELPER:
+            		//用于alg的应用识别
                 helper = nl_attr_get_string(b);
                 break;
             case OVS_CT_ATTR_MARK:
@@ -5432,23 +5448,24 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             case OVS_CT_ATTR_NAT: {
                 const struct nlattr *b_nest;
                 unsigned int left_nest;
-                bool ip_min_specified = false;
-                bool proto_num_min_specified = false;
-                bool ip_max_specified = false;
-                bool proto_num_max_specified = false;
+                bool ip_min_specified = false;//是否指定了ip下限
+                bool proto_num_min_specified = false;//是否设置了port下限
+                bool ip_max_specified = false;//是否设置了ip上限
+                bool proto_num_max_specified = false;//是否设置了port上限
                 memset(&nat_action_info, 0, sizeof nat_action_info);
                 nat_action_info_ref = &nat_action_info;
 
+                //遍历OVS_CT_ATTR_NAT动作下的子动作
                 NL_NESTED_FOR_EACH_UNSAFE (b_nest, left_nest, b) {
                     enum ovs_nat_attr sub_type_nest = nl_attr_type(b_nest);
 
                     switch (sub_type_nest) {
                     case OVS_NAT_ATTR_SRC:
                     case OVS_NAT_ATTR_DST:
-                        nat_config = true;
+                        nat_config = true;//配置了nat
                         nat_action_info.nat_action |=
                             ((sub_type_nest == OVS_NAT_ATTR_SRC)
-                                ? NAT_ACTION_SRC : NAT_ACTION_DST);//设置做哪种nat
+                                ? NAT_ACTION_SRC : NAT_ACTION_DST);//设置做哪种nat，snat? or dnat?
                         break;
                     case OVS_NAT_ATTR_IP_MIN:
                         memcpy(&nat_action_info.min_addr,
@@ -5483,9 +5500,11 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 }
 
                 if (ip_min_specified && !ip_max_specified) {
+                		//仅设置下限，未设置上限，则仅有一个ip
                     nat_action_info.max_addr = nat_action_info.min_addr;
                 }
                 if (proto_num_min_specified && !proto_num_max_specified) {
+                		//如果仅设置下限，未设置上限，则仅有一个port
                     nat_action_info.max_port = nat_action_info.min_port;
                 }
 
@@ -5508,6 +5527,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         /* We won't be able to function properly in this case, hence
          * complain loudly. */
         if (nat_config && !commit) {
+        		//如果配置了nat，但未commit，则告警
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
             VLOG_WARN_RL(&rl, "NAT specified without commit.");
         }

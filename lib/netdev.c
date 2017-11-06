@@ -819,7 +819,8 @@ netdev_pop_header(struct netdev *netdev, struct dp_packet_batch *batch)
     size_t i, size = dp_packet_batch_size(batch);
 
     DP_PACKET_BATCH_REFILL_FOR_EACH (i, size, packet, batch) {
-        packet = netdev->netdev_class->pop_header(packet);
+    		//见netdev_vport_tunnel_register函数处理
+        packet = netdev->netdev_class->pop_header(packet);//看netdev-vport.c
         if (packet) {
             /* Reset the checksum offload flags if present, to avoid wrong
              * interpretation in the further packet processing when

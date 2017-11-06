@@ -254,7 +254,9 @@ BUILD_MESSAGE("FLOW_WC_SEQ changed: miniflow_extract() will have runtime "
 
 #define miniflow_set_maps(MF, OFS, N_WORDS)                     \
 {                                                               \
+	/*设置字段对应的偏移量*/                                       \
     size_t ofs = (OFS);                                         \
+    /*从ofs位置开始，共需要设置n_words个bit*/                       \
     size_t n_words = (N_WORDS);                                 \
                                                                 \
     MINIFLOW_ASSERT(n_words && MF.data + n_words <= MF.end);    \
@@ -605,6 +607,7 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
     /* Metadata. */
     //如果tunnel被配置了
     if (flow_tnl_dst_is_set(&md->tunnel)) {
+    		//从&flow->tunnel开始到&flow->metadata终止，这些bit都需要打上标记
         miniflow_push_words(mf, tunnel, &md->tunnel,
                             offsetof(struct flow_tnl, metadata) /
                             sizeof(uint64_t));

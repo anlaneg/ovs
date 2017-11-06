@@ -766,6 +766,7 @@ dp_packet_delete_batch(struct dp_packet_batch *batch, bool may_steal)
     }
 }
 
+//应用报文截短动作
 static inline void
 dp_packet_batch_apply_cutlen(struct dp_packet_batch *batch)
 {

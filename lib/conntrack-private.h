@@ -35,7 +35,8 @@ struct ct_endpoint {
     union {
         ovs_be16 port;
         struct {
-            ovs_be16 icmp_id;
+        		//icmp协议时
+            ovs_be16 icmp_id;//echo的报文标识
             uint8_t icmp_type;
             uint8_t icmp_code;
         };
@@ -52,7 +53,7 @@ struct conn_key {
     struct ct_endpoint dst;
 
     ovs_be16 dl_type;
-    uint8_t nw_proto;
+    uint8_t nw_proto;//l4层协议，udp or tcp or ...
     uint16_t zone;
 };
 

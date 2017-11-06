@@ -84,7 +84,7 @@ struct nat_action_info_t {
     struct ct_addr max_addr;//nat资源池最大地址
     uint16_t min_port;//最小port
     uint16_t max_port;//最大port
-    uint16_t nat_action;//nat转换方式
+    uint16_t nat_action;//nat转换方式(snat or dnat ? snat是否转换port?dnat是否转换port?)
 };
 
 void conntrack_init(struct conntrack *);
@@ -250,7 +250,7 @@ struct conntrack {
     struct conntrack_bucket buckets[CONNTRACK_BUCKETS];//连接信息表
 
     /* Salt for hashing a connection key. */
-    uint32_t hash_basis;
+    uint32_t hash_basis;//安全码
 
     /* The thread performing periodic cleanup of the connection
      * tracker */
