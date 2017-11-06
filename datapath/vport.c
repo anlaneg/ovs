@@ -504,6 +504,7 @@ int ovs_vport_receive(struct vport *vport, struct sk_buff *skb,
 		kfree_skb(skb);
 		return error;
 	}
+	//处理收上来的报文
 	ovs_dp_process_packet(skb, &key);
 	return 0;
 }

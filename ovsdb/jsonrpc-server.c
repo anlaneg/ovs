@@ -949,9 +949,10 @@ ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
         reply = ovsdb_jsonrpc_monitor_cancel(s, json_array(request->params),
                                              request->id);
     } else if (!strcmp(request->method, "get_schema")) {
+    	//获取参数指定的db
         struct ovsdb *db = ovsdb_jsonrpc_lookup_db(s, request, &reply);
         if (!reply) {
-        	//返回db的模式
+        	//请求格式正确，返回db的模式
             reply = jsonrpc_create_reply(ovsdb_schema_to_json(db->schema),
                                          request->id);
         }

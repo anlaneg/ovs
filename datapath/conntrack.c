@@ -509,9 +509,11 @@ static int handle_fragments(struct net *net, struct sw_flow_key *key,
 	int err;
 
 	if (key->eth.type == htons(ETH_P_IP)) {
+		//报文是ip报文
 		enum ip_defrag_users user = IP_DEFRAG_CONNTRACK_IN + zone;
 
 		memset(IPCB(skb), 0, sizeof(struct inet_skb_parm));
+		//分片重组
 		err = ip_defrag(net, skb, user);
 		if (err)
 			return err;
@@ -519,6 +521,7 @@ static int handle_fragments(struct net *net, struct sw_flow_key *key,
 		ovs_cb.dp_cb.mru = IPCB(skb)->frag_max_size;
 #if IS_ENABLED(CONFIG_NF_DEFRAG_IPV6)
 	} else if (key->eth.type == htons(ETH_P_IPV6)) {
+		//报文是ipv6报文
 		enum ip6_defrag_users user = IP6_DEFRAG_CONNTRACK_IN + zone;
 
 		memset(IP6CB(skb), 0, sizeof(struct inet6_skb_parm));
@@ -754,10 +757,13 @@ static int ovs_ct_nat_execute(struct sk_buff *skb, struct nf_conn *ct,
 
 	/* See HOOK2MANIP(). */
 	if (maniptype == NF_NAT_MANIP_SRC)
+		//修改源ip
 		hooknum = NF_INET_LOCAL_IN; /* Source NAT */
 	else
+		//修改目的ip
 		hooknum = NF_INET_LOCAL_OUT; /* Destination NAT */
 
+	//按状态进行处理
 	switch (ctinfo) {
 	case IP_CT_RELATED:
 	case IP_CT_RELATED_REPLY:
@@ -812,6 +818,7 @@ static int ovs_ct_nat_execute(struct sk_buff *skb, struct nf_conn *ct,
 		goto push;
 	}
 
+	//nat报文修改
 	err = nf_nat_packet(ct, ctinfo, hooknum, skb);
 push:
 	skb_push(skb, nh_off);
@@ -917,6 +924,8 @@ static int ovs_ct_nat(struct net *net, struct sw_flow_key *key,
 	} else {
 		return NF_ACCEPT; /* Connection is not NATed. */
 	}
+
+	//连接跟踪nat处理
 	err = ovs_ct_nat_execute(skb, ct, ctinfo, &info->range, maniptype);
 
 	/* Mark NAT done if successful and update the flow key. */
@@ -1153,6 +1162,7 @@ int ovs_ct_execute(struct net *net, struct sk_buff *skb,
 	skb_pull_rcsum(skb, nh_ofs);
 
 	if (key->ip.frag != OVS_FRAG_TYPE_NONE) {
+		//有分片，处理分片
 		err = handle_fragments(net, key, info->zone.id, skb);
 		if (err)
 			return err;

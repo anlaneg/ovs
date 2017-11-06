@@ -205,7 +205,7 @@ static int check_iphdr(struct sk_buff *skb)
 
 	err = check_header(skb, nh_ofs + sizeof(struct iphdr));
 	if (unlikely(err))
-		return err;
+		return err;//报文检查不通过
 
 	ip_len = ip_hdrlen(skb);
 	if (unlikely(ip_len < sizeof(struct iphdr) ||
@@ -561,6 +561,7 @@ static int key_extract(struct sk_buff *skb, struct sw_flow_key *key)
 	key->eth.type = skb->protocol;
 
 	/* Network layer. */
+	//遇到ip报文
 	if (key->eth.type == htons(ETH_P_IP)) {
 		struct iphdr *nh;
 		__be16 offset;
@@ -576,7 +577,7 @@ static int key_extract(struct sk_buff *skb, struct sw_flow_key *key)
 			return error;
 		}
 
-		nh = ip_hdr(skb);
+		nh = ip_hdr(skb);//ip层头部
 		key->ipv4.addr.src = nh->saddr;
 		key->ipv4.addr.dst = nh->daddr;
 
@@ -586,14 +587,15 @@ static int key_extract(struct sk_buff *skb, struct sw_flow_key *key)
 
 		offset = nh->frag_off & htons(IP_OFFSET);
 		if (offset) {
+			//有offset，则标记为later
 			key->ip.frag = OVS_FRAG_TYPE_LATER;
 			return 0;
 		}
 		if (nh->frag_off & htons(IP_MF) ||
 			skb_shinfo(skb)->gso_type & SKB_GSO_UDP)
-			key->ip.frag = OVS_FRAG_TYPE_FIRST;
+			key->ip.frag = OVS_FRAG_TYPE_FIRST;//有more标记，但offset为０，则标记为first
 		else
-			key->ip.frag = OVS_FRAG_TYPE_NONE;
+			key->ip.frag = OVS_FRAG_TYPE_NONE;//普通报文
 
 		/* Transport layer. */
 		if (key->ip.proto == IPPROTO_TCP) {

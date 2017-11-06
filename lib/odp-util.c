@@ -3048,6 +3048,7 @@ format_odp_key_attr(const struct nlattr *a, const struct nlattr *ma,
         const struct ovs_key_ipv4 *key = nl_attr_get(a);
         const struct ovs_key_ipv4 *mask = ma ? nl_attr_get(ma) : NULL;
 
+        //填充ipv4信息
         format_ipv4(ds, "src", key->ipv4_src, MASK(mask, ipv4_src), verbose);
         format_ipv4(ds, "dst", key->ipv4_dst, MASK(mask, ipv4_dst), verbose);
         format_u8u(ds, "proto", key->ipv4_proto, MASK(mask, ipv4_proto),
@@ -3116,7 +3117,7 @@ format_odp_key_attr(const struct nlattr *a, const struct nlattr *ma,
     case OVS_KEY_ATTR_ICMPV6: {
         const struct ovs_key_icmpv6 *key = nl_attr_get(a);
         const struct ovs_key_icmpv6 *mask = ma ? nl_attr_get(ma) : NULL;
-
+        //填充icmpv6信息
         format_u8u(ds, "type", key->icmpv6_type, MASK(mask, icmpv6_type),
                    verbose);
         format_u8u(ds, "code", key->icmpv6_code, MASK(mask, icmpv6_code),
@@ -3128,6 +3129,7 @@ format_odp_key_attr(const struct nlattr *a, const struct nlattr *ma,
         const struct ovs_key_arp *mask = ma ? nl_attr_get(ma) : NULL;
         const struct ovs_key_arp *key = nl_attr_get(a);
 
+        //填充arp信息
         format_ipv4(ds, "sip", key->arp_sip, MASK(mask, arp_sip), verbose);
         format_ipv4(ds, "tip", key->arp_tip, MASK(mask, arp_tip), verbose);
         format_be16(ds, "op", key->arp_op, MASK(mask, arp_op), verbose);

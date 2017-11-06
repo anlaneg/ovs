@@ -308,6 +308,7 @@ ovsdb_schema_to_json(const struct ovsdb_schema *schema)
 
     tables = json_object_create();
 
+    //返回含有哪些表
     SHASH_FOR_EACH (node, &schema->tables) {
         struct ovsdb_table_schema *table = node->data;
         json_object_put(tables, table->name,

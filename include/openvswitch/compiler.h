@@ -217,6 +217,7 @@
     __declspec(allocate(".CRT$XCU")) static void (__cdecl*f##_)(void) = f; \
     static void __cdecl f(void)
 #else
+//constructor级别的函数声明及定义
 #define OVS_CONSTRUCTOR(f) \
     static void f(void) __attribute__((constructor)); \
     static void f(void)

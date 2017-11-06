@@ -168,6 +168,7 @@ error:
 	return ERR_PTR(err);
 }
 
+//创建vxlan接口
 static struct vport *vxlan_create(const struct vport_parms *parms)
 {
 	struct vport *vport;

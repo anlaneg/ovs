@@ -132,7 +132,7 @@ struct vport_parms {
  * zero for dropped packets or negative for error.
  */
 struct vport_ops {
-	enum ovs_vport_type type;
+	enum ovs_vport_type type;//接口类型
 
 	/* Called with ovs_mutex. */
 	struct vport *(*create)(const struct vport_parms *);

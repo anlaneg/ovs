@@ -40,9 +40,14 @@
 extern "C" {
 #endif
 
+//ovs提供的log模块，要我之前所遇到和写过的log模块更灵活（包括模块日志自动生成）
+//其原理为，由需要单独控制log的模块注册自身日志控制块，并采用统一的日志接口进行日
+//志输出
+
 /* Logging severity levels.
  *
  * ovs-appctl(8) defines each of the log levels. */
+//日志级别（debug,info,warn,error,emer,off)
 #define VLOG_LEVELS                             \
     VLOG_LEVEL(OFF,  LOG_ALERT,   1)            \
     VLOG_LEVEL(EMER, LOG_ALERT,   1)            \
@@ -61,10 +66,13 @@ const char *vlog_get_level_name(enum vlog_level);
 enum vlog_level vlog_get_level_val(const char *name);
 
 /* Destinations that we can log to. */
+//指定各输出方式及其输出前的模式
 #define VLOG_DESTINATIONS                                                 \
     VLOG_DESTINATION(SYSLOG, "ovs|%05N|%c%T|%p|%m")                        \
     VLOG_DESTINATION(CONSOLE, "%D{%Y-%m-%dT%H:%M:%SZ}|%05N|%c%T|%p|%m")    \
     VLOG_DESTINATION(FILE, "%D{%Y-%m-%dT%H:%M:%S.###Z}|%05N|%c%T|%p|%m")
+
+//定义输出目的地
 enum vlog_destination {
 #define VLOG_DESTINATION(NAME, PATTERN) VLF_##NAME,
     VLOG_DESTINATIONS
@@ -173,6 +181,10 @@ void vlog_rate_limit(const struct vlog_module *, enum vlog_level,
 /* Defines a logging module whose name is MODULE, which should generally be
  * roughly the name of the source file, and makes it the module used by the
  * logging convenience macros defined below. */
+//定义模块的名称，log级别，
+//为了防止模块名称重复，通过定义不同名结构体来保证
+//（这个比较浪费资源，可以采用vlog_insert_module中检查来保证,但这样不利用多个文件采用同一个module）
+
 #define VLOG_DEFINE_THIS_MODULE(MODULE)                                 \
         static struct vlog_module this_module = {                       \
             OVS_LIST_INITIALIZER(&this_module.list),                    \

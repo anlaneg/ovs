@@ -120,6 +120,7 @@ main(int argc, char *argv[])
         }
         bridge_run();
         unixctl_server_run(unixctl);
+        //由此函数下去，经dpif_netdev_run->reconfigure_datapath->...可到达pmd_thread_main
         netdev_run();
 
         //wait代码段

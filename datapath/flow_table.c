@@ -82,6 +82,7 @@ void ovs_flow_mask_key(struct sw_flow_key *dst, const struct sw_flow_key *src,
 		*d++ = *s++ & *m++;
 }
 
+//申请flow
 struct sw_flow *ovs_flow_alloc(void)
 {
 	struct sw_flow *flow;

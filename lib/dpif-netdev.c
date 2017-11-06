@@ -555,7 +555,7 @@ struct dp_netdev_pmd_thread {
     struct cmap flow_table OVS_GUARDED; /* Flow table. */ //二级缓存表
 
     /* One classifier per in_port polled by the pmd */
-    struct cmap classifiers;//cls分类表，dpcls类型
+    struct cmap classifiers;//cls分类表，dpcls类型(按in_port进行分类）
     /* Periodically sort subtable vectors according to hit frequencies */
     long long int next_optimization;
 
@@ -3905,7 +3905,7 @@ reload:
                                                       : PMD_CYCLES_IDLE);
         }
 
-        //做些维护
+        //做些维护（每1024次进去一次）
         if (lc++ > 1024) {
             bool reload;
 
