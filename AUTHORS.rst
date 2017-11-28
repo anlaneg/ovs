@@ -62,6 +62,7 @@ Ariel Tubaltsev                 atubaltsev@vmware.com
 Arnoldo Lutz                    arnoldo.lutz.guevara@hpe.com
 Arun Sharma                     arun.sharma@calsoftinc.com
 Aryan TaheriMonfared            aryan.taherimonfared@uis.no
+Ashish Varma                    ashishvarma.ovs@gmail.com
 Ashwin Swaminathan              ashwinds@arista.com
 Babu Shanmugam                  bschanmu@redhat.com
 Ben Pfaff                       blp@ovn.org
@@ -326,6 +327,7 @@ Tony van der Peet               tony.vanderpeet@alliedtelesis.co.nz
 Tonghao Zhang                   xiangxia.m.yue@gmail.com
 Valient Gough                   vgough@pobox.com
 Venkata Anil Kommaddi           vkommadi@redhat.com
+Vishal Deep Ajmera              vishal.deep.ajmera@ericsson.com
 Vivien Bernet-Rollande          vbr@soprive.net
 wangqianyu                      wang.qianyu@zte.com.cn
 Wang Sheng-Hui                  shhuiw@gmail.com

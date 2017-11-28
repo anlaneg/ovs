@@ -74,10 +74,6 @@ union flow_vlan_hdr {
     };
 };
 
-#ifdef __cplusplus
-}
-#endif
-
 /* Network Service Header keys */
 struct flow_nsh {
     uint8_t flags;
@@ -93,5 +89,9 @@ struct flow_nsh {
 #define FLOW_NSH_F_CTX (1 << 1)
 
 #define FLOW_NSH_F_MASK ((1 << 2) - 1)
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* packets.h */
