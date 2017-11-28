@@ -66,7 +66,7 @@ struct local_datapath {
     /* True if this datapath contains an l3gateway port located on this
      * hypervisor. */
     bool has_local_l3gateway;//是否在本机有l3gateway
-    const struct ldatapath **peer_dps;//(即自身通过patch口与这些ldatapath相连）
+    const struct sbrec_datapath_binding **peer_dps;
     size_t n_peer_dps;
 };
 

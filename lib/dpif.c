@@ -37,7 +37,7 @@
 #include "openvswitch/ofp-util.h"
 #include "openvswitch/ofpbuf.h"
 #include "packets.h"
-#include "poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "route-table.h"
 #include "seq.h"
 #include "openvswitch/shash.h"
@@ -383,7 +383,7 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
             err = netdev_open(dpif_port.name, dpif_port.type, &netdev);
 
             if (!err) {
-                netdev_ports_insert(netdev, DPIF_HMAP_KEY(dpif), &dpif_port);
+                netdev_ports_insert(netdev, dpif->dpif_class, &dpif_port);
                 netdev_close(netdev);
             } else {
                 VLOG_WARN("could not open netdev %s type %s: %s",
@@ -448,6 +448,18 @@ dpif_create_and_open(const char *name, const char *type, struct dpif **dpifp)
     return error;
 }
 
+static void
+dpif_remove_netdev_ports(struct dpif *dpif) {
+        struct dpif_port_dump port_dump;
+        struct dpif_port dpif_port;
+
+        DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
+            if (!dpif_is_internal_port(dpif_port.type)) {
+                netdev_ports_remove(dpif_port.port_no, dpif->dpif_class);
+            }
+        }
+}
+
 /* Closes and frees the connection to 'dpif'.  Does not destroy the datapath
  * itself; call dpif_delete() first, instead, if that is desirable. */
 void
@@ -457,6 +469,10 @@ dpif_close(struct dpif *dpif)
         struct registered_dpif_class *rc;
 
         rc = shash_find_data(&dpif_classes, dpif->dpif_class->type);
+
+        if (rc->refcount == 1) {
+            dpif_remove_netdev_ports(dpif);
+        }
         dpif_uninit(dpif, true);
         dp_class_unref(rc);
     }
@@ -597,7 +613,7 @@ dpif_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
             dpif_port.type = CONST_CAST(char *, netdev_get_type(netdev));
             dpif_port.name = CONST_CAST(char *, netdev_name);
             dpif_port.port_no = port_no;
-            netdev_ports_insert(netdev, DPIF_HMAP_KEY(dpif), &dpif_port);
+            netdev_ports_insert(netdev, dpif->dpif_class, &dpif_port);
         }
     } else {
         VLOG_WARN_RL(&error_rl, "%s: failed to add %s as port: %s",
@@ -624,7 +640,7 @@ dpif_port_del(struct dpif *dpif, odp_port_t port_no)
         VLOG_DBG_RL(&dpmsg_rl, "%s: port_del(%"PRIu32")",
                     dpif_name(dpif), port_no);
 
-        netdev_ports_remove(port_no, DPIF_HMAP_KEY(dpif));
+        netdev_ports_remove(port_no, dpif->dpif_class);
     } else {
         log_operation(dpif, "port_del", error);
     }
@@ -1285,6 +1301,8 @@ dpif_execute_helper_cb(void *aux_, struct dp_packet_batch *packets_,
     case OVS_ACTION_ATTR_PUSH_ETH:
     case OVS_ACTION_ATTR_POP_ETH:
     case OVS_ACTION_ATTR_CLONE:
+    case OVS_ACTION_ATTR_ENCAP_NSH:
+    case OVS_ACTION_ATTR_DECAP_NSH:
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
         OVS_NOT_REACHED();
@@ -1562,11 +1580,11 @@ dpif_set_config(struct dpif *dpif, const struct smap *cfg)
     return error;
 }
 
-/* Polls for an upcall from 'dpif' for an upcall handler.  Since there
- * there can be multiple poll loops, 'handler_id' is needed as index to
- * identify the corresponding poll loop.  If successful, stores the upcall
- * into '*upcall', using 'buf' for storage.  Should only be called if
- * 'recv_set' has been used to enable receiving packets from 'dpif'.
+/* Polls for an upcall from 'dpif' for an upcall handler.  Since there can
+ * be multiple poll loops, 'handler_id' is needed as index to identify the
+ * corresponding poll loop.  If successful, stores the upcall into '*upcall',
+ * using 'buf' for storage.  Should only be called if 'recv_set' has been used
+ * to enable receiving packets from 'dpif'.
  *
  * 'upcall->key' and 'upcall->userdata' point into data in the caller-provided
  * 'buf', so their memory cannot be freed separately from 'buf'.

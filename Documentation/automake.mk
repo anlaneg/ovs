@@ -23,11 +23,13 @@ DOC_SOURCE = \
 	Documentation/intro/install/windows.rst \
 	Documentation/intro/install/xenserver.rst \
 	Documentation/tutorials/index.rst \
+	Documentation/tutorials/faucet.rst \
 	Documentation/tutorials/ovs-advanced.rst \
 	Documentation/tutorials/ovn-openstack.rst \
 	Documentation/tutorials/ovn-sandbox.rst \
 	Documentation/topics/index.rst \
 	Documentation/topics/bonding.rst \
+	Documentation/topics/idl-compound-indexes.rst \
 	Documentation/topics/datapath.rst \
 	Documentation/topics/design.rst \
 	Documentation/topics/dpdk/index.rst \
@@ -40,11 +42,13 @@ DOC_SOURCE = \
 	Documentation/topics/openflow.rst \
 	Documentation/topics/ovsdb-replication.rst \
 	Documentation/topics/porting.rst \
+	Documentation/topics/role-based-access-control.rst \
 	Documentation/topics/tracing.rst \
 	Documentation/topics/windows.rst \
 	Documentation/howto/index.rst \
 	Documentation/howto/docker.rst \
 	Documentation/howto/dpdk.rst \
+	Documentation/howto/firewalld.rst \
 	Documentation/howto/kvm.rst \
 	Documentation/howto/libvirt.rst \
 	Documentation/howto/selinux.rst \
@@ -77,6 +81,8 @@ DOC_SOURCE = \
 	Documentation/internals/index.rst \
 	Documentation/internals/authors.rst \
 	Documentation/internals/bugs.rst \
+	Documentation/internals/charter.rst \
+	Documentation/internals/committer-emeritus-status.rst \
 	Documentation/internals/committer-grant-revocation.rst \
 	Documentation/internals/committer-responsibilities.rst \
 	Documentation/internals/documentation.rst \
@@ -177,8 +183,8 @@ extract_stem_and_section = \
 	eval "mandir=\$$man$${section}dir"; \
 	test -n "$$mandir" || { echo "unknown directory for manpage section $$section"; continue; }
 
-if HAVE_SPHINX
 INSTALL_DATA_LOCAL += install-man-rst
+if HAVE_SPHINX
 install-man-rst: docs-check
 	@$(set_mandirs); \
 	for rst in $(RST_MANPAGES); do \
@@ -188,6 +194,9 @@ install-man-rst: docs-check
 	    echo " $(INSTALL_DATA) $(SPHINXBUILDDIR)/man/$$stem.$$section '$(DESTDIR)'\"$$mandir/$$stem.$$section\""; \
 	    $(INSTALL_DATA) $(SPHINXBUILDDIR)/man/$$stem.$$section '$(DESTDIR)'"$$mandir/$$stem.$$section"; \
 	done
+else
+install-man-rst:
+	@:
 endif
 
 UNINSTALL_LOCAL += uninstall-man-rst

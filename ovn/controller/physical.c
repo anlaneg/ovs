@@ -21,7 +21,7 @@
 #include "lflow.h"
 #include "lport.h"
 #include "lib/bundle.h"
-#include "lib/poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "lib/uuid.h"
 #include "ofctrl.h"
 #include "openvswitch/list.h"
@@ -294,9 +294,9 @@ load_logical_ingress_metadata(const struct sbrec_port_binding *binding,
 }
 
 static void
-consider_port_binding(enum mf_field_id mff_ovn_geneve,
+consider_port_binding(struct controller_ctx *ctx,
+                      enum mf_field_id mff_ovn_geneve,
                       const struct simap *ct_zones,
-                      const struct lport_index *lports,
                       const struct chassis_index *chassis_index,
                       struct sset *active_tunnels,
                       struct hmap *local_datapaths,
@@ -321,7 +321,7 @@ consider_port_binding(enum mf_field_id mff_ovn_geneve,
         }
 
         const struct sbrec_port_binding *peer = lport_lookup_by_name(
-            lports, peer_name);
+            ctx->ovnsb_idl, peer_name);
         if (!peer || strcmp(peer->type, binding->type)) {
         	//如果未找到对端或者对对端类型与binding不一致，则不处理
             return;
@@ -390,7 +390,7 @@ consider_port_binding(enum mf_field_id mff_ovn_geneve,
         const char *distributed_port = smap_get_def(&binding->options,
                                                     "distributed-port", "");
         const struct sbrec_port_binding *distributed_binding
-            = lport_lookup_by_name(lports, distributed_port);
+            = lport_lookup_by_name(ctx->ovnsb_idl, distributed_port);
 
         if (!distributed_binding) {
             /* Packet will be dropped. */
@@ -821,11 +821,11 @@ consider_mc_group(enum mf_field_id mff_ovn_geneve,
                      remote_ofpacts_p);
         }
 
-        const char *chassis;
+        const char *chassis_name;
         const struct chassis_tunnel *prev = NULL;
-        SSET_FOR_EACH (chassis, &remote_chassis) {
+        SSET_FOR_EACH (chassis_name, &remote_chassis) {
             const struct chassis_tunnel *tun
-                = chassis_tunnel_find(chassis);
+                = chassis_tunnel_find(chassis_name);
             if (!tun) {
                 continue;
             }
@@ -864,7 +864,7 @@ void
 physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
              const struct ovsrec_bridge *br_int,
              const struct sbrec_chassis *chassis,
-             const struct simap *ct_zones, struct lport_index *lports,
+             const struct simap *ct_zones,
              struct hmap *flow_table, struct hmap *local_datapaths,
              const struct sset *local_lports,
              struct chassis_index *chassis_index,
@@ -989,7 +989,7 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
      * 64 for logical-to-physical translation. */
     const struct sbrec_port_binding *binding;
     SBREC_PORT_BINDING_FOR_EACH (binding, ctx->ovnsb_idl) {
-        consider_port_binding(mff_ovn_geneve, ct_zones, lports,
+        consider_port_binding(ctx, mff_ovn_geneve, ct_zones,
                               chassis_index, active_tunnels,
                               local_datapaths, binding, chassis,
                               &ofpacts, flow_table);
@@ -1114,7 +1114,7 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
          * rule with higher priority for every localport in this
          * datapath. */
         const struct sbrec_port_binding *pb = lport_lookup_by_name(
-            lports, localport);
+            ctx->ovnsb_idl, localport);
         if (pb && !strcmp(pb->type, "localport")) {
             match_set_reg(&match, MFF_LOG_INPORT - MFF_REG0, pb->tunnel_key);
             match_set_metadata(&match, htonll(pb->datapath->tunnel_key));

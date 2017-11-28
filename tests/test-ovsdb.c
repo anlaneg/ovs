@@ -16,7 +16,6 @@
 
 #include <config.h>
 
-#include <assert.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <inttypes.h>
@@ -44,7 +43,7 @@
 #include "ovsdb/table.h"
 #include "ovsdb/transaction.h"
 #include "ovsdb/trigger.h"
-#include "poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "stream.h"
 #include "svec.h"
 #include "tests/idltest.h"
@@ -215,7 +214,14 @@ usage(void)
            "  idl-partial-update-set-column SERVER \n"
            "    connect to SERVER and executes different operations to\n"
            "    test the capacity of updating elements inside a set column\n"
-           "    displaying the table information after each operation.\n",
+           "    displaying the table information after each operation.\n"
+           "  idl-compound-index TEST_TO_EXECUTE\n"
+           "    Execute the tests to verify compound-index feature.\n"
+           "    The TEST_TO_EXECUTE are:\n"
+           "        idl_compound_index_single_column:\n"
+           "          test for indexes using one column.\n"
+           "        idl_compound_index_double_column:\n"
+           "            test for indexes using two columns.\n",
            program_name, program_name);
     vlog_usage();
     printf("\nOther options:\n"
@@ -394,7 +400,7 @@ do_default_data(struct ovs_cmdl_context *ctx OVS_UNUSED)
                 ovsdb_base_type_init(&type.value, value);
                 type.n_min = n_min;
                 type.n_max = 1;
-                assert(ovsdb_type_is_valid(&type));
+                ovs_assert(ovsdb_type_is_valid(&type));
 
                 printf("key %s, value %s, n_min %u: ",
                        ovsdb_atomic_type_to_string(key),
@@ -576,6 +582,7 @@ do_parse_atom_strings(struct ovs_cmdl_context *ctx)
         ovsdb_atom_destroy(&atom, base.type);
         if (range_end_atom) {
             ovsdb_atom_destroy(range_end_atom, base.type);
+            free(range_end_atom);
         }
     }
     ovsdb_base_type_destroy(&base);
@@ -1681,7 +1688,7 @@ do_transact_print(struct ovs_cmdl_context *ctx OVS_UNUSED)
     HMAP_FOR_EACH (row, hmap_node, &do_transact_table->rows) {
         rows[i++] = row;
     }
-    assert(i == n_rows);
+    ovs_assert(i == n_rows);
 
     qsort(rows, n_rows, sizeof *rows, compare_rows_by_uuid);
 
@@ -1723,7 +1730,7 @@ do_transact(struct ovs_cmdl_context *ctx)
     json_destroy(json);
     do_transact_db = ovsdb_create(schema);
     do_transact_table = ovsdb_get_table(do_transact_db, "mytable");
-    assert(do_transact_table != NULL);
+    ovs_assert(do_transact_table != NULL);
 
     for (i = 1; i < ctx->argc; i++) {
         struct json *command;
@@ -2655,6 +2662,356 @@ do_idl_partial_update_set_column(struct ovs_cmdl_context *ctx)
     return;
 }
 
+static void
+do_idl_compound_index_with_ref(struct ovs_cmdl_context *ctx)
+{
+    struct ovsdb_idl *idl;
+    struct ovsdb_idl_txn *myTxn;
+    const struct idltest_simple3 *myRow;
+    struct idltest_simple4 *myRow2;
+    const struct ovsdb_datum *uset OVS_UNUSED;
+    const struct ovsdb_datum *uref OVS_UNUSED;
+    struct ovsdb_idl_index_cursor cursor;
+    int step = 0;
+
+    idl = ovsdb_idl_create(ctx->argv[1], &idltest_idl_class, false, true);
+    ovsdb_idl_add_table(idl, &idltest_table_simple3);
+    ovsdb_idl_add_column(idl, &idltest_simple3_col_name);
+    ovsdb_idl_add_column(idl, &idltest_simple3_col_uset);
+    ovsdb_idl_add_column(idl, &idltest_simple3_col_uref);
+    ovsdb_idl_add_table(idl, &idltest_table_simple4);
+    ovsdb_idl_add_column(idl, &idltest_simple4_col_name);
+
+    struct ovsdb_idl_index *index;
+    index = ovsdb_idl_create_index(idl, &idltest_table_simple3, "uref");
+    ovsdb_idl_index_add_column(index, &idltest_simple3_col_uref,
+                               OVSDB_INDEX_ASC, NULL);
+
+    ovsdb_idl_get_initial_snapshot(idl);
+
+    ovsdb_idl_initialize_cursor(idl, &idltest_table_simple3, "uref",
+                                &cursor);
+
+    setvbuf(stdout, NULL, _IONBF, 0);
+    ovsdb_idl_run(idl);
+
+    /* Adds to a table and update a strong reference in another table. */
+    myTxn = ovsdb_idl_txn_create(idl);
+    myRow = idltest_simple3_insert(myTxn);
+    myRow2 = idltest_simple4_insert(myTxn);
+    idltest_simple4_set_name(myRow2, "test");
+    idltest_simple3_update_uref_addvalue(myRow, myRow2);
+    ovsdb_idl_txn_commit_block(myTxn);
+    ovsdb_idl_txn_destroy(myTxn);
+    ovsdb_idl_get_initial_snapshot(idl);
+    printf("%03d: After add to other table + set of strong ref\n", step++);
+    dump_simple3(idl, myRow, step++);
+
+    myRow2 = (struct idltest_simple4 *) idltest_simple4_first(idl);
+    printf("%03d: check simple4: %s\n", step++,
+           myRow2 ? "not empty" : "empty");
+
+    /* Use index to query the row with reference */
+
+    struct idltest_simple3 *equal;
+    equal = idltest_simple3_index_init_row(idl, &idltest_table_simple3);
+    myRow2 = (struct idltest_simple4 *) idltest_simple4_first(idl);
+    idltest_simple3_index_set_uref(equal, &myRow2, 1);
+    printf("%03d: Query using index with reference\n", step++);
+    IDLTEST_SIMPLE3_FOR_EACH_EQUAL (myRow, &cursor, equal) {
+        print_idl_row_simple3(myRow, step++);
+    }
+    idltest_simple3_index_destroy_row(equal);
+
+    /* Delete the row with reference */
+    myTxn = ovsdb_idl_txn_create(idl);
+    myRow = idltest_simple3_first(idl);
+    idltest_simple3_delete(myRow);
+    ovsdb_idl_txn_commit_block(myTxn);
+    ovsdb_idl_txn_destroy(myTxn);
+    ovsdb_idl_get_initial_snapshot(idl);
+    printf("%03d: After delete\n", step++);
+    dump_simple3(idl, myRow, step++);
+
+    myRow2 = (struct idltest_simple4 *) idltest_simple4_first(idl);
+    printf("%03d: check simple4: %s\n", step++,
+           myRow2 ? "not empty" : "empty");
+
+    ovsdb_idl_destroy(idl);
+    printf("%03d: End test\n", step);
+    return;
+}
+
+
+static int
+test_idl_compound_index_single_column(struct ovsdb_idl *idl,
+        struct ovsdb_idl_index_cursor *sCursor,
+        struct ovsdb_idl_index_cursor *iCursor)
+{
+    const struct idltest_simple *myRow;
+    struct ovsdb_idl_txn *txn;
+    int step = 0;
+
+     /* Display records by string index -> sCursor */
+     ++step;
+     IDLTEST_SIMPLE_FOR_EACH_BYINDEX (myRow, sCursor) {
+         printf("%03d: s=%s i=%"PRId64" b=%s r=%f\n", step, myRow->s,
+                myRow->i, myRow->b?"True":"False", myRow->r);
+     }
+     /* Display records by integer index -> iCursor */
+     ++step;
+     IDLTEST_SIMPLE_FOR_EACH_BYINDEX (myRow, iCursor) {
+         printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
+                myRow->s, myRow->b?"True":"False", myRow->r);
+     }
+     /* Display records by string index -> sCursor with filtering
+      * where s=\"List001\
+      */
+     ++step;
+     struct idltest_simple *equal;
+     equal = idltest_simple_index_init_row(idl, &idltest_table_simple);
+     idltest_simple_index_set_s(equal, "List001");
+     ovs_assert(strcmp(equal->s, "List001") == 0);
+     IDLTEST_SIMPLE_FOR_EACH_EQUAL (myRow, sCursor, equal) {
+         printf("%03d: s=%s i=%"PRId64" b=%s r=%f\n", step, myRow->s,
+                myRow->i, myRow->b?"True":"False", myRow->r);
+     }
+     /* Display records by integer index -> iCursor with filtering where i=5 */
+     ++step;
+     idltest_simple_index_set_i(equal, 5);
+     ovs_assert(equal->i == 5);
+     IDLTEST_SIMPLE_FOR_EACH_EQUAL (myRow, iCursor, equal) {
+         printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
+                myRow->s, myRow->b?"True":"False", myRow->r);
+     }
+     /* Display records by integer index -> iCursor in range i=[3,7] */
+     ++step;
+     struct idltest_simple *from, *to;
+     from = idltest_simple_index_init_row(idl, &idltest_table_simple);
+     idltest_simple_index_set_i(from, 3);
+     ovs_assert(from->i == 3);
+     to = idltest_simple_index_init_row(idl, &idltest_table_simple);
+     idltest_simple_index_set_i(to, 7);
+     ovs_assert(to->i == 7);
+     IDLTEST_SIMPLE_FOR_EACH_RANGE (myRow, iCursor, from, to) {
+         printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
+                myRow->s, myRow->b?"True":"False", myRow->r);
+     }
+     /* Delete record i=4 and insert i=54 by integer index -> iCursor */
+     ++step;
+     struct idltest_simple *toDelete, *toInsert;
+     toDelete = idltest_simple_index_init_row(idl, &idltest_table_simple);
+     idltest_simple_index_set_i(toDelete, 4);
+     ovs_assert(toDelete->i == 4);
+     myRow = idltest_simple_index_find(iCursor, toDelete);
+     ovs_assert(myRow);
+     ovs_assert(myRow->i == 4);
+     txn = ovsdb_idl_txn_create(idl);
+     idltest_simple_delete(myRow);
+     toInsert = idltest_simple_insert(txn);
+     idltest_simple_set_i(toInsert, 54);
+     idltest_simple_set_s(toInsert, "Lista054");
+     ovsdb_idl_txn_commit_block(txn);
+     ovsdb_idl_txn_destroy(txn);
+     idltest_simple_index_set_i(to, 60);
+     printf("Expected 60, stored %"PRId64"\n", to->i);
+     ovs_assert(to->i == 60);
+     IDLTEST_SIMPLE_FOR_EACH_RANGE (myRow, iCursor, from, to) {
+         printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
+                myRow->s, myRow->b?"True":"False", myRow->r);
+     }
+
+     /* Test special-case range, "from" and "to" are both NULL,
+      * which is interpreted as the range from -infinity to +infinity. */
+     ++step;
+     IDLTEST_SIMPLE_FOR_EACH_RANGE (myRow, iCursor, NULL, NULL) {
+         printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
+                myRow->s, myRow->b?"True":"False", myRow->r);
+     }
+
+     /* Free the temporal rows */
+     idltest_simple_index_destroy_row(from);
+     idltest_simple_index_destroy_row(to);
+     idltest_simple_index_destroy_row(equal);
+     return step;
+}
+
+static int
+test_idl_compound_index_double_column(struct ovsdb_idl *idl,
+        struct ovsdb_idl_index_cursor *siCursor,
+        struct ovsdb_idl_index_cursor *sidCursor,
+        struct ovsdb_idl_index_cursor *isCursor,
+        struct ovsdb_idl_index_cursor *idsCursor)
+{
+    const struct idltest_simple *myRow;
+    int step = 0;
+
+    /* Display records by string-integer index -> siCursor */
+    step++;
+    IDLTEST_SIMPLE_FOR_EACH_BYINDEX (myRow, siCursor) {
+        printf("%03d: s=%s i=%"PRId64" b=%s r=%f\n", step, myRow->s, myRow->i,
+               myRow->b?"True":"False", myRow->r);
+    }
+    /* Display records by string-integer(down order) index -> sidCursor */
+    step++;
+    IDLTEST_SIMPLE_FOR_EACH_BYINDEX (myRow, sidCursor) {
+        printf("%03d: s=%s i=%"PRId64" b=%s r=%f\n", step, myRow->s, myRow->i,
+               myRow->b?"True":"False", myRow->r);
+    }
+    /* Display records by string-integer index -> siCursor with filtering
+     * where s="List000" and i=10
+     */
+    step++;
+    struct idltest_simple *equal;
+    equal = idltest_simple_index_init_row(idl, &idltest_table_simple);
+    idltest_simple_index_set_s(equal, "List000");
+    ovs_assert(strcmp(equal->s, "List000") == 0);
+    idltest_simple_index_set_i(equal, 10);
+    ovs_assert(equal->i == 10);
+    IDLTEST_SIMPLE_FOR_EACH_EQUAL (myRow, siCursor, equal) {
+        printf("%03d: s=%s i=%"PRId64" b=%s r=%f\n", step, myRow->s, myRow->i,
+               myRow->b?"True":"False", myRow->r);
+    }
+    /* Display records by string-integer index -> siCursor in range i=[0,100]
+     * and s=[\"List002\",\"List003\"]
+     */
+    step++;
+    struct idltest_simple *from, *to;
+    from =  idltest_simple_index_init_row(idl, &idltest_table_simple);
+    to = idltest_simple_index_init_row(idl, &idltest_table_simple);
+    idltest_simple_index_set_i(from, 0);
+    ovs_assert(from->i == 0);
+    idltest_simple_index_set_s(from, "List001");
+    ovs_assert(strcmp(from->s, "List001") == 0);
+    idltest_simple_index_set_i(to, 100);
+    ovs_assert(to->i == 100);
+    idltest_simple_index_set_s(to, "List005");
+    ovs_assert(strcmp(to->s, "List005")==0);
+    IDLTEST_SIMPLE_FOR_EACH_RANGE (myRow, siCursor, from, to) {
+        printf("%03d: s=%s i=%"PRId64" b=%s r=%f\n", step, myRow->s, myRow->i,
+               myRow->b?"True":"False", myRow->r);
+    }
+    /* Display records using integer-string index. */
+    step++;
+    IDLTEST_SIMPLE_FOR_EACH_BYINDEX (myRow, isCursor) {
+        printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step, myRow->i, myRow->s,
+               myRow->b?"True":"False", myRow->r);
+    }
+    /* Display records using integer(descend)-string index. */
+    step++;
+    IDLTEST_SIMPLE_FOR_EACH_BYINDEX (myRow, idsCursor) {
+        printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step, myRow->i, myRow->s,
+               myRow->b?"True":"False", myRow->r);
+    }
+
+    idltest_simple_index_destroy_row(to);
+    idltest_simple_index_destroy_row(from);
+    idltest_simple_index_destroy_row(equal);
+    return step;
+}
+
+static void
+do_idl_compound_index(struct ovs_cmdl_context *ctx)
+{
+    struct ovsdb_idl *idl;
+    struct ovsdb_idl_index_cursor sCursor, iCursor, siCursor, sidCursor,
+                    isCursor, idsCursor;
+    enum TESTS { IDL_COMPOUND_INDEX_WITH_SINGLE_COLUMN,
+            IDL_COMPOUND_INDEX_WITH_DOUBLE_COLUMN
+    };
+    int step = 0;
+    int i;
+
+    idl = ovsdb_idl_create(ctx->argv[1], &idltest_idl_class, false, true);
+
+    /* Add tables/columns and initialize index data needed for tests */
+    ovsdb_idl_add_table(idl, &idltest_table_simple);
+    ovsdb_idl_add_column(idl, &idltest_simple_col_s);
+    ovsdb_idl_add_column(idl, &idltest_simple_col_i);
+    ovsdb_idl_add_column(idl, &idltest_simple_col_r);
+    ovsdb_idl_add_column(idl, &idltest_simple_col_b);
+
+    struct ovsdb_idl_index *index;
+    index = ovsdb_idl_create_index(idl, &idltest_table_simple, "string");
+    ovsdb_idl_index_add_column(index, &idltest_simple_col_s, OVSDB_INDEX_ASC,
+                               NULL);
+
+    index = ovsdb_idl_create_index(idl, &idltest_table_simple, "integer");
+    ovsdb_idl_index_add_column(index, &idltest_simple_col_i, OVSDB_INDEX_ASC,
+                               NULL);
+
+    index = ovsdb_idl_create_index(idl, &idltest_table_simple,
+                                   "string-integer");
+    ovsdb_idl_index_add_column(index, &idltest_simple_col_s, OVSDB_INDEX_ASC,
+                               NULL);
+    ovsdb_idl_index_add_column(index, &idltest_simple_col_i, OVSDB_INDEX_ASC,
+                               NULL);
+
+    index = ovsdb_idl_create_index(idl, &idltest_table_simple,
+                                   "string-integerd");
+    ovsdb_idl_index_add_column(index, &idltest_simple_col_s, OVSDB_INDEX_ASC,
+                               NULL);
+    ovsdb_idl_index_add_column(index, &idltest_simple_col_i, OVSDB_INDEX_DESC,
+                               NULL);
+
+    index = ovsdb_idl_create_index(idl, &idltest_table_simple,
+                                   "integer-string");
+    ovsdb_idl_index_add_column(index, &idltest_simple_col_i, OVSDB_INDEX_ASC,
+                               NULL);
+    ovsdb_idl_index_add_column(index, &idltest_simple_col_s, OVSDB_INDEX_ASC,
+                               NULL);
+
+    index = ovsdb_idl_create_index(idl, &idltest_table_simple,
+                                   "integerd-string");
+    ovsdb_idl_index_add_column(index, &idltest_simple_col_i, OVSDB_INDEX_DESC,
+                               NULL);
+    ovsdb_idl_index_add_column(index, &idltest_simple_col_s, OVSDB_INDEX_ASC,
+                               NULL);
+
+    /* wait for replica to be updated */
+    ovsdb_idl_get_initial_snapshot(idl);
+
+    /* Initialize cursors to be used by indexes */
+    ovsdb_idl_initialize_cursor(idl, &idltest_table_simple, "string",
+                                &sCursor);
+    ovsdb_idl_initialize_cursor(idl, &idltest_table_simple, "integer",
+                                &iCursor);
+    ovsdb_idl_initialize_cursor(idl, &idltest_table_simple, "string-integer",
+                                &siCursor);
+    ovsdb_idl_initialize_cursor(idl, &idltest_table_simple, "string-integerd",
+                                &sidCursor);
+    ovsdb_idl_initialize_cursor(idl, &idltest_table_simple, "integer-string",
+                                &isCursor);
+    ovsdb_idl_initialize_cursor(idl, &idltest_table_simple, "integerd-string",
+                                &idsCursor);
+
+    setvbuf(stdout, NULL, _IONBF, 0);
+    int test_to_run = -1;
+    for (i = 2; i < ctx->argc; i++) {
+        char *arg = ctx->argv[i];
+
+        if (strcmp(arg,"idl_compound_index_single_column") == 0) {
+            test_to_run = IDL_COMPOUND_INDEX_WITH_SINGLE_COLUMN;
+        } else if (strcmp(arg, "idl_compound_index_double_column") == 0) {
+            test_to_run = IDL_COMPOUND_INDEX_WITH_DOUBLE_COLUMN;
+        }
+
+        switch (test_to_run) {
+            case IDL_COMPOUND_INDEX_WITH_SINGLE_COLUMN:
+                test_idl_compound_index_single_column(idl, &sCursor, &iCursor);
+                break;
+            case IDL_COMPOUND_INDEX_WITH_DOUBLE_COLUMN:
+                test_idl_compound_index_double_column(idl, &siCursor,
+                        &sidCursor, &isCursor, &idsCursor);
+                break;
+            default:
+                printf("%03d: Test %s not implemented.\n", step++, arg);
+        }
+    }
+    ovsdb_idl_destroy(idl);
+    printf("%03d: done\n", step);
+}
+
 static struct ovs_cmdl_command all_commands[] = {
     { "log-io", NULL, 2, INT_MAX, do_log_io, OVS_RO },
     { "default-atoms", NULL, 0, 0, do_default_atoms, OVS_RO },
@@ -2686,6 +3043,9 @@ static struct ovs_cmdl_command all_commands[] = {
     { "execute-readonly", NULL, 2, INT_MAX, do_execute_ro, OVS_RO },
     { "trigger", NULL, 2, INT_MAX, do_trigger, OVS_RO },
     { "idl", NULL, 1, INT_MAX, do_idl, OVS_RO },
+    { "idl-compound-index", NULL, 2, 2, do_idl_compound_index, OVS_RW },
+    { "idl-compound-index-with-ref", NULL, 1, INT_MAX,
+        do_idl_compound_index_with_ref, OVS_RO },
     { "idl-partial-update-map-column", NULL, 1, INT_MAX,
         do_idl_partial_update_map_column, OVS_RO },
     { "idl-partial-update-set-column", NULL, 1, INT_MAX,

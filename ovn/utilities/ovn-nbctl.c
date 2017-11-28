@@ -24,10 +24,11 @@
 #include "dirs.h"
 #include "fatal-signal.h"
 #include "openvswitch/json.h"
+#include "ovn/lib/acl-log.h"
 #include "ovn/lib/ovn-nb-idl.h"
 #include "ovn/lib/ovn-util.h"
 #include "packets.h"
-#include "poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "process.h"
 #include "smap.h"
 #include "sset.h"
@@ -332,7 +333,8 @@ Logical switch commands:\n\
   ls-list                   print the names of all logical switches\n\
 \n\
 ACL commands:\n\
-  acl-add SWITCH DIRECTION PRIORITY MATCH ACTION [log]\n\
+  [--log] [--severity=SEVERITY] [--name=NAME] [--may-exist]\n\
+  acl-add SWITCH DIRECTION PRIORITY MATCH ACTION\n\
                             add an ACL to SWITCH\n\
   acl-del SWITCH [DIRECTION [PRIORITY MATCH]]\n\
                             remove ACLs from SWITCH\n\
@@ -367,6 +369,9 @@ Logical switch port commands:\n\
   lsp-set-dhcpv4-options PORT [DHCP_OPTIONS_UUID]\n\
                             set dhcpv4 options for PORT\n\
   lsp-get-dhcpv4-options PORT  get the dhcpv4 options for PORT\n\
+  lsp-set-dhcpv6-options PORT [DHCP_OPTIONS_UUID]\n\
+                            set dhcpv6 options for PORT\n\
+  lsp-get-dhcpv6-options PORT  get the dhcpv6 options for PORT\n\
 \n\
 Logical router commands:\n\
   lr-add [ROUTER]           create a logical router named ROUTER\n\
@@ -376,6 +381,13 @@ Logical router commands:\n\
 Logical router port commands:\n\
   lrp-add ROUTER PORT MAC NETWORK... [peer=PEER]\n\
                             add logical port PORT on ROUTER\n\
+  lrp-set-gateway-chassis PORT CHASSIS [PRIORITY]\n\
+                            set gateway chassis for port PORT\n\
+  lrp-del-gateway-chassis PORT CHASSIS\n\
+                            delete gateway chassis from port PORT\n\
+  lrp-get-gateway-chassis PORT\n\
+                            print the names of all gateway chassis on PORT\n\
+                            with PRIORITY\n\
   lrp-del PORT              delete PORT from its attached router\n\
   lrp-list ROUTER           print the names of all ports on ROUTER\n\
   lrp-set-enabled PORT STATE\n\
@@ -1161,7 +1173,12 @@ nbctl_lsp_set_type(struct ctl_context *ctx)
     const struct nbrec_logical_switch_port *lsp;
 
     lsp = lsp_by_name_or_uuid(ctx, id, true);
-    nbrec_logical_switch_port_set_type(lsp, type);
+    if (ovn_is_known_nb_lsp_type(type)) {
+        nbrec_logical_switch_port_set_type(lsp, type);
+    } else {
+        ctl_fatal("Logical switch port type '%s' is unrecognized. "
+                  "Not setting type.", type);
+    }
 }
 
 static void
@@ -1236,6 +1253,30 @@ nbctl_lsp_set_dhcpv4_options(struct ctl_context *ctx)
 }
 
 static void
+nbctl_lsp_set_dhcpv6_options(struct ctl_context *ctx)
+{
+    const char *id = ctx->argv[1];
+    const struct nbrec_logical_switch_port *lsp;
+
+    lsp = lsp_by_name_or_uuid(ctx, id, true);
+    const struct nbrec_dhcp_options *dhcp_opt = NULL;
+    if (ctx->argc == 3) {
+        dhcp_opt = dhcp_options_get(ctx, ctx->argv[2], true);
+    }
+
+    if (dhcp_opt) {
+        struct in6_addr ip;
+        unsigned int plen;
+        char *error = ipv6_parse_cidr(dhcp_opt->cidr, &ip, &plen);
+        if (error) {
+            free(error);
+            ctl_fatal("DHCP options cidr '%s' is not IPv6", dhcp_opt->cidr);
+        }
+    }
+    nbrec_logical_switch_port_set_dhcpv6_options(lsp, dhcp_opt);
+}
+
+static void
 nbctl_lsp_get_dhcpv4_options(struct ctl_context *ctx)
 {
     const char *id = ctx->argv[1];
@@ -1246,6 +1287,20 @@ nbctl_lsp_get_dhcpv4_options(struct ctl_context *ctx)
         ds_put_format(&ctx->output, UUID_FMT " (%s)\n",
                       UUID_ARGS(&lsp->dhcpv4_options->header_.uuid),
                       lsp->dhcpv4_options->cidr);
+    }
+}
+
+static void
+nbctl_lsp_get_dhcpv6_options(struct ctl_context *ctx)
+{
+    const char *id = ctx->argv[1];
+    const struct nbrec_logical_switch_port *lsp;
+
+    lsp = lsp_by_name_or_uuid(ctx, id, true);
+    if (lsp->dhcpv6_options) {
+        ds_put_format(&ctx->output, UUID_FMT " (%s)\n",
+                      UUID_ARGS(&lsp->dhcpv6_options->header_.uuid),
+                      lsp->dhcpv6_options->cidr);
     }
 }
 
@@ -1304,9 +1359,21 @@ nbctl_acl_list(struct ctl_context *ctx)
 
     for (i = 0; i < ls->n_acls; i++) {
         const struct nbrec_acl *acl = acls[i];
-        ds_put_format(&ctx->output, "%10s %5"PRId64" (%s) %s%s\n",
-                      acl->direction, acl->priority,
-                      acl->match, acl->action, acl->log ? " log" : "");
+        ds_put_format(&ctx->output, "%10s %5"PRId64" (%s) %s",
+                      acl->direction, acl->priority, acl->match,
+                      acl->action);
+        if (acl->log) {
+            ds_put_cstr(&ctx->output, " log(");
+            if (acl->name) {
+                ds_put_format(&ctx->output, "name=%s,", acl->name);
+            }
+            if (acl->severity) {
+                ds_put_format(&ctx->output, "severity=%s", acl->severity);
+            }
+            ds_chomp(&ctx->output, ',');
+            ds_put_cstr(&ctx->output, ")");
+        }
+        ds_put_cstr(&ctx->output, "\n");
     }
 
     free(acls);
@@ -1362,8 +1429,22 @@ nbctl_acl_add(struct ctl_context *ctx)
     nbrec_acl_set_direction(acl, direction);
     nbrec_acl_set_match(acl, ctx->argv[4]);
     nbrec_acl_set_action(acl, action);
-    if (shash_find(&ctx->options, "--log") != NULL) {
+
+    /* Logging options. */
+    bool log = shash_find(&ctx->options, "--log") != NULL;
+    const char *severity = shash_find_data(&ctx->options, "--severity");
+    const char *name = shash_find_data(&ctx->options, "--name");
+    if (log || severity || name) {
         nbrec_acl_set_log(acl, true);
+    }
+    if (severity) {
+        if (log_severity_from_string(severity) == UINT8_MAX) {
+            ctl_fatal("bad severity: %s", severity);
+        }
+        nbrec_acl_set_severity(acl, severity);
+    }
+    if (name) {
+        nbrec_acl_set_name(acl, name);
     }
 
     /* Check if same acl already exists for the ls */
@@ -1392,10 +1473,6 @@ nbctl_acl_del(struct ctl_context *ctx)
 {
     const struct nbrec_logical_switch *ls;
     ls = ls_by_name_or_uuid(ctx, ctx->argv[1], true);
-
-    if (ctx->argc != 2 && ctx->argc != 3 && ctx->argc != 5) {
-        ctl_fatal("cannot specify priority without match");
-    }
 
     if (ctx->argc == 2) {
         /* If direction, priority, and match are not specified, delete
@@ -1426,6 +1503,10 @@ nbctl_acl_del(struct ctl_context *ctx)
     }
 
     int64_t priority = parse_priority(ctx->argv[3]);
+
+    if (ctx->argc == 4) {
+        ctl_fatal("cannot specify priority without match");
+    }
 
     /* Remove the matching rule. */
     for (size_t i = 0; i < ls->n_acls; i++) {
@@ -1472,40 +1553,76 @@ nbctl_lb_add(struct ctl_context *ctx)
         }
     }
 
-    ovs_be32 ipv4 = 0;
-    ovs_be16 port = 0;
-    char *error = ip_parse_port(lb_vip, &ipv4, &port);
+    struct sockaddr_storage ss_vip;
+    char *error;
+    error = ipv46_parse(lb_vip, PORT_OPTIONAL, &ss_vip);
     if (error) {
         free(error);
-        if (!ip_parse(lb_vip, &ipv4)) {
-            ctl_fatal("%s: should be an IPv4 address (or an IPv4 address "
-                    "and a port number with : as a separator).", lb_vip);
-        }
+        ctl_fatal("%s: should be an IP address (or an IP address "
+                  "and a port number with : as a separator).", lb_vip);
+    }
 
-        if (is_update_proto) {
-            ctl_fatal("Protocol is unnecessary when no port of vip "
-                    "is given.");
+    char lb_vip_normalized[INET6_ADDRSTRLEN + 8];
+    char normalized_ip[INET6_ADDRSTRLEN];
+    if (ss_vip.ss_family == AF_INET) {
+        struct sockaddr_in *sin = ALIGNED_CAST(struct sockaddr_in *, &ss_vip);
+        inet_ntop(AF_INET, &sin->sin_addr, normalized_ip,
+                  sizeof normalized_ip);
+        if (sin->sin_port) {
+            is_vip_with_port = true;
+            snprintf(lb_vip_normalized, sizeof lb_vip_normalized, "%s:%d",
+                     normalized_ip, ntohs(sin->sin_port));
+        } else {
+            is_vip_with_port = false;
+            ovs_strlcpy(lb_vip_normalized, normalized_ip,
+                        sizeof lb_vip_normalized);
         }
-        is_vip_with_port = false;
+    } else {
+        struct sockaddr_in6 *sin6 = ALIGNED_CAST(struct sockaddr_in6 *,
+                                                 &ss_vip);
+        inet_ntop(AF_INET6, &sin6->sin6_addr, normalized_ip,
+                  sizeof normalized_ip);
+        if (sin6->sin6_port) {
+            is_vip_with_port = true;
+            snprintf(lb_vip_normalized, sizeof lb_vip_normalized, "[%s]:%d",
+                     normalized_ip, ntohs(sin6->sin6_port));
+        } else {
+            is_vip_with_port = false;
+            ovs_strlcpy(lb_vip_normalized, normalized_ip,
+                        sizeof lb_vip_normalized);
+        }
+    }
+
+    if (!is_vip_with_port && is_update_proto) {
+        ctl_fatal("Protocol is unnecessary when no port of vip "
+                  "is given.");
     }
 
     char *token = NULL, *save_ptr = NULL;
     struct ds lb_ips_new = DS_EMPTY_INITIALIZER;
     for (token = strtok_r(lb_ips, ",", &save_ptr);
             token != NULL; token = strtok_r(NULL, ",", &save_ptr)) {
-        if (is_vip_with_port) {
-            error = ip_parse_port(token, &ipv4, &port);
-            if (error) {
-                free(error);
-                ds_destroy(&lb_ips_new);
-                ctl_fatal("%s: should be an IPv4 address and a port "
+        struct sockaddr_storage ss_dst;
+
+        error = ipv46_parse(token, is_vip_with_port
+                ? PORT_REQUIRED
+                : PORT_FORBIDDEN,
+                &ss_dst);
+
+        if (error) {
+            free(error);
+            if (is_vip_with_port) {
+                ctl_fatal("%s: should be an IP address and a port "
                         "number with : as a separator.", token);
+            } else {
+                ctl_fatal("%s: should be an IP address.", token);
             }
-        } else {
-            if (!ip_parse(token, &ipv4)) {
-                ds_destroy(&lb_ips_new);
-                ctl_fatal("%s: should be an IPv4 address.", token);
-            }
+        }
+
+        if (ss_vip.ss_family != ss_dst.ss_family) {
+            ds_destroy(&lb_ips_new);
+            ctl_fatal("%s: IP address family is different from VIP %s.",
+                    token, lb_vip_normalized);
         }
         ds_put_format(&lb_ips_new, "%s%s",
                 lb_ips_new.length ? "," : "", token);
@@ -1515,19 +1632,19 @@ nbctl_lb_add(struct ctl_context *ctx)
     if (!add_duplicate) {
         lb = lb_by_name_or_uuid(ctx, lb_name, false);
         if (lb) {
-            if (smap_get(&lb->vips, lb_vip)) {
+            if (smap_get(&lb->vips, lb_vip_normalized)) {
                 if (!may_exist) {
                     ds_destroy(&lb_ips_new);
                     ctl_fatal("%s: a load balancer with this vip (%s) "
-                            "already exists", lb_name, lb_vip);
+                            "already exists", lb_name, lb_vip_normalized);
                 }
                 /* Update the vips. */
                 smap_replace(CONST_CAST(struct smap *, &lb->vips),
-                        lb_vip, ds_cstr(&lb_ips_new));
+                        lb_vip_normalized, ds_cstr(&lb_ips_new));
             } else {
                 /* Add the new vips. */
                 smap_add(CONST_CAST(struct smap *, &lb->vips),
-                        lb_vip, ds_cstr(&lb_ips_new));
+                        lb_vip_normalized, ds_cstr(&lb_ips_new));
             }
 
             /* Update the load balancer. */
@@ -1547,7 +1664,7 @@ nbctl_lb_add(struct ctl_context *ctx)
     nbrec_load_balancer_set_name(lb, lb_name);
     nbrec_load_balancer_set_protocol(lb, lb_proto);
     smap_add(CONST_CAST(struct smap *, &lb->vips),
-            lb_vip, ds_cstr(&lb_ips_new));
+            lb_vip_normalized, ds_cstr(&lb_ips_new));
     nbrec_load_balancer_set_vips(lb, &lb->vips);
     ds_destroy(&lb_ips_new);
 }
@@ -1589,32 +1706,49 @@ nbctl_lb_del(struct ctl_context *ctx)
 
 static void
 lb_info_add_smap(const struct nbrec_load_balancer *lb,
-                 struct smap *lbs)
+                 struct smap *lbs, int vip_width)
 {
     struct ds key = DS_EMPTY_INITIALIZER;
     struct ds val = DS_EMPTY_INITIALIZER;
     char *error, *protocol;
-    ovs_be32 ipv4 = 0;
-    ovs_be16 port = 0;
 
     const struct smap_node **nodes = smap_sort(&lb->vips);
     if (nodes) {
         for (int i = 0; i < smap_count(&lb->vips); i++) {
             const struct smap_node *node = nodes[i];
             protocol = lb->protocol;
-            error = ip_parse_port(node->key, &ipv4, &port);
+
+            struct sockaddr_storage ss;
+            error = ipv46_parse(node->key, PORT_OPTIONAL, &ss);
             if (error) {
+                VLOG_WARN("%s", error);
                 free(error);
-                protocol = "tcp/udp";
+                continue;
+            }
+
+            if (ss.ss_family == AF_INET) {
+                struct sockaddr_in *sin = ALIGNED_CAST(struct sockaddr_in *,
+                                                       &ss);
+                if (!sin->sin_port) {
+                    protocol = "tcp/udp";
+                }
+            } else {
+                struct sockaddr_in6 *sin6 = ALIGNED_CAST(struct sockaddr_in6 *,
+                                                         &ss);
+                if (!sin6->sin6_port) {
+                    protocol = "tcp/udp";
+                }
             }
 
             i == 0 ? ds_put_format(&val,
-                        UUID_FMT "    %-20.16s%-11.7s%-25.21s%s",
+                        UUID_FMT "    %-20.16s%-11.7s%-*.*s%s",
                         UUID_ARGS(&lb->header_.uuid),
                         lb->name, protocol,
+                        vip_width + 4, vip_width,
                         node->key, node->value)
-                   : ds_put_format(&val, "\n%60s%-11.7s%-25.21s%s",
+                   : ds_put_format(&val, "\n%60s%-11.7s%-*.*s%s",
                         "", protocol,
+                        vip_width + 4, vip_width,
                         node->key, node->value);
         }
 
@@ -1628,12 +1762,12 @@ lb_info_add_smap(const struct nbrec_load_balancer *lb,
 }
 
 static void
-lb_info_print(struct ctl_context *ctx, struct smap *lbs)
+lb_info_print(struct ctl_context *ctx, struct smap *lbs, int vip_width)
 {
     const struct smap_node **nodes = smap_sort(lbs);
     if (nodes) {
-        ds_put_format(&ctx->output, "%-40.36s%-20.16s%-11.7s%-25.21s%s\n",
-                "UUID", "LB", "PROTO", "VIP", "IPs");
+        ds_put_format(&ctx->output, "%-40.36s%-20.16s%-11.7s%-*.*s%s\n",
+                "UUID", "LB", "PROTO", vip_width + 4, vip_width, "VIP", "IPs");
         for (size_t i = 0; i < smap_count(lbs); i++) {
             const struct smap_node *node = nodes[i];
             ds_put_format(&ctx->output, "%s\n", node->value);
@@ -1643,21 +1777,45 @@ lb_info_print(struct ctl_context *ctx, struct smap *lbs)
     }
 }
 
+static int
+lb_get_max_vip_length(const struct nbrec_load_balancer *lb, int vip_width)
+{
+    const struct smap_node *node;
+    int max_length = vip_width;
+
+    SMAP_FOR_EACH (node, &lb->vips) {
+        size_t keylen = strlen(node->key);
+        if (max_length < keylen) {
+            max_length = keylen;
+        }
+    }
+
+    return max_length;
+}
+
 static void
 lb_info_list_all(struct ctl_context *ctx,
                  const char *lb_name, bool lb_check)
 {
     const struct nbrec_load_balancer *lb;
     struct smap lbs = SMAP_INITIALIZER(&lbs);
+    int vip_width = 0;
+
+    NBREC_LOAD_BALANCER_FOR_EACH (lb, ctx->idl) {
+        if (lb_check && strcmp(lb->name, lb_name)) {
+            continue;
+        }
+        vip_width = lb_get_max_vip_length(lb, vip_width);
+    }
 
     NBREC_LOAD_BALANCER_FOR_EACH(lb, ctx->idl) {
         if (lb_check && strcmp(lb->name, lb_name)) {
             continue;
         }
-        lb_info_add_smap(lb, &lbs);
+        lb_info_add_smap(lb, &lbs, vip_width);
     }
 
-    lb_info_print(ctx, &lbs);
+    lb_info_print(ctx, &lbs, vip_width);
     smap_destroy(&lbs);
 }
 
@@ -1756,15 +1914,21 @@ nbctl_lr_lb_list(struct ctl_context *ctx)
     const char *lr_name = ctx->argv[1];
     const struct nbrec_logical_router *lr;
     struct smap lbs = SMAP_INITIALIZER(&lbs);
+    int vip_width = 0;
 
     lr = lr_by_name_or_uuid(ctx, lr_name, true);
     for (int i = 0; i < lr->n_load_balancer; i++) {
         const struct nbrec_load_balancer *lb
             = lr->load_balancer[i];
-        lb_info_add_smap(lb, &lbs);
+        vip_width = lb_get_max_vip_length(lb, vip_width);
+    }
+    for (int i = 0; i < lr->n_load_balancer; i++) {
+        const struct nbrec_load_balancer *lb
+            = lr->load_balancer[i];
+        lb_info_add_smap(lb, &lbs, vip_width);
     }
 
-    lb_info_print(ctx, &lbs);
+    lb_info_print(ctx, &lbs, vip_width);
     smap_destroy(&lbs);
 }
 
@@ -1853,15 +2017,21 @@ nbctl_ls_lb_list(struct ctl_context *ctx)
     const char *ls_name = ctx->argv[1];
     const struct nbrec_logical_switch *ls;
     struct smap lbs = SMAP_INITIALIZER(&lbs);
+    int vip_width = 0;
 
     ls = ls_by_name_or_uuid(ctx, ls_name, true);
     for (int i = 0; i < ls->n_load_balancer; i++) {
         const struct nbrec_load_balancer *lb
             = ls->load_balancer[i];
-        lb_info_add_smap(lb, &lbs);
+        vip_width = lb_get_max_vip_length(lb, vip_width);
+    }
+    for (int i = 0; i < ls->n_load_balancer; i++) {
+        const struct nbrec_load_balancer *lb
+            = ls->load_balancer[i];
+        lb_info_add_smap(lb, &lbs, vip_width);
     }
 
-    lb_info_print(ctx, &lbs);
+    lb_info_print(ctx, &lbs, vip_width);
     smap_destroy(&lbs);
 }
 
@@ -2528,6 +2698,178 @@ lr_get_name(const struct nbrec_logical_router *lr, char uuid_s[UUID_LEN + 1],
     return uuid_s;
 }
 
+static const struct nbrec_gateway_chassis *
+gc_by_name_or_uuid(struct ctl_context *ctx, const char *id, bool must_exist)
+{
+    const struct nbrec_gateway_chassis *gc = NULL;
+
+    struct uuid gc_uuid;
+    bool is_uuid = uuid_from_string(&gc_uuid, id);
+    if (is_uuid) {
+        gc = nbrec_gateway_chassis_get_for_uuid(ctx->idl, &gc_uuid);
+    }
+
+    if (!gc) {
+        NBREC_GATEWAY_CHASSIS_FOR_EACH (gc, ctx->idl) {
+            if (!strcmp(gc->name, id)) {
+                break;
+            }
+        }
+    }
+
+    if (!gc && must_exist) {
+        ctl_fatal("%s: gateway chassis %s not found", id,
+                  is_uuid ? "UUID" : "name");
+    }
+
+    return gc;
+}
+
+static void
+nbctl_lrp_set_gateway_chassis(struct ctl_context *ctx)
+{
+    char *gc_name;
+    int64_t priority = 0;
+    const char *lrp_name = ctx->argv[1];
+    const struct nbrec_logical_router_port *lrp;
+    lrp = lrp_by_name_or_uuid(ctx, lrp_name, true);
+    if (!lrp) {
+        ctl_fatal("router port %s is required", lrp_name);
+        return;
+    }
+
+    const char *chassis_name = ctx->argv[2];
+    if (ctx->argv[3]) {
+        priority = parse_priority(ctx->argv[3]);
+    }
+
+    gc_name = xasprintf("%s-%s", lrp_name, chassis_name);
+    const struct nbrec_gateway_chassis *existing_gc;
+    existing_gc = gc_by_name_or_uuid(ctx, gc_name, false);
+    if (existing_gc) {
+        nbrec_gateway_chassis_set_priority(existing_gc, priority);
+        free(gc_name);
+        return;
+    }
+
+    /* Create the logical gateway chassis. */
+    struct nbrec_gateway_chassis *gc
+        = nbrec_gateway_chassis_insert(ctx->txn);
+    nbrec_gateway_chassis_set_name(gc, gc_name);
+    nbrec_gateway_chassis_set_chassis_name(gc, chassis_name);
+    nbrec_gateway_chassis_set_priority(gc, priority);
+
+    /* Insert the logical gateway chassis into the logical router port. */
+    nbrec_logical_router_port_verify_gateway_chassis(lrp);
+    struct nbrec_gateway_chassis **new_gc = xmalloc(
+        sizeof *new_gc * (lrp->n_gateway_chassis + 1));
+    nullable_memcpy(new_gc, lrp->gateway_chassis,
+                    sizeof *new_gc * lrp->n_gateway_chassis);
+    new_gc[lrp->n_gateway_chassis] = gc;
+    nbrec_logical_router_port_set_gateway_chassis(
+        lrp, new_gc, lrp->n_gateway_chassis + 1);
+    free(new_gc);
+    free(gc_name);
+}
+
+/* Removes logical router port 'lrp->gateway_chassis[idx]'. */
+static void
+remove_gc(const struct nbrec_logical_router_port *lrp, size_t idx)
+{
+    const struct nbrec_gateway_chassis *gc = lrp->gateway_chassis[idx];
+
+    if (lrp->n_gateway_chassis == 1) {
+        nbrec_logical_router_port_set_gateway_chassis(lrp, NULL, 0);
+    } else {
+        /* First remove 'gc' from the array of gateway_chassis.  This is what
+         * will actually cause the gateway chassis to be deleted when the
+         * transaction is sent to the database server (due to garbage
+         * collection). */
+        struct nbrec_gateway_chassis **new_gc
+            = xmemdup(lrp->gateway_chassis,
+                      sizeof *new_gc * lrp->n_gateway_chassis);
+        new_gc[idx] = new_gc[lrp->n_gateway_chassis - 1];
+        nbrec_logical_router_port_verify_gateway_chassis(lrp);
+        nbrec_logical_router_port_set_gateway_chassis(
+            lrp, new_gc, lrp->n_gateway_chassis - 1);
+        free(new_gc);
+    }
+
+    /* Delete 'gc' from the IDL.  This won't have a real effect on
+     * the database server (the IDL will suppress it in fact) but it
+     * means that it won't show up when we iterate with
+     * NBREC_GATEWAY_CHASSIS_FOR_EACH later. */
+    nbrec_gateway_chassis_delete(gc);
+}
+
+static void
+nbctl_lrp_del_gateway_chassis(struct ctl_context *ctx)
+{
+    const struct nbrec_logical_router_port *lrp;
+    lrp = lrp_by_name_or_uuid(ctx, ctx->argv[1], true);
+    if (!lrp) {
+        return;
+    }
+    /* Find the lrp that contains 'gc', then delete it. */
+    const char *chassis_name = ctx->argv[2];
+    for (size_t i = 0; i < lrp->n_gateway_chassis; i++) {
+        if (!strncmp(lrp->gateway_chassis[i]->chassis_name,
+                    chassis_name,
+                    strlen(lrp->gateway_chassis[i]->chassis_name))) {
+            remove_gc(lrp, i);
+            return;
+        }
+    }
+
+    /* Can't happen because of the database schema. */
+    ctl_fatal("chassis %s is not added to logical port %s",
+              chassis_name, ctx->argv[1]);
+}
+
+/* gateway_chassis ordering
+ *  */
+static int
+compare_chassis_prio_(const void *gc1_, const void *gc2_)
+{
+    const struct nbrec_gateway_chassis *const *gc1p = gc1_;
+    const struct nbrec_gateway_chassis *const *gc2p = gc2_;
+    const struct nbrec_gateway_chassis *gc1 = *gc1p;
+    const struct nbrec_gateway_chassis *gc2 = *gc2p;
+
+    int prio_diff = gc2->priority - gc1->priority;
+    if (!prio_diff) {
+        return strcmp(gc2->name, gc1->name);
+    }
+    return prio_diff;
+}
+
+/* Print a list of gateway chassis. */
+static void
+nbctl_lrp_get_gateway_chassis(struct ctl_context *ctx)
+{
+    const char *id = ctx->argv[1];
+    const struct nbrec_logical_router_port *lrp;
+    const struct nbrec_gateway_chassis **gcs;
+    size_t i;
+
+    lrp = lrp_by_name_or_uuid(ctx, id, true);
+
+    gcs = xmalloc(sizeof *gcs * lrp->n_gateway_chassis);
+    for (i = 0; i < lrp->n_gateway_chassis; i++) {
+        gcs[i] = lrp->gateway_chassis[i];
+    }
+
+    qsort(gcs, lrp->n_gateway_chassis, sizeof *gcs, compare_chassis_prio_);
+
+    for (i = 0; i < lrp->n_gateway_chassis; i++) {
+        const struct nbrec_gateway_chassis *gc = gcs[i];
+        ds_put_format(&ctx->output, "%s %5"PRId64"\n",
+                      gc->name, gc->priority);
+    }
+
+    free(gcs);
+}
+
 static void
 nbctl_lrp_add(struct ctl_context *ctx)
 {
@@ -3113,6 +3455,8 @@ static const struct ctl_table_class tables[NBREC_N_TABLES] = {
 
     [NBREC_TABLE_ADDRESS_SET].row_ids[0]
     = {&nbrec_address_set_col_name, NULL, NULL},
+
+    [NBREC_TABLE_ACL].row_ids[0] = {&nbrec_acl_col_name, NULL, NULL},
 };
 
 static void
@@ -3364,8 +3708,8 @@ static const struct ctl_command_syntax nbctl_commands[] = {
     { "ls-list", 0, 0, "", NULL, nbctl_ls_list, NULL, "", RO },
 
     /* acl commands. */
-    { "acl-add", 5, 5, "SWITCH DIRECTION PRIORITY MATCH ACTION", NULL,
-      nbctl_acl_add, NULL, "--log,--may-exist", RW },
+    { "acl-add", 5, 6, "SWITCH DIRECTION PRIORITY MATCH ACTION", NULL,
+      nbctl_acl_add, NULL, "--log,--may-exist,--name=,--severity=", RW },
     { "acl-del", 1, 4, "SWITCH [DIRECTION [PRIORITY MATCH]]", NULL,
       nbctl_acl_del, NULL, "", RW },
     { "acl-list", 1, 1, "SWITCH", NULL, nbctl_acl_list, NULL, "", RO },
@@ -3402,6 +3746,10 @@ static const struct ctl_command_syntax nbctl_commands[] = {
       nbctl_lsp_set_dhcpv4_options, NULL, "", RW },
     { "lsp-get-dhcpv4-options", 1, 1, "PORT", NULL,
       nbctl_lsp_get_dhcpv4_options, NULL, "", RO },
+    { "lsp-set-dhcpv6-options", 1, 2, "PORT [DHCP_OPT_UUID]", NULL,
+      nbctl_lsp_set_dhcpv6_options, NULL, "", RW },
+    { "lsp-get-dhcpv6-options", 1, 1, "PORT", NULL,
+      nbctl_lsp_get_dhcpv6_options, NULL, "", RO },
 
     /* logical router commands. */
     { "lr-add", 0, 1, "[ROUTER]", NULL, nbctl_lr_add, NULL,
@@ -3413,6 +3761,13 @@ static const struct ctl_command_syntax nbctl_commands[] = {
     { "lrp-add", 4, INT_MAX,
       "ROUTER PORT MAC NETWORK... [COLUMN[:KEY]=VALUE]...",
       NULL, nbctl_lrp_add, NULL, "--may-exist", RW },
+    { "lrp-set-gateway-chassis", 2, 3,
+      "PORT CHASSIS [PRIORITY]",
+      NULL, nbctl_lrp_set_gateway_chassis, NULL, "--may-exist", RW },
+    { "lrp-del-gateway-chassis", 2, 2, "PORT CHASSIS", NULL,
+      nbctl_lrp_del_gateway_chassis, NULL, "", RW },
+    { "lrp-get-gateway-chassis", 1, 1, "PORT", NULL,
+      nbctl_lrp_get_gateway_chassis, NULL, "", RO },
     { "lrp-del", 1, 1, "PORT", NULL, nbctl_lrp_del, NULL, "--if-exists", RW },
     { "lrp-list", 1, 1, "ROUTER", NULL, nbctl_lrp_list, NULL, "", RO },
     { "lrp-set-enabled", 2, 2, "PORT STATE", NULL, nbctl_lrp_set_enabled,

@@ -336,7 +336,8 @@ dpctl_set_if(int argc, const char *argv[], struct dpctl_params *dpctl_p)
         struct smap args;
         odp_port_t port_no;
         char *option;
-        int error = 0;
+
+        error = 0;
 
         argcopy = xstrdup(argv[i]);
         name = strtok_r(argcopy, ",", &save_ptr);
@@ -824,6 +825,9 @@ dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
         }
     }
 
+    /* The datapath name is not a mandatory parameter for this command.
+     * If it is not specified - so argc == 1 - we retrieve it from the
+     * current setup, assuming only one exists. */
     name = (argc > 1) ? xstrdup(argv[1]) : get_one_dp(dpctl_p);
     if (!name) {
         error = EINVAL;
@@ -959,6 +963,9 @@ dpctl_put_flow(int argc, const char *argv[], enum dpif_flow_put_flags flags,
     struct simap port_names;
     int n, error;
 
+    /* The datapath name is not a mandatory parameter for this command.
+     * If it is not specified - so argc < 4 - we retrieve it from the
+     * current setup, assuming only one exists. */
     dp_name = argc == 4 ? xstrdup(argv[1]) : get_one_dp(dpctl_p);
     if (!dp_name) {
         return EINVAL;
@@ -1068,6 +1075,9 @@ dpctl_get_flow(int argc, const char *argv[], struct dpctl_params *dpctl_p)
     struct ds ds;
     int n, error;
 
+    /* The datapath name is not a mandatory parameter for this command.
+     * If it is not specified - so argc < 3 - we retrieve it from the
+     * current setup, assuming only one exists. */
     dp_name = argc == 3 ? xstrdup(argv[1]) : get_one_dp(dpctl_p);
     if (!dp_name) {
         return EINVAL;
@@ -1124,6 +1134,9 @@ dpctl_del_flow(int argc, const char *argv[], struct dpctl_params *dpctl_p)
     struct simap port_names;
     int n, error;
 
+    /* The datapath name is not a mandatory parameter for this command.
+     * If it is not specified - so argc < 3 - we retrieve it from the
+     * current setup, assuming only one exists. */
     dp_name = argc == 3 ? xstrdup(argv[1]) : get_one_dp(dpctl_p);
     if (!dp_name) {
         return EINVAL;
@@ -1201,6 +1214,9 @@ dpctl_del_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
     char *name;
     int error;
 
+    /* The datapath name is not a mandatory parameter for this command.
+     * If it is not specified - so argc < 2 - we retrieve it from the
+     * current setup, assuming only one exists. */
     name = (argc == 2) ? xstrdup(argv[1]) : get_one_dp(dpctl_p);
     if (!name) {
         return EINVAL;
@@ -1258,6 +1274,7 @@ dpctl_dump_conntrack(int argc, const char *argv[],
     struct ct_dpif_dump_state *dump;
     struct ct_dpif_entry cte;
     uint16_t zone, *pzone = NULL;
+    int tot_bkts;
     struct dpif *dpif;
     char *name;
     int error;
@@ -1266,6 +1283,9 @@ dpctl_dump_conntrack(int argc, const char *argv[],
         pzone = &zone;
         argc--;
     }
+    /* The datapath name is not a mandatory parameter for this command.
+     * If it is not specified - so argc < 2 - we retrieve it from the
+     * current setup, assuming only one exists. */
     name = (argc == 2) ? xstrdup(argv[1]) : get_one_dp(dpctl_p);
     if (!name) {
         return EINVAL;
@@ -1277,14 +1297,14 @@ dpctl_dump_conntrack(int argc, const char *argv[],
         return error;
     }
 
-    error = ct_dpif_dump_start(dpif, &dump, pzone);
+    error = ct_dpif_dump_start(dpif, &dump, pzone, &tot_bkts);
     if (error) {
         dpctl_error(dpctl_p, error, "starting conntrack dump");
         dpif_close(dpif);
         return error;
     }
 
-    while (!ct_dpif_dump_next(dump, &cte)) {
+    while (!(error = ct_dpif_dump_next(dump, &cte))) {
         struct ds s = DS_EMPTY_INITIALIZER;
 
         ct_dpif_format_entry(&cte, &s, dpctl_p->verbosity,
@@ -1294,6 +1314,13 @@ dpctl_dump_conntrack(int argc, const char *argv[],
         dpctl_print(dpctl_p, "%s\n", ds_cstr(&s));
         ds_destroy(&s);
     }
+    if (error == EOF) {
+        /* Any CT entry was dumped with no issue. */
+        error = 0;
+    } else if (error) {
+        dpctl_error(dpctl_p, error, "dumping conntrack entry");
+    }
+
     ct_dpif_dump_done(dump);
     dpif_close(dpif);
     return error;
@@ -1312,6 +1339,9 @@ dpctl_flush_conntrack(int argc, const char *argv[],
         pzone = &zone;
         argc--;
     }
+    /* The datapath name is not a mandatory parameter for this command.
+     * If it is not specified - so argc < 2 - we retrieve it from the
+     * current setup, assuming only one exists. */
     name = (argc == 2) ? xstrdup(argv[1]) : get_one_dp(dpctl_p);
     if (!name) {
         return EINVAL;
@@ -1339,6 +1369,7 @@ dpctl_ct_stats_show(int argc, const char *argv[],
     struct ct_dpif_dump_state *dump;
     struct ct_dpif_entry cte;
     uint16_t zone, *pzone = NULL;
+    int tot_bkts;
     bool verbose = false;
     int lastargc = 0;
 
@@ -1358,7 +1389,9 @@ dpctl_ct_stats_show(int argc, const char *argv[],
             }
         }
     }
-
+    /* The datapath name is not a mandatory parameter for this command.
+     * If it is not specified - so argc == 1 - we retrieve it from the
+     * current setup, assuming only one exists. */
     name = (argc > 1) ? xstrdup(argv[1]) : get_one_dp(dpctl_p);
     if (!name) {
         return EINVAL;
@@ -1373,7 +1406,7 @@ dpctl_ct_stats_show(int argc, const char *argv[],
 
     memset(proto_stats, 0, sizeof(proto_stats));
     memset(tcp_conn_per_states, 0, sizeof(tcp_conn_per_states));
-    error = ct_dpif_dump_start(dpif, &dump, pzone);
+    error = ct_dpif_dump_start(dpif, &dump, pzone, &tot_bkts);
     if (error) {
         dpctl_error(dpctl_p, error, "starting conntrack dump");
         dpif_close(dpif);
@@ -1381,7 +1414,7 @@ dpctl_ct_stats_show(int argc, const char *argv[],
     }
 
     int tot_conn = 0;
-    while (!ct_dpif_dump_next(dump, &cte)) {
+    while (!(error = ct_dpif_dump_next(dump, &cte))) {
         ct_dpif_entry_uninit(&cte);
         tot_conn++;
         switch (cte.tuple_orig.ip_proto) {
@@ -1421,6 +1454,13 @@ dpctl_ct_stats_show(int argc, const char *argv[],
             proto_stats[CT_STATS_OTHER]++;
             break;
         }
+    }
+    if (error == EOF) {
+        /* All CT entries were dumped with no issue.  */
+        error = 0;
+    } else if (error) {
+        dpctl_error(dpctl_p, error, "dumping conntrack entry");
+        /* Fall through to show any other info we collected. */
     }
 
     dpctl_print(dpctl_p, "Connections Stats:\n    Total: %d\n", tot_conn);
@@ -1462,6 +1502,112 @@ dpctl_ct_stats_show(int argc, const char *argv[],
 
     ct_dpif_dump_done(dump);
     dpif_close(dpif);
+    return error;
+}
+
+#define CT_BKTS_GT "gt="
+static int
+dpctl_ct_bkts(int argc, const char *argv[],
+                     struct dpctl_params *dpctl_p)
+{
+    struct dpif *dpif;
+    char *name;
+
+    struct ct_dpif_dump_state *dump;
+    struct ct_dpif_entry cte;
+    uint16_t gt = 0; /* Threshold: display value when greater than gt. */
+    uint16_t *pzone = NULL;
+    int tot_bkts = 0;
+    int error;
+
+    if (argc > 1 && !strncmp(argv[argc - 1], CT_BKTS_GT, strlen(CT_BKTS_GT))) {
+        if (ovs_scan(argv[argc - 1], CT_BKTS_GT"%"SCNu16, &gt)) {
+            argc--;
+        }
+    }
+
+    /* The datapath name is not a mandatory parameter for this command.
+     * If it is not specified - so argc < 2 - we retrieve it from the
+     * current setup, assuming only one exists. */
+    name = (argc == 2) ? xstrdup(argv[1]) : get_one_dp(dpctl_p);
+    if (!name) {
+        return EINVAL;
+    }
+
+    error = parsed_dpif_open(name, false, &dpif);
+    free(name);
+    if (error) {
+        dpctl_error(dpctl_p, error, "opening datapath");
+        return error;
+    }
+
+    error = ct_dpif_dump_start(dpif, &dump, pzone, &tot_bkts);
+    if (error) {
+        dpctl_error(dpctl_p, error, "starting conntrack dump");
+        dpif_close(dpif);
+        return error;
+    }
+    if (tot_bkts == -1) {
+         /* Command not available when called by kernel OvS. */
+         dpctl_print(dpctl_p,
+             "Command is available for UserSpace ConnTracker only.\n");
+         ct_dpif_dump_done(dump);
+         dpif_close(dpif);
+         return 0;
+    }
+
+    dpctl_print(dpctl_p, "Total Buckets: %d\n", tot_bkts);
+
+    int tot_conn = 0;
+    uint32_t *conn_per_bkts = xzalloc(tot_bkts * sizeof(uint32_t));
+
+    while (!(error = ct_dpif_dump_next(dump, &cte))) {
+        ct_dpif_entry_uninit(&cte);
+        tot_conn++;
+        if (tot_bkts > 0) {
+            if (cte.bkt < tot_bkts) {
+                conn_per_bkts[cte.bkt]++;
+            } else {
+                dpctl_print(dpctl_p, "Bucket nr out of range: %d >= %d\n",
+                        cte.bkt, tot_bkts);
+            }
+        }
+    }
+    if (error == EOF) {
+        /* All CT entries were dumped with no issue.  */
+        error = 0;
+    } else if (error) {
+        dpctl_error(dpctl_p, error, "dumping conntrack entry");
+        /* Fall through and display all the collected info.  */
+    }
+
+    dpctl_print(dpctl_p, "Current Connections: %d\n", tot_conn);
+    dpctl_print(dpctl_p, "\n");
+    if (tot_bkts && tot_conn) {
+        dpctl_print(dpctl_p, "+-----------+"
+                "-----------------------------------------+\n");
+        dpctl_print(dpctl_p, "|  Buckets  |"
+                "         Connections per Buckets         |\n");
+        dpctl_print(dpctl_p, "+-----------+"
+                "-----------------------------------------+");
+#define NUM_BKTS_DIPLAYED_PER_ROW 8
+        for (int i = 0; i < tot_bkts; i++) {
+            if (i % NUM_BKTS_DIPLAYED_PER_ROW == 0) {
+                 dpctl_print(dpctl_p, "\n %3d..%3d   | ",
+                         i, i + NUM_BKTS_DIPLAYED_PER_ROW - 1);
+            }
+            if (conn_per_bkts[i] > gt) {
+                dpctl_print(dpctl_p, "%5d", conn_per_bkts[i]);
+            } else {
+                dpctl_print(dpctl_p, "%5s", ".");
+            }
+        }
+        dpctl_print(dpctl_p, "\n\n");
+    }
+
+    ct_dpif_dump_done(dump);
+    dpif_close(dpif);
+    free(conn_per_bkts);
     return error;
 }
 
@@ -1689,8 +1835,7 @@ dpctl_normalize_actions(int argc, const char *argv[],
     qsort(afs, n_afs, sizeof *afs, compare_actions_for_flow);
 
     for (i = 0; i < n_afs; i++) {
-        struct actions_for_flow *af = afs[i];
-
+        af = afs[i];
         sort_output_actions(af->actions.data, af->actions.size);
 
         for (encaps = 0; encaps < FLOW_MAX_VLAN_HEADERS; encaps ++) {
@@ -1760,6 +1905,7 @@ static const struct dpctl_command all_commands[] = {
     { "flush-conntrack", "[dp] [zone=N]", 0, 2, dpctl_flush_conntrack, DP_RW },
     { "ct-stats-show", "[dp] [zone=N] [verbose]",
       0, 3, dpctl_ct_stats_show, DP_RO },
+    { "ct-bkts", "[dp] [gt=N]", 0, 2, dpctl_ct_bkts, DP_RO },
     { "help", "", 0, INT_MAX, dpctl_help, DP_RO },
     { "list-commands", "", 0, INT_MAX, dpctl_list_commands, DP_RO },
 

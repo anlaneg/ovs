@@ -171,13 +171,22 @@ BUILD_ASSERT_DECL(sizeof(struct cmap_bucket) == CACHE_LINE_SIZE);
 //查询，删除比较简单,查询时需要在两个位置检查，删除时，可能需要在hash冲突链上删除元素。
 /* The implementation of a concurrent hash map. */
 struct cmap_impl {
-    unsigned int n;             /* Number of in-use elements. */
-    unsigned int max_n;         /* Max elements before enlarging. */ //需要扩展的下限
-    unsigned int min_n;         /* Min elements before shrinking. */   //需要缩发的上限
-    uint32_t mask;              /* Number of 'buckets', minus one. */ //桶大小
-    uint32_t basis;             /* Basis for rehashing client's hash values. */ //随机值，用于相同大小时，解决淘汰问题。（让老天给个机会）
-    uint8_t pad[CACHE_LINE_SIZE - 4 * 5]; /* Pad to end of cache line. */ //防止cache冲刷
-    struct cmap_bucket buckets[1];//桶
+    PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline0,
+        unsigned int n;             /* Number of in-use elements. */
+        //需要扩展的下限
+        unsigned int max_n;         /* Max elements before enlarging. */
+        //需要缩发的上限
+        unsigned int min_n;         /* Min elements before shrinking. */
+        //桶大小
+        uint32_t mask;              /* Number of 'buckets', minus one. */
+        //随机值，用于相同大小时，解决淘汰问题。（让老天给个机会）
+        uint32_t basis;             /* Basis for rehashing client's
+                                       hash values. */
+    );
+
+    PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
+        struct cmap_bucket buckets[1];
+    );
 };
 BUILD_ASSERT_DECL(sizeof(struct cmap_impl) == CACHE_LINE_SIZE * 2);
 

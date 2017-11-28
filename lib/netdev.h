@@ -99,9 +99,9 @@ enum netdev_pt_mode {
 
 /* Configuration specific to tunnels. */
 struct netdev_tunnel_config {//tunnel配置结构体
+    ovs_be64 in_key;//是否用流中的key(in)
     bool in_key_present;//in_key是否有效(是否配置了in_key或key)
-    bool in_key_flow;//是否用流中的key(in)
-    ovs_be64 in_key;
+    bool in_key_flow;
 
     bool out_key_present;//out_key是否有效
     bool out_key_flow;//是否用流中的key(out)
@@ -115,8 +115,8 @@ struct netdev_tunnel_config {//tunnel配置结构体
     struct in6_addr ipv6_dst;//设置的ipv6目的地址（ipv4地址也在其中）
 
     uint32_t exts;
-    bool set_egress_pkt_mark;
     uint32_t egress_pkt_mark;
+    bool set_egress_pkt_mark;
 
     uint8_t ttl;//ttl设置值
     bool ttl_inherit;//是否使用原流中的ttl，如果为Fasle,则采用"ttl设置值“
@@ -186,9 +186,10 @@ void netdev_send_wait(struct netdev *, int qid);
 
 /* Flow offloading. */
 struct offload_info {
-    const void *port_hmap_obj; /* To query ports info from netdev port map */
+    const struct dpif_class *dpif_class;
     ovs_be16 tp_dst_port; /* Destination port for tunnel in SET action */
 };
+struct dpif_class;
 struct netdev_flow_dump;
 int netdev_flow_flush(struct netdev *);
 int netdev_flow_dump_create(struct netdev *, struct netdev_flow_dump **dump);
@@ -210,16 +211,18 @@ bool netdev_is_flow_api_enabled(void);
 void netdev_set_flow_api_enabled(const struct smap *ovs_other_config);
 
 struct dpif_port;
-int netdev_ports_insert(struct netdev *, const void *obj, struct dpif_port *);
-struct netdev *netdev_ports_get(odp_port_t port, const void *obj);
-int netdev_ports_remove(odp_port_t port, const void *obj);
+int netdev_ports_insert(struct netdev *, const struct dpif_class *,
+                        struct dpif_port *);
+struct netdev *netdev_ports_get(odp_port_t port, const struct dpif_class *);
+int netdev_ports_remove(odp_port_t port, const struct dpif_class *);
 odp_port_t netdev_ifindex_to_odp_port(int ifindex);
-struct netdev_flow_dump **netdev_ports_flow_dump_create(const void *obj,
-                                                        int *ports);
-void netdev_ports_flow_flush(const void *obj);
-int netdev_ports_flow_del(const void *obj, const ovs_u128 *ufid,
+struct netdev_flow_dump **netdev_ports_flow_dump_create(
+                                        const struct dpif_class *,
+                                        int *ports);
+void netdev_ports_flow_flush(const struct dpif_class *);
+int netdev_ports_flow_del(const struct dpif_class *, const ovs_u128 *ufid,
                           struct dpif_flow_stats *stats);
-int netdev_ports_flow_get(const void *obj, struct match *match,
+int netdev_ports_flow_get(const struct dpif_class *, struct match *match,
                           struct nlattr **actions,
                           const ovs_u128 *ufid,
                           struct dpif_flow_stats *stats,

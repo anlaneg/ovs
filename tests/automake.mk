@@ -100,7 +100,8 @@ TESTSUITE_AT = \
 	tests/ovn-controller.at \
 	tests/ovn-controller-vtep.at \
 	tests/mcast-snooping.at \
-	tests/packet-type-aware.at
+	tests/packet-type-aware.at \
+	tests/nsh.at
 
 SYSTEM_KMOD_TESTSUITE_AT = \
 	tests/system-common-macros.at \
@@ -187,6 +188,7 @@ valgrind_wrappers = \
 	tests/valgrind/ovsdb-tool \
 	tests/valgrind/ovstest \
 	tests/valgrind/test-ovsdb \
+	tests/valgrind/test-skiplist \
 	tests/valgrind/test-strtok_r \
 	tests/valgrind/test-type-props
 
@@ -347,6 +349,7 @@ tests_ovstest_SOURCES = \
 	tests/test-rstp.c \
 	tests/test-sflow.c \
 	tests/test-sha1.c \
+	tests/test-skiplist.c \
 	tests/test-stp.c \
 	tests/test-unixctl.c \
 	tests/test-util.c \
