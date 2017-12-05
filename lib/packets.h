@@ -724,7 +724,7 @@ struct igmpv3_header {
     uint8_t rsvr1;
     ovs_be16 csum;
     ovs_be16 rsvr2;
-    ovs_be16 ngrp;
+    ovs_be16 ngrp;//组地址数目
 };
 BUILD_ASSERT_DECL(IGMPV3_HEADER_LEN == sizeof(struct igmpv3_header));
 
@@ -732,8 +732,8 @@ BUILD_ASSERT_DECL(IGMPV3_HEADER_LEN == sizeof(struct igmpv3_header));
 struct igmpv3_record {
     uint8_t type;
     uint8_t aux_len;
-    ovs_be16 nsrcs;
-    ovs_16aligned_be32 maddr;
+    ovs_be16 nsrcs;//源地址数量（标记记录中存在多少源地址，用于标明接受某人的组播）
+    ovs_16aligned_be32 maddr;//记录对应的组播地址
 };
 BUILD_ASSERT_DECL(IGMPV3_RECORD_LEN == sizeof(struct igmpv3_record));
 

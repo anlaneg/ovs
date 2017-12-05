@@ -438,8 +438,7 @@ mcast_snooping_add_group4(struct mcast_snooping *ms, ovs_be32 ip4,
     return mcast_snooping_add_group(ms, &addr, vlan, port);
 }
 
-//看这个函数有助于理解igmpv3那个无敌复杂的报文意义，目前我还不完全清楚
-//有空再看。
+//igmp snooping report报文处理
 int
 mcast_snooping_add_report(struct mcast_snooping *ms,
                           const struct dp_packet *p,
@@ -452,15 +451,17 @@ mcast_snooping_add_report(struct mcast_snooping *ms,
     int count = 0;
     int ngrp;
 
+    //igmp位于４层，先计算其偏移量，再取得igmpv3的头部
     offset = (char *) dp_packet_l4(p) - (char *) dp_packet_data(p);
     igmpv3 = dp_packet_at(p, offset, IGMPV3_HEADER_LEN);
     if (!igmpv3) {
-        return 0;
+        return 0;//报文有误
     }
     ngrp = ntohs(igmpv3->ngrp);
-    offset += IGMPV3_HEADER_LEN;
+    offset += IGMPV3_HEADER_LEN;//跳过８个字节
     while (ngrp--) {//遍历所有组播组
         bool ret;
+        //取某个igmpv3的record
         record = dp_packet_at(p, offset, sizeof(struct igmpv3_record));
         if (!record) {
             break;
@@ -468,7 +469,7 @@ mcast_snooping_add_report(struct mcast_snooping *ms,
         /* Only consider known record types. */
         if (record->type < IGMPV3_MODE_IS_INCLUDE
             || record->type > IGMPV3_BLOCK_OLD_SOURCES) {
-        	    //只处理认识的类型
+        	//只处理v3版本认识的类型
             continue;
         }
         ip4 = get_16aligned_be32(&record->maddr);
@@ -476,18 +477,22 @@ mcast_snooping_add_report(struct mcast_snooping *ms,
          * If record is INCLUDE MODE and there are no sources, it's equivalent
          * to a LEAVE.
          */
+        //对于include类型，change_to_include类型来讲，如果记录对应的源为０，则等价于leave
+        //其它所有情况，按add处理
         if (ntohs(record->nsrcs) == 0
             && (record->type == IGMPV3_MODE_IS_INCLUDE
                 || record->type == IGMPV3_CHANGE_TO_INCLUDE_MODE)) {
-        	    //没有指定源，但指定了include,则移除已学习到的所有
+        	//没有指定源，但指定了include,则移除已学习到的所有（没有人关注此组播）
             ret = mcast_snooping_leave_group4(ms, ip4, vlan, port);
         } else {
-        	    //指定了源，处理为include
+        	//其它情况的report报文，处理为include（这个处理比较懒，实际上不够精细）
             ret = mcast_snooping_add_group4(ms, ip4, vlan, port);
         }
         if (ret) {
             count++;
         }
+
+        //由于不解析源地址，不解析辅助数组字段，直接跳过这两个
         offset += sizeof(*record)
                   + ntohs(record->nsrcs) * sizeof(ovs_be32) + record->aux_len;
     }
@@ -580,6 +585,7 @@ mcast_snooping_leave_group(struct mcast_snooping *ms,
         return false;
     }
 
+    //查出对应的组播项，将其移除
     grp = mcast_snooping_lookup(ms, addr, vlan);
     if (grp && mcast_group_delete_bundle(ms, grp, port)) {
         ms->need_revalidate = true;

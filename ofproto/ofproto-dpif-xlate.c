@@ -2424,7 +2424,7 @@ update_mcast_snooping_table4__(const struct xlate_ctx *ctx,
                                IP_ARGS(flow->nw_src), in_xbundle->name, vlan);
         }
         break;
-    case IGMPV3_HOST_MEMBERSHIP_REPORT://无敌复杂的igmpv3 report报文学习
+    case IGMPV3_HOST_MEMBERSHIP_REPORT://无敌复杂的igmpv3 report报文学习（处理的很简单，很懒）
         count = mcast_snooping_add_report(ms, packet, vlan,
                                           in_xbundle->ofbundle);
         if (count) {
