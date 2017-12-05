@@ -271,7 +271,7 @@ patch_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     //仍存在于existing_ports中的接口是在数据库中已不存在的数，需要将其自br-int中移除
     struct shash_node *port_node, *port_next_node;
     SHASH_FOR_EACH_SAFE (port_node, port_next_node, &existing_ports) {
-        struct ovsrec_port *port = port_node->data;
+        port = port_node->data;
         shash_delete(&existing_ports, port_node);
         remove_port(ctx, port);//移除掉已存在的桥
     }

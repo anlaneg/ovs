@@ -493,7 +493,10 @@ ovs_set_program_name(const char *argv0, const char *version)
     size_t max_len = strlen(argv0) + 1;
 
     SetErrorMode(GetErrorMode() | SEM_NOGPFAULTERRORBOX);
+#if _MSC_VER < 1900
+     /* This function is deprecated from 1900 (Visual Studio 2015) */
     _set_output_format(_TWO_DIGIT_EXPONENT);
+#endif
 
     basename = xmalloc(max_len);
     _splitpath_s(argv0, NULL, 0, NULL, 0, basename, max_len, NULL, 0);
@@ -647,48 +650,53 @@ void
 ovs_hex_dump(FILE *stream, const void *buf_, size_t size,
              uintptr_t ofs, bool ascii)
 {
-  const uint8_t *buf = buf_;
-  const size_t per_line = 16; /* Maximum bytes per line. */
+    const uint8_t *buf = buf_;
+    const size_t per_line = 16; /* Maximum bytes per line. */
 
-  while (size > 0)
-    {
-      size_t start, end, n;
-      size_t i;
+    while (size > 0) {
+        size_t i;
 
-      /* Number of bytes on this line. */
-      start = ofs % per_line;
-      end = per_line;
-      if (end - start > size)
-        end = start + size;
-      n = end - start;
-
-      /* Print line. */
-      fprintf(stream, "%08"PRIxMAX"  ", (uintmax_t) ROUND_DOWN(ofs, per_line));
-      for (i = 0; i < start; i++)
-        fprintf(stream, "   ");
-      for (; i < end; i++)
-        fprintf(stream, "%02x%c",
-                buf[i - start], i == per_line / 2 - 1? '-' : ' ');
-      if (ascii)
-        {
-          for (; i < per_line; i++)
-            fprintf(stream, "   ");
-          fprintf(stream, "|");
-          for (i = 0; i < start; i++)
-            fprintf(stream, " ");
-          for (; i < end; i++) {
-              int c = buf[i - start];
-              putc(c >= 32 && c < 127 ? c : '.', stream);
-          }
-          for (; i < per_line; i++)
-            fprintf(stream, " ");
-          fprintf(stream, "|");
+        /* Number of bytes on this line. */
+        size_t start = ofs % per_line;
+        size_t end = per_line;
+        if (end - start > size) {
+            end = start + size;
         }
-      fprintf(stream, "\n");
+        size_t n = end - start;
 
-      ofs += n;
-      buf += n;
-      size -= n;
+        /* Print line. */
+        fprintf(stream, "%08"PRIxMAX" ",
+                (uintmax_t) ROUND_DOWN(ofs, per_line));
+        for (i = 0; i < start; i++) {
+            fprintf(stream, "   ");
+        }
+        for (; i < end; i++) {
+            fprintf(stream, "%c%02x",
+                    i == per_line / 2 ? '-' : ' ', buf[i - start]);
+        }
+        if (ascii) {
+            fprintf(stream, " ");
+            for (; i < per_line; i++) {
+                fprintf(stream, "   ");
+            }
+            fprintf(stream, "|");
+            for (i = 0; i < start; i++) {
+                fprintf(stream, " ");
+            }
+            for (; i < end; i++) {
+                int c = buf[i - start];
+                putc(c >= 32 && c < 127 ? c : '.', stream);
+            }
+            for (; i < per_line; i++) {
+                fprintf(stream, " ");
+            }
+            fprintf(stream, "|");
+        }
+        fprintf(stream, "\n");
+
+        ofs += n;
+        buf += n;
+        size -= n;
     }
 }
 
@@ -1239,35 +1247,34 @@ const uint8_t count_1bits_8[256] = {
 };
 #endif
 
-/* Returns true if the 'n' bytes starting at 'p' are zeros. */
+/* Returns true if the 'n' bytes starting at 'p' are 'byte'. */
 bool
-is_all_zeros(const void *p_, size_t n)
+is_all_byte(const void *p_, size_t n, uint8_t byte)
 {
     const uint8_t *p = p_;
     size_t i;
 
     for (i = 0; i < n; i++) {
-        if (p[i] != 0x00) {
+        if (p[i] != byte) {
             return false;
         }
     }
     return true;
 }
 
-/* Returns true if the 'n' bytes starting at 'p' are 0xff. */
+/* Returns true if the 'n' bytes starting at 'p' are zeros. */
 //如果p指针位置开始n字节长度，全部为0xff,则返回true,否则返回false
 bool
-is_all_ones(const void *p_, size_t n)
+is_all_zeros(const void *p, size_t n)
 {
-    const uint8_t *p = p_;
-    size_t i;
+    return is_all_byte(p, n, 0);
+}
 
-    for (i = 0; i < n; i++) {
-        if (p[i] != 0xff) {
-            return false;
-        }
-    }
-    return true;
+/* Returns true if the 'n' bytes starting at 'p' are 0xff. */
+bool
+is_all_ones(const void *p, size_t n)
+{
+    return is_all_byte(p, n, 0xff);
 }
 
 /* Copies 'n_bits' bits starting from bit 'src_ofs' in 'src' to the 'n_bits'

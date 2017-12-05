@@ -31,7 +31,7 @@
 extern char *program_name;
 
 #define __ARRAY_SIZE_NOCHECK(ARRAY) (sizeof(ARRAY) / sizeof((ARRAY)[0]))
-#ifdef __GNUC__
+#if __GNUC__ && !defined(__cplusplus)
 /* return 0 for array types, 1 otherwise */
 #define __ARRAY_CHECK(ARRAY) 					\
     !__builtin_types_compatible_p(typeof(ARRAY), typeof(&ARRAY[0]))
@@ -41,6 +41,19 @@ extern char *program_name;
 #define __ARRAY_SIZE(ARRAY)					\
     __builtin_choose_expr(__ARRAY_CHECK(ARRAY),			\
         __ARRAY_SIZE_NOCHECK(ARRAY), __ARRAY_FAIL(ARRAY))
+#elif defined(__cplusplus)
+#define __ARRAY_SIZE(ARRAY) ( \
+   0 * sizeof(reinterpret_cast<const ::Bad_arg_to_ARRAY_SIZE *>(ARRAY)) + \
+   0 * sizeof(::Bad_arg_to_ARRAY_SIZE::check_type((ARRAY), &(ARRAY))) + \
+   sizeof(ARRAY) / sizeof((ARRAY)[0]) )
+
+struct Bad_arg_to_ARRAY_SIZE {
+   class Is_pointer;
+   class Is_array {};
+   template <typename T>
+   static Is_pointer check_type(const T *, const T * const *);
+   static Is_array check_type(const void *, const void *);
+};
 #else
 #define __ARRAY_SIZE(ARRAY) __ARRAY_SIZE_NOCHECK(ARRAY)
 #endif
@@ -50,6 +63,12 @@ extern char *program_name;
  * Being wrong hurts performance but not correctness. */
 #define CACHE_LINE_SIZE 64
 BUILD_ASSERT_DECL(IS_POW2(CACHE_LINE_SIZE));
+
+/* Cacheline marking is typically done using zero-sized array.
+ * However MSVC doesn't like zero-sized array in struct/union.
+ * C4200: https://msdn.microsoft.com/en-us/library/79wf64bc.aspx
+ */
+typedef uint8_t OVS_CACHE_LINE_MARKER[1];
 
 //预取一段内存，从start起始，预取size个字节
 static inline void
@@ -413,6 +432,7 @@ static inline ovs_be32 be32_prefix_mask(int plen)
 
 bool is_all_zeros(const void *, size_t);
 bool is_all_ones(const void *, size_t);
+bool is_all_byte(const void *, size_t, uint8_t byte);
 void bitwise_copy(const void *src, unsigned int src_len, unsigned int src_ofs,
                   void *dst, unsigned int dst_len, unsigned int dst_ofs,
                   unsigned int n_bits);

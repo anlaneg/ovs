@@ -32,7 +32,7 @@
 #include "netlink-socket.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
-#include "poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "timeval.h"
 #include "unixctl.h"
 #include "util.h"
@@ -123,7 +123,8 @@ struct nl_ct_dump_state {
 
 /* Initialize a conntrack netlink dump. */
 int
-nl_ct_dump_start(struct nl_ct_dump_state **statep, const uint16_t *zone)
+nl_ct_dump_start(struct nl_ct_dump_state **statep, const uint16_t *zone,
+        int *ptot_bkts)
 {
     struct nl_ct_dump_state *state;
 
@@ -139,6 +140,9 @@ nl_ct_dump_start(struct nl_ct_dump_state **statep, const uint16_t *zone)
                         IPCTNL_MSG_CT_GET, NLM_F_REQUEST);
     nl_dump_start(&state->dump, NETLINK_NETFILTER, &state->buf);
     ofpbuf_clear(&state->buf);
+
+    /* Buckets to store connections are not used. */
+    *ptot_bkts = -1;
 
     return 0;
 }

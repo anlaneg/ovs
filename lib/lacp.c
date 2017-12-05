@@ -25,7 +25,7 @@
 #include "dp-packet.h"
 #include "ovs-atomic.h"
 #include "packets.h"
-#include "poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "seq.h"
 #include "openvswitch/shash.h"
 #include "timer.h"
@@ -546,6 +546,7 @@ lacp_run(struct lacp *lacp, lacp_send_pdu *send_pdu) OVS_EXCLUDED(mutex)
 
     if (lacp->update) {
         lacp_update_attached(lacp);
+        seq_change(connectivity_seq_get());
     }
 
     HMAP_FOR_EACH (slave, node, &lacp->slaves) {

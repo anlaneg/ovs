@@ -100,7 +100,8 @@ TESTSUITE_AT = \
 	tests/ovn-controller.at \
 	tests/ovn-controller-vtep.at \
 	tests/mcast-snooping.at \
-	tests/packet-type-aware.at
+	tests/packet-type-aware.at \
+	tests/nsh.at
 
 SYSTEM_KMOD_TESTSUITE_AT = \
 	tests/system-common-macros.at \
@@ -187,6 +188,7 @@ valgrind_wrappers = \
 	tests/valgrind/ovsdb-tool \
 	tests/valgrind/ovstest \
 	tests/valgrind/test-ovsdb \
+	tests/valgrind/test-skiplist \
 	tests/valgrind/test-strtok_r \
 	tests/valgrind/test-type-props
 
@@ -288,7 +290,6 @@ $(srcdir)/package.m4: $(top_srcdir)/configure.ac
 noinst_PROGRAMS += tests/test-ovsdb
 tests_test_ovsdb_SOURCES = tests/test-ovsdb.c
 nodist_tests_test_ovsdb_SOURCES = tests/idltest.c tests/idltest.h
-EXTRA_DIST += tests/uuidfilt.pl tests/ovsdb-monitor-sort.pl
 tests_test_ovsdb_LDADD = ovsdb/libovsdb.la lib/libopenvswitch.la
 
 noinst_PROGRAMS += tests/test-lib
@@ -347,6 +348,7 @@ tests_ovstest_SOURCES = \
 	tests/test-rstp.c \
 	tests/test-sflow.c \
 	tests/test-sha1.c \
+	tests/test-skiplist.c \
 	tests/test-stp.c \
 	tests/test-unixctl.c \
 	tests/test-util.c \
@@ -366,7 +368,6 @@ tests_ovstest_SOURCES += \
 endif
 
 tests_ovstest_LDADD = lib/libopenvswitch.la ovn/lib/libovn.la
-dist_check_SCRIPTS = tests/flowgen.pl
 
 noinst_PROGRAMS += tests/test-strtok_r
 tests_test_strtok_r_SOURCES = tests/test-strtok_r.c
@@ -377,6 +378,8 @@ tests_test_type_props_SOURCES = tests/test-type-props.c
 # Python tests.
 CHECK_PYFILES = \
 	tests/appctl.py \
+	tests/flowgen.py \
+	tests/ovsdb-monitor-sort.py \
 	tests/test-daemon.py \
 	tests/test-json.py \
 	tests/test-jsonrpc.py \
@@ -386,7 +389,8 @@ CHECK_PYFILES = \
 	tests/MockXenAPI.py \
 	tests/test-unix-socket.py \
 	tests/test-unixctl.py \
-	tests/test-vlog.py
+	tests/test-vlog.py \
+	tests/uuidfilt.py
 EXTRA_DIST += $(CHECK_PYFILES)
 PYCOV_CLEAN_FILES += $(CHECK_PYFILES:.py=.py,cover) .coverage
 

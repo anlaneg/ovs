@@ -21,6 +21,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "openflow/openflow.h"
 
 struct ds;
@@ -56,7 +60,9 @@ struct ofpbuf;
  *     type, and sometimes a code for each protocol that supports the error:
  *
  *         # The vendor is OF for standard OpenFlow error codes.  Otherwise it
- *           is one of the *_VENDOR_ID codes defined in openflow-common.h.
+ *           is one of the *_VENDOR_ID codes defined in openflow-common.h.  (To
+ *           add support for a new vendor, add a VENDOR_ID code to that
+ *           header.)
  *
  *         # The version can specify a specific OpenFlow version, a version
  *           range delimited by "-", or an open-ended range with "+".
@@ -271,6 +277,15 @@ enum ofperr {
      * present.  conjunction(id, k/n) must satisfy 1 <= k <= n and 2 <= n <=
      * 64. */
     OFPERR_NXBAC_BAD_CONJUNCTION,
+
+    /* NX1.3+(39).  Unsupported packet type in encap or decap. */
+    OFPERR_NXBAC_BAD_HEADER_TYPE,
+
+    /* NX1.3+(40).  Unrecognized encap or decap property. */
+    OFPERR_NXBAC_UNKNOWN_ED_PROP,
+
+    /* NX1.3+(41).  Error in encap or decap property. */
+    OFPERR_NXBAC_BAD_ED_PROP,
 
 /* ## --------------------- ## */
 /* ## OFPET_BAD_INSTRUCTION ## */
@@ -822,5 +837,9 @@ const char *ofperr_get_description(enum ofperr);
 
 void ofperr_format(struct ds *, enum ofperr);
 const char *ofperr_to_string(enum ofperr);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* ofp-errors.h */

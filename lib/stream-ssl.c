@@ -38,7 +38,7 @@
 #include "openvswitch/ofpbuf.h"
 #include "openflow/openflow.h"
 #include "packets.h"
-#include "poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "openvswitch/shash.h"
 #include "socket-util.h"
 #include "util.h"
@@ -300,6 +300,7 @@ error:
         SSL_free(ssl);
     }
     closesocket(fd);
+    free(name);
     return retval;
 }
 
@@ -447,7 +448,7 @@ get_peer_common_name(const struct ssl_stream *sslv)
     }
 
     const char *cn;
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined (LIBRESSL_VERSION_NUMBER)
     /* ASN1_STRING_data() is deprecated as of OpenSSL version 1.1 */
     cn = (const char *)ASN1_STRING_data(cn_data);
 #else

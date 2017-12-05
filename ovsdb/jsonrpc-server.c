@@ -29,7 +29,7 @@
 #include "ovsdb-parser.h"
 #include "ovsdb.h"
 #include "condition.h"
-#include "poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "reconnect.h"
 #include "row.h"
 #include "server.h"
@@ -1521,10 +1521,10 @@ ovsdb_jsonrpc_monitor_cond_change(struct ovsdb_jsonrpc_session *s,
                                     &m->unflushed, m->condition, m->version);
     if (update_json) {
         struct jsonrpc_msg *msg;
-        struct json *params;
+        struct json *p;
 
-        params = json_array_create_2(json_clone(m->monitor_id), update_json);
-        msg = ovsdb_jsonrpc_create_notify(m, params);
+        p = json_array_create_2(json_clone(m->monitor_id), update_json);
+        msg = ovsdb_jsonrpc_create_notify(m, p);
         jsonrpc_session_send(s->js, msg);
     }
 

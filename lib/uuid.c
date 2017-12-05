@@ -101,6 +101,14 @@ uuid_generate(struct uuid *uuid)
     uuid_set_bits_v4(uuid);//指出这是一个random uuid
 }
 
+struct uuid
+uuid_random(void)
+{
+    struct uuid uuid;
+    uuid_generate(&uuid);
+    return uuid;
+}
+
 //标记此值为uuid
 void
 uuid_set_bits_v4(struct uuid *uuid)

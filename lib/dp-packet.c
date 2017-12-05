@@ -31,6 +31,7 @@ dp_packet_init__(struct dp_packet *b, size_t allocated, enum dp_packet_source so
     dp_packet_reset_offsets(b);
     pkt_metadata_init(&b->md, 0);
     dp_packet_rss_invalidate(b);
+    dp_packet_mbuf_init(b);
     dp_packet_reset_cutlen(b);
     /* By default assume the packet type to be Ethernet. */
     b->packet_type = htonl(PT_ETH);
@@ -92,16 +93,17 @@ dp_packet_use_const(struct dp_packet *b, const void *data, size_t size)//使用s
     dp_packet_set_size(b, size);
 }
 
-/* Initializes 'b' as an empty dp_packet that contains the 'allocated' bytes of
- * memory starting at 'base'.  DPDK allocated dp_packet and *data is allocated
- * from one continous memory region, so in memory data start right after
- * dp_packet.  Therefore there is special method to free this type of
- * buffer.  dp_packet base, data and size are initialized by dpdk rcv() so no
- * need to initialize those fields. */
+/* Initializes 'b' as an empty dp_packet that contains the 'allocated' bytes.
+ * DPDK allocated dp_packet and *data is allocated from one continous memory
+ * region as part of memory pool, so in memory data start right after
+ * dp_packet.  Therefore, there is a special method to free this type of
+ * buffer.  Here, non-transient ovs dp-packet fields are initialized for
+ * packets that are part of a DPDK memory pool. */
 void
 dp_packet_init_dpdk(struct dp_packet *b, size_t allocated)//使用dpdk类型管理packet
 {
-    dp_packet_init__(b, allocated, DPBUF_DPDK);
+    dp_packet_set_allocated(b, allocated);
+    b->source = DPBUF_DPDK;
 }
 
 /* Initializes 'b' as an empty dp_packet with an initial capacity of 'size'
@@ -159,8 +161,9 @@ dp_packet_clone(const struct dp_packet *buffer)//报文copy
     return dp_packet_clone_with_headroom(buffer, 0);
 }
 
-/* Creates and returns a new dp_packet whose data are copied from 'buffer'.   The
- * returned dp_packet will additionally have 'headroom' bytes of headroom. */
+/* Creates and returns a new dp_packet whose data are copied from 'buffer'.
+ * The returned dp_packet will additionally have 'headroom' bytes of
+ * headroom. */
 struct dp_packet *
 dp_packet_clone_with_headroom(const struct dp_packet *buffer, size_t headroom)//创建相同报文
 {
@@ -170,14 +173,13 @@ dp_packet_clone_with_headroom(const struct dp_packet *buffer, size_t headroom)//
     new_buffer = dp_packet_clone_data_with_headroom(dp_packet_data(buffer),
                                                  dp_packet_size(buffer),
                                                  headroom);
+    /* Copy the following fields into the returned buffer: l2_pad_size,
+     * l2_5_ofs, l3_ofs, l4_ofs, cutlen, packet_type and md. */
     //控制变量copy
-    new_buffer->l2_pad_size = buffer->l2_pad_size;
-    new_buffer->l2_5_ofs = buffer->l2_5_ofs;
-    new_buffer->l3_ofs = buffer->l3_ofs;
-    new_buffer->l4_ofs = buffer->l4_ofs;
-    new_buffer->md = buffer->md;
-    new_buffer->cutlen = buffer->cutlen;
-    new_buffer->packet_type = buffer->packet_type;
+    memcpy(&new_buffer->l2_pad_size, &buffer->l2_pad_size,
+            sizeof(struct dp_packet) -
+            offsetof(struct dp_packet, l2_pad_size));
+
 #ifdef DPDK_NETDEV
     new_buffer->mbuf.ol_flags = buffer->mbuf.ol_flags;
 #else

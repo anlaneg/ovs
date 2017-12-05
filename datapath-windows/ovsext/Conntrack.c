@@ -169,6 +169,18 @@ OvsPostCtEventEntry(POVS_CT_ENTRY entry, UINT8 type)
     OvsPostCtEvent(&ctEventEntry);
 }
 
+static __inline VOID
+OvsCtIncrementCounters(POVS_CT_ENTRY entry, BOOLEAN reply, PNET_BUFFER_LIST nbl)
+{
+    if (reply) {
+        entry->rev_key.byteCount+= OvsPacketLenNBL(nbl);
+        entry->rev_key.packetCount++;
+    } else {
+        entry->key.byteCount += OvsPacketLenNBL(nbl);
+        entry->key.packetCount++;
+    }
+}
+
 static __inline BOOLEAN
 OvsCtAddEntry(POVS_CT_ENTRY entry, OvsConntrackKeyLookupCtx *ctx,
               PNAT_ACTION_INFO natInfo, UINT64 now)
@@ -287,6 +299,9 @@ OvsCtEntryCreate(OvsForwardingContext *fwdCtx,
     }
 
     OvsCtUpdateFlowKey(key, state, ctx->key.zone, 0, NULL);
+    if (entry) {
+        OvsCtIncrementCounters(entry, ctx->reply, curNbl);
+    }
     return entry;
 }
 
@@ -382,18 +397,6 @@ OvsCtKeyAreSame(OVS_CT_KEY ctxKey, OVS_CT_KEY entryKey)
             (ctxKey.zone == entryKey.zone));
 }
 
-static __inline VOID
-OvsCtIncrementCounters(POVS_CT_ENTRY entry, BOOLEAN reply, PNET_BUFFER_LIST nbl)
-{
-    if (reply) {
-        entry->rev_key.byteCount+= OvsPacketLenNBL(nbl);
-        entry->rev_key.packetCount++;
-    } else {
-        entry->key.byteCount += OvsPacketLenNBL(nbl);
-        entry->key.packetCount++;
-    }
-}
-
 POVS_CT_ENTRY
 OvsCtLookup(OvsConntrackKeyLookupCtx *ctx)
 {
@@ -401,7 +404,14 @@ OvsCtLookup(OvsConntrackKeyLookupCtx *ctx)
     POVS_CT_ENTRY entry;
     BOOLEAN reply = FALSE;
     POVS_CT_ENTRY found = NULL;
-    OVS_CT_KEY key = ctx->key;
+
+    /* Reverse NAT must be performed before OvsCtLookup, so here
+     * we simply need to flip the src and dst in key and compare
+     * they are equal. Note that flipped key is not equal to
+     * rev_key due to NAT effect.
+     */
+    OVS_CT_KEY revCtxKey = ctx->key;
+    OvsCtKeyReverse(&revCtxKey);
 
     if (!ctTotalEntries) {
         return found;
@@ -410,19 +420,13 @@ OvsCtLookup(OvsConntrackKeyLookupCtx *ctx)
     LIST_FORALL(&ovsConntrackTable[ctx->hash & CT_HASH_TABLE_MASK], link) {
         entry = CONTAINING_RECORD(link, OVS_CT_ENTRY, link);
 
-        if (OvsCtKeyAreSame(key,entry->key)) {
+        if (OvsCtKeyAreSame(ctx->key, entry->key)) {
             found = entry;
             reply = FALSE;
             break;
         }
 
-        /* Reverse NAT must be performed before OvsCtLookup, so here
-         * we simply need to flip the src and dst in key and compare
-         * they are equal. Note that flipped key is not equal to
-         * rev_key due to NAT effect.
-         */
-        OvsCtKeyReverse(&key);
-        if (OvsCtKeyAreSame(key, entry->key)) {
+        if (OvsCtKeyAreSame(revCtxKey, entry->key)) {
             found = entry;
             reply = TRUE;
             break;
@@ -721,6 +725,23 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
         entry = NULL;
     }
 
+    if (!entry && commit && ctTotalEntries >= CT_MAX_ENTRIES) {
+        /* Don't proceed with processing if the max limit has been hit.
+         * This blocks only new entries from being created and doesn't
+         * affect existing connections.
+         */
+        NdisReleaseRWLock(ovsConntrackLockObj, &lockState);
+        OVS_LOG_ERROR("Conntrack Limit hit: %lu", ctTotalEntries);
+        return NDIS_STATUS_RESOURCES;
+    }
+
+    /* Increment the counters soon after the lookup, since we set ct.state
+     * to OVS_CS_F_TRACKED after processing the ct entry.
+     */
+    if (entry && (!(key->ct.state & OVS_CS_F_TRACKED))) {
+        OvsCtIncrementCounters(entry, ctx.reply, curNbl);
+    }
+
     if (!entry) {
         /* If no matching entry was found, create one and add New state */
         entry = OvsCtEntryCreate(fwdCtx, key->ipKey.nwProto,
@@ -729,7 +750,6 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
                                  &entryCreated);
     } else {
         /* Process the entry and update CT flags */
-        OvsCtIncrementCounters(entry, ctx.reply, curNbl);
         entry = OvsProcessConntrackEntry(fwdCtx, layers->l4Offset, &ctx, key,
                                          zone, natInfo, commit, currentTime,
                                          &entryCreated);
@@ -781,9 +801,16 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
 
         key->ct.tuple_ipv4.ipv4_src = ctKey->src.addr.ipv4_aligned;
         key->ct.tuple_ipv4.ipv4_dst = ctKey->dst.addr.ipv4_aligned;
-        key->ct.tuple_ipv4.src_port = ctKey->src.port;
-        key->ct.tuple_ipv4.dst_port = ctKey->dst.port;
         key->ct.tuple_ipv4.ipv4_proto = ctKey->nw_proto;
+
+        /* Orig tuple Port is overloaded to take in ICMP-Type & Code */
+        /* This mimics the behavior in lib/conntrack.c*/
+        key->ct.tuple_ipv4.src_port = ctKey->nw_proto != IPPROTO_ICMP ?
+                                      ctKey->src.port :
+                                      htons(ctKey->src.icmp_type);
+        key->ct.tuple_ipv4.dst_port = ctKey->nw_proto != IPPROTO_ICMP ?
+                                      ctKey->dst.port :
+                                      htons(ctKey->src.icmp_code);
     }
 
     if (entryCreated && entry) {
@@ -953,10 +980,14 @@ OvsConntrackEntryCleaner(PVOID data)
     POVS_CT_THREAD_CTX context = (POVS_CT_THREAD_CTX)data;
     PLIST_ENTRY link, next;
     POVS_CT_ENTRY entry;
+    LOCK_STATE_EX lockState;
     BOOLEAN success = TRUE;
 
     while (success) {
-        LOCK_STATE_EX lockState;
+        if (ovsConntrackLockObj == NULL) {
+            /* Lock has been freed by 'OvsCleanupConntrack()' */
+            break;
+        }
         NdisAcquireRWLockWrite(ovsConntrackLockObj, &lockState, 0);
         if (context->exit) {
             NdisReleaseRWLock(ovsConntrackLockObj, &lockState);

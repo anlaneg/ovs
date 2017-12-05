@@ -64,7 +64,7 @@
 #include "openflow/openflow.h"
 #include "ovs-atomic.h"
 #include "packets.h"
-#include "poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "rtnetlink.h"
 #include "openvswitch/shash.h"
 #include "socket-util.h"
@@ -144,7 +144,7 @@ struct tpacket_auxdata {
  *
  * To avoid revisiting problems reported with using configure to detect
  * compatibility (see report at
- * http://openvswitch.org/pipermail/dev/2014-October/047978.html)
+ * https://mail.openvswitch.org/pipermail/ovs-dev/2014-October/291521.html)
  * unconditionally replace ethtool_cmd_speed. */
 #define ethtool_cmd_speed rpl_ethtool_cmd_speed
 static inline uint32_t rpl_ethtool_cmd_speed(const struct ethtool_cmd *ep)
@@ -182,8 +182,8 @@ static inline uint32_t rpl_ethtool_cmd_speed(const struct ethtool_cmd *ep)
  *
  * Tests for rtnl_link_stats64 don't seem to consistently work, e.g. on
  * 2.6.32-431.29.2.el6.x86_64 (see report at
- * http://openvswitch.org/pipermail/dev/2014-October/047978.html).  Maybe
- * if_link.h is not self-contained on those kernels.  It is easiest to
+ * https://mail.openvswitch.org/pipermail/ovs-dev/2014-October/291521.html).
+ * Maybe if_link.h is not self-contained on those kernels.  It is easiest to
  * unconditionally define a replacement. */
 #ifndef IFLA_STATS64
 #define IFLA_STATS64 23
@@ -1182,12 +1182,89 @@ netdev_linux_rxq_drain(struct netdev_rxq *rxq_)
     }
 }
 
-/* Sends 'buffer' on 'netdev'.  Returns 0 if successful, otherwise a positive
+static int
+netdev_linux_sock_batch_send(int sock, int ifindex,
+                             struct dp_packet_batch *batch)
+{
+    const size_t size = dp_packet_batch_size(batch);
+    /* We don't bother setting most fields in sockaddr_ll because the
+     * kernel ignores them for SOCK_RAW. */
+    struct sockaddr_ll sll = { .sll_family = AF_PACKET,
+                               .sll_ifindex = ifindex };
+
+    struct mmsghdr *mmsg = xmalloc(sizeof(*mmsg) * size);
+    struct iovec *iov = xmalloc(sizeof(*iov) * size);
+
+    struct dp_packet *packet;
+    DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+        iov[i].iov_base = dp_packet_data(packet);
+        iov[i].iov_len = dp_packet_get_send_len(packet);
+        mmsg[i].msg_hdr = (struct msghdr) { .msg_name = &sll,
+                                            .msg_namelen = sizeof sll,
+                                            .msg_iov = &iov[i],
+                                            .msg_iovlen = 1 };
+    }
+
+    int error = 0;
+    for (uint32_t ofs = 0; ofs < size; ) {
+        ssize_t retval;
+        do {
+            retval = sendmmsg(sock, mmsg + ofs, size - ofs, 0);
+            error = retval < 0 ? errno : 0;
+        } while (error == EINTR);
+        if (error) {
+            break;
+        }
+        ofs += retval;
+    }
+
+    free(mmsg);
+    free(iov);
+    return error;
+}
+
+/* Use the tap fd to send 'batch' to tap device 'netdev'.  Using the tap fd is
+ * essential, because packets sent to a tap device with an AF_PACKET socket
+ * will loop back to be *received* again on the tap device.  This doesn't occur
+ * on other interface types because we attach a socket filter to the rx
+ * socket. */
+static int
+netdev_linux_tap_batch_send(struct netdev *netdev_,
+                            struct dp_packet_batch *batch)
+{
+    struct netdev_linux *netdev = netdev_linux_cast(netdev_);
+    struct dp_packet *packet;
+    DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+        size_t size = dp_packet_get_send_len(packet);
+        ssize_t retval;
+        int error;
+
+        do {
+            retval = write(netdev->tap_fd, dp_packet_data(packet), size);
+            error = retval < 0 ? errno : 0;
+        } while (error == EINTR);
+
+        if (error) {
+            /* The Linux tap driver returns EIO if the device is not up.  From
+             * the OVS side this is not an error, so we ignore it; otherwise,
+             * return the erro. */
+            if (error != EIO) {
+                return error;
+            }
+        } else if (retval != size) {
+            VLOG_WARN_RL(&rl, "sent partial Ethernet packet (%"PRIuSIZE" "
+                         "bytes of %"PRIuSIZE") on %s",
+                         retval, size, netdev_get_name(netdev_));
+            return EMSGSIZE;
+        }
+    }
+    return 0;
+}
+
+/* Sends 'batch' on 'netdev'.  Returns 0 if successful, otherwise a positive
  * errno value.  Returns EAGAIN without blocking if the packet cannot be queued
  * immediately.  Returns EMSGSIZE if a partial packet was transmitted or if
  * the packet is too big or too small to transmit on the device.
- *
- * The caller retains ownership of 'buffer' in all cases.
  *
  * The kernel maintains a packet transmission queue, so the caller is not
  * expected to do additional queuing of packets. */
@@ -1199,8 +1276,6 @@ netdev_linux_send(struct netdev *netdev_, int qid OVS_UNUSED,
     int error = 0;
     int sock = 0;
 
-    struct sockaddr_ll sll;
-    struct msghdr msg;
     if (!is_tap_netdev(netdev_)) {
         sock = af_packet_sock();
         if (sock < 0) {
@@ -1214,87 +1289,25 @@ netdev_linux_send(struct netdev *netdev_, int qid OVS_UNUSED,
             goto free_batch;
         }
 
-        /* We don't bother setting most fields in sockaddr_ll because the
-         * kernel ignores them for SOCK_RAW. */
-        memset(&sll, 0, sizeof sll);
-        sll.sll_family = AF_PACKET;
-        sll.sll_ifindex = ifindex;
-
-        msg.msg_name = &sll;
-        msg.msg_namelen = sizeof sll;
-        msg.msg_iovlen = 1;
-        msg.msg_control = NULL;
-        msg.msg_controllen = 0;
-        msg.msg_flags = 0;
+        error = netdev_linux_sock_batch_send(sock, ifindex, batch);
+    } else {
+        error = netdev_linux_tap_batch_send(netdev_, batch);
     }
-
-    /* 'i' is incremented only if there's no error */
-    for (int i = 0; i < batch->count; ) {
-        const void *data = dp_packet_data(batch->packets[i]);
-        size_t size = dp_packet_size(batch->packets[i]);
-        ssize_t retval;
-
-        /* Truncate the packet if it is configured. */
-        size -= dp_packet_get_cutlen(batch->packets[i]);
-
-        if (!is_tap_netdev(netdev_)) {
-            /* Use our AF_PACKET socket to send to this device. */
-            struct iovec iov;
-
-            iov.iov_base = CONST_CAST(void *, data);
-            iov.iov_len = size;
-
-            msg.msg_iov = &iov;
-
-            retval = sendmsg(sock, &msg, 0);
+    if (error) {
+        if (error == ENOBUFS) {
+            /* The Linux AF_PACKET implementation never blocks waiting
+             * for room for packets, instead returning ENOBUFS.
+             * Translate this into EAGAIN for the caller. */
+            error = EAGAIN;
         } else {
-            /* Use the tap fd to send to this device.  This is essential for
-             * tap devices, because packets sent to a tap device with an
-             * AF_PACKET socket will loop back to be *received* again on the
-             * tap device.  This doesn't occur on other interface types
-             * because we attach a socket filter to the rx socket. */
-            struct netdev_linux *netdev = netdev_linux_cast(netdev_);
-
-            retval = write(netdev->tap_fd, data, size);
-        }
-
-        if (retval < 0) {
-            if (errno == EINTR) {
-                /* The send was interrupted by a signal.  Retry the packet by
-                 * continuing without incrementing 'i'.*/
-                continue;
-            } else if (errno == EIO && is_tap_netdev(netdev_)) {
-                /* The Linux tap driver returns EIO if the device is not up.
-                 * From the OVS side this is not an error, so ignore it. */
-            } else {
-                /* The Linux AF_PACKET implementation never blocks waiting for
-                 * room for packets, instead returning ENOBUFS.  Translate this
-                 * into EAGAIN for the caller. */
-                error = errno == ENOBUFS ? EAGAIN : errno;
-                break;
-            }
-        } else if (retval != size) {
-            VLOG_WARN_RL(&rl, "sent partial Ethernet packet (%"PRIuSIZE" bytes"
-                              " of %"PRIuSIZE") on %s", retval, size,
-                         netdev_get_name(netdev_));
-            error = EMSGSIZE;
-            break;
-        }
-
-        /* Process the next packet in the batch */
-        i++;
-    }
-
-    if (error && error != EAGAIN) {
             VLOG_WARN_RL(&rl, "error sending Ethernet packet on %s: %s",
                          netdev_get_name(netdev_), ovs_strerror(error));
+        }
     }
 
 free_batch:
     dp_packet_delete_batch(batch, may_steal);
-
     return error;
-
 }
 
 /* Registers with the poll loop to wake up from the next call to poll_block()
@@ -3750,6 +3763,7 @@ htb_parse_class_details__(struct netdev *netdev,
 {
     const struct htb *htb = htb_get__(netdev);
     int mtu, error;
+    unsigned long long int max_rate_bit;
 
     error = netdev_linux_get_mtu__(netdev_linux_cast(netdev), &mtu);
     if (error) {
@@ -3765,10 +3779,8 @@ htb_parse_class_details__(struct netdev *netdev,
     hc->min_rate = MIN(hc->min_rate, htb->max_rate);
 
     /* max-rate */
-    hc->max_rate = smap_get_ullong(details, "max-rate", 0) / 8;
-    if (!hc->max_rate) {
-        hc->max_rate = htb->max_rate;
-    }
+    max_rate_bit = smap_get_ullong(details, "max-rate", 0);
+    hc->max_rate = max_rate_bit ? max_rate_bit / 8 : htb->max_rate;
     hc->max_rate = MAX(hc->max_rate, hc->min_rate);
     hc->max_rate = MIN(hc->max_rate, htb->max_rate);
 
@@ -5373,7 +5385,7 @@ get_stats_via_netlink(const struct netdev *netdev_, struct netdev_stats *stats)
             netdev_stats_from_rtnl_link_stats64(stats, nl_attr_get(a));
             error = 0;
         } else {
-            const struct nlattr *a = nl_attr_find(reply, 0, IFLA_STATS);
+            a = nl_attr_find(reply, 0, IFLA_STATS);
             if (a && nl_attr_get_size(a) >= sizeof(struct rtnl_link_stats)) {
                 netdev_stats_from_rtnl_link_stats(stats, nl_attr_get(a));
                 error = 0;
@@ -5426,8 +5438,12 @@ linux_get_ifindex(const char *netdev_name)
 
     error = af_inet_ioctl(SIOCGIFINDEX, &ifr);
     if (error) {
-        VLOG_WARN_RL(&rl, "ioctl(SIOCGIFINDEX) on %s device failed: %s",
-                     netdev_name, ovs_strerror(error));
+        /* ENODEV probably means that a vif disappeared asynchronously and
+         * hasn't been removed from the database yet, so reduce the log level
+         * to INFO for that case. */
+        VLOG_RL(&rl, error == ENODEV ? VLL_INFO : VLL_ERR,
+                "ioctl(SIOCGIFINDEX) on %s device failed: %s",
+                netdev_name, ovs_strerror(error));
         return -error;
     }
     return ifr.ifr_ifindex;

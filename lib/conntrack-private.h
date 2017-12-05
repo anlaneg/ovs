@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, 2016 Nicira, Inc.
+ * Copyright (c) 2015, 2016, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,8 @@ struct ct_endpoint {
     union {
         ovs_be16 port;
         struct {
-            ovs_be16 icmp_id;
+        		//icmp协议时
+            ovs_be16 icmp_id;//echo的报文标识
             uint8_t icmp_type;
             uint8_t icmp_code;
         };
@@ -46,14 +47,15 @@ struct ct_endpoint {
  * hashing in ct_endpoint_hash_add(). */
 BUILD_ASSERT_DECL(sizeof(struct ct_endpoint) == sizeof(struct ct_addr) + 4);
 
-/* Changes to this structure need to be reflected in conn_key_hash() */
+/* Changes to this structure need to be reflected in conn_key_hash()
+ * and conn_key_cmp(). */
 struct conn_key {
     struct ct_endpoint src;
     struct ct_endpoint dst;
 
     ovs_be16 dl_type;
-    uint8_t nw_proto;
     uint16_t zone;
+    uint8_t nw_proto;//l4层协议，udp or tcp or ...
 };
 
 struct nat_conn_key_node {
@@ -62,17 +64,50 @@ struct nat_conn_key_node {
     struct conn_key value;
 };
 
+/* This is used for alg expectations; an expectation is a
+ * context created in preparation for establishing a data
+ * connection. The expectation is created by the control
+ * connection. */
+struct alg_exp_node {
+    struct hmap_node node;
+    /* Expiry list node for an expectation. */
+    struct ovs_list exp_node;
+    /* The time when this expectation will expire. */
+    long long expiration;
+    /* Key of data connection to be created. */
+    struct conn_key key;
+    /* Corresponding key of the control connection. */
+    struct conn_key master_key;
+    /* The NAT replacement address to be used by the data connection. */
+    struct ct_addr alg_nat_repl_addr;
+    /* The data connection inherits the master control
+     * connection label and mark. */
+    ovs_u128 master_label;
+    uint32_t master_mark;
+    /* True if the expectation is for passive mode, as is
+     * one option for FTP. */
+    bool passive_mode;
+};
+
 struct conn {
     struct conn_key key;//正向
     struct conn_key rev_key;//反向
+    /* Only used for orig_tuple support. */
+    struct conn_key master_key;
     long long expiration;//过期时间
     struct ovs_list exp_node;//挂链用
     struct hmap_node node;//挂connect链
     ovs_u128 label;
     /* XXX: consider flattening. */
     struct nat_action_info_t *nat_info;//nat分配信息
+    char *alg;
+    int seq_skew;
     uint32_t mark;
     uint8_t conn_type;
+    /* TCP sequence skew due to NATTing of FTP control messages. */
+    uint8_t seq_skew_dir;
+    /* True if alg data connection. */
+    uint8_t alg_related;
 };
 
 enum ct_update_res {

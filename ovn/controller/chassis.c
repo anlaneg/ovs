@@ -245,6 +245,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
         sbrec_encap_set_type(encaps[i], type);//不同的封装
         sbrec_encap_set_ip(encaps[i], encap_ip);
         sbrec_encap_set_options(encaps[i], &options);
+        sbrec_encap_set_chassis_name(encaps[i], chassis_id);
     }
     sbrec_chassis_set_encaps(chassis_rec, encaps, n_encaps);
     free(encaps);

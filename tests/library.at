@@ -1,7 +1,7 @@
 AT_BANNER([library unit tests])
 
 AT_SETUP([flow extractor])
-AT_CHECK([$PERL `which flowgen.pl` >/dev/null 3>flows 4>pcap])
+AT_CHECK([$PYTHON $srcdir/flowgen.py >/dev/null 3>flows 4>pcap])
 AT_CHECK([ovstest test-flows flows pcap], [0], [checked 247 packets, 0 errors
 ])
 AT_CLEANUP
@@ -54,6 +54,17 @@ AT_CLEANUP
 
 AT_SETUP([SHA-1])
 AT_CHECK([ovstest test-sha1], [0], [.........
+])
+AT_CLEANUP
+
+AT_SETUP([test skiplist])
+AT_KEYWORDS([skiplist])
+AT_CHECK([ovstest test-skiplist], [0], [skiplist insert
+skiplist delete
+skiplist find
+skiplist forward_to
+skiplist random
+
 ])
 AT_CLEANUP
 

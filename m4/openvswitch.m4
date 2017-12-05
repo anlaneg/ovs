@@ -79,11 +79,14 @@ AC_DEFUN([OVS_CHECK_WIN64],
      if (cl) 2>&1 | grep 'x64' >/dev/null 2>&1; then
        cl_cv_x64=yes
        MSVC64_LDFLAGS=" /MACHINE:X64 "
+       MSVC_PLATFORM="x64"
      else
        cl_cv_x64=no
        MSVC64_LDFLAGS=""
+       MSVC_PLATFORM="x86"
      fi])
      AC_SUBST([MSVC64_LDFLAGS])
+     AC_SUBST([MSVC_PLATFORM])
 ])
 
 dnl Checks for WINDOWS.
@@ -143,6 +146,7 @@ AC_DEFUN([OVS_CHECK_WIN32],
       )
 
       AC_DEFINE([WIN32], [1], [Define to 1 if building on WIN32.])
+      AC_CHECK_TYPES([struct timespec], [], [], [[#include <time.h>]])
       AH_BOTTOM([#ifdef WIN32
 #include "include/windows/windefs.h"
 #endif])
@@ -620,3 +624,22 @@ AC_DEFUN([OVS_LIBTOOL_VERSIONS],
   AC_MSG_RESULT([libX-$OVS_MAJOR.$OVS_MINOR.so.$LT_CURRENT.0.$OVS_MICRO)])
   AC_SUBST(OVS_LTINFO)
     ])
+
+dnl OVS does not use C++ itself, but it provides public header files
+dnl that a C++ compiler should accept, so when --enable-Werror is in
+dnl effect and a C++ compiler is available, we enable building a C++
+dnl source file that #includes all the public headers, as a way to
+dnl ensure that they are acceptable as C++.
+AC_DEFUN([OVS_CHECK_CXX],
+  [AC_REQUIRE([AC_PROG_CXX])
+   AC_REQUIRE([OVS_ENABLE_WERROR])
+   AX_CXX_COMPILE_STDCXX([11], [], [optional])
+   if test $enable_Werror = yes && test $HAVE_CXX11 = 1; then
+     enable_cxx=:
+     AC_LANG_PUSH([C++])
+     AC_CHECK_HEADERS([atomic])
+     AC_LANG_POP([C++])
+   else
+     enable_cxx=false
+   fi
+   AM_CONDITIONAL([HAVE_CXX], [$enable_cxx])])

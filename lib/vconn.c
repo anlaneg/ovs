@@ -35,7 +35,7 @@
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
 #include "packets.h"
-#include "poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "random.h"
 #include "util.h"
 #include "socket-util.h"
@@ -890,7 +890,6 @@ vconn_transact_noreply(struct vconn *vconn, struct ofpbuf *request,
     for (;;) {
         struct ofpbuf *msg;
         ovs_be32 msg_xid;
-        int error;
 
         error = vconn_recv_block(vconn, &msg);
         if (error) {

@@ -27,7 +27,7 @@
 #include "openvswitch/list.h"
 #include "openvswitch/ofpbuf.h"
 #include "ovs-thread.h"
-#include "poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "reconnect.h"
 #include "stream.h"
 #include "timeval.h"
@@ -845,7 +845,7 @@ jsonrpc_session_open_unreliably(struct jsonrpc *jsonrpc, uint8_t dscp)
     s->rpc = jsonrpc;
     s->stream = NULL;
     s->pstream = NULL;
-    s->seqno = 0;
+    s->seqno = 1;
 
     return s;
 }
@@ -903,7 +903,6 @@ jsonrpc_session_connect(struct jsonrpc_session *s)
     if (error) {
         reconnect_connect_failed(s->reconnect, time_msec(), error);
     }
-    s->seqno++;//增加序列号
 }
 
 void
@@ -924,6 +923,7 @@ jsonrpc_session_run(struct jsonrpc_session *s)
             }
             reconnect_connected(s->reconnect, time_msec());
             s->rpc = jsonrpc_open(stream);//构造与client间的rpc
+            s->seqno++;
         } else if (error != EAGAIN) {
         	//发生错误，关闭pstream
             reconnect_listen_error(s->reconnect, time_msec(), error);
@@ -966,6 +966,7 @@ jsonrpc_session_run(struct jsonrpc_session *s)
             reconnect_connected(s->reconnect, time_msec());
             s->rpc = jsonrpc_open(s->stream);
             s->stream = NULL;
+            s->seqno++;
         } else if (error != EAGAIN) {
             reconnect_connect_failed(s->reconnect, time_msec(), error);
             stream_close(s->stream);

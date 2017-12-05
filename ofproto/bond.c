@@ -42,7 +42,7 @@
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
 #include "packets.h"
-#include "poll-loop.h"
+#include "openvswitch/poll-loop.h"
 #include "seq.h"
 #include "openvswitch/shash.h"
 #include "timeval.h"
@@ -88,13 +88,13 @@ struct bond_slave {
 
     struct netdev *netdev;      /* Network device, owned by the client. */
     uint64_t change_seq;        /* Tracks changes in 'netdev'. */
-    ofp_port_t  ofp_port;       /* OpenFlow port number. */
     char *name;                 /* Name (a copy of netdev_get_name(netdev)). */
+    ofp_port_t  ofp_port;       /* OpenFlow port number. */
 
     /* Link status. */
-    long long delay_expires;    /* Time after which 'enabled' may change. */
     bool enabled;               /* May be chosen for flows? */
     bool may_enable;            /* Client considers this slave bondable. */
+    long long delay_expires;    /* Time after which 'enabled' may change. */
 
     /* Rebalancing info.  Used only by bond_rebalance(). */
     struct ovs_list bal_node;   /* In bond_rebalance()'s 'bals' list. */
@@ -175,10 +175,6 @@ static void bond_link_status_update(struct bond_slave *)
     OVS_REQ_WRLOCK(rwlock);
 static void bond_choose_active_slave(struct bond *)
     OVS_REQ_WRLOCK(rwlock);
-static unsigned int bond_hash_src(const struct eth_addr mac,
-                                  uint16_t vlan, uint32_t basis);
-static unsigned int bond_hash_tcp(const struct flow *, uint16_t vlan,
-                                  uint32_t basis);
 static struct bond_entry *lookup_bond_entry(const struct bond *,
                                             const struct flow *,
                                             uint16_t vlan)
@@ -1167,7 +1163,7 @@ bond_rebalance(struct bond *bond)
     }
     bond->next_rebalance = time_msec() + bond->rebalance_interval;
 
-    use_recirc = bond->ofproto->backer->support.odp.recirc &&
+    use_recirc = bond->ofproto->backer->rt_support.odp.recirc &&
                  bond_may_recirc(bond);
 
     if (use_recirc) {
@@ -1621,7 +1617,7 @@ bond_unixctl_hash(struct unixctl_conn *conn, int argc, const char *argv[],
     }
 
     if (ovs_scan(mac_s, ETH_ADDR_SCAN_FMT, ETH_ADDR_SCAN_ARGS(mac))) {
-        hash = bond_hash_src(mac, vlan, basis) & BOND_MASK;
+        hash = hash_mac(mac, vlan, basis) & BOND_MASK;
 
         hash_cstr = xasprintf("%u", hash);
         unixctl_command_reply(conn, hash_cstr);
@@ -1688,6 +1684,8 @@ bond_slave_lookup(struct bond *bond, const void *slave_)
 static void
 bond_enable_slave(struct bond_slave *slave, bool enable)
 {
+    struct bond *bond = slave->bond;
+
     slave->delay_expires = LLONG_MAX;
     if (enable != slave->enabled) {
         slave->bond->bond_revalidate = true;
@@ -1697,6 +1695,7 @@ bond_enable_slave(struct bond_slave *slave, bool enable)
         if (enable) {
             ovs_list_insert(&slave->bond->enabled_slaves, &slave->list_node);
         } else {
+            bond->send_learning_packets = true;
             ovs_list_remove(&slave->list_node);
         }
         ovs_mutex_unlock(&slave->bond->mutex);
@@ -1742,31 +1741,13 @@ bond_link_status_update(struct bond_slave *slave)
 }
 
 static unsigned int
-bond_hash_src(const struct eth_addr mac, uint16_t vlan, uint32_t basis)
-{
-    return hash_mac(mac, vlan, basis);
-}
-
-static unsigned int
-bond_hash_tcp(const struct flow *flow, uint16_t vlan, uint32_t basis)
-{
-    struct flow hash_flow = *flow;
-    hash_flow.vlans[0].tci = htons(vlan);
-
-    /* The symmetric quality of this hash function is not required, but
-     * flow_hash_symmetric_l4 already exists, and is sufficient for our
-     * purposes, so we use it out of convenience. */
-    return flow_hash_symmetric_l4(&hash_flow, basis);
-}
-
-static unsigned int
 bond_hash(const struct bond *bond, const struct flow *flow, uint16_t vlan)
 {
     ovs_assert(bond->balance == BM_TCP || bond->balance == BM_SLB);
 
     return (bond->balance == BM_TCP
-            ? bond_hash_tcp(flow, vlan, bond->basis)
-            : bond_hash_src(flow->dl_src, vlan, bond->basis));
+            ? flow_hash_5tuple(flow, bond->basis)
+            : hash_mac(flow->dl_src, vlan, bond->basis));
 }
 
 static struct bond_entry *
@@ -1825,11 +1806,11 @@ choose_output_slave(const struct bond *bond, const struct flow *flow,
             return NULL;
         }
         if (wc) {
-            flow_mask_hash_fields(flow, wc, NX_HASH_FIELDS_SYMMETRIC_L4);
+            flow_mask_hash_fields(flow, wc, NX_HASH_FIELDS_SYMMETRIC_L3L4_UDP);
         }
         /* Fall Through. */
     case BM_SLB:
-        if (wc) {
+        if (wc && balance == BM_SLB) {
             flow_mask_hash_fields(flow, wc, NX_HASH_FIELDS_ETH_SRC);
         }
         e = lookup_bond_entry(bond, flow, vlan);

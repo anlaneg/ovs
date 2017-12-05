@@ -46,6 +46,16 @@ struct netdev {
     const struct netdev_class *netdev_class; /* Functions to control
                                                 this device. */
 
+    /* If this is 'true' the user did not specify a netdev_class when
+     * opening this device, and therefore got assigned to the "system" class */
+    bool auto_classified;
+
+    /* If this is 'true', the user explicitly specified an MTU for this
+     * netdev.  Otherwise, Open vSwitch is allowed to override it. */
+    bool mtu_user_config;
+
+    int ref_cnt;                        /* Times this devices was opened. */
+
     /* A sequence number which indicates changes in one of 'netdev''s
      * properties.   It must be nonzero so that users have a value which
      * they may use as a reset when tracking 'netdev'.
@@ -66,18 +76,14 @@ struct netdev {
     struct seq *reconfigure_seq;//netdev重配置序列器
     uint64_t last_reconfigure_seq;//最后一次配置发生变化时的序列
 
-    /* If this is 'true', the user explicitly specified an MTU for this
-     * netdev.  Otherwise, Open vSwitch is allowed to override it. */
-    bool mtu_user_config;
-
     /* The core netdev code initializes these at netdev construction and only
      * provide read-only access to its client.  Netdev implementations may
      * modify them. */
     int n_txq;//收队列数
     int n_rxq;//发队列数
-    int ref_cnt;                        /* Times this devices was opened. */
-    struct shash_node *node;            /* Pointer to element in global map. */ //在netdev_shash中保存的结点
+    //在netdev_shash中保存的结点
     //保存netdev的flags发生变化的序列，以及变化后的值。（实际就是个增量串）
+    struct shash_node *node;            /* Pointer to element in global map. */
     struct ovs_list saved_flags_list; /* Contains "struct netdev_saved_flags". */
 };
 
@@ -123,8 +129,8 @@ struct netdev *netdev_rxq_get_netdev(const struct netdev_rxq *);
 struct netdev_flow_dump {
     struct netdev *netdev;
     odp_port_t port;
-    struct nl_dump *nl_dump;
     bool terse;
+    struct nl_dump *nl_dump;
 };
 
 /* Network device class structure, to be defined by each implementation of a

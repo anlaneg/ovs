@@ -76,24 +76,32 @@ struct tc_flower_key {
     struct eth_addr dst_mac;
     struct eth_addr src_mac;
 
-    ovs_be16 src_port;
-    ovs_be16 dst_port;
+    ovs_be16 tcp_src;
+    ovs_be16 tcp_dst;
+    ovs_be16 tcp_flags;
+
+    ovs_be16 udp_src;
+    ovs_be16 udp_dst;
+
+    ovs_be16 sctp_src;
+    ovs_be16 sctp_dst;
 
     uint16_t vlan_id;
     uint8_t vlan_prio;
 
     ovs_be16 encap_eth_type;
 
-    union {
-        struct {
-            ovs_be32 ipv4_src;
-            ovs_be32 ipv4_dst;
-        } ipv4;
-        struct {
-            struct in6_addr ipv6_src;
-            struct in6_addr ipv6_dst;
-        } ipv6;
-    };
+    uint8_t ip_ttl;
+
+    struct {
+        ovs_be32 ipv4_src;
+        ovs_be32 ipv4_dst;
+        uint8_t rewrite_ttl;
+    } ipv4;
+    struct {
+        struct in6_addr ipv6_src;
+        struct in6_addr ipv6_dst;
+    } ipv6;
 };
 
 struct tc_flower {
@@ -111,6 +119,14 @@ struct tc_flower {
 
     struct ovs_flow_stats stats;
     uint64_t lastused;
+
+    struct {
+        bool rewrite;
+        struct tc_flower_key key;
+        struct tc_flower_key mask;
+    } rewrite;
+
+    uint32_t csum_update_flags;
 
     struct {
         bool set;
@@ -143,7 +159,16 @@ struct tc_flower {
     } tunnel;
 
     struct tc_cookie act_cookie;
+
+    bool needs_full_ip_proto_mask;
 };
+
+/* assert that if we overflow with a masked write of uint32_t to the last byte
+ * of flower.rewrite we overflow inside struct flower.
+ * shouldn't happen unless someone moves rewrite to the end of flower */
+BUILD_ASSERT_DECL(offsetof(struct tc_flower, rewrite)
+                  + MEMBER_SIZEOF(struct tc_flower, rewrite)
+                  + sizeof(uint32_t) - 2 < sizeof(struct tc_flower));
 
 int tc_replace_flower(int ifindex, uint16_t prio, uint32_t handle,
                       struct tc_flower *flower);
