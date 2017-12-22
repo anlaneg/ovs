@@ -7137,6 +7137,7 @@ main(int argc, char *argv[])
     exit(res);
 }
 
+//退出命令处理
 static void
 ovn_northd_exit(struct unixctl_conn *conn, int argc OVS_UNUSED,
                 const char *argv[] OVS_UNUSED, void *exiting_)
