@@ -704,10 +704,15 @@ format_odp_tnl_push_action(struct ds *ds, const struct nlattr *attr,
 
     data = (struct ovs_action_push_tnl *) nl_attr_get(attr);
 
+    //输出tunnel_port,采用那个port进行封装
     ds_put_cstr(ds, "tnl_push(tnl_port(");
     odp_portno_name_format(portno_names, data->tnl_port, ds);
     ds_put_cstr(ds, "),");
+
+    //format header并输出
     format_odp_tnl_push_header(ds, data);
+
+    //输出路由指出的出接口
     ds_put_format(ds, ",out_port(");
     odp_portno_name_format(portno_names, data->out_port, ds);
     ds_put_cstr(ds, "))");
@@ -929,6 +934,7 @@ format_odp_conntrack_action(struct ds *ds, const struct nlattr *attr)
     }
 }
 
+//格式化输出各action
 static void
 format_odp_action(struct ds *ds, const struct nlattr *a,
                   const struct hmap *portno_names)
@@ -965,7 +971,7 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
         odp_portno_name_format(portno_names, nl_attr_get_odp_port(a), ds);
         ds_put_char(ds, ')');
         break;
-    case OVS_ACTION_ATTR_TUNNEL_PUSH:
+    case OVS_ACTION_ATTR_TUNNEL_PUSH://tunnel_push动作
         format_odp_tnl_push_action(ds, a, portno_names);
         break;
     case OVS_ACTION_ATTR_USERSPACE:
@@ -1045,7 +1051,7 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
     case OVS_ACTION_ATTR_CT:
         format_odp_conntrack_action(ds, a);
         break;
-    case OVS_ACTION_ATTR_CLONE:
+    case OVS_ACTION_ATTR_CLONE://clone输出
         format_odp_clone_action(ds, a, portno_names);
         break;
     case OVS_ACTION_ATTR_ENCAP_NSH:

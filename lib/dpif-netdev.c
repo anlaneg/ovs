@@ -2564,12 +2564,14 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
         odp_parms.key_buf = &key_buf;
         odp_flow_key_from_mask(&odp_parms, &mask_buf);
 
+        //开始dump flow的值
         ds_put_cstr(&ds, "flow_add: ");
-        odp_format_ufid(ufid, &ds);
+        odp_format_ufid(ufid, &ds);//输出ufid:
         ds_put_cstr(&ds, " ");
         odp_flow_format(key_buf.data, key_buf.size,
                         mask_buf.data, mask_buf.size,
                         NULL, &ds, false);
+        //输出action
         ds_put_cstr(&ds, ", actions:");
         format_odp_actions(&ds, actions, actions_len, NULL);
 
