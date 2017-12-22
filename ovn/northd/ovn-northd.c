@@ -663,6 +663,7 @@ join_datapaths(struct northd_context *ctx, struct hmap *datapaths,
     ovs_list_init(both);
 
     const struct sbrec_datapath_binding *sb, *sb_next;
+
     //遍历sb库，生成datapaths表，优先认为是sb_only的。
     SBREC_DATAPATH_BINDING_FOR_EACH_SAFE (sb, sb_next, ctx->ovnsb_idl) {
         struct uuid key;
@@ -865,6 +866,7 @@ ovn_port_create(struct hmap *ports, const char *key,
 
     op->key = xstrdup(key);
     op->sb = sb;
+    //如果是switch port,则nbsp不为空，如果是router port,则nbrp不为空
     op->nbsp = nbsp;
     op->nbrp = nbrp;
     op->derived = false;
@@ -1432,6 +1434,7 @@ join_logical_ports(struct northd_context *ctx,
                     ovs_list_push_back(nb_only, &op->list);//标明北向库独有
                 }
 
+                //发现了类型为localnet的port,更新od
                 if (!strcmp(nbsp->type, "localnet")) {
                    od->localnet_port = op;
                 }
@@ -1442,8 +1445,10 @@ join_logical_ports(struct northd_context *ctx,
                 for (size_t j = 0; j < nbsp->n_addresses; j++) {
                     if (!strcmp(nbsp->addresses[j], "unknown")
                         || !strcmp(nbsp->addresses[j], "router")) {
+                    	//忽略地址值为'unknown','router'的address
                         continue;
                     }
+
                     if (is_dynamic_lsp_address(nbsp->addresses[j])) {
                     	//指明为动态地址
                         if (nbsp->dynamic_addresses) {
@@ -6430,6 +6435,7 @@ sync_dns_entries(struct northd_context *ctx, struct hmap *datapaths)
 }
 
 
+//northd最重要的一个函数，用于实现南向库，北向库之间的同步
 static void
 ovnnb_db_run(struct northd_context *ctx, struct chassis_index *chassis_index,
              struct ovsdb_idl_loop *sb_loop)
@@ -7099,7 +7105,7 @@ main(int argc, char *argv[])
             chassis_index_init(&chassis_index, ctx.ovnsb_idl);
             destroy_chassis_index = true;
 
-            //将north库的内容添加到sb库中
+            //将north库的内容添加到sb库中(****重要函数****)
             ovnnb_db_run(&ctx, &chassis_index, &ovnsb_idl_loop);
             ovnsb_db_run(&ctx, &ovnsb_idl_loop);
             if (ctx.ovnsb_txn) {
