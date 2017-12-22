@@ -928,7 +928,13 @@ netdev_set_etheraddr(struct netdev *netdev, const struct eth_addr mac)//设置�
 int
 netdev_get_etheraddr(const struct netdev *netdev, struct eth_addr *mac)//获取mac对应的mac地址
 {
-    return netdev->netdev_class->get_etheraddr(netdev, mac);
+    int error;
+
+    error = netdev->netdev_class->get_etheraddr(netdev, mac);
+    if (error) {
+        memset(mac, 0, sizeof *mac);
+    }
+    return error;
 }
 
 /* Returns the name of the network device that 'netdev' represents,

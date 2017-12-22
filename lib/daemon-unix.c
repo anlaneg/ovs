@@ -542,6 +542,8 @@ daemon_usage(void)//deamon模式，根路径切换，pid文件位置,是否替�
     printf(
         "\nDaemon options:\n"
         "  --detach                run in background as daemon\n"
+        "  --monitor               creates a process to monitor this daemon\n"
+        "  --user=username[:group] changes the effective daemon user:group\n"
         "  --no-chdir              do not chdir to '/'\n"
         "  --pidfile[=FILE]        create pidfile (default: %s/%s.pid)\n"
         "  --overwrite-pidfile     with --pidfile, start even if already "

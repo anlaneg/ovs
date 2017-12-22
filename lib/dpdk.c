@@ -42,6 +42,7 @@ static FILE *log_stream = NULL;       /* Stream for DPDK log redirection */
 
 //保存vhost_socket的目录，默认在ovs_rundir()
 static char *vhost_sock_dir = NULL;   /* Location of vhost-user sockets */
+static bool vhost_iommu_enabled = false; /* Status of vHost IOMMU support */
 
 //检查ovs_other_config中是否有flag配置，如果有并且flag对应的配置字符串长度小于size，则使用配置的值
 //否则使用default_val,在new_val中保持最终的值，返回0或者1来表示是否发生了变更。
@@ -372,6 +373,11 @@ dpdk_init__(const struct smap *ovs_other_config)
         vhost_sock_dir = sock_dir_subcomponent;
     }
 
+    vhost_iommu_enabled = smap_get_bool(ovs_other_config,
+                                        "vhost-iommu-support", false);
+    VLOG_INFO("IOMMU support for vhost-user-client %s.",
+               vhost_iommu_enabled ? "enabled" : "disabled");
+
     //当前版本中的argv实际上全部来源于ovs_other_config
     argv = grow_argv(&argv, 0, 1);
     argc = 1;
@@ -527,6 +533,12 @@ const char *
 dpdk_get_vhost_sock_dir(void)
 {
     return vhost_sock_dir;
+}
+
+bool
+dpdk_vhost_iommu_enabled(void)
+{
+    return vhost_iommu_enabled;
 }
 
 void

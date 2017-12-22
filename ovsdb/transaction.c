@@ -855,6 +855,7 @@ ovsdb_txn_commit_(struct ovsdb_txn *txn, bool durable)
     //指出具体哪些列发生了变化，如果没有变化，则bug
     error = for_each_txn_row(txn, determine_changes);
     if (error) {
+        ovsdb_txn_abort(txn);
         return OVSDB_WRAP_BUG("can't happen", error);
     }
     //无表发生变化。

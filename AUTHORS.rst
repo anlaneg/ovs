@@ -310,7 +310,7 @@ SUGYO Kazushi                   sugyo.org@gmail.com
 Tadaaki Nagao                   nagao@stratosphere.co.jp
 Terry Wilson                    twilson@redhat.com
 Tetsuo NAKAGAWA                 nakagawa@mxc.nes.nec.co.jp
-Thadeu Lima de Souza Cascardo   cascardo@redhat.com
+Thadeu Lima de Souza Cascardo   cascardo@cascardo.eti.br
 Thomas F. Herbert               thomasfherbert@gmail.com
 Thomas Goirand                  zigo@debian.org
 Thomas Graf                     tgraf@noironetworks.com
@@ -589,6 +589,7 @@ likunyun                        kunyunli@hotmail.com
 meishengxin                     meishengxin@huawei.com
 neeraj mehta                    mehtaneeraj07@gmail.com
 rahim entezari                  rahim.entezari@gmail.com
+shivani dommeti                 shivani.dommeti@gmail.com
 weizj                           34965317@qq.com
 俊 赵                           zhaojun12@outlook.com
 冯全树(Crab)                    fqs888@126.com

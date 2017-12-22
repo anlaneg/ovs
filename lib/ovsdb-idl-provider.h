@@ -26,6 +26,10 @@
 #include "openvswitch/shash.h"
 #include "uuid.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* A local copy of a row in an OVSDB table, replicated from an OVSDB server.
  * This structure is used as a header for a larger structure that translates
  * the "struct ovsdb_datum"s into easier-to-use forms, via the ->parse() and
@@ -99,6 +103,7 @@ struct ovsdb_idl_column {
 struct ovsdb_idl_table_class {
     char *name;//表名称
     bool is_root;//是否为根表
+    bool is_singleton;
     const struct ovsdb_idl_column *columns;//列信息
     size_t n_columns;//有多少列
     size_t allocation_size;//申请多大空间（生成的代码中第一个字段为ovsdb_idl_row
@@ -164,5 +169,9 @@ void ovsdb_idl_txn_verify(const struct ovsdb_idl_row *,
                           const struct ovsdb_idl_column *);
 
 struct ovsdb_idl_txn *ovsdb_idl_txn_get(const struct ovsdb_idl_row *);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* ovsdb-idl-provider.h */

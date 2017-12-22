@@ -131,7 +131,8 @@ static void tnl_port_mod_log(const struct tnl_port *, const char *action)
     OVS_REQ_RDLOCK(rwlock);
 static const char *tnl_port_get_name(const struct tnl_port *)
     OVS_REQ_RDLOCK(rwlock);
-static void tnl_port_del__(const struct ofport_dpif *) OVS_REQ_WRLOCK(rwlock);
+static void tnl_port_del__(const struct ofport_dpif *, odp_port_t)
+    OVS_REQ_WRLOCK(rwlock);
 
 void
 ofproto_tunnel_init(void)
@@ -229,14 +230,16 @@ tnl_port_add(const struct ofport_dpif *ofport, const struct netdev *netdev,
 }
 
 /* Checks if the tunnel represented by 'ofport' reconfiguration due to changes
- * in its netdev_tunnel_config.  If it does, returns true. Otherwise, returns
- * false.  'ofport' and 'odp_port' should be the same as would be passed to
- * tnl_port_add(). */
+ * in its netdev_tunnel_config. If it does, returns true. Otherwise, returns
+ * false. 'new_odp_port' should be the port number coming from 'ofport' that
+ * is passed to tnl_port_add__(). 'old_odp_port' should be the port number
+ * that is passed to tnl_port_del__(). */
 //一个批次的配置来，执行这个批次的配置，如果不存在添加，如果存在，删除掉，然后再加入新的。
 bool
 tnl_port_reconfigure(const struct ofport_dpif *ofport,
-                     const struct netdev *netdev, odp_port_t odp_port,
-                     bool native_tnl, const char name[])
+                     const struct netdev *netdev, odp_port_t new_odp_port,
+                     odp_port_t old_odp_port, bool native_tnl,
+                     const char name[])
     OVS_EXCLUDED(rwlock)
 {
     struct tnl_port *tnl_port;
@@ -245,14 +248,15 @@ tnl_port_reconfigure(const struct ofport_dpif *ofport,
     fat_rwlock_wrlock(&rwlock);
     tnl_port = tnl_find_ofport(ofport);
     if (!tnl_port) {//不存在，添加
-        changed = tnl_port_add__(ofport, netdev, odp_port, false, native_tnl,
-                                 name);
+        changed = tnl_port_add__(ofport, netdev, new_odp_port, false,
+                                 native_tnl, name);
     } else if (tnl_port->netdev != netdev
-               || tnl_port->match.odp_port != odp_port
-               || tnl_port->change_seq != netdev_get_change_seq(tnl_port->netdev)) {//已存在，且变更了，删除掉再添加
+               || tnl_port->match.odp_port != new_odp_port
+               || tnl_port->change_seq != netdev_get_change_seq(tnl_port->netdev)) {
+		//已存在，且变更了，删除掉再添加
         VLOG_DBG("reconfiguring %s", tnl_port_get_name(tnl_port));
-        tnl_port_del__(ofport);
-        tnl_port_add__(ofport, netdev, odp_port, true, native_tnl, name);
+        tnl_port_del__(ofport, old_odp_port);
+        tnl_port_add__(ofport, netdev, new_odp_port, true, native_tnl, name);
         changed = true;
     }
     fat_rwlock_unlock(&rwlock);
@@ -261,7 +265,8 @@ tnl_port_reconfigure(const struct ofport_dpif *ofport,
 
 //释放tunnel-port
 static void
-tnl_port_del__(const struct ofport_dpif *ofport) OVS_REQ_WRLOCK(rwlock)
+tnl_port_del__(const struct ofport_dpif *ofport, odp_port_t odp_port)
+    OVS_REQ_WRLOCK(rwlock)
 {
     struct tnl_port *tnl_port;
 
@@ -271,11 +276,9 @@ tnl_port_del__(const struct ofport_dpif *ofport) OVS_REQ_WRLOCK(rwlock)
 
     tnl_port = tnl_find_ofport(ofport);
     if (tnl_port) {//找到了此tunl-port
-        const struct netdev_tunnel_config *cfg =
-            netdev_get_tunnel_config(tnl_port->netdev);
         struct hmap **map;
 
-        tnl_port_map_delete(cfg->dst_port, netdev_get_type(tnl_port->netdev));
+        tnl_port_map_delete(odp_port, netdev_get_type(tnl_port->netdev));
         tnl_port_mod_log(tnl_port, "removing");
         map = tnl_match_map(&tnl_port->match);
         hmap_remove(*map, &tnl_port->match_node);//删除match信息
@@ -293,10 +296,11 @@ tnl_port_del__(const struct ofport_dpif *ofport) OVS_REQ_WRLOCK(rwlock)
 /* Removes 'ofport' from the module. */
 //删除tunnel口
 void
-tnl_port_del(const struct ofport_dpif *ofport) OVS_EXCLUDED(rwlock)
+tnl_port_del(const struct ofport_dpif *ofport, odp_port_t odp_port)
+    OVS_EXCLUDED(rwlock)
 {
     fat_rwlock_wrlock(&rwlock);
-    tnl_port_del__(ofport);
+    tnl_port_del__(ofport, odp_port);
     fat_rwlock_unlock(&rwlock);
 }
 

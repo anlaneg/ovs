@@ -1873,9 +1873,12 @@ parse_odp_encap_nsh_action(const char *s, struct ofpbuf *actions)
                 }
                 encap_nsh.mdlen = mdlen + padding;
                 ofpbuf_uninit(&b);
+                continue;
             }
-            continue;
         }
+
+        ret = -EINVAL;
+        goto out;
     }
 out:
     if (ret < 0) {
@@ -3508,8 +3511,9 @@ generate_all_wildcard_mask(const struct attr_len_tbl tbl[], int max,
         size_t nested_mask;
 
         if (tbl[type].next) {
-            tbl = tbl[type].next;
-            max = tbl[type].next_max;
+            const struct attr_len_tbl *entry = &tbl[type];
+            tbl = entry->next;
+            max = entry->next_max;
         }
 
         nested_mask = nl_msg_start_nested(ofp, type);
