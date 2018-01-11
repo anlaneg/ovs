@@ -15,6 +15,8 @@
  */
 
 #include <config.h>
+
+#include <sys/types.h>
 #include <netinet/in.h>
 
 #include "bundle.h"
@@ -355,6 +357,9 @@ enum ofp_raw_action_type {
 /* These are intentionally undocumented, subject to change, and ovs-vswitchd */
 /* accepts them only if started with --enable-dummy. */
 
+    /* NX1.0+(254): void. */
+    NXAST_RAW_DEBUG_SLOW,
+
     /* NX1.0+(255): void. */
     NXAST_RAW_DEBUG_RECIRC,
 };
@@ -473,6 +478,7 @@ ofpact_next_flattened(const struct ofpact *ofpact)
     case OFPACT_UNROLL_XLATE:
     case OFPACT_CT_CLEAR:
     case OFPACT_DEBUG_RECIRC:
+    case OFPACT_DEBUG_SLOW:
     case OFPACT_METER:
     case OFPACT_CLEAR_ACTIONS:
     case OFPACT_WRITE_METADATA:
@@ -5800,7 +5806,7 @@ format_SAMPLE(const struct ofpact_sample *a,
     ds_put_format(s, "%s)%s", colors.paren, colors.end);
 }
 
-/* debug_recirc instruction. */
+/* debug instructions. */
 
 static bool enable_debug;
 
@@ -5845,6 +5851,43 @@ format_DEBUG_RECIRC(const struct ofpact_null *a OVS_UNUSED,
                     struct ds *s)
 {
     ds_put_format(s, "%sdebug_recirc%s", colors.value, colors.end);
+}
+
+static enum ofperr
+decode_NXAST_RAW_DEBUG_SLOW(struct ofpbuf *out)
+{
+    if (!enable_debug) {
+        return OFPERR_OFPBAC_BAD_VENDOR_TYPE;
+    }
+
+    ofpact_put_DEBUG_SLOW(out);
+    return 0;
+}
+
+static void
+encode_DEBUG_SLOW(const struct ofpact_null *n OVS_UNUSED,
+                  enum ofp_version ofp_version OVS_UNUSED,
+                  struct ofpbuf *out)
+{
+    put_NXAST_DEBUG_SLOW(out);
+}
+
+static char * OVS_WARN_UNUSED_RESULT
+parse_DEBUG_SLOW(char *arg OVS_UNUSED,
+                 const struct ofputil_port_map *port_map OVS_UNUSED,
+                 struct ofpbuf *ofpacts,
+                 enum ofputil_protocol *usable_protocols OVS_UNUSED)
+{
+    ofpact_put_DEBUG_SLOW(ofpacts);
+    return NULL;
+}
+
+static void
+format_DEBUG_SLOW(const struct ofpact_null *a OVS_UNUSED,
+                  const struct ofputil_port_map *port_map OVS_UNUSED,
+                  struct ds *s)
+{
+    ds_put_format(s, "%sdebug_slow%s", colors.value, colors.end);
 }
 
 /* Action structure for NXAST_CT.
@@ -7149,6 +7192,7 @@ ofpact_is_set_or_move_action(const struct ofpact *a)
     case OFPACT_WRITE_ACTIONS:
     case OFPACT_WRITE_METADATA:
     case OFPACT_DEBUG_RECIRC:
+    case OFPACT_DEBUG_SLOW:
         return false;
     default:
         OVS_NOT_REACHED();
@@ -7217,6 +7261,7 @@ ofpact_is_allowed_in_actions_set(const struct ofpact *a)
     case OFPACT_STACK_POP:
     case OFPACT_STACK_PUSH:
     case OFPACT_DEBUG_RECIRC:
+    case OFPACT_DEBUG_SLOW:
 
     /* The action set may only include actions and thus
      * may not include any instructions */
@@ -7441,6 +7486,7 @@ ovs_instruction_type_from_ofpact_type(enum ofpact_type type)
     case OFPACT_UNROLL_XLATE:
     case OFPACT_SAMPLE:
     case OFPACT_DEBUG_RECIRC:
+    case OFPACT_DEBUG_SLOW:
     case OFPACT_CT:
     case OFPACT_CT_CLEAR:
     case OFPACT_NAT:
@@ -8107,6 +8153,7 @@ ofpact_check__(enum ofputil_protocol *usable_protocols, struct ofpact *a,
         return OFPERR_OFPBAC_BAD_TYPE;
 
     case OFPACT_DEBUG_RECIRC:
+    case OFPACT_DEBUG_SLOW:
         return 0;
 
     case OFPACT_ENCAP:
@@ -8622,6 +8669,7 @@ ofpact_outputs_to_port(const struct ofpact *ofpact, ofp_port_t port)
     case OFPACT_METER:
     case OFPACT_GROUP:
     case OFPACT_DEBUG_RECIRC:
+    case OFPACT_DEBUG_SLOW:
     case OFPACT_CT:
     case OFPACT_CT_CLEAR:
     case OFPACT_NAT:
@@ -9176,6 +9224,9 @@ ofpact_decode_raw(enum ofp_version ofp_version,
         }
     }
 
+    VLOG_WARN_RL(&rl, "unknown %s action for vendor %#"PRIx32" and "
+                 "type %"PRIu16, ofputil_version_to_string(ofp_version),
+                 hdrs.vendor, hdrs.type);
     return (hdrs.vendor
             ? OFPERR_OFPBAC_BAD_VENDOR_TYPE
             : OFPERR_OFPBAC_BAD_TYPE);

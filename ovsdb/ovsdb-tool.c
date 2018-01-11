@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2016, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -226,8 +226,8 @@ do_create(struct ovs_cmdl_context *ctx)
 
     /* Create database file. */
     //创建数据库日志文件，写入表模式，并提交。
-    check_ovsdb_error(ovsdb_log_open(db_file_name, OVSDB_LOG_CREATE,
-                                     -1, &log));
+    check_ovsdb_error(ovsdb_log_open(db_file_name, OVSDB_MAGIC,
+                                     OVSDB_LOG_CREATE_EXCL, -1, &log));
     check_ovsdb_error(ovsdb_log_write(log, json));
     check_ovsdb_error(ovsdb_log_commit(log));
     ovsdb_log_close(log);
@@ -555,8 +555,8 @@ do_show_log(struct ovs_cmdl_context *ctx)
     unsigned int i;
 
     //打开日志文件
-    check_ovsdb_error(ovsdb_log_open(db_file_name, OVSDB_LOG_READ_ONLY,
-                                     -1, &log));
+    check_ovsdb_error(ovsdb_log_open(db_file_name, OVSDB_MAGIC,
+                                     OVSDB_LOG_READ_ONLY, -1, &log));
     shash_init(&names);
     schema = NULL;
     for (i = 0; ; i++) {

@@ -137,14 +137,23 @@ main(int argc, char *argv[])
         if (argc - optind > command->min_args
             && svec_contains(&dbs, argv[optind])) {
             database = xstrdup(argv[optind++]);
-        } else if (dbs.n == 1) {
-            database = xstrdup(dbs.names[0]);
         } else if (svec_contains(&dbs, "Open_vSwitch")) {
             database = xstrdup("Open_vSwitch");
         } else {
-            jsonrpc_close(rpc);
-            ovs_fatal(0, "no default database for `%s' command, please "
-                      "specify a database name", command->name);
+            size_t n = 0;
+            const char *best = NULL;
+            for (size_t i = 0; i < dbs.n; i++) {
+                if (dbs.names[i][0] != '_') {
+                    best = dbs.names[i];
+                    n++;
+                }
+            }
+            if (n != 1) {
+                jsonrpc_close(rpc);
+                ovs_fatal(0, "no default database for `%s' command, please "
+                          "specify a database name", command->name);
+            }
+            database = xstrdup(best);
         }
         svec_destroy(&dbs);
     } else {
@@ -271,8 +280,11 @@ usage(void)
            "\n  list-columns [SERVER] [DATABASE] [TABLE]\n"
            "    list columns in TABLE (or all tables) in DATABASE on SERVER\n"
            "\n  transact [SERVER] TRANSACTION\n"
-           "    run TRANSACTION (a JSON array of operations) on SERVER\n"
+           "    run TRANSACTION (params for \"transact\" request) on SERVER\n"
            "    and print the results as JSON on stdout\n"
+           "\n  query [SERVER] TRANSACTION\n"
+           "    run TRANSACTION (params for \"transact\" request) on SERVER,\n"
+           "    as read-only, and print the results as JSON on stdout\n"
            "\n  monitor [SERVER] [DATABASE] TABLE [COLUMN,...]...\n"
            "    monitor contents of COLUMNs in TABLE in DATABASE on SERVER.\n"
            "    COLUMNs may include !initial, !insert, !delete, !modify\n"
@@ -370,7 +382,7 @@ static void
 print_json(struct json *json)
 {
     char *string = json_to_string(json, table_style.json_flags);
-    fputs(string, stdout);
+    puts(string);
     free(string);
 }
 
@@ -536,20 +548,61 @@ do_list_columns(struct jsonrpc *rpc, const char *database,
     table_destroy(&t);
 }
 
+static struct json *
+do_transact__(struct jsonrpc *rpc, struct json *transaction)
+{
+    struct jsonrpc_msg *request, *reply;
+
+    request = jsonrpc_create_request("transact", transaction, NULL);
+    check_txn(jsonrpc_transact_block(rpc, request, &reply), &reply);
+    struct json *result = json_clone(reply->result);
+    jsonrpc_msg_destroy(reply);
+
+    return result;
+}
+
 static void
 do_transact(struct jsonrpc *rpc, const char *database OVS_UNUSED,
             int argc OVS_UNUSED, char *argv[])
 {
-    struct jsonrpc_msg *request, *reply;
-    struct json *transaction;
+    print_and_free_json(do_transact__(rpc, parse_json(argv[0])));
+}
 
-    transaction = parse_json(argv[0]);
+static void
+do_query(struct jsonrpc *rpc, const char *database OVS_UNUSED,
+         int argc OVS_UNUSED, char *argv[])
+{
+    struct json *transaction = parse_json(argv[0]);
 
-    request = jsonrpc_create_request("transact", transaction, NULL);
-    check_txn(jsonrpc_transact_block(rpc, request, &reply), &reply);
-    print_json(reply->result);
-    putchar('\n');
-    jsonrpc_msg_destroy(reply);
+    if (transaction->type != JSON_ARRAY) {
+        ovs_fatal(0, "not a valid OVSDB query");
+    }
+
+    /* Append an "abort" operation to the query. */
+    struct json *abort_op = json_object_create();
+    json_object_put_string(abort_op, "op", "abort");
+    json_array_add(transaction, abort_op);
+    size_t abort_idx = transaction->u.array.n - 2;
+
+    /* Run query. */
+    struct json *result = do_transact__(rpc, transaction);
+
+    /* If the "abort" operation ended the transaction, remove its result. */
+    if (result->type == JSON_ARRAY
+        && result->u.array.n == abort_idx + 1
+        && result->u.array.elems[abort_idx]->type == JSON_OBJECT) {
+        struct json *op_result = result->u.array.elems[abort_idx];
+        struct json *error = shash_find_data(json_object(op_result), "error");
+        if (error
+            && error->type == JSON_STRING
+            && !strcmp(json_string(error), "aborted")) {
+            result->u.array.n--;
+            json_destroy(op_result);
+        }
+    }
+
+    /* Print the result. */
+    print_and_free_json(result);
 }
 
 /* "monitor" command. */
@@ -1259,9 +1312,8 @@ dump_table(const char *table_name, const struct shash *cols,
                           y, table_name, columns[x]->name);
             }
 
-            check_ovsdb_error(ovsdb_datum_from_json(&data[y][x],
-                                                    &columns[x]->type,
-                                                    json, NULL));
+            check_ovsdb_error(ovsdb_unconstrained_datum_from_json(
+                                  &data[y][x], &columns[x]->type, json));
         }
     }
 
@@ -1403,7 +1455,7 @@ print_and_free_log_record(struct json *record)
 {
     struct ds header = DS_EMPTY_INITIALIZER;
     struct ds data = DS_EMPTY_INITIALIZER;
-    ovsdb_log_compose_record(record, &header, &data);
+    ovsdb_log_compose_record(record, OVSDB_MAGIC, &header, &data);
     fwrite(header.string, header.length, 1, stdout);
     fwrite(data.string, data.length, 1, stdout);
     ds_destroy(&data);
@@ -1763,7 +1815,6 @@ do_lock(struct jsonrpc *rpc, const char *method, const char *lock)
         } else if (msg->type == JSONRPC_REPLY
                    && json_equal(msg->id, request_id)) {
             print_json(msg->result);
-            putchar('\n');
             fflush(stdout);
             enable_lock_request = true;
             json_destroy(request_id);
@@ -1772,7 +1823,6 @@ do_lock(struct jsonrpc *rpc, const char *method, const char *lock)
         } else if (msg->type == JSONRPC_NOTIFY) {
             puts(msg->method);
             print_json(msg->params);
-            putchar('\n');
             fflush(stdout);
         }
 
@@ -1831,6 +1881,7 @@ static const struct ovsdb_client_command all_commands[] = {
     { "list-tables",        NEED_DATABASE, 0, 0,       do_list_tables },
     { "list-columns",       NEED_DATABASE, 0, 1,       do_list_columns },
     { "transact",           NEED_RPC,      1, 1,       do_transact },
+    { "query",              NEED_RPC,      1, 1,       do_query },
     { "monitor",            NEED_DATABASE, 1, INT_MAX, do_monitor },
     { "monitor-cond",       NEED_DATABASE, 2, 3,       do_monitor_cond },
     { "dump",               NEED_DATABASE, 0, INT_MAX, do_dump },

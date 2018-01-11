@@ -19,6 +19,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <sys/types.h>
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,7 +29,6 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
-#include <sys/types.h>
 #endif
 
 #include "cmap.h"
@@ -794,9 +794,8 @@ netdev_get_pt_mode(const struct netdev *netdev)
  * If the function returns a non-zero value, some of the packets might have
  * been sent anyway.
  *
- * If 'may_steal' is false, the caller retains ownership of all the packets.
- * If 'may_steal' is true, the caller transfers ownership of all the packets
- * to the network device, regardless of success.
+ * The caller transfers ownership of all the packets to the network device,
+ * regardless of success.
  *
  * If 'concurrent_txq' is true, the caller may perform concurrent calls
  * to netdev_send() with the same 'qid'. The netdev provider is responsible
@@ -810,15 +809,13 @@ netdev_get_pt_mode(const struct netdev *netdev)
  * queues. */
 int
 netdev_send(struct netdev *netdev, int qid, struct dp_packet_batch *batch,//报文发送
-            bool may_steal, bool concurrent_txq)//concurrent_txq为true时，需要加锁，非独占
+            bool concurrent_txq)//concurrent_txq为true时，需要加锁，非独占
+
 {
-    int error = netdev->netdev_class->send(netdev, qid, batch, may_steal,
+    int error = netdev->netdev_class->send(netdev, qid, batch,
                                            concurrent_txq);
     if (!error) {
         COVERAGE_INC(netdev_sent);
-        if (!may_steal) {
-            dp_packet_batch_reset_cutlen(batch);
-        }
     }
     return error;
 }
@@ -1457,6 +1454,21 @@ netdev_get_stats(const struct netdev *netdev, struct netdev_stats *stats)//返�
     }
     return error;
 }
+
+/* Retrieves current device custom stats for 'netdev'. */
+int
+netdev_get_custom_stats(const struct netdev *netdev,
+                        struct netdev_custom_stats *custom_stats)
+{
+    int error;
+    memset(custom_stats, 0, sizeof *custom_stats);
+    error = (netdev->netdev_class->get_custom_stats
+             ? netdev->netdev_class->get_custom_stats(netdev, custom_stats)
+             : EOPNOTSUPP);
+
+    return error;
+}
+
 
 /* Attempts to set input rate limiting (policing) policy, such that up to
  * 'kbits_rate' kbps of traffic is accepted, with a maximum accumulative burst
@@ -2415,6 +2427,18 @@ netdev_ports_flow_get(const struct dpif_class *dpif_class, struct match *match,
     }
     ovs_mutex_unlock(&netdev_hmap_mutex);
     return ENOENT;
+}
+
+void
+netdev_free_custom_stats_counters(struct netdev_custom_stats *custom_stats)
+{
+    if (custom_stats) {
+        if (custom_stats->counters) {
+            free(custom_stats->counters);
+            custom_stats->counters = NULL;
+            custom_stats->size = 0;
+        }
+    }
 }
 
 #ifdef __linux__

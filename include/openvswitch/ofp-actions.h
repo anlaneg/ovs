@@ -128,6 +128,7 @@ struct vl_mff_map;
      * These are intentionally undocumented, subject to change, and     \
      * only accepted if ovs-vswitchd is started with --enable-dummy. */ \
     OFPACT(DEBUG_RECIRC, ofpact_null,           ofpact, "debug_recirc") \
+    OFPACT(DEBUG_SLOW,   ofpact_null,           ofpact, "debug_slow")   \
                                                                         \
     /* Instructions. */                                                 \
     OFPACT(METER,           ofpact_meter,       ofpact, "meter")        \
@@ -474,7 +475,7 @@ struct ofpact_reg_move {
     struct mf_subfield dst;
 };
 
-/* OFPACT_STACK_PUSH.
+/* OFPACT_STACK_PUSH, OFPACT_STACK_POP.
  *
  * Used for NXAST_STACK_PUSH and NXAST_STACK_POP. */
 struct ofpact_stack {

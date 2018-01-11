@@ -17,10 +17,11 @@
 #include "ofproto/ofproto-dpif-xlate.h"
 
 #include <errno.h>
+#include <sys/types.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
 
 #include "bfd.h"
 #include "bitmap.h"
@@ -366,7 +367,6 @@ struct xlate_ctx {
     uint32_t dp_hash_basis;
     struct ofpbuf frozen_actions;
     const struct ofpact_controller *pause;
-    struct flow *paused_flow;
 
     /* True if a packet was but is no longer MPLS (due to an MPLS pop action).
      * This is a trigger for recirculation in cases where translating an action
@@ -2906,19 +2906,18 @@ xlate_normal(struct xlate_ctx *ctx)
 
 /* Appends a "sample" action for sFlow or IPFIX to 'ctx->odp_actions'.  The
  * 'probability' is the number of packets out of UINT32_MAX to sample.  The
- * 'cookie' (of length 'cookie_size' bytes) is passed back in the callback for
- * each sampled packet.  'tunnel_out_port', if not ODPP_NONE, is added as the
- * OVS_USERSPACE_ATTR_EGRESS_TUN_PORT attribute.  If 'include_actions', an
- * OVS_USERSPACE_ATTR_ACTIONS attribute is added.  If 'emit_set_tunnel',
- * sample(sampling_port=1) would translate into datapath sample action
- * set(tunnel(...)), sample(...) and it is used for sampling egress tunnel
- * information.
+ * 'cookie' is passed back in the callback for each sampled packet.
+ * 'tunnel_out_port', if not ODPP_NONE, is added as the
+ * OVS_USERSPACE_ATTR_EGRESS_TUN_PORT attribute.  If 'include_actions',
+ * an OVS_USERSPACE_ATTR_ACTIONS attribute is added.  If
+ * 'emit_set_tunnel', sample(sampling_port=1) would translate into
+ * datapath sample action set(tunnel(...)), sample(...) and it is used
+ * for sampling egress tunnel information.
  */
 static size_t
 compose_sample_action(struct xlate_ctx *ctx,
                       const uint32_t probability,
-                      const union user_action_cookie *cookie,
-                      const size_t cookie_size,
+                      const struct user_action_cookie *cookie,
                       const odp_port_t tunnel_out_port,
                       bool include_actions)
 {
@@ -2953,7 +2952,7 @@ compose_sample_action(struct xlate_ctx *ctx,
         ctx->xbridge, ctx->xin->flow.in_port.ofp_port);
     uint32_t pid = dpif_port_get_pid(ctx->xbridge->dpif, odp_port,
                                      flow_hash_5tuple(&ctx->xin->flow, 0));
-    int cookie_offset = odp_put_userspace_action(pid, cookie, cookie_size,
+    int cookie_offset = odp_put_userspace_action(pid, cookie, sizeof *cookie,
                                                  tunnel_out_port,
                                                  include_actions,
                                                  ctx->odp_actions);
@@ -2981,10 +2980,13 @@ compose_sflow_action(struct xlate_ctx *ctx)
         return 0;
     }
 
-    union user_action_cookie cookie = { .type = USER_ACTION_COOKIE_SFLOW };
+    struct user_action_cookie cookie = {
+        .type = USER_ACTION_COOKIE_SFLOW,
+        .ofp_in_port = ctx->xin->flow.in_port.ofp_port,
+        .ofproto_uuid = ctx->xbridge->ofproto->uuid
+    };
     return compose_sample_action(ctx, dpif_sflow_get_probability(sflow),
-                                 &cookie, sizeof cookie.sflow, ODPP_NONE,
-                                 true);
+                                 &cookie, ODPP_NONE, true);
 }
 
 /* If flow IPFIX is enabled, make sure IPFIX flow sample action
@@ -3017,38 +3019,36 @@ compose_ipfix_action(struct xlate_ctx *ctx, odp_port_t output_odp_port)
          * OVS_USERSPACE_ATTR_TUNNEL_OUT_PORT
          */
         if (dpif_ipfix_get_bridge_exporter_tunnel_sampling(ipfix) &&
-            dpif_ipfix_get_tunnel_port(ipfix, output_odp_port) ) {
+            dpif_ipfix_is_tunnel_port(ipfix, output_odp_port) ) {
            tunnel_out_port = output_odp_port;
         }
     }
 
-    union user_action_cookie cookie = {
-        .ipfix = {
-            .type = USER_ACTION_COOKIE_IPFIX,
-            .output_odp_port = output_odp_port,
-        }
+    struct user_action_cookie cookie = {
+        .type = USER_ACTION_COOKIE_IPFIX,
+        .ofp_in_port = ctx->xin->flow.in_port.ofp_port,
+        .ofproto_uuid = ctx->xbridge->ofproto->uuid,
+        .ipfix.output_odp_port = output_odp_port
     };
     compose_sample_action(ctx,
                           dpif_ipfix_get_bridge_exporter_probability(ipfix),
-                          &cookie, sizeof cookie.ipfix, tunnel_out_port,
-                          false);
+                          &cookie, tunnel_out_port, false);
 }
 
 /* Fix "sample" action according to data collected while composing ODP actions,
  * as described in compose_sflow_action().
  *
- * 'user_cookie_offset' must be the offset returned by add_sflow_action(). */
+ * 'user_cookie_offset' must be the offset returned by
+ * compose_sflow_action(). */
 static void
 fix_sflow_action(struct xlate_ctx *ctx, unsigned int user_cookie_offset)
 {
     const struct flow *base = &ctx->base_flow;
-    union user_action_cookie *cookie;
+    struct user_action_cookie *cookie;
 
-    cookie = ofpbuf_at(ctx->odp_actions, user_cookie_offset,
-                       sizeof cookie->sflow);
+    cookie = ofpbuf_at(ctx->odp_actions, user_cookie_offset, sizeof *cookie);
     ovs_assert(cookie->type == USER_ACTION_COOKIE_SFLOW);
 
-    cookie->type = USER_ACTION_COOKIE_SFLOW;
     cookie->sflow.vlan_tci = base->vlans[0].tci;
 
     /* See http://www.sflow.org/sflow_version_5.txt (search for "Input/output
@@ -4154,6 +4154,22 @@ xlate_group_bucket(struct xlate_ctx *ctx, struct ofputil_bucket *bucket,
      * the group bucket freezes translation, the actions after the group action
      * must continue processing with the original, not the frozen packet! */
     ctx->exit = false;
+
+    /* Context error in a bucket should not impact processing of other buckets
+     * or actions. This is similar to cloning a packet for group buckets.
+     * There is no need to restore the error back to old value due to the fact
+     * that we actually processed group action which can happen only when there
+     * is no previous context error.
+     *
+     * Exception to above is errors which are system limits to protect
+     * translation from running too long or occupy too much space. These errors
+     * should not be masked. XLATE_RECURSION_TOO_DEEP, XLATE_TOO_MANY_RESUBMITS
+     * and XLATE_STACK_TOO_DEEP fall in this category. */
+    if (ctx->error == XLATE_TOO_MANY_MPLS_LABELS ||
+        ctx->error == XLATE_UNSUPPORTED_PACKET_TYPE) {
+        /* reset the error and continue processing other buckets */
+        ctx->error = XLATE_OK;
+    }
 }
 
 static void
@@ -4432,174 +4448,42 @@ flood_packets(struct xlate_ctx *ctx, bool all, bool is_last_action)
     ctx->nf_output_iface = NF_OUT_FLOOD;
 }
 
-/* Copy and reformat a partially xlated odp actions to a new
- * odp actions list in 'b', so that the new actions list
- * can be executed by odp_execute_actions.
- *
- * When xlate using nested odp actions, such as sample and clone,
- * the nested action created by nl_msg_start_nested() may not
- * have been properly closed yet, thus can not be executed
- * directly.
- *
- * Since unclosed nested action has to be last action, it can be
- * fixed by skipping the outer header, and treating the actions within
- * as if they are outside the nested attribute since the effect
- * of executing them on packet is the same.
- *
- * As an optimization, a fully closed 'sample' or 'clone' action
- * is skipped since their execution has no effect to the packet.
- *
- * Returns true if success. 'b' contains the new actions list.
- * The caller is responsible for disposing 'b'.
- *
- * Returns false if error, 'b' has been freed already.  */
-static bool
-xlate_fixup_actions(struct ofpbuf *b, const struct nlattr *actions,
-                    size_t actions_len)
+static void
+put_controller_user_action(struct xlate_ctx *ctx,
+                           bool dont_send, bool continuation,
+                           uint32_t recirc_id, int len,
+                           enum ofp_packet_in_reason reason,
+                           uint16_t controller_id)
 {
-    const struct nlattr *a;
-    unsigned int left;
+    struct user_action_cookie cookie;
 
-    NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
-        int type = nl_attr_type(a);
+    memset(&cookie, 0, sizeof cookie);
+    cookie.type = USER_ACTION_COOKIE_CONTROLLER;
+    cookie.ofp_in_port = OFPP_NONE,
+    cookie.ofproto_uuid = ctx->xbridge->ofproto->uuid;
+    cookie.controller.dont_send = dont_send;
+    cookie.controller.continuation = continuation;
+    cookie.controller.reason = reason;
+    cookie.controller.recirc_id = recirc_id;
+    put_32aligned_be64(&cookie.controller.rule_cookie, ctx->rule_cookie);
+    cookie.controller.controller_id = controller_id;
+    cookie.controller.max_len = len;
 
-        switch ((enum ovs_action_attr) type) {
-        case OVS_ACTION_ATTR_HASH:
-        case OVS_ACTION_ATTR_PUSH_VLAN:
-        case OVS_ACTION_ATTR_POP_VLAN:
-        case OVS_ACTION_ATTR_PUSH_MPLS:
-        case OVS_ACTION_ATTR_POP_MPLS:
-        case OVS_ACTION_ATTR_SET:
-        case OVS_ACTION_ATTR_SET_MASKED:
-        case OVS_ACTION_ATTR_TRUNC:
-        case OVS_ACTION_ATTR_OUTPUT:
-        case OVS_ACTION_ATTR_TUNNEL_PUSH:
-        case OVS_ACTION_ATTR_TUNNEL_POP:
-        case OVS_ACTION_ATTR_USERSPACE:
-        case OVS_ACTION_ATTR_RECIRC:
-        case OVS_ACTION_ATTR_CT:
-        case OVS_ACTION_ATTR_PUSH_ETH:
-        case OVS_ACTION_ATTR_POP_ETH:
-        case OVS_ACTION_ATTR_ENCAP_NSH:
-        case OVS_ACTION_ATTR_DECAP_NSH:
-        case OVS_ACTION_ATTR_METER:
-            ofpbuf_put(b, a, nl_attr_len_pad(a, left));
-            break;
-
-        case OVS_ACTION_ATTR_CLONE:
-            /* If the clone action has been fully xlated, it can
-             * be skipped, since any actions executed within clone
-             * do not affect the current packet.
-             *
-             * When xlating actions within clone, the clone action,
-             * because it is an nested netlink attribute, do not have
-             * a valid 'nla_len'; it will be zero instead.  Skip
-             * the clone header to find the start of the actions
-             * enclosed. Treat those actions as if they are written
-             * outside of clone.   */
-            if (!a->nla_len) {
-                bool ok;
-                if (left < NLA_HDRLEN) {
-                    goto error;
-                }
-
-                ok = xlate_fixup_actions(b, nl_attr_get_unspec(a, 0),
-                                         left - NLA_HDRLEN);
-                if (!ok) {
-                    goto error;
-                }
-            }
-            break;
-
-        case OVS_ACTION_ATTR_SAMPLE:
-            if (!a->nla_len) {
-                bool ok;
-                if (left < NLA_HDRLEN) {
-                    goto error;
-                }
-                const struct nlattr *attr = nl_attr_get_unspec(a, 0);
-                left -= NLA_HDRLEN;
-
-                while (left > 0 &&
-                       nl_attr_type(attr) != OVS_SAMPLE_ATTR_ACTIONS) {
-                    /* Only OVS_SAMPLE_ATTR_ACTIONS can have unclosed
-                     * nested netlink attribute.  */
-                    if (!attr->nla_len) {
-                        goto error;
-                    }
-
-                    left -= NLA_ALIGN(attr->nla_len);
-                    attr = nl_attr_next(attr);
-                }
-
-                if (left < NLA_HDRLEN) {
-                    goto error;
-                }
-
-                ok = xlate_fixup_actions(b, nl_attr_get_unspec(attr, 0),
-                                         left - NLA_HDRLEN);
-                if (!ok) {
-                    goto error;
-                }
-            }
-            break;
-
-        case OVS_ACTION_ATTR_UNSPEC:
-        case __OVS_ACTION_ATTR_MAX:
-            OVS_NOT_REACHED();
-        }
-    }
-
-    return true;
-
-error:
-    ofpbuf_delete(b);
-    return false;
-}
-
-static bool
-xlate_execute_odp_actions(struct dp_packet *packet,
-                          const struct nlattr *actions, int actions_len)
-{
-    struct dp_packet_batch batch;
-    struct ofpbuf *b = ofpbuf_new(actions_len);
-
-    if (!xlate_fixup_actions(b, actions, actions_len)) {
-        return false;
-    }
-
-    dp_packet_batch_init_packet(&batch, packet);
-    odp_execute_actions(NULL, &batch, false, b->data, b->size, NULL);
-    ofpbuf_delete(b);
-
-    return true;
+    odp_port_t odp_port = ofp_port_to_odp_port(ctx->xbridge,
+                                             ctx->xin->flow.in_port.ofp_port);
+    uint32_t pid = dpif_port_get_pid(ctx->xbridge->dpif, odp_port,
+                                     flow_hash_5tuple(&ctx->xin->flow, 0));
+    odp_put_userspace_action(pid, &cookie, sizeof cookie, ODPP_NONE,
+                             false, ctx->odp_actions);
 }
 
 static void
-execute_controller_action(struct xlate_ctx *ctx, int len,
-                          enum ofp_packet_in_reason reason,
-                          uint16_t controller_id,
-                          const uint8_t *userdata, size_t userdata_len)
+xlate_controller_action(struct xlate_ctx *ctx, int len,
+                        enum ofp_packet_in_reason reason,
+                        uint16_t controller_id,
+                        const uint8_t *userdata, size_t userdata_len)
 {
-    struct dp_packet *packet;
-
-    ctx->xout->slow |= SLOW_CONTROLLER;
     xlate_commit_actions(ctx);//生成动作
-    if (!ctx->xin->packet) {
-        return;
-    }
-
-    if (!ctx->xin->allow_side_effects && !ctx->xin->xcache) {//如果没有报文，就可以退了
-        return;
-    }
-
-    packet = dp_packet_clone(ctx->xin->packet);
-    if (!xlate_execute_odp_actions(packet, ctx->odp_actions->data,
-                                  ctx->odp_actions->size)) {
-        xlate_report_error(ctx, "Failed to execute controller action");
-        dp_packet_delete(packet);
-        return;
-    }
 
     /* A packet sent by an action in a table-miss rule is considered an
      * explicit table miss.  OpenFlow before 1.3 doesn't have that concept so
@@ -4609,94 +4493,56 @@ execute_controller_action(struct xlate_ctx *ctx, int len,
         reason = OFPR_EXPLICIT_MISS;
     }
 
-    size_t packet_len = dp_packet_size(packet);
-
-    struct ofproto_async_msg *am = xmalloc(sizeof *am);
-    *am = (struct ofproto_async_msg) {
-        .controller_id = controller_id,
-        .oam = OAM_PACKET_IN,
-        .pin = {
-            .up = {
-                .base = {
-                    .packet = dp_packet_steal_data(packet),
-                    .packet_len = packet_len,
-                    .reason = reason,
-                    .table_id = ctx->table_id,
-                    .cookie = ctx->rule_cookie,
-                    .userdata = (userdata_len
-                                 ? xmemdup(userdata, userdata_len)
-                                 : NULL),
-                    .userdata_len = userdata_len,
-                }
-            },
-            .max_len = len,
-        },
+    struct frozen_state state = {
+        .table_id = ctx->table_id,
+        .ofproto_uuid = ctx->xbridge->ofproto->uuid,
+        .stack = ctx->stack.data,
+        .stack_size = ctx->stack.size,
+        .mirrors = ctx->mirrors,
+        .conntracked = ctx->conntracked,
+        .ofpacts = NULL,
+        .ofpacts_len = 0,
+        .action_set = NULL,
+        .action_set_len = 0,
+        .userdata = CONST_CAST(uint8_t *, userdata),
+        .userdata_len = userdata_len,
     };
-    flow_get_metadata(&ctx->xin->flow, &am->pin.up.base.flow_metadata);
+    frozen_metadata_from_flow(&state.metadata, &ctx->xin->flow);
 
-    /* Async messages are only sent once, so if we send one now, no
-     * xlate cache entry is created.  */
-    if (ctx->xin->allow_side_effects) {
-        ofproto_dpif_send_async_msg(ctx->xbridge->ofproto, am);//上报controller
-    } else /* xcache */ {
-        struct xc_entry *entry;
-
-        entry = xlate_cache_add_entry(ctx->xin->xcache, XC_CONTROLLER);
-        entry->controller.ofproto = ctx->xbridge->ofproto;
-        entry->controller.am = am;
-    }
-
-    dp_packet_delete(packet);
-}
-
-static void
-emit_continuation(struct xlate_ctx *ctx, const struct frozen_state *state)
-{
-    if (!ctx->xin->allow_side_effects && !ctx->xin->xcache) {
+    uint32_t recirc_id = recirc_alloc_id_ctx(&state);
+    if (!recirc_id) {
+        xlate_report_error(ctx, "Failed to allocate recirculation id");
+        ctx->error = XLATE_NO_RECIRCULATION_CONTEXT;
         return;
     }
+    recirc_refs_add(&ctx->xout->recircs, recirc_id);
 
-    struct ofproto_async_msg *am = xmalloc(sizeof *am);
-    *am = (struct ofproto_async_msg) {
-        .controller_id = ctx->pause->controller_id,
-        .oam = OAM_PACKET_IN,
-        .pin = {
-            .up = {
-                .base = {
-                    .userdata = xmemdup(ctx->pause->userdata,
-                                        ctx->pause->userdata_len),
-                    .userdata_len = ctx->pause->userdata_len,
-                    .packet = xmemdup(dp_packet_data(ctx->xin->packet),
-                                      dp_packet_size(ctx->xin->packet)),
-                    .packet_len = dp_packet_size(ctx->xin->packet),
-                    .reason = ctx->pause->reason,
-                },
-                .bridge = ctx->xbridge->ofproto->uuid,
-                .stack = xmemdup(state->stack, state->stack_size),
-                .stack_size = state->stack_size,
-                .mirrors = state->mirrors,
-                .conntracked = state->conntracked,
-                .actions = xmemdup(state->ofpacts, state->ofpacts_len),
-                .actions_len = state->ofpacts_len,
-                .action_set = xmemdup(state->action_set,
-                                      state->action_set_len),
-                .action_set_len = state->action_set_len,
-            },
-            .max_len = UINT16_MAX,
-        },
-    };
-    flow_get_metadata(ctx->paused_flow, &am->pin.up.base.flow_metadata);
+    size_t offset;
+    size_t ac_offset;
+    uint32_t meter_id = ctx->xbridge->ofproto->up.controller_meter_id;
+    if (meter_id != UINT32_MAX) {
+        /* If controller meter is configured, generate clone(meter, userspace)
+         * action. */
+        offset = nl_msg_start_nested(ctx->odp_actions, OVS_ACTION_ATTR_SAMPLE);
+        nl_msg_put_u32(ctx->odp_actions, OVS_SAMPLE_ATTR_PROBABILITY,
+                       UINT32_MAX);
+        ac_offset = nl_msg_start_nested(ctx->odp_actions,
+                                        OVS_SAMPLE_ATTR_ACTIONS);
+        nl_msg_put_u32(ctx->odp_actions, OVS_ACTION_ATTR_METER, meter_id);
+    }
 
-    /* Async messages are only sent once, so if we send one now, no
-     * xlate cache entry is created.  */
-    if (ctx->xin->allow_side_effects) {
-        ofproto_dpif_send_async_msg(ctx->xbridge->ofproto, am);
-    } else /* xcache */ {
-        struct xc_entry *entry;
+    /* Generate the datapath flows even if we don't send the packet-in
+     * so that debugging more closely represents normal state. */
+    bool dont_send = false;
+    if (!ctx->xin->allow_side_effects && !ctx->xin->xcache) {
+        dont_send = true;
+    }
+    put_controller_user_action(ctx, dont_send, false, recirc_id, len,
+                               reason, controller_id);
 
-        entry = xlate_cache_add_entry(ctx->xin->xcache, XC_CONTROLLER);
-        entry->controller.ofproto = ctx->xbridge->ofproto;
-        entry->controller.am = am;
+    if (meter_id != UINT32_MAX) {
+        nl_msg_end_nested(ctx->odp_actions, ac_offset);
+        nl_msg_end_nested(ctx->odp_actions, offset);
     }
 }
 
@@ -4707,7 +4553,6 @@ emit_continuation(struct xlate_ctx *ctx, const struct frozen_state *state)
 static uint32_t
 finish_freezing__(struct xlate_ctx *ctx, uint8_t table)
 {
-    uint32_t id = 0;
     ovs_assert(ctx->freezing);
 
     struct frozen_state state = {
@@ -4721,27 +4566,35 @@ finish_freezing__(struct xlate_ctx *ctx, uint8_t table)
         .ofpacts_len = ctx->frozen_actions.size,
         .action_set = ctx->action_set.data,
         .action_set_len = ctx->action_set.size,
+        .userdata = ctx->pause ? CONST_CAST(uint8_t *,ctx->pause->userdata)
+                               : NULL,
+        .userdata_len = ctx->pause ? ctx->pause->userdata_len : 0,
     };
     frozen_metadata_from_flow(&state.metadata, &ctx->xin->flow);
 
+    /* Allocate a unique recirc id for the given metadata state in the
+     * flow.  An existing id, with a new reference to the corresponding
+     * recirculation context, will be returned if possible.
+     * The life-cycle of this recirc id is managed by associating it
+     * with the udpif key ('ukey') created for each new datapath flow. */
+    uint32_t recirc_id = recirc_alloc_id_ctx(&state);
+    if (!recirc_id) {
+        xlate_report_error(ctx, "Failed to allocate recirculation id");
+        ctx->error = XLATE_NO_RECIRCULATION_CONTEXT;
+        return 0;
+    }
+    recirc_refs_add(&ctx->xout->recircs, recirc_id);
+
     if (ctx->pause) {
-        if (ctx->xin->packet) {
-            emit_continuation(ctx, &state);
-        }
-    } else {
-        /* Allocate a unique recirc id for the given metadata state in the
-         * flow.  An existing id, with a new reference to the corresponding
-         * recirculation context, will be returned if possible.
-         * The life-cycle of this recirc id is managed by associating it
-         * with the udpif key ('ukey') created for each new datapath flow. */
-        id = recirc_alloc_id_ctx(&state);
-        if (!id) {
-            xlate_report_error(ctx, "Failed to allocate recirculation id");
-            ctx->error = XLATE_NO_RECIRCULATION_CONTEXT;
+        if (!ctx->xin->allow_side_effects && !ctx->xin->xcache) {
             return 0;
         }
-        recirc_refs_add(&ctx->xout->recircs, id);
 
+        put_controller_user_action(ctx, false, true, recirc_id,
+                                   ctx->pause->max_len,
+                                   ctx->pause->reason,
+                                   ctx->pause->controller_id);
+    } else {
         if (ctx->recirc_update_dp_hash) {
             struct ovs_action_hash *act_hash;
 
@@ -4752,12 +4605,12 @@ finish_freezing__(struct xlate_ctx *ctx, uint8_t table)
             act_hash->hash_alg = OVS_HASH_ALG_L4;  /* Make configurable. */
             act_hash->hash_basis = 0;              /* Make configurable. */
         }
-        nl_msg_put_u32(ctx->odp_actions, OVS_ACTION_ATTR_RECIRC, id);
+        nl_msg_put_u32(ctx->odp_actions, OVS_ACTION_ATTR_RECIRC, recirc_id);
     }
 
     /* Undo changes done by freezing. */
     ctx_cancel_freeze(ctx);
-    return id;
+    return recirc_id;
 }
 
 /* Called only when we're freezing. */
@@ -4861,8 +4714,8 @@ compose_dec_ttl(struct xlate_ctx *ctx, struct ofpact_cnt_ids *ids)
 
         //向多个controller上报
         for (i = 0; i < ids->n_controllers; i++) {
-            execute_controller_action(ctx, UINT16_MAX, OFPR_INVALID_TTL,
-                                      ids->cnt_ids[i], NULL, 0);
+            xlate_controller_action(ctx, UINT16_MAX, OFPR_INVALID_TTL,
+                                    ids->cnt_ids[i], NULL, 0);
         }
 
         /* Stop processing for current table. */
@@ -4913,8 +4766,8 @@ compose_dec_mpls_ttl_action(struct xlate_ctx *ctx)
             set_mpls_lse_ttl(&flow->mpls_lse[0], ttl);
             return false;
         } else {
-            execute_controller_action(ctx, UINT16_MAX, OFPR_INVALID_TTL, 0,
-                                      NULL, 0);
+            xlate_controller_action(ctx, UINT16_MAX, OFPR_INVALID_TTL, 0,
+                                    NULL, 0);
         }
     }
 
@@ -4969,12 +4822,12 @@ xlate_output_action(struct xlate_ctx *ctx, ofp_port_t port,
         flood_packets(ctx, true, is_last_action);
         break;
     case OFPP_CONTROLLER://发送报文到controller
-        execute_controller_action(ctx, controller_len,
-                                  (ctx->in_packet_out ? OFPR_PACKET_OUT
-                                   : ctx->in_group ? OFPR_GROUP
-                                   : ctx->in_action_set ? OFPR_ACTION_SET
-                                   : OFPR_ACTION),
-                                  0, NULL, 0);
+        xlate_controller_action(ctx, controller_len,
+                                (ctx->in_packet_out ? OFPR_PACKET_OUT
+                                 : ctx->in_group ? OFPR_GROUP
+                                 : ctx->in_action_set ? OFPR_ACTION_SET
+                                 : OFPR_ACTION),
+                                0, NULL, 0);
         break;
     case OFPP_NONE://没有和任何端口关联
         break;
@@ -5316,13 +5169,6 @@ xlate_sample_action(struct xlate_ctx *ctx,
      * the same percentage. */
     uint32_t probability = (os->probability << 16) | os->probability;
 
-    if (!ctx->xbridge->support.variable_length_userdata) {
-        xlate_report_error(ctx, "ignoring NXAST_SAMPLE action because "
-                           "datapath lacks support (needs Linux 3.10+ or "
-                           "kernel module from OVS 1.11+)");
-        return;
-    }
-
     /* If ofp_port in flow sample action is equel to ofp_port,
      * this sample action is a input port action. */
     if (os->sampling_port != OFPP_NONE &&
@@ -5337,7 +5183,7 @@ xlate_sample_action(struct xlate_ctx *ctx,
 
         if (dpif_ipfix_get_flow_exporter_tunnel_sampling(ipfix,
                                                          os->collector_set_id)
-            && dpif_ipfix_get_tunnel_port(ipfix, output_odp_port)) {
+            && dpif_ipfix_is_tunnel_port(ipfix, output_odp_port)) {
             tunnel_out_port = output_odp_port;
             emit_set_tunnel = true;
         }
@@ -5368,9 +5214,11 @@ xlate_sample_action(struct xlate_ctx *ctx,
         }
     }
 
-    union user_action_cookie cookie = {
+    struct user_action_cookie cookie = {
+        .type = USER_ACTION_COOKIE_FLOW_SAMPLE,
+        .ofp_in_port = ctx->xin->flow.in_port.ofp_port,
+        .ofproto_uuid = ctx->xbridge->ofproto->uuid,
         .flow_sample = {
-            .type = USER_ACTION_COOKIE_FLOW_SAMPLE,
             .probability = os->probability,
             .collector_set_id = os->collector_set_id,
             .obs_domain_id = os->obs_domain_id,
@@ -5379,8 +5227,7 @@ xlate_sample_action(struct xlate_ctx *ctx,
             .direction = os->direction,
         }
     };
-    compose_sample_action(ctx, probability, &cookie, sizeof cookie.flow_sample,
-                          tunnel_out_port, false);
+    compose_sample_action(ctx, probability, &cookie, tunnel_out_port, false);
 }
 
 /* Determine if an datapath action translated from the openflow action
@@ -5403,6 +5250,7 @@ reversible_actions(const struct ofpact *ofpacts, size_t ofpacts_len)
         case OFPACT_CONTROLLER:
         case OFPACT_CT_CLEAR:
         case OFPACT_DEBUG_RECIRC:
+        case OFPACT_DEBUG_SLOW:
         case OFPACT_DEC_MPLS_TTL:
         case OFPACT_DEC_TTL:
         case OFPACT_ENQUEUE:
@@ -5736,6 +5584,7 @@ freeze_unroll_actions(const struct ofpact *a, const struct ofpact *end,
         case OFPACT_ENCAP:
         case OFPACT_DECAP:
         case OFPACT_DEBUG_RECIRC:
+        case OFPACT_DEBUG_SLOW:
         case OFPACT_CT:
         case OFPACT_CT_CLEAR:
         case OFPACT_NAT:
@@ -5948,17 +5797,17 @@ rewrite_flow_encap_ethernet(struct xlate_ctx *ctx,
 
 /* For an MD2 NSH header returns a pointer to an ofpbuf with the encoded
  * MD2 TLVs provided as encap properties to the encap operation. This
- * will be stored as encap_data in the ctx and copied into the encap_nsh
+ * will be stored as encap_data in the ctx and copied into the push_nsh
  * action at the next commit. */
 static struct ofpbuf *
-rewrite_flow_encap_nsh(struct xlate_ctx *ctx,
-                       const struct ofpact_encap *encap,
-                       struct flow *flow,
-                       struct flow_wildcards *wc)
+rewrite_flow_push_nsh(struct xlate_ctx *ctx,
+                      const struct ofpact_encap *encap,
+                      struct flow *flow,
+                      struct flow_wildcards *wc)
 {
     ovs_be32 packet_type = flow->packet_type;
     const char *ptr = (char *) encap->props;
-    struct ofpbuf *buf = ofpbuf_new(OVS_ENCAP_NSH_MAX_MD_LEN);
+    struct ofpbuf *buf = ofpbuf_new(NSH_CTX_HDRS_MAX_LEN);
     uint8_t md_type = NSH_M_TYPE1;
     uint8_t np = 0;
     int i;
@@ -5998,7 +5847,7 @@ rewrite_flow_encap_nsh(struct xlate_ctx *ctx,
         }
         ptr += ROUND_UP(prop_ptr->len, 8);
     }
-    if (buf->size == 0 || buf->size > OVS_ENCAP_NSH_MAX_MD_LEN) {
+    if (buf->size == 0 || buf->size > NSH_CTX_HDRS_MAX_LEN) {
         ofpbuf_delete(buf);
         buf = NULL;
     }
@@ -6043,7 +5892,7 @@ rewrite_flow_encap_nsh(struct xlate_ctx *ctx,
 
     if (md_type == NSH_M_TYPE1) {
         flow->nsh.mdtype = NSH_M_TYPE1;
-        memset(flow->nsh.c, 0, sizeof flow->nsh.c);
+        memset(flow->nsh.context, 0, sizeof flow->nsh.context);
         if (buf) {
             /* Drop any MD2 context TLVs. */
             ofpbuf_delete(buf);
@@ -6074,7 +5923,7 @@ xlate_generic_encap_action(struct xlate_ctx *ctx,
             rewrite_flow_encap_ethernet(ctx, flow, wc);
             break;
         case PT_NSH:
-            encap_data = rewrite_flow_encap_nsh(ctx, encap, flow, wc);
+            encap_data = rewrite_flow_push_nsh(ctx, encap, flow, wc);
             break;
         default:
             /* New packet type was checked during decoding. */
@@ -6116,7 +5965,7 @@ xlate_generic_decap_action(struct xlate_ctx *ctx,
             }
             return false;
         case PT_NSH:
-            /* The decap_nsh action is generated at the commit executed as
+            /* The pop_nsh action is generated at the commit executed as
              * part of freezing the ctx for recirculation. Here we just set
              * the new packet type based on the NSH next protocol field. */
             switch (flow->nsh.np) {
@@ -6237,6 +6086,7 @@ recirc_for_mpls(const struct ofpact *a, struct xlate_ctx *ctx)
     case OFPACT_CT_CLEAR:
     case OFPACT_NAT:
     case OFPACT_DEBUG_RECIRC:
+    case OFPACT_DEBUG_SLOW:
     case OFPACT_METER:
     case OFPACT_CLEAR_ACTIONS:
     case OFPACT_WRITE_ACTIONS:
@@ -6356,16 +6206,14 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             controller = ofpact_get_CONTROLLER(a);
             if (controller->pause) {
                 ctx->pause = controller;
-                ctx->xout->slow |= SLOW_CONTROLLER;
-                *ctx->paused_flow = ctx->xin->flow;
                 ctx_trigger_freeze(ctx);
                 a = ofpact_next(a);
             } else {
-                execute_controller_action(ctx, controller->max_len,//将报文传递
-                                          controller->reason,
-                                          controller->controller_id,
-                                          controller->userdata,
-                                          controller->userdata_len);
+                xlate_controller_action(ctx, controller->max_len,//将报文传递
+                                        controller->reason,
+                                        controller->controller_id,
+                                        controller->userdata,
+                                        controller->userdata_len);
             }
             break;
 
@@ -6712,6 +6560,10 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             ctx_trigger_freeze(ctx);
             a = ofpact_next(a);
             break;
+
+        case OFPACT_DEBUG_SLOW:
+            ctx->xout->slow |= SLOW_ACTION;
+            break;
         }
 
         /* Check if need to store this and the remaining actions for later
@@ -7009,7 +6861,6 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     uint64_t frozen_actions_stub[1024 / 8];
     uint64_t actions_stub[256 / 8];
     struct ofpbuf scratch_actions = OFPBUF_STUB_INITIALIZER(actions_stub);
-    struct flow paused_flow;
     struct xlate_ctx ctx = {
         .xin = xin,
         .xout = xout,
@@ -7045,7 +6896,6 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         .recirc_update_dp_hash = false,
         .frozen_actions = OFPBUF_STUB_INITIALIZER(frozen_actions_stub),//构造空的frozen_actions
         .pause = NULL,
-        .paused_flow = &paused_flow,
 
         .was_mpls = false,
         .conntracked = false,

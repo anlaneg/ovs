@@ -1167,8 +1167,7 @@ ofconn_send_replies(const struct ofconn *ofconn, struct ovs_list *replies)
     }
 }
 
-/* Sends 'error' on 'ofconn', as a reply to 'request'.  Only at most the
- * first 64 bytes of 'request' are used. */
+/* Sends 'error' on 'ofconn', as a reply to 'request'. */
 void
 ofconn_send_error(const struct ofconn *ofconn,
                   const struct ofp_header *request, enum ofperr error)//发送error给request
@@ -1250,20 +1249,18 @@ ofconn_get_bundle(struct ofconn *ofconn, uint32_t id)//通过id查找ofp_bundle
     return NULL;
 }
 
-enum ofperr
-ofconn_insert_bundle(struct ofconn *ofconn, struct ofp_bundle *bundle)//加入ofp_bundle到bundles链
+//加入ofp_bundle到bundles链
+void
+ofconn_insert_bundle(struct ofconn *ofconn, struct ofp_bundle *bundle)
 {
     hmap_insert(&ofconn->bundles, &bundle->node, bundle_hash(bundle->id));
-
-    return 0;
 }
 
-enum ofperr
-ofconn_remove_bundle(struct ofconn *ofconn, struct ofp_bundle *bundle)//删除ofp_bundle
+//删除ofp_bundle
+void
+ofconn_remove_bundle(struct ofconn *ofconn, struct ofp_bundle *bundle)
 {
     hmap_remove(&ofconn->bundles, &bundle->node);
-
-    return 0;
 }
 
 static void
@@ -1284,8 +1281,9 @@ bundle_remove_expired(struct ofconn *ofconn, long long int now)
 
     HMAP_FOR_EACH_SAFE (b, next, node, &ofconn->bundles) {
         if (b->used <= limit) {//used时的时间已过去了BUNDLE_IDLE_TIMEOUT
-            ofconn_send_error(ofconn, &b->ofp_msg, OFPERR_OFPBFC_TIMEOUT);//发送timeout错误
+            ofconn_send_error(ofconn, b->msg, OFPERR_OFPBFC_TIMEOUT);//发送timeout错误
             ofp_bundle_remove__(ofconn, b);//移除b
+
         }
     }
 }

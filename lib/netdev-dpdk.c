@@ -435,6 +435,14 @@ struct netdev_dpdk {
          * from the enum set 'dpdk_hw_ol_features' */
         uint32_t hw_ol_features;
     );
+
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        /* Names of all XSTATS counters */
+        struct rte_eth_xstat_name *rte_xstats_names;
+        int rte_xstats_names_size;
+        int rte_xstats_ids_size;
+        uint64_t *rte_xstats_ids;
+    );
 };
 
 struct netdev_rxq_dpdk {
@@ -925,6 +933,12 @@ common_construct(struct netdev *netdev, dpdk_port_t port_no,
     //要求此设备重新配置
     netdev_request_reconfigure(netdev);
 
+    dev->rte_xstats_names = NULL;
+    dev->rte_xstats_names_size = 0;
+
+    dev->rte_xstats_ids = NULL;
+    dev->rte_xstats_ids_size = 0;
+
     return 0;
 }
 
@@ -1173,6 +1187,126 @@ netdev_dpdk_dealloc(struct netdev *netdev)//netdev释放netdev
     rte_free(dev);
 }
 
+static void
+netdev_dpdk_clear_xstats(struct netdev_dpdk *dev) OVS_REQUIRES(dev->mutex)
+{
+    /* If statistics are already allocated, we have to
+     * reconfigure, as port_id could have been changed. */
+    if (dev->rte_xstats_names) {
+        free(dev->rte_xstats_names);
+        dev->rte_xstats_names = NULL;
+        dev->rte_xstats_names_size = 0;
+    }
+    if (dev->rte_xstats_ids) {
+        free(dev->rte_xstats_ids);
+        dev->rte_xstats_ids = NULL;
+        dev->rte_xstats_ids_size = 0;
+    }
+}
+
+static const char*
+netdev_dpdk_get_xstat_name(struct netdev_dpdk *dev, uint64_t id)
+{
+    if (id >= dev->rte_xstats_names_size) {
+        return "UNKNOWN";
+    }
+    return dev->rte_xstats_names[id].name;
+}
+
+static bool
+netdev_dpdk_configure_xstats(struct netdev_dpdk *dev)
+    OVS_REQUIRES(dev->mutex)
+{
+    int rte_xstats_len;
+    bool ret;
+    struct rte_eth_xstat *rte_xstats;
+    uint64_t id;
+    int xstats_no;
+    const char *name;
+
+    /* Retrieving all XSTATS names. If something will go wrong
+     * or amount of counters will be equal 0, rte_xstats_names
+     * buffer will be marked as NULL, and any further xstats
+     * query won't be performed (e.g. during netdev_dpdk_get_stats
+     * execution). */
+
+    ret = false;
+    rte_xstats = NULL;
+
+    if (dev->rte_xstats_names == NULL || dev->rte_xstats_ids == NULL) {
+        dev->rte_xstats_names_size =
+                rte_eth_xstats_get_names(dev->port_id, NULL, 0);
+
+        if (dev->rte_xstats_names_size < 0) {
+            VLOG_WARN("Cannot get XSTATS for port: %"PRIu8, dev->port_id);
+            dev->rte_xstats_names_size = 0;
+        } else {
+            /* Reserve memory for xstats names and values */
+            dev->rte_xstats_names = xcalloc(dev->rte_xstats_names_size,
+                                            sizeof *dev->rte_xstats_names);
+
+            if (dev->rte_xstats_names) {
+                /* Retreive xstats names */
+                rte_xstats_len =
+                        rte_eth_xstats_get_names(dev->port_id,
+                                                 dev->rte_xstats_names,
+                                                 dev->rte_xstats_names_size);
+
+                if (rte_xstats_len < 0) {
+                    VLOG_WARN("Cannot get XSTATS names for port: %"PRIu8,
+                               dev->port_id);
+                    goto out;
+                } else if (rte_xstats_len != dev->rte_xstats_names_size) {
+                    VLOG_WARN("XSTATS size doesn't match for port: %"PRIu8,
+                              dev->port_id);
+                    goto out;
+                }
+
+                dev->rte_xstats_ids = xcalloc(dev->rte_xstats_names_size,
+                                              sizeof(uint64_t));
+
+                /* We have to calculate number of counters */
+                rte_xstats = xmalloc(rte_xstats_len * sizeof *rte_xstats);
+                memset(rte_xstats, 0xff, sizeof *rte_xstats * rte_xstats_len);
+
+                /* Retreive xstats values */
+                if (rte_eth_xstats_get(dev->port_id, rte_xstats,
+                                       rte_xstats_len) > 0) {
+                    dev->rte_xstats_ids_size = 0;
+                    xstats_no = 0;
+                    for (uint32_t i = 0; i < rte_xstats_len; i++) {
+                        id = rte_xstats[i].id;
+                        name = netdev_dpdk_get_xstat_name(dev, id);
+                        /* We need to filter out everything except
+                         * dropped, error and management counters */
+                        if (string_ends_with(name, "_errors") ||
+                            strstr(name, "_management_") ||
+                            string_ends_with(name, "_dropped")) {
+
+                            dev->rte_xstats_ids[xstats_no] = id;
+                            xstats_no++;
+                        }
+                    }
+                    dev->rte_xstats_ids_size = xstats_no;
+                    ret = true;
+                } else {
+                    VLOG_WARN("Can't get XSTATS IDs for port: %"PRIu8,
+                              dev->port_id);
+                }
+            }
+        }
+    } else {
+        /* Already configured */
+        ret = true;
+    }
+
+out:
+    if (!ret) {
+        netdev_dpdk_clear_xstats(dev);
+    }
+    return ret;
+}
+
 static int
 netdev_dpdk_get_config(const struct netdev *netdev, struct smap *args)//填充当前配置
 {
@@ -1349,6 +1483,7 @@ netdev_dpdk_set_config(struct netdev *netdev, const struct smap *args,
                     dev->devargs = xstrdup(new_devargs);
                     dev->port_id = new_port_id;
                     netdev_request_reconfigure(&dev->up);
+                    netdev_dpdk_clear_xstats(dev);
                     err = 0;
                 }
             }
@@ -1886,8 +2021,6 @@ dpdk_do_tx_copy(struct netdev *netdev, int qid, struct dp_packet_batch *batch)
         dropped += batch_cnt - cnt;
     }
 
-    dp_packet_batch_apply_cutlen(batch);
-
     uint32_t txcnt = 0;
 
     for (uint32_t i = 0; i < cnt; i++) {
@@ -1935,14 +2068,13 @@ dpdk_do_tx_copy(struct netdev *netdev, int qid, struct dp_packet_batch *batch)
 static int
 netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
                        struct dp_packet_batch *batch,
-                       bool may_steal, bool concurrent_txq OVS_UNUSED)
+                       bool concurrent_txq OVS_UNUSED)
 {
 
-    if (OVS_UNLIKELY(!may_steal || batch->packets[0]->source != DPBUF_DPDK)) {
+    if (OVS_UNLIKELY(batch->packets[0]->source != DPBUF_DPDK)) {
         dpdk_do_tx_copy(netdev, qid, batch);
-        dp_packet_delete_batch(batch, may_steal);
+        dp_packet_delete_batch(batch, true);
     } else {
-        dp_packet_batch_apply_cutlen(batch);//按action对报文进行截断
         __netdev_dpdk_vhost_send(netdev, qid, batch->packets, batch->count);
     }
     return 0;
@@ -1950,11 +2082,11 @@ netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
 
 static inline void
 netdev_dpdk_send__(struct netdev_dpdk *dev, int qid,
-                   struct dp_packet_batch *batch, bool may_steal,
+                   struct dp_packet_batch *batch,
                    bool concurrent_txq)
 {
     if (OVS_UNLIKELY(!(dev->flags & NETDEV_UP))) {
-        dp_packet_delete_batch(batch, may_steal);
+        dp_packet_delete_batch(batch, true);
         return;
     }
 
@@ -1964,18 +2096,15 @@ netdev_dpdk_send__(struct netdev_dpdk *dev, int qid,
         rte_spinlock_lock(&dev->tx_q[qid].tx_lock);
     }
 
-    if (OVS_UNLIKELY(!may_steal ||
-                     batch->packets[0]->source != DPBUF_DPDK)) {
+    if (OVS_UNLIKELY(batch->packets[0]->source != DPBUF_DPDK)) {
         struct netdev *netdev = &dev->up;
 
         dpdk_do_tx_copy(netdev, qid, batch);
-        dp_packet_delete_batch(batch, may_steal);
+        dp_packet_delete_batch(batch, true);
     } else {
         int tx_cnt, dropped;
         int batch_cnt = dp_packet_batch_size(batch);
         struct rte_mbuf **pkts = (struct rte_mbuf **) batch->packets;
-
-        dp_packet_batch_apply_cutlen(batch);
 
         tx_cnt = netdev_dpdk_filter_packet_len(dev, pkts, batch_cnt);
         tx_cnt = netdev_dpdk_qos_run(dev, pkts, tx_cnt, true);
@@ -1996,12 +2125,11 @@ netdev_dpdk_send__(struct netdev_dpdk *dev, int qid,
 
 static int
 netdev_dpdk_eth_send(struct netdev *netdev, int qid,
-                     struct dp_packet_batch *batch, bool may_steal,
-                     bool concurrent_txq)
+                     struct dp_packet_batch *batch, bool concurrent_txq)
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
 
-    netdev_dpdk_send__(dev, qid, batch, may_steal, concurrent_txq);
+    netdev_dpdk_send__(dev, qid, batch, concurrent_txq);
     return 0;
 }
 
@@ -2225,6 +2353,56 @@ out:
      * local resource constraints in DPDK and NIC respectively. */
     stats->rx_dropped += rte_stats.rx_nombuf + rte_stats.imissed;
     stats->rx_missed_errors = rte_stats.imissed;
+
+    ovs_mutex_unlock(&dev->mutex);
+
+    return 0;
+}
+
+static int
+netdev_dpdk_get_custom_stats(const struct netdev *netdev,
+                             struct netdev_custom_stats *custom_stats)
+{
+
+    uint32_t i;
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    int rte_xstats_ret;
+
+    ovs_mutex_lock(&dev->mutex);
+
+    if (netdev_dpdk_configure_xstats(dev)) {
+        uint64_t *values = xcalloc(dev->rte_xstats_ids_size,
+                                   sizeof(uint64_t));
+
+        rte_xstats_ret =
+                rte_eth_xstats_get_by_id(dev->port_id, dev->rte_xstats_ids,
+                                         values, dev->rte_xstats_ids_size);
+
+        if (rte_xstats_ret > 0 &&
+            rte_xstats_ret <= dev->rte_xstats_ids_size) {
+
+            custom_stats->size = rte_xstats_ret;
+            custom_stats->counters =
+                    (struct netdev_custom_counter *) xcalloc(rte_xstats_ret,
+                            sizeof(struct netdev_custom_counter));
+
+            for (i = 0; i < rte_xstats_ret; i++) {
+                ovs_strlcpy(custom_stats->counters[i].name,
+                            netdev_dpdk_get_xstat_name(dev,
+                                                       dev->rte_xstats_ids[i]),
+                            NETDEV_CUSTOM_STATS_NAME_SIZE);
+                custom_stats->counters[i].value = values[i];
+            }
+        } else {
+            VLOG_WARN("Cannot get XSTATS values for port: %"PRIu8,
+                      dev->port_id);
+            custom_stats->counters = NULL;
+            custom_stats->size = 0;
+            /* Let's clear statistics cache, so it will be
+             * reconfigured */
+            netdev_dpdk_clear_xstats(dev);
+        }
+    }
 
     ovs_mutex_unlock(&dev->mutex);
 
@@ -2629,6 +2807,56 @@ error:
     free(response);
 }
 
+static void
+netdev_dpdk_get_mempool_info(struct unixctl_conn *conn,
+                             int argc, const char *argv[],
+                             void *aux OVS_UNUSED)
+{
+    size_t size;
+    FILE *stream;
+    char *response = NULL;
+    struct netdev *netdev = NULL;
+
+    if (argc == 2) {
+        netdev = netdev_from_name(argv[1]);
+        if (!netdev || !is_dpdk_class(netdev->netdev_class)) {
+            unixctl_command_reply_error(conn, "Not a DPDK Interface");
+            goto out;
+        }
+    }
+
+    stream = open_memstream(&response, &size);
+    if (!stream) {
+        response = xasprintf("Unable to open memstream: %s.",
+                             ovs_strerror(errno));
+        unixctl_command_reply_error(conn, response);
+        goto out;
+    }
+
+    if (netdev) {
+        struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+
+        ovs_mutex_lock(&dev->mutex);
+        ovs_mutex_lock(&dpdk_mp_mutex);
+
+        rte_mempool_dump(stream, dev->mp);
+
+        ovs_mutex_unlock(&dpdk_mp_mutex);
+        ovs_mutex_unlock(&dev->mutex);
+    } else {
+        ovs_mutex_lock(&dpdk_mp_mutex);
+        rte_mempool_list_dump(stream);
+        ovs_mutex_unlock(&dpdk_mp_mutex);
+    }
+
+    fclose(stream);
+
+    unixctl_command_reply(conn, response);
+out:
+    free(response);
+    netdev_close(netdev);
+}
+
 /*
  * Set virtqueue flags so that we do not receive interrupts.
  */
@@ -2888,6 +3116,10 @@ netdev_dpdk_class_init(void)//模块载入时处理
                                  "pci address of device", 1, 1,
                                  netdev_dpdk_detach, NULL);
 
+        unixctl_command_register("netdev-dpdk/get-mempool-info",
+                                 "[netdev]", 0, 1,
+                                 netdev_dpdk_get_mempool_info, NULL);
+
         ovsthread_once_done(&once);
     }
 
@@ -2979,8 +3211,7 @@ dpdk_ring_open(const char dev_name[], dpdk_port_t *eth_port_id)
 
 static int
 netdev_dpdk_ring_send(struct netdev *netdev, int qid,
-                      struct dp_packet_batch *batch, bool may_steal,
-                      bool concurrent_txq)
+                      struct dp_packet_batch *batch, bool concurrent_txq)
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
     struct dp_packet *packet;
@@ -2993,7 +3224,7 @@ netdev_dpdk_ring_send(struct netdev *netdev, int qid,
         dp_packet_mbuf_rss_flag_reset(packet);
     }
 
-    netdev_dpdk_send__(dev, qid, batch, may_steal, concurrent_txq);
+    netdev_dpdk_send__(dev, qid, batch, concurrent_txq);
     return 0;
 }
 
@@ -3394,7 +3625,8 @@ unlock:
 
 #define NETDEV_DPDK_CLASS(NAME, INIT, CONSTRUCT, DESTRUCT,    \
                           SET_CONFIG, SET_TX_MULTIQ, SEND,    \
-                          GET_CARRIER, GET_STATS,             \
+                          GET_CARRIER, GET_STATS,			  \
+                          GET_CUSTOM_STATS,					  \
                           GET_FEATURES, GET_STATUS,           \
                           RECONFIGURE, RXQ_RECV)              \
 {                                                             \
@@ -3429,6 +3661,7 @@ unlock:
     netdev_dpdk_get_carrier_resets,                           \
     netdev_dpdk_set_miimon,                                   \
     GET_STATS,                                                \
+    GET_CUSTOM_STATS,										  \
     GET_FEATURES,                                             \
     NULL,                       /* set_advertisements */      \
     NULL,                       /* get_pt_mode */             \
@@ -3479,6 +3712,7 @@ static const struct netdev_class dpdk_class =
         netdev_dpdk_eth_send,
         netdev_dpdk_get_carrier,
         netdev_dpdk_get_stats,
+        netdev_dpdk_get_custom_stats,
         netdev_dpdk_get_features,
         netdev_dpdk_get_status,
         netdev_dpdk_reconfigure,//dpdk口配置
@@ -3495,6 +3729,7 @@ static const struct netdev_class dpdk_ring_class =
         netdev_dpdk_ring_send,
         netdev_dpdk_get_carrier,
         netdev_dpdk_get_stats,
+        netdev_dpdk_get_custom_stats,
         netdev_dpdk_get_features,
         netdev_dpdk_get_status,
         netdev_dpdk_reconfigure,
@@ -3514,6 +3749,7 @@ static const struct netdev_class dpdk_vhost_class =
         netdev_dpdk_vhost_get_stats,
         NULL,
         NULL,
+        NULL,
         netdev_dpdk_vhost_reconfigure,
         netdev_dpdk_vhost_rxq_recv);//vhost收包
 static const struct netdev_class dpdk_vhost_client_class =
@@ -3527,6 +3763,7 @@ static const struct netdev_class dpdk_vhost_client_class =
         netdev_dpdk_vhost_send,
         netdev_dpdk_vhost_get_carrier,
         netdev_dpdk_vhost_get_stats,
+        NULL,
         NULL,
         NULL,
         netdev_dpdk_vhost_client_reconfigure,
