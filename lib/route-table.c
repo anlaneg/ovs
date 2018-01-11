@@ -183,6 +183,7 @@ route_table_reset(void)
         struct route_table_msg msg;
 
         if (route_table_parse(&reply, &msg)) {
+        		//处理netlink消息，进行路由表项的添加删除
             route_table_handle_msg(&msg);
         }
     }

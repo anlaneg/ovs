@@ -3359,7 +3359,8 @@ native_tunnel_output(struct xlate_ctx *ctx, const struct xport *xport,
         s_ip = in6_addr_get_mapped_ipv4(&s_ip6);
     }
 
-    err = tnl_neigh_lookup(out_dev->xbridge->name, &d_ip6, &dmac);//查d_ip6的目的mac,我们需要发送给它
+    //查d_ip6的目的mac,我们需要发送给它，如果查不到，就发送arp或者nd请求
+    err = tnl_neigh_lookup(out_dev->xbridge->name, &d_ip6, &dmac);
     if (err) {//没有查找到
         xlate_report(ctx, OFT_DETAIL,
                      "neighbor cache miss for %s on bridge %s, "
@@ -3388,8 +3389,10 @@ native_tunnel_output(struct xlate_ctx *ctx, const struct xport *xport,
                  ETH_ADDR_ARGS(smac), ipv6_string_mapped(buf_sip6, &s_ip6),
                  ETH_ADDR_ARGS(dmac), buf_dip6);
 
+    //现在知道了隧道发送用的源ip,源mac,目的mac填充tnl_params
     netdev_init_tnl_build_header_params(&tnl_params, flow, &s_ip6, dmac, smac);//填充tnl_params
-    err = tnl_port_build_header(xport->ofport, &tnl_push_data, &tnl_params);//采用tnl_params走tunnel口（xport)创建tnl_push_data
+    //采用tnl_params走tunnel口（xport)创建tnl_push_data,以便再后面push tunnel header时使用
+    err = tnl_port_build_header(xport->ofport, &tnl_push_data, &tnl_params);
     if (err) {
         return err;
     }

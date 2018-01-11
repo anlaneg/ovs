@@ -988,9 +988,9 @@ netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
                                        netdev_gre_push_header,
                                        netdev_gre_pop_header,
                                        NULL),
-        TUNNEL_CLASS("vxlan", "vxlan_sys", netdev_vxlan_build_header,
-                                           netdev_tnl_push_udp_header,
-                                           netdev_vxlan_pop_header,
+        TUNNEL_CLASS("vxlan", "vxlan_sys", netdev_vxlan_build_header,//封装vxlan，生成header
+                                           netdev_tnl_push_udp_header,//应用header,完成封装
+                                           netdev_vxlan_pop_header,//解封装vxlan
                                            NETDEV_VPORT_GET_IFINDEX),
         TUNNEL_CLASS("lisp", "lisp_sys", NULL, NULL, NULL, NULL),
         TUNNEL_CLASS("stt", "stt_sys", NULL, NULL, NULL, NULL),

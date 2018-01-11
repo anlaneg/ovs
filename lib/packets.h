@@ -1273,13 +1273,13 @@ BUILD_ASSERT_DECL(sizeof(struct vxlanhdr) == 8);
  * |                VXLAN Network Identifier (VNI) |   Reserved    |
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  *
- * Ver = Version. Indicates VXLAN GPE protocol version.
+ * Ver = Version. Indicates VXLAN GPE protocol version. //指出GPE协议版本号，当前为0
  *
  * P = Next Protocol Bit. The P bit is set to indicate that the
- *     Next Protocol field is present.
+ *     Next Protocol field is present. 指出下一层封装的是某一个协议（例如ipv4,ipv6)，如果为0，则封装的是以太包。
  *
  * O = OAM Flag Bit. The O bit is set to indicate that the packet
- *     is an OAM packet.
+ *     is an OAM packet.  //指出此报文封装的是一个OAM报文（需要触发OAM报文处理）
  *
  * Next Protocol = This 8 bit field indicates the protocol header
  * immediately following the VXLAN GPE header.

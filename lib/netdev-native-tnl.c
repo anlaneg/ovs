@@ -217,7 +217,7 @@ udp_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
 }
 
 
-//给定报文，为这些报文封闭vxlan头
+//给定报文，为这些报文封装vxlan头
 //由于data数据类型中已填充好了必要的模板头，故（1）将模板直接copy进mbuf（2）填充ipv total length
 //(3) 计算ipv4 checksum (4)随机填充一个src port (5)填充udp总长度 (6)计算udp checksum
 void
@@ -230,6 +230,7 @@ netdev_tnl_push_udp_header(struct dp_packet *packet,
     udp = netdev_tnl_push_ip_header(packet, data->header, data->header_len, &ip_tot_size);
 
     /* set udp src port */
+    //按hash生成源port
     udp->udp_src = netdev_tnl_get_src_port(packet);
     udp->udp_len = htons(ip_tot_size);//填充udp长度（不含ipv4头）
 
@@ -276,6 +277,7 @@ netdev_tnl_ip_build_header(struct ovs_action_push_tnl *data,
 {
     void *l3;
 
+    //填充以太头
     l3 = eth_build_header(data, params);
     if (!params->is_ipv6) {//构造ipv4头
         ovs_be32 ip_src = in6_addr_get_mapped_ipv4(params->s_ip);
@@ -287,7 +289,7 @@ netdev_tnl_ip_build_header(struct ovs_action_push_tnl *data,
         ip->ip_tos = params->flow->tunnel.ip_tos;
         ip->ip_ttl = params->flow->tunnel.ip_ttl;
         ip->ip_proto = next_proto;//预填充上层协议
-        put_16aligned_be32(&ip->ip_src, ip_src);
+        put_16aligned_be32(&ip->ip_src, ip_src);//填充源ip
         put_16aligned_be32(&ip->ip_dst, params->flow->tunnel.ip_dst);
 
         ip->ip_frag_off = (params->flow->tunnel.flags & FLOW_TNL_F_DONT_FRAGMENT) ?
@@ -533,6 +535,7 @@ netdev_vxlan_pop_header(struct dp_packet *packet)
         vx_flags &= htonl(~VXLAN_GPE_USED_BITS);
         /* Drop the OAM packets */
         if (vxh->vx_gpe.flags & VXLAN_GPE_FLAGS_O) {
+        		//对端打上了O标记，当前OVS不支持处理OAM报文
             goto err;
         }
         switch (vxh->vx_gpe.next_protocol) {
@@ -589,15 +592,20 @@ netdev_vxlan_build_header(const struct netdev *netdev,
     ovs_mutex_lock(&dev->mutex);
     tnl_cfg = &dev->tnl_cfg;
 
+    //构造vxlan前面的报文，获得vxlan头部指针
     vxh = udp_build_header(tnl_cfg, data, params);
 
+    //如果需要支持GPE扩展封装,看https://tools.ietf.org/html/draft-ietf-nvo3-vxlan-gpe-01
     if (tnl_cfg->exts & (1 << OVS_VXLAN_EXT_GPE)) {
+    		//打GPE标记
         put_16aligned_be32(&vxh->vx_flags, htonl(VXLAN_FLAGS | VXLAN_HF_GPE));
+        //设置vxlan id
         put_16aligned_be32(&vxh->vx_vni,
                            htonl(ntohll(params->flow->tunnel.tun_id) << 8));
         if (params->flow->packet_type == htonl(PT_ETH)) {
             vxh->vx_gpe.next_protocol = VXLAN_GPE_NP_ETHERNET;
         } else if (pt_ns(params->flow->packet_type) == OFPHTN_ETHERTYPE) {
+        	    //填写next_protocol
             switch (pt_ns_type(params->flow->packet_type)) {
             case ETH_TYPE_IP:
                 vxh->vx_gpe.next_protocol = VXLAN_GPE_NP_IPV4;

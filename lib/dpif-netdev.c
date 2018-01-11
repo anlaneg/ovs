@@ -645,7 +645,7 @@ struct dp_netdev_pmd_thread {
      * The instances for cpu core NON_PMD_CORE_ID can be accessed by multiple
      * threads, and thusly need to be protected by 'non_pmd_mutex'.  Every
      * other instance will only be accessed by its own pmd thread. */
-    struct hmap tnl_port_cache;
+    struct hmap tnl_port_cache;//隧道口集合
     struct hmap send_port_cache;
 
     /* Only a pmd thread can write on its own 'cycles' and 'stats'.
@@ -3414,6 +3414,7 @@ dp_netdev_process_rxq_port(struct dp_netdev_pmd_thread *pmd,
     return batch_cnt;
 }
 
+//给出port编号，获得此port对应的tx_port结构
 static struct tx_port *
 tx_port_lookup(const struct hmap *hmap, odp_port_t port_no)
 {
@@ -4044,7 +4045,7 @@ reconfigure_datapath(struct dp_netdev *dp)
         ovs_mutex_lock(&pmd->port_mutex);
         if (hmap_count(&pmd->poll_list) || pmd->core_id == NON_PMD_CORE_ID) {
             HMAP_FOR_EACH (port, node, &dp->ports) {
-                //使dp中的每一个ports均可被pmd发送
+                //使dp中的每一个ports均可被pmd发送（包含隧道口）
             		dp_netdev_add_port_tx_to_pmd(pmd, port);
             }
         }

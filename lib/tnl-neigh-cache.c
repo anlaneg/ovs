@@ -86,6 +86,7 @@ tnl_neigh_lookup__(const char br_name[IFNAMSIZ], const struct in6_addr *dst)
     return NULL;
 }
 
+//查询领居表项，确定目的mac地址
 int
 tnl_neigh_lookup(const char br_name[IFNAMSIZ], const struct in6_addr *dst,
                  struct eth_addr *mac)
