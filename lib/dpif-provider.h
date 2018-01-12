@@ -391,6 +391,7 @@ struct dpif_class {
      * Registers an upcall callback function with 'dpif'. This is only used
      * if 'dpif' directly executes upcall functions. 'aux' is passed to the
      * callback on invocation. */
+    //注册upcall回调函数
     void (*register_upcall_cb)(struct dpif *, upcall_callback *, void *aux);
 
     /* Enables upcalls if 'dpif' directly executes upcall functions. */
@@ -437,6 +438,12 @@ struct dpif_class {
      *     (zone 0). */
     int (*ct_flush)(struct dpif *, const uint16_t *zone,
                     const struct ct_dpif_tuple *tuple);
+    /* Set max connections allowed. */
+    int (*ct_set_maxconns)(struct dpif *, uint32_t maxconns);
+    /* Get max connections allowed. */
+    int (*ct_get_maxconns)(struct dpif *, uint32_t *maxconns);
+    /* Get number of connections tracked. */
+    int (*ct_get_nconns)(struct dpif *, uint32_t *nconns);
 
     /* Meters */
 

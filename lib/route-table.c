@@ -19,6 +19,8 @@
 #include "route-table.h"
 
 #include <errno.h>
+#include <sys/types.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <linux/rtnetlink.h>
@@ -181,6 +183,7 @@ route_table_reset(void)
         struct route_table_msg msg;
 
         if (route_table_parse(&reply, &msg)) {
+        		//处理netlink消息，进行路由表项的添加删除
             route_table_handle_msg(&msg);
         }
     }

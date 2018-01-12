@@ -60,7 +60,7 @@ struct tun_metadata {
 
     union {
         uint8_t u8[TUN_METADATA_TOT_OPT_SIZE]; /* Values from tunnel TLVs. */
-        struct geneve_opt gnv[TLV_TOT_OPT_SIZE / sizeof(struct geneve_opt)];
+        struct geneve_opt gnv[TLV_TOT_OPT_SIZE / sizeof(struct geneve_opt)];//geneve的选项字段
     } opts;
 };
 BUILD_ASSERT_DECL(offsetof(struct tun_metadata, opts) % 8 == 0);

@@ -117,6 +117,7 @@ PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
     } ct_orig_tuple;//连接信息                         /* 'ct_orig_tuple_ipv6' is set */
 );
 
+//将tunnel单独做为一个cacheline
 PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline2,
     struct flow_tnl tunnel;     /* Encapsulating tunnel parameters. Note that
                                  * if 'ip_dst' == 0, the rest of the fields may
@@ -439,9 +440,8 @@ void push_eth(struct dp_packet *packet, const struct eth_addr *dst,
               const struct eth_addr *src);
 void pop_eth(struct dp_packet *packet);
 
-void encap_nsh(struct dp_packet *packet,
-               const struct ovs_action_encap_nsh *encap_nsh);
-bool decap_nsh(struct dp_packet *packet);
+void push_nsh(struct dp_packet *packet, const struct nsh_hdr *nsh_hdr_src);
+bool pop_nsh(struct dp_packet *packet);
 
 #define LLC_DSAP_SNAP 0xaa
 #define LLC_SSAP_SNAP 0xaa
@@ -982,6 +982,7 @@ BUILD_ASSERT_DECL(ND_PREFIX_OPT_LEN == sizeof(struct ovs_nd_prefix_opt));
 
 /* Neighbor Discovery option: MTU. */
 #define ND_MTU_OPT_LEN 8
+#define ND_MTU_DEFAULT 0
 struct ovs_nd_mtu_opt {
     uint8_t  type;      /* ND_OPT_MTU */
     uint8_t  len;       /* Always 1. */
@@ -1020,6 +1021,17 @@ BUILD_ASSERT_DECL(RA_MSG_LEN == sizeof(struct ovs_ra_msg));
 
 #define ND_RA_MANAGED_ADDRESS 0x80
 #define ND_RA_OTHER_CONFIG    0x40
+
+/* Defaults based on MaxRtrInterval and MinRtrInterval from RFC 4861 section
+ * 6.2.1
+ */
+#define ND_RA_MAX_INTERVAL_DEFAULT 600
+
+static inline int
+nd_ra_min_interval_default(int max)
+{
+    return max >= 9 ? max / 3 : max * 3 / 4;
+}
 
 /*
  * Use the same struct for MLD and MLD2, naming members as the defined fields in
@@ -1262,13 +1274,13 @@ BUILD_ASSERT_DECL(sizeof(struct vxlanhdr) == 8);
  * |                VXLAN Network Identifier (VNI) |   Reserved    |
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  *
- * Ver = Version. Indicates VXLAN GPE protocol version.
+ * Ver = Version. Indicates VXLAN GPE protocol version. //指出GPE协议版本号，当前为0
  *
  * P = Next Protocol Bit. The P bit is set to indicate that the
- *     Next Protocol field is present.
+ *     Next Protocol field is present. 指出下一层封装的是某一个协议（例如ipv4,ipv6)，如果为0，则封装的是以太包。
  *
  * O = OAM Flag Bit. The O bit is set to indicate that the packet
- *     is an OAM packet.
+ *     is an OAM packet.  //指出此报文封装的是一个OAM报文（需要触发OAM报文处理）
  *
  * Next Protocol = This 8 bit field indicates the protocol header
  * immediately following the VXLAN GPE header.
@@ -1421,7 +1433,7 @@ void compose_nd_ra(struct dp_packet *,
                    const struct in6_addr *ipv6_dst,
                    uint8_t cur_hop_limit, uint8_t mo_flags,
                    ovs_be16 router_lt, ovs_be32 reachable_time,
-                   ovs_be32 retrans_timer, ovs_be32 mtu);
+                   ovs_be32 retrans_timer, uint32_t mtu);
 void packet_put_ra_prefix_opt(struct dp_packet *,
                               uint8_t plen, uint8_t la_flags,
                               ovs_be32 valid_lifetime,

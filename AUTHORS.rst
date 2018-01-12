@@ -203,6 +203,7 @@ Lili Huang                      huanglili.huang@huawei.com
 Linda Sun                       lsun@vmware.com
 Lior Neudorfer                  lior@guardicore.com
 Lorand Jakab                    lojakab@cisco.com
+Lorenzo Bianconi                lorenzo.bianconi@redhat.com
 Luca Giraudo                    lgiraudo@nicira.com
 Lucas Alvares Gomes             lucasagomes@gmail.com
 Lucian Petrut                   lpetrut@cloudbasesolutions.com
@@ -376,6 +377,7 @@ Aaron M. Ucko                   ucko@debian.org
 Abhinav Singhal                 Abhinav.Singhal@spirent.com
 Adam Heath                      doogie@brainfood.com
 Ahmed Bilal                     numan252@gmail.com
+Alan Kayahan                    hsykay@gmail.com
 Alan Shieh                      ashieh@nicira.com
 Alban Browaeys                  prahal@yahoo.com
 Alex Yip                        alex@nicira.com
@@ -400,6 +402,7 @@ Ben Basler                      bbasler@nicira.com
 Bhargava Shastry                bshastry@sec.t-labs.tu-berlin.de
 Bob Ball                        bob.ball@citrix.com
 Brad Hall                       brad@nicira.com
+Brad Cowie                      brad@wand.net.nz
 Brailey Josh                    josh@faucet.nz
 Brandon Heller                  brandonh@stanford.edu
 Brendan Kelley                  bkelley@nicira.com
@@ -521,6 +524,7 @@ Pasi Kärkkäinen                 pasik@iki.fi
 Patrik Andersson R              patrik.r.andersson@ericsson.com
 Paulo Cravero                   pcravero@as2594.net
 Pawan Shukla                    shuklap@vmware.com
+Periyasamy Palanisamy           periyasamy.palanisamy@ericsson.com
 Peter Amidon                    peter@picnicpark.org
 Peter Balland                   peter@nicira.com
 Peter Phaal                     peter.phaal@inmon.com

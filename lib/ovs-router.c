@@ -18,12 +18,13 @@
 
 #include "ovs-router.h"
 
+#include <sys/types.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <sys/socket.h>
 #include <net/if.h>
-#include <netinet/in.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,7 +61,7 @@ struct ovs_router_entry {
     char output_bridge[IFNAMSIZ];//从哪个桥发出
     struct in6_addr gw;//网关
     struct in6_addr nw_addr;//目的网段
-    struct in6_addr src_addr;//采用哪个源ip
+    struct in6_addr src_addr;//采用哪个源ip（由于自某个桥发出，故这个源ip将在此桥link up上选）
     uint8_t plen;
     uint8_t priority;
     uint32_t mark;
@@ -222,7 +223,8 @@ ovs_router_insert__(uint32_t mark, uint8_t priority,
     p->nw_addr = match.flow.ipv6_dst;
     p->plen = plen;
     p->priority = priority;
-    err = get_src_addr(ip6_dst, output_bridge, &p->src_addr);//自设备output_bridge上查找合适的ip地址
+    //自设备output_bridge上查找合适的ip地址
+    err = get_src_addr(ip6_dst, output_bridge, &p->src_addr);
     if (err && ipv6_addr_is_set(gw)) {//出错，且gw被设置为非０
         err = get_src_addr(gw, output_bridge, &p->src_addr);//尝试gw
     }
@@ -253,7 +255,7 @@ ovs_router_insert__(uint32_t mark, uint8_t priority,
     return 0;
 }
 
-//表项插入
+//路由表项插入
 void
 ovs_router_insert(uint32_t mark, const struct in6_addr *ip_dst, uint8_t plen,
                   const char output_bridge[], const struct in6_addr *gw)
@@ -327,7 +329,7 @@ scan_ipv4_route(const char *s, ovs_be32 *addr, unsigned int *plen)
     return true;
 }
 
-//命令行插入
+//命令行插入路由
 static void
 ovs_router_add(struct unixctl_conn *conn, int argc,
               const char *argv[], void *aux OVS_UNUSED)
@@ -386,7 +388,7 @@ ovs_router_add(struct unixctl_conn *conn, int argc,
     }
 }
 
-//命令行删除
+//命令行路由删除
 static void
 ovs_router_del(struct unixctl_conn *conn, int argc OVS_UNUSED,
               const char *argv[], void *aux OVS_UNUSED)

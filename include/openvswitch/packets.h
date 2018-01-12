@@ -17,6 +17,7 @@
 #ifndef OPENVSWITCH_PACKETS_H
 #define OPENVSWITCH_PACKETS_H 1
 
+#include <sys/types.h>
 #include <netinet/in.h>
 #include "openvswitch/tun-metadata.h"
 
@@ -52,8 +53,8 @@ struct flow_tnl {
 
 /* Private flags */
 #define FLOW_TNL_F_DONT_FRAGMENT (1 << 1)
-#define FLOW_TNL_F_CSUM (1 << 2)
-#define FLOW_TNL_F_KEY (1 << 3)
+#define FLOW_TNL_F_CSUM (1 << 2) //标记checksum已校验
+#define FLOW_TNL_F_KEY (1 << 3) //标记vxlan id被标记
 
 #define FLOW_TNL_F_MASK ((1 << 4) - 1)
 
@@ -81,7 +82,16 @@ struct flow_nsh {
     uint8_t np;
     uint8_t si;
     ovs_be32 spi;
-    ovs_be32 c[4];
+    ovs_be32 context[4];
+};
+
+struct ovs_key_nsh {
+    uint8_t flags;
+    uint8_t mdtype;
+    uint8_t np;
+    uint8_t pad;
+    ovs_be32 path_hdr;
+    ovs_be32 context[4];
 };
 
 /* NSH flags */

@@ -60,6 +60,7 @@
 struct dpif_flow_stats;
 struct ofproto_async_msg;
 struct ofproto_dpif;
+struct uuid;
 struct xlate_cache;
 
 /* Number of implemented OpenFlow tables. */
@@ -152,12 +153,6 @@ struct group_dpif *group_dpif_lookup(struct ofproto_dpif *,
  * They are defined as macros to keep 'dpif_show_support()' in sync
  * as new fields are added.  */
 #define DPIF_SUPPORT_FIELDS                                                 \
-    /* True if the datapath supports variable-length                        \
-     * OVS_USERSPACE_ATTR_USERDATA in OVS_ACTION_ATTR_USERSPACE actions.    \
-     * False if the datapath supports only 8-byte (or shorter) userdata. */ \
-    DPIF_SUPPORT_FIELD(bool, variable_length_userdata,                      \
-                       "Variable length userdata")                          \
-                                                                            \
     /* True if the datapath supports masked data in OVS_ACTION_ATTR_SET     \
      * actions. */                                                          \
     DPIF_SUPPORT_FIELD(bool, masked_set_action, "Masked set action")        \
@@ -241,7 +236,7 @@ struct dpif_backer {
                                                 set to a lower level in
                                                 feature than 'bt_support'. */
 
-    struct atomic_count tnl_count;
+    struct atomic_count tnl_count;//系统tunnel口数量
 };
 
 /* All existing ofproto_backer instances, indexed by ofproto->up.type. */
@@ -252,7 +247,12 @@ struct ofport_dpif *odp_port_to_ofport(const struct dpif_backer *, odp_port_t);
 /* A bridge based on a "dpif" datapath. */
 
 struct ofproto_dpif {
-    struct hmap_node all_ofproto_dpifs_node; /* In 'all_ofproto_dpifs'. */ //用于加入链表用
+    /* In 'all_ofproto_dpifs_by_name'. */
+    struct hmap_node all_ofproto_dpifs_by_name_node;
+
+    /* In 'all_ofproto_dpifs_by_uuid'. */
+    struct hmap_node all_ofproto_dpifs_by_uuid_node;
+
     struct ofproto up;
     struct dpif_backer *backer;//ofproto对应的backer(等价与type,但提供比type更多的信息）
 
@@ -307,10 +307,8 @@ struct ofproto_dpif {
     uint64_t ams_seqno;
 };
 
-/* All existing ofproto_dpif instances, indexed by ->up.name. */
-extern struct hmap all_ofproto_dpifs;
-
-struct ofproto_dpif *ofproto_dpif_lookup(const char *name);
+struct ofproto_dpif *ofproto_dpif_lookup_by_name(const char *name);
+struct ofproto_dpif *ofproto_dpif_lookup_by_uuid(const struct uuid *uuid);
 
 ovs_version_t ofproto_dpif_get_tables_version(struct ofproto_dpif *);
 

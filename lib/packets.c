@@ -16,13 +16,13 @@
 
 #include <config.h>
 #include "packets.h"
+#include <sys/types.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
 #include <netinet/ip6.h>
 #include <netinet/icmp6.h>
 #include <stdlib.h>
-#include <sys/types.h>
 #include <netdb.h>
 #include "byte-order.h"
 #include "csum.h"
@@ -446,10 +446,10 @@ pop_mpls(struct dp_packet *packet, ovs_be16 ethtype)
 }
 
 void
-encap_nsh(struct dp_packet *packet, const struct ovs_action_encap_nsh *encap)
+push_nsh(struct dp_packet *packet, const struct nsh_hdr *nsh_hdr_src)
 {
     struct nsh_hdr *nsh;
-    size_t length = NSH_BASE_HDR_LEN + encap->mdlen;
+    size_t length = nsh_hdr_len(nsh_hdr_src);
     uint8_t next_proto;
 
     switch (ntohl(packet->packet_type)) {
@@ -470,33 +470,15 @@ encap_nsh(struct dp_packet *packet, const struct ovs_action_encap_nsh *encap)
     }
 
     nsh = (struct nsh_hdr *) dp_packet_push_uninit(packet, length);
-    nsh->ver_flags_ttl_len =
-            htons(((encap->flags << NSH_FLAGS_SHIFT) & NSH_FLAGS_MASK)
-                    | (63 << NSH_TTL_SHIFT)
-                    | ((length >> 2) << NSH_LEN_SHIFT));
-    nsh->md_type = (encap->mdtype << NSH_MDTYPE_SHIFT) & NSH_MDTYPE_MASK;
+    memcpy(nsh, nsh_hdr_src, length);
     nsh->next_proto = next_proto;
-    put_16aligned_be32(&nsh->path_hdr, encap->path_hdr);
-    switch (encap->mdtype) {
-        case NSH_M_TYPE1:
-            nsh->md1 = *ALIGNED_CAST(struct nsh_md1_ctx *, encap->metadata);
-            break;
-        case NSH_M_TYPE2: {
-            /* The MD2 metadata in encap is already padded to 4 bytes. */
-            memcpy(&nsh->md2, encap->metadata, encap->mdlen);
-            break;
-        }
-        default:
-            OVS_NOT_REACHED();
-    }
-
     packet->packet_type = htonl(PT_NSH);
     dp_packet_reset_offsets(packet);
     packet->l3_ofs = 0;
 }
 
 bool
-decap_nsh(struct dp_packet *packet)
+pop_nsh(struct dp_packet *packet)
 {
     struct nsh_hdr *nsh = (struct nsh_hdr *) dp_packet_l3(packet);
     size_t length;
@@ -1699,7 +1681,7 @@ compose_nd_ra(struct dp_packet *b,
               const struct in6_addr *ipv6_src, const struct in6_addr *ipv6_dst,
               uint8_t cur_hop_limit, uint8_t mo_flags,
               ovs_be16 router_lt, ovs_be32 reachable_time,
-              ovs_be32 retrans_timer, ovs_be32 mtu)
+              ovs_be32 retrans_timer, uint32_t mtu)
 {
     /* Don't compose Router Advertisement packet with MTU Option if mtu
      * value is 0. */
@@ -1731,7 +1713,7 @@ compose_nd_ra(struct dp_packet *b,
         mtu_opt->type = ND_OPT_MTU;
         mtu_opt->len = 1;
         mtu_opt->reserved = 0;
-        put_16aligned_be32(&mtu_opt->mtu, mtu);
+        put_16aligned_be32(&mtu_opt->mtu, htonl(mtu));
     }
 
     ra->icmph.icmp6_cksum = 0;

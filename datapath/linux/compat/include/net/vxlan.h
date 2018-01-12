@@ -49,11 +49,11 @@ static inline struct net_device *rpl_vxlan_dev_create(
  * |                VXLAN Network Identifier (VNI) |   Reserved    |
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  *
- * I = VXLAN Network Identifier (VNI) present.
+ * I = VXLAN Network Identifier (VNI) present. //此位必须置为1，其它位置为0
  */
 struct vxlanhdr {
-	__be32 vx_flags;
-	__be32 vx_vni;
+	__be32 vx_flags;//前8bit为标记为，目前仅第4bit被使用
+	__be32 vx_vni;//vni占用前24bit,后8bit预留
 };
 
 /* VXLAN header flags. */

@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <net/if.h>
+#include <sys/types.h>
 #include <netinet/in.h>
 #include <netinet/ip6.h>
 #include <sys/ioctl.h>
@@ -921,6 +922,7 @@ netdev_vport_get_ifindex(const struct netdev *netdev_)
     NULL,                       /* get_carrier_resets */    \
     NULL,                       /* get_miimon */            \
     get_stats,                                              \
+    NULL,                       /* get_custom_stats */      \
                                                             \
     NULL,                       /* get_features */          \
     NULL,                       /* set_advertisements */    \
@@ -978,6 +980,7 @@ netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
     /* The name of the dpif_port should be short enough to accomodate adding
      * a port number to the end if one is necessary. */
     static const struct vport_class vport_classes[] = {
+    		//geneve相较vxlan，头部的内容要更丰富一些
         TUNNEL_CLASS("geneve", "genev_sys", netdev_geneve_build_header,
                                             netdev_tnl_push_udp_header,
                                             netdev_geneve_pop_header,
@@ -986,9 +989,9 @@ netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
                                        netdev_gre_push_header,
                                        netdev_gre_pop_header,
                                        NULL),
-        TUNNEL_CLASS("vxlan", "vxlan_sys", netdev_vxlan_build_header,
-                                           netdev_tnl_push_udp_header,
-                                           netdev_vxlan_pop_header,
+        TUNNEL_CLASS("vxlan", "vxlan_sys", netdev_vxlan_build_header,//封装vxlan，生成header
+                                           netdev_tnl_push_udp_header,//应用header,完成封装
+                                           netdev_vxlan_pop_header,//解封装vxlan
                                            NETDEV_VPORT_GET_IFINDEX),
         TUNNEL_CLASS("lisp", "lisp_sys", NULL, NULL, NULL, NULL),
         TUNNEL_CLASS("stt", "stt_sys", NULL, NULL, NULL, NULL),
