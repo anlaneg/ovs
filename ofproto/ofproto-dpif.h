@@ -236,7 +236,7 @@ struct dpif_backer {
                                                 set to a lower level in
                                                 feature than 'bt_support'. */
 
-    struct atomic_count tnl_count;
+    struct atomic_count tnl_count;//系统tunnel口数量
 };
 
 /* All existing ofproto_backer instances, indexed by ofproto->up.type. */

@@ -980,6 +980,7 @@ netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
     /* The name of the dpif_port should be short enough to accomodate adding
      * a port number to the end if one is necessary. */
     static const struct vport_class vport_classes[] = {
+    		//geneve相较vxlan，头部的内容要更丰富一些
         TUNNEL_CLASS("geneve", "genev_sys", netdev_geneve_build_header,
                                             netdev_tnl_push_udp_header,
                                             netdev_geneve_pop_header,

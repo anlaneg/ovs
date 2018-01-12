@@ -190,6 +190,7 @@ udp_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
         return NULL;
     }
 
+    //udp checksum校验
     if (udp->udp_csum) {
         if (OVS_UNLIKELY(!dp_packet_l4_checksum_valid(packet))) {
             uint32_t csum;
@@ -207,7 +208,7 @@ udp_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
                 return NULL;
             }
         }
-        tnl->flags |= FLOW_TNL_F_CSUM;
+        tnl->flags |= FLOW_TNL_F_CSUM;//checksum已校验
     }
 
     tnl->tp_src = udp->udp_src;
@@ -460,6 +461,7 @@ netdev_gre_push_header(struct dp_packet *packet,
     }
 }
 
+//gre封装
 int
 netdev_gre_build_header(const struct netdev *netdev,
                         struct ovs_action_push_tnl *data,
@@ -475,9 +477,11 @@ netdev_gre_build_header(const struct netdev *netdev,
     ovs_mutex_lock(&dev->mutex);
     tnl_cfg = &dev->tnl_cfg;
 
+    //仅封装到ip头（47号为gre协议）
     greh = netdev_tnl_ip_build_header(data, params, IPPROTO_GRE);
 
     if (params->flow->packet_type == htonl(PT_ETH)) {
+    		//指明负载封装的是以太网报文
         greh->protocol = htons(ETH_TYPE_TEB);
     } else if (pt_ns(params->flow->packet_type) == OFPHTN_ETHERTYPE) {
         greh->protocol = pt_ns_type_be(params->flow->packet_type);
@@ -496,6 +500,7 @@ netdev_gre_build_header(const struct netdev *netdev,
 
     if (tnl_cfg->out_key_present) {
         greh->flags |= htons(GRE_KEY);
+        //通过gre key来包含tunnel_id
         put_16aligned_be32(options, be64_to_be32(params->flow->tunnel.tun_id));
         options++;
     }
@@ -530,8 +535,9 @@ netdev_vxlan_pop_header(struct dp_packet *packet)
         goto err;
     }
 
+    //解析vxlan头部的标记位
     vx_flags = get_16aligned_be32(&vxh->vx_flags);
-    if (vx_flags & htonl(VXLAN_HF_GPE)) {
+    if (vx_flags & htonl(VXLAN_HF_GPE)) {//gpe扩展
         vx_flags &= htonl(~VXLAN_GPE_USED_BITS);
         /* Drop the OAM packets */
         if (vxh->vx_gpe.flags & VXLAN_GPE_FLAGS_O) {
@@ -556,6 +562,7 @@ netdev_vxlan_pop_header(struct dp_packet *packet)
         }
     }
 
+    //未标记vxlan id
     if (vx_flags != htonl(VXLAN_FLAGS) ||
        (get_16aligned_be32(&vxh->vx_vni) & htonl(0xff))) {//检查flag及预留字段
         VLOG_WARN_RL(&err_rl, "invalid vxlan flags=%#x vni=%#x\n",
@@ -683,6 +690,7 @@ netdev_geneve_pop_header(struct dp_packet *packet)
     }
 
     tnl->flags |= gnh->oam ? FLOW_TNL_F_OAM : 0;
+    //tun_id占用24bit
     tnl->tun_id = htonll(ntohl(get_16aligned_be32(&gnh->vni)) >> 8);
     tnl->flags |= FLOW_TNL_F_KEY;
 
@@ -699,6 +707,7 @@ err:
     return NULL;
 }
 
+//geneve头部
 int
 netdev_geneve_build_header(const struct netdev *netdev,
                            struct ovs_action_push_tnl *data,
@@ -714,6 +723,7 @@ netdev_geneve_build_header(const struct netdev *netdev,
     ovs_mutex_lock(&dev->mutex);
     tnl_cfg = &dev->tnl_cfg;
 
+    //构造udp头部
     gnh = udp_build_header(tnl_cfg, data, params);
 
     put_16aligned_be32(&gnh->vni, htonl(ntohll(params->flow->tunnel.tun_id) << 8));

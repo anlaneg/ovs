@@ -854,8 +854,9 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
     return error;
 }
 
+//检查本地tunnel是否开启（后端是否支持tunnel的push,pop操作）
 bool
-ovs_native_tunneling_is_on(struct ofproto_dpif *ofproto)//检查本地tunnel是否开启
+ovs_native_tunneling_is_on(struct ofproto_dpif *ofproto)
 {
     return ofproto_use_tnl_push_pop
         && ofproto->backer->rt_support.tnl_push_pop
@@ -1853,7 +1854,8 @@ port_construct(struct ofport *port_)//ofport构造
 
     port->odp_port = dpif_port.port_no;
 
-    if (netdev_get_tunnel_config(netdev)) {//此netdev有tunnel配置，则其需要创建tunnel口
+    if (netdev_get_tunnel_config(netdev)) {
+    	    //此netdev有tunnel配置，则其需要创建tunnel口
         atomic_count_inc(&ofproto->backer->tnl_count);
         error = tnl_port_add(port, port->up.netdev, port->odp_port,
                              ovs_native_tunneling_is_on(ofproto), dp_port_name);

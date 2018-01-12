@@ -117,6 +117,7 @@ PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
     } ct_orig_tuple;//连接信息                         /* 'ct_orig_tuple_ipv6' is set */
 );
 
+//将tunnel单独做为一个cacheline
 PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline2,
     struct flow_tnl tunnel;     /* Encapsulating tunnel parameters. Note that
                                  * if 'ip_dst' == 0, the rest of the fields may

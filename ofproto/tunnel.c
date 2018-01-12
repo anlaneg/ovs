@@ -231,6 +231,7 @@ tnl_port_add(const struct ofport_dpif *ofport, const struct netdev *netdev,
     bool ok;
 
     fat_rwlock_wrlock(&rwlock);
+    //加入tunnel口
     ok = tnl_port_add__(ofport, netdev, odp_port, true, native_tnl, name);
     fat_rwlock_unlock(&rwlock);
 
