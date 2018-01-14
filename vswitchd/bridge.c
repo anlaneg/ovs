@@ -1816,6 +1816,7 @@ static int
 iface_set_netdev_config(const struct ovsrec_interface *iface_cfg,
                         struct netdev *netdev, char **errp)
 {
+	//设置netdev的配置，netdev的配置值采用options下发
     return netdev_set_config(netdev, &iface_cfg->options, errp);
 }
 

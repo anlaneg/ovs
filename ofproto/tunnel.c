@@ -45,13 +45,13 @@ VLOG_DEFINE_THIS_MODULE(tunnel);
 
 //match这些数据来源于tunnel口的配置
 struct tnl_match {
-    ovs_be64 in_key;
+    ovs_be64 in_key;//对应tunnel-id
     struct in6_addr ipv6_src;//保存ipv4或者ipv6地址（ipv4地址存在末尾)
     struct in6_addr ipv6_dst;
     odp_port_t odp_port;//tunnel对应datapath的接口编号
-    bool in_key_flow;//见后面的注释（谁把这个结构提前，却不将注释提前 :-P)
-    bool ip_src_flow;
-    bool ip_dst_flow;
+    bool in_key_flow;//是否使用tunnel解析出来的key
+    bool ip_src_flow;//源ip是否可以用flow中的
+    bool ip_dst_flow;//目的ip是否可以用flow中的
     enum netdev_pt_mode pt_mode;
 };
 
@@ -198,18 +198,22 @@ tnl_port_add__(const struct ofport_dpif *ofport, const struct netdev *netdev,
         return false;
     }
 
+    //将隧道口加入到ofprort_map
     hmap_insert(ofport_map, &tnl_port->ofport_node, hash_pointer(ofport, 0));//加入到ofport_map
 
-    if (!*map) {//廷迟创建map对应的hash
+    if (!*map) {
+    		//map还没有创建，创建map对应的hash
         *map = xmalloc(sizeof **map);
         hmap_init(*map);
     }
-    hmap_insert(*map, &tnl_port->match_node, tnl_hash(&tnl_port->match));//加入到map,方便以后查找
+    //加入到map,方便以后查找
+    hmap_insert(*map, &tnl_port->match_node, tnl_hash(&tnl_port->match));
     tnl_port_mod_log(tnl_port, "adding");
 
     if (native_tnl) {
         const char *type;
 
+        //指明占用隧道对应的目的端号口
         type = netdev_get_type(netdev);
         tnl_port_map_insert(odp_port, cfg->dst_port, name, type);
 
@@ -541,6 +545,7 @@ tnl_find_exact(struct tnl_match *match, struct hmap *map)
         struct tnl_port *tnl_port;
 
         HMAP_FOR_EACH_WITH_HASH (tnl_port, match_node, tnl_hash(match), map) {
+        		//需要match完全相同
             if (!memcmp(match, &tnl_port->match, sizeof *match)) {
                 return tnl_port;
             }
@@ -561,14 +566,17 @@ tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)//通过流来找tunnel�
     int i;
 
     i = 0;
-    //这一组循环的目的就是为了很完全遍历tnl_match_maps
+    //这一组循环的目的就是为了完全遍历tnl_match_maps
     //针对flow查找所有hash表，查找能配置的tnl_port
+    //这个流是对端tunnel发送过来的流，我们解析了这个流(采用pop tunnel)，但我们不知道需要哪个隧道口
+    //来回复此流，故我们进行本端tunnel检查，因此对应的src-ip即为我们tunnel的目的ip
     for (in_key_flow = 0; in_key_flow < 2; in_key_flow++) {
         for (ip_dst_flow = 0; ip_dst_flow < 2; ip_dst_flow++) {
             for (ip_src = 0; ip_src < 3; ip_src++) {//为什么是３，看IP_SRC_CFG枚举
                 struct hmap *map = tnl_match_maps[i];
 
                 if (map) {
+                		//这个map是存在的，在其中查找
                     struct tnl_port *tnl_port;
                     struct tnl_match match;
 
@@ -581,11 +589,14 @@ tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)//通过流来找tunnel�
                      * packets. */
                     match.in_key = in_key_flow ? 0 : flow->tunnel.tun_id;
                     if (ip_src == IP_SRC_CFG) {
+                    		//采用隧道外层的目的ip做为src-ip
                         match.ipv6_src = flow_tnl_dst(&flow->tunnel);
                     }
                     if (!ip_dst_flow) {
+                    		//采用隧道外层的源ip做为dst-ip
                         match.ipv6_dst = flow_tnl_src(&flow->tunnel);
                     }
+                    //设置tunnel port id号
                     match.odp_port = flow->in_port.odp_port;
                     match.in_key_flow = in_key_flow;
                     match.ip_dst_flow = ip_dst_flow;
@@ -595,6 +606,7 @@ tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)//通过流来找tunnel�
                     if (pt_ns(flow->packet_type) == OFPHTN_ETHERTYPE) {
                         match.pt_mode = NETDEV_PT_LEGACY_L3;
                     } else {
+                    	    //只能封装2层报文（常见传统的vxlan)
                         match.pt_mode = NETDEV_PT_LEGACY_L2;
                     }
                     tnl_port = tnl_find_exact(&match, map);
@@ -603,6 +615,7 @@ tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)//通过流来找tunnel�
                     }
 
                     /* Then check for a packet type aware port. */
+                    //尝试自动模式
                     match.pt_mode = NETDEV_PT_AWARE;
                     tnl_port = tnl_find_exact(&match, map);
                     if (tnl_port) {
@@ -610,7 +623,7 @@ tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)//通过流来找tunnel�
                     }
                 }
 
-                i++;
+                i++;//没找到继续尝试
             }
         }
     }
@@ -626,6 +639,7 @@ tnl_match_map(const struct tnl_match *m)
 {
     enum ip_src_type ip_src;
 
+    //确认源ip如何选择
     ip_src = (m->ip_src_flow ? IP_SRC_FLOW
               : ipv6_addr_is_set(&m->ipv6_src) ? IP_SRC_CFG
               : IP_SRC_ANY);

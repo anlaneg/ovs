@@ -85,8 +85,9 @@ vport_class_cast(const struct netdev_class *class)
     return CONTAINER_OF(class, struct vport_class, netdev_class);
 }
 
+//获取tunnel配置
 static const struct netdev_tunnel_config *
-get_netdev_tunnel_config(const struct netdev *netdev)//获取tunnel配置
+get_netdev_tunnel_config(const struct netdev *netdev)
 {
     return &netdev_vport_cast(netdev)->tnl_cfg;
 }
@@ -448,7 +449,7 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args, char **errp)//�
     memset(&tnl_cfg, 0, sizeof tnl_cfg);
 
     /* Add a default destination port for tunnel ports if none specified. */
-    //设置默认目的port
+    //针对隧道类型，设置默认目的port
     if (!strcmp(type, "geneve")) {
         tnl_cfg.dst_port = htons(GENEVE_DST_PORT);
     }
@@ -650,8 +651,9 @@ out:
     return err;
 }
 
+//获取tunnel对应的配置(返回args,args是一个配置集）
 static int
-get_tunnel_config(const struct netdev *dev, struct smap *args)//获取tunnel对应的配置
+get_tunnel_config(const struct netdev *dev, struct smap *args)
 {
     struct netdev_vport *netdev = netdev_vport_cast(dev);
     const char *type = netdev_get_type(dev);
@@ -673,6 +675,7 @@ get_tunnel_config(const struct netdev *dev, struct smap *args)//获取tunnel对�
         smap_add(args, "local_ip", "flow");
     }
 
+    //采用flow中的in,out key
     if (tnl_cfg.in_key_flow && tnl_cfg.out_key_flow) {
         smap_add(args, "key", "flow");
     } else if (tnl_cfg.in_key_present && tnl_cfg.out_key_present
@@ -703,9 +706,11 @@ get_tunnel_config(const struct netdev *dev, struct smap *args)//获取tunnel对�
     if (tnl_cfg.tos_inherit) {
         smap_add(args, "tos", "inherit");
     } else if (tnl_cfg.tos) {
+    		//tos
         smap_add_format(args, "tos", "0x%x", tnl_cfg.tos);
     }
 
+    //设置目的port
     if (tnl_cfg.dst_port) {
         uint16_t dst_port = ntohs(tnl_cfg.dst_port);
 
@@ -967,8 +972,8 @@ netdev_vport_get_ifindex(const struct netdev *netdev_)
                      GET_IFINDEX)                                              \
     { DPIF_PORT,                                                               \
         { NAME, false,                                                         \
-          VPORT_FUNCTIONS(get_tunnel_config,                                   \
-                          set_tunnel_config,                                   \
+          VPORT_FUNCTIONS(get_tunnel_config,/*tunnel口配置获取，依据tnl_cfg生成*/ \
+                          set_tunnel_config,/*tunnel口配置设置，设置到tnl_cfg上*/  \
                           get_netdev_tunnel_config,                            \
                           tunnel_get_status,                                   \
                           BUILD_HEADER, PUSH_HEADER, POP_HEADER,               \

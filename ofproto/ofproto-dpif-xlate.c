@@ -1379,7 +1379,7 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer, const struct flow *flow,
 
     //查找xport（此流对的入接口）
     xport = xport_lookup(xcfg, tnl_port_should_receive(flow)//是否tunnel　接口收到报文
-                         ? tnl_port_receive(flow)//tunnel收取到报文
+                         ? tnl_port_receive(flow)//tunnel收取到报文,则查询tunnel口
                          : odp_port_to_ofport(backer, flow->in_port.odp_port));
     if (OVS_UNLIKELY(!xport)) {
         return NULL;
