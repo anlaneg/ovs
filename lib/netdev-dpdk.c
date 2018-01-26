@@ -384,7 +384,7 @@ struct netdev_dpdk {
 
     PADDED_MEMBERS(CACHE_LINE_SIZE,
         /* Identifier used to distinguish vhost devices from each other. */
-        char vhost_id[PATH_MAX];
+        char vhost_id[PATH_MAX];//vhost 设备的path(如hostuser中的path)
     );
 
     PADDED_MEMBERS(CACHE_LINE_SIZE,
@@ -1012,7 +1012,7 @@ netdev_dpdk_vhost_construct(struct netdev *netdev)
     //由于这里是第一次使用vhost_driver_flags，故这个标记位上没有zero copy flag被赋上
     //故此版本还不支持 @2017-06-08
     dev->vhost_driver_flags &= ~RTE_VHOST_USER_CLIENT;//指明为服务端
-    //注册vsocket,未开始监听
+    //注册vsocket,但未开始监听（unix socket path)
     err = rte_vhost_driver_register(dev->vhost_id, dev->vhost_driver_flags);
     if (err) {
         VLOG_ERR("vhost-user socket device setup failure for socket %s\n",
