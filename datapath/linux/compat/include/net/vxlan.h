@@ -273,13 +273,13 @@ struct vxlan_dev {
 	struct vxlan_rdst default_dst;	/* default destination */
 	u32		  flags;	/* VXLAN_F_* in vxlan.h */
 
-	struct timer_list age_timer;
+	struct timer_list age_timer;//用于老化fdb表项
 	spinlock_t	  hash_lock;
 	unsigned int	  addrcnt;
 
 	struct vxlan_config	cfg;
 
-	struct hlist_head fdb_head[FDB_HASH_SIZE];
+	struct hlist_head fdb_head[FDB_HASH_SIZE];//vxlan设备转发表项
 };
 
 #define VXLAN_F_LEARN			0x01

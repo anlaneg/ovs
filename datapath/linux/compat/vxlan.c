@@ -647,6 +647,7 @@ static bool vxlan_ecn_decapsulate(struct vxlan_sock *vs, void *oiph,
 }
 
 /* Callback from net/ipv4/udp.c to receive packets */
+//收到vxlan报文处理
 static int vxlan_rcv(struct sock *sk, struct sk_buff *skb)
 {
 	union {
@@ -665,11 +666,15 @@ static int vxlan_rcv(struct sock *sk, struct sk_buff *skb)
 	void *oiph;
 
 	/* Need UDP and VXLAN header to be present */
+	//报文需要有完整的udp,vxlan头（从长度上保证）
 	if (!pskb_may_pull(skb, VXLAN_HLEN))
 		goto drop;
 
+	//定位到vxlan头部
 	unparsed = *vxlan_hdr(skb);
 	/* VNI flag always required to be set */
+	//当前vxlan标准要求首字节的第４位必须置１（linux 查int32型的第27位）
+	//如果未置位，则丢包（不合法的vxlan报文）
 	if (!(unparsed.vx_flags & VXLAN_HF_VNI)) {
 		netdev_dbg(skb->dev, "invalid vxlan flags=%#x vni=%#x\n",
 			   ntohl(vxlan_hdr(skb)->vx_flags),
@@ -678,8 +683,9 @@ static int vxlan_rcv(struct sock *sk, struct sk_buff *skb)
 		goto drop;
 	}
 
+	//提取vxlan的其它标记位
 	unparsed.vx_flags &= ~VXLAN_HF_VNI;
-	unparsed.vx_vni &= ~VXLAN_VNI_MASK;
+	unparsed.vx_vni &= ~VXLAN_VNI_MASK;//提取vxlan id号
 
 	vs = rcu_dereference_sk_user_data(sk);
 	if (!vs)
@@ -695,6 +701,7 @@ static int vxlan_rcv(struct sock *sk, struct sk_buff *skb)
 	}
 #endif
 #endif
+	//检查是否有能收取此vni的vxlan设备
 	vxlan = vxlan_vs_find_vni(vs, vxlan_vni(vxlan_hdr(skb)->vx_vni));
 	if (!vxlan)
 		goto drop;
@@ -702,6 +709,7 @@ static int vxlan_rcv(struct sock *sk, struct sk_buff *skb)
 	/* For backwards compatibility, only allow reserved fields to be
 	 * used by VXLAN extensions if explicitly requested.
 	 */
+	//vxlan扩展处理
 	if (vs->flags & VXLAN_F_GPE) {
 		if (!vxlan_parse_gpe_hdr(&unparsed, &protocol, skb, vs->flags))
 			goto drop;
