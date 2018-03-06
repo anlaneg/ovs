@@ -80,6 +80,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/dpdk.h \
 	lib/dpif-netdev.c \
 	lib/dpif-netdev.h \
+	lib/dpif-netdev-perf.c \
+	lib/dpif-netdev-perf.h \
 	lib/dpif-provider.h \
 	lib/dpif.c \
 	lib/dpif.h \
@@ -129,6 +131,7 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/meta-flow.c \
 	lib/multipath.c \
 	lib/multipath.h \
+	lib/namemap.c \
 	lib/netdev-dpdk.h \
 	lib/netdev-dummy.c \
 	lib/netdev-provider.h \
@@ -149,12 +152,26 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/odp-util.c \
 	lib/odp-util.h \
 	lib/ofp-actions.c \
+	lib/ofp-bundle.c \
+	lib/ofp-connection.c \
 	lib/ofp-ed-props.c \
 	lib/ofp-errors.c \
+	lib/ofp-flow.c \
+	lib/ofp-group.c \
+	lib/ofp-ipfix.c \
+	lib/ofp-match.c \
+	lib/ofp-meter.c \
+	lib/ofp-monitor.c \
 	lib/ofp-msgs.c \
+	lib/ofp-packet.c \
 	lib/ofp-parse.c \
+	lib/ofp-port.c \
 	lib/ofp-print.c \
 	lib/ofp-prop.c \
+	lib/ofp-protocol.c \
+	lib/ofp-queue.c \
+	lib/ofp-switch.c \
+	lib/ofp-table.c \
 	lib/ofp-util.c \
 	lib/ofp-version-opt.h \
 	lib/ofp-version-opt.c \
@@ -453,7 +470,8 @@ EXTRA_DIST += \
 	lib/ssl.xml \
 	lib/ssl-bootstrap.xml \
 	lib/table.xml \
-	lib/vlog.xml
+	lib/vlog.xml \
+	lib/unixctl.xml
 
 MAN_FRAGMENTS += \
 	lib/colors.man \

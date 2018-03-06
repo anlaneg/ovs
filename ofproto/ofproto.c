@@ -41,9 +41,13 @@
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/meta-flow.h"
 #include "openvswitch/ofp-actions.h"
+#include "openvswitch/ofp-bundle.h"
 #include "openvswitch/ofp-errors.h"
+#include "openvswitch/ofp-match.h"
 #include "openvswitch/ofp-msgs.h"
+#include "openvswitch/ofp-monitor.h"
 #include "openvswitch/ofp-print.h"
+#include "openvswitch/ofp-queue.h"
 #include "openvswitch/ofp-util.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
@@ -1545,10 +1549,8 @@ ofproto_rule_delete(struct ofproto *ofproto, struct rule *rule)
         /* Make sure there is no postponed removal of the rule. */
         ovs_assert(cls_rule_visible_in_version(&rule->cr, OVS_VERSION_MAX));
 
-        if (!classifier_remove(&rule->ofproto->tables[rule->table_id].cls,
-                               &rule->cr)) {
-            OVS_NOT_REACHED();
-        }
+        classifier_remove_assert(&rule->ofproto->tables[rule->table_id].cls,
+                                 &rule->cr);
         ofproto_rule_remove__(rule->ofproto, rule);
         if (ofproto->ofproto_class->rule_delete) {
             ofproto->ofproto_class->rule_delete(rule);
@@ -2003,28 +2005,19 @@ ofproto_port_dump_done(struct ofproto_port_dump *dump)
     return dump->error == EOF ? 0 : dump->error;
 }
 
-/* Returns the type to pass to netdev_open() when a datapath of type
- * 'datapath_type' has a port of type 'port_type', for a few special
- * cases when a netdev type differs from a port type.  For example, when
- * using the userspace datapath, a port of type "internal" needs to be
- * opened as "tap".
+/* Returns the type to pass to netdev_open() when 'ofproto' has a port of type
+ * 'port_type', for a few special cases when a netdev type differs from a port
+ * type.  For example, when using the userspace datapath, a port of type
+ * "internal" needs to be opened as "tap".
  *
  * Returns either 'type' itself or a string literal, which must not be
  * freed. */
 //依据datapath类型来返回对应的port_type(如上面注释举例说说的 userspace datapath时，internal被返回为tap）
 const char *
-ofproto_port_open_type(const char *datapath_type, const char *port_type)
+ofproto_port_open_type(const struct ofproto *ofproto, const char *port_type)
 {
-    const struct ofproto_class *class;
-
-    datapath_type = ofproto_normalize_type(datapath_type);//datapath类型规则化
-    class = ofproto_class_find__(datapath_type);//找出datapath类型对应的class
-    if (!class) {
-        return port_type;
-    }
-
-    return (class->port_open_type
-            ? class->port_open_type(datapath_type, port_type)
+    return (ofproto->ofproto_class->port_open_type
+            ? ofproto->ofproto_class->port_open_type(ofproto->type, port_type)
             : port_type);
 }
 
@@ -2778,10 +2771,9 @@ init_ports(struct ofproto *p)
 static bool
 ofport_is_internal_or_patch(const struct ofproto *p, const struct ofport *port)
 {
-    return !strcmp(netdev_get_type(port->netdev),
-                   ofproto_port_open_type(p->type, "internal")) ||
-           !strcmp(netdev_get_type(port->netdev),
-                   ofproto_port_open_type(p->type, "patch"));
+    const char *netdev_type = netdev_get_type(port->netdev);
+    return !strcmp(netdev_type, ofproto_port_open_type(p, "internal")) ||
+           !strcmp(netdev_type, ofproto_port_open_type(p, "patch"));
 }
 
 /* If 'port' is internal or patch and if the user didn't explicitly specify an
@@ -2937,9 +2929,7 @@ remove_rule_rcu__(struct rule *rule)
     struct oftable *table = &ofproto->tables[rule->table_id];
 
     ovs_assert(!cls_rule_visible_in_version(&rule->cr, OVS_VERSION_MAX));
-    if (!classifier_remove(&table->cls, &rule->cr)) {
-        OVS_NOT_REACHED();
-    }
+    classifier_remove_assert(&table->cls, &rule->cr);
     if (ofproto->ofproto_class->rule_delete) {
         ofproto->ofproto_class->rule_delete(rule);
     }
@@ -3255,7 +3245,7 @@ learned_cookies_flush(struct ofproto *ofproto, struct ovs_list *dead_cookies)
 static enum ofperr
 handle_echo_request(struct ofconn *ofconn, const struct ofp_header *oh)
 {
-    ofconn_send_reply(ofconn, make_echo_reply(oh));
+    ofconn_send_reply(ofconn, ofputil_encode_echo_reply(oh));
     return 0;
 }
 
@@ -3277,7 +3267,7 @@ query_tables(struct ofproto *ofproto,
         struct ofputil_table_features *f = &features[i];
 
         f->table_id = i;
-        sprintf(f->name, "table%d", i);
+        f->name[0] = '\0';
         f->metadata_match = OVS_BE64_MAX;
         f->metadata_write = OVS_BE64_MAX;
         atomic_read_relaxed(&ofproto->tables[i].miss_config, &f->miss_config);
@@ -4458,7 +4448,8 @@ flow_stats_ds(struct ofproto *ofproto, struct rule *rule, struct ds *results)
     ds_put_char(results, ',');
 
     ds_put_cstr(results, "actions=");
-    ofpacts_format(actions->ofpacts, actions->ofpacts_len, NULL, results);
+    struct ofpact_format_params fp = { .s = results };
+    ofpacts_format(actions->ofpacts, actions->ofpacts_len, &fp);
 
     ds_put_cstr(results, "\n");
 }
@@ -5019,8 +5010,6 @@ ofproto_flow_mod_init_for_learn(struct ofproto *ofproto,
                                 struct ofproto_flow_mod *ofm)
     OVS_EXCLUDED(ofproto_mutex)
 {
-    enum ofperr error;
-
     /* Reject flow mods that do not look like they were generated by a learn
      * action. */
     if (fm->command != OFPFC_MODIFY_STRICT || fm->table_id == OFPTT_ALL
@@ -5061,13 +5050,7 @@ ofproto_flow_mod_init_for_learn(struct ofproto *ofproto,
         }
     }
 
-    /* Initialize ofproto_flow_mod for future use. */
-    error = ofproto_flow_mod_init(ofproto, ofm, fm, rule);
-    if (error) {
-        ofproto_rule_unref(rule);
-        return error;
-    }
-    return 0;
+    return ofproto_flow_mod_init(ofproto, ofm, fm, rule);
 }
 
 enum ofperr
@@ -5212,15 +5195,13 @@ ofproto_flow_mod_learn(struct ofproto_flow_mod *ofm, bool keep_ref,
                 ofproto_flow_mod_learn_finish(ofm, NULL);
             }
         } else {
+            static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(1, 5);
+            VLOG_INFO_RL(&rll, "Learn limit for flow %"PRIu64" reached.",
+                         rule->flow_cookie);
+
             ofproto_flow_mod_uninit(ofm);
         }
         ovs_mutex_unlock(&ofproto_mutex);
-
-        if (!below_limit) {
-            static struct vlog_rate_limit learn_rl = VLOG_RATE_LIMIT_INIT(1, 5);
-            VLOG_INFO_RL(&learn_rl, "Learn limit for flow %"PRIu64" reached.",
-                         rule->flow_cookie);
-        }
     }
 
     if (!keep_ref && below_limit) {
@@ -5307,9 +5288,7 @@ replace_rule_revert(struct ofproto *ofproto,
     }
 
     /* Remove the new rule immediately.  It was never visible to lookups. */
-    if (!classifier_remove(&table->cls, &new_rule->cr)) {
-        OVS_NOT_REACHED();
-    }
+    classifier_remove_assert(&table->cls, &new_rule->cr);
     ofproto_rule_remove__(ofproto, new_rule);
     ofproto_rule_unref(new_rule);
 }
@@ -7628,6 +7607,9 @@ ofproto_flow_mod_uninit(struct ofproto_flow_mod *ofm)
     }
 }
 
+/* Initializes 'ofm' with 'ofproto', 'fm', and 'rule'.  'rule' may be null, but
+ * if it is nonnull then the caller must own a reference to it, which on
+ * success is transferred to 'ofm' and on failure is unreffed. */
 static enum ofperr
 ofproto_flow_mod_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
                       const struct ofputil_flow_mod *fm, struct rule *rule)

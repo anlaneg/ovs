@@ -775,9 +775,9 @@ dp_packet_batch_is_empty(const struct dp_packet_batch *batch)
     return !dp_packet_batch_size(batch);
 }
 
-#define DP_PACKET_BATCH_FOR_EACH(PACKET, BATCH)    \
-    for (size_t i = 0; i < dp_packet_batch_size(BATCH); i++)  \
-        if (PACKET = BATCH->packets[i], true)
+#define DP_PACKET_BATCH_FOR_EACH(IDX, PACKET, BATCH)                \
+    for (size_t IDX = 0; IDX < dp_packet_batch_size(BATCH); IDX++)  \
+        if (PACKET = BATCH->packets[IDX], true)
 
 /* Use this macro for cases where some packets in the 'BATCH' may be
  * dropped after going through each packet in the 'BATCH'.
@@ -801,8 +801,8 @@ dp_packet_batch_clone(struct dp_packet_batch *dst,
     struct dp_packet *packet;
 
     dp_packet_batch_init(dst);
-    DP_PACKET_BATCH_FOR_EACH (packet, src) {
-    		//完成对packet的clone,并将创建的新报文加入到dst中
+    DP_PACKET_BATCH_FOR_EACH (i, packet, src) {
+    	//完成对packet的clone,并将创建的新报文加入到dst中
         dp_packet_batch_add(dst, dp_packet_clone(packet));
     }
     dst->trunc = src->trunc;//trunc动作copy
@@ -814,7 +814,7 @@ dp_packet_delete_batch(struct dp_packet_batch *batch, bool may_steal)
     if (may_steal) {
         struct dp_packet *packet;
 
-        DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+        DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
             dp_packet_delete(packet);
         }
         dp_packet_batch_init(batch);
@@ -827,7 +827,7 @@ dp_packet_batch_init_packet_fields(struct dp_packet_batch *batch)
 {
     struct dp_packet *packet;
 
-    DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+    DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
         dp_packet_reset_cutlen(packet);
         packet->packet_type = htonl(PT_ETH);
     }
@@ -839,7 +839,7 @@ dp_packet_batch_apply_cutlen(struct dp_packet_batch *batch)
     if (batch->trunc) {
         struct dp_packet *packet;
 
-        DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+        DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
             //重设报文大小，完成报文截断
             dp_packet_set_size(packet, dp_packet_get_send_len(packet));
             dp_packet_reset_cutlen(packet);//设为0，完成截断
@@ -854,7 +854,7 @@ dp_packet_batch_reset_cutlen(struct dp_packet_batch *batch)
     if (batch->trunc) {
         struct dp_packet *packet;
 
-        DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+        DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
             dp_packet_reset_cutlen(packet);
         }
         batch->trunc = false;

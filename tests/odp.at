@@ -30,9 +30,9 @@ in_port(1),eth(src=00:01:02:03:04:05,dst=10:11:12:13:14:15),eth_type(0x8848),mpl
 ])
 
 (echo '# Valid forms without tun_id or VLAN header.'
- set 's/^/skb_priority(0),skb_mark(0),recirc_id(0),dp_hash(0),/' odp-base.txt
+ sed 's/^/skb_priority(0),skb_mark(0),recirc_id(0),dp_hash(0),/' odp-base.txt
 
- set '
+ sed '
 s/^/skb_priority(0),skb_mark(0),recirc_id(0),dp_hash(0),/
 ' odp-base.txt
 
@@ -354,6 +354,7 @@ ct(force_commit,nat(src=fe80::20c:29ff:fe88:a18b,random))
 ct(force_commit,nat(src=fe80::20c:29ff:fe88:1-fe80::20c:29ff:fe88:a18b,random))
 ct(force_commit,nat(src=[[fe80::20c:29ff:fe88:1]]-[[fe80::20c:29ff:fe88:a18b]]:255-4096,random))
 ct(force_commit,helper=ftp,nat(src=10.1.1.240-10.1.1.255))
+ct_clear
 trunc(100)
 clone(1)
 clone(clone(push_vlan(vid=12,pcp=0),2),1)

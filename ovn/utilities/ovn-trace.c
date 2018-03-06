@@ -28,6 +28,7 @@
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/json.h"
 #include "openvswitch/ofp-actions.h"
+#include "openvswitch/ofp-flow.h"
 #include "openvswitch/ofp-print.h"
 #include "openvswitch/vconn.h"
 #include "openvswitch/vlog.h"
@@ -1888,6 +1889,10 @@ trace_actions(const struct ovnact *ovnacts, size_t ovnacts_len,
         case OVNACT_LOG:
             execute_log(ovnact_get_LOG(a), uflow, super);
             break;
+
+        case OVNACT_SET_METER:
+            /* Nothing to do. */
+            break;
         }
 
     }
@@ -1932,7 +1937,7 @@ trace_openflow(const struct ovntrace_flow *f, struct ovs_list *super)
         struct ds s = DS_EMPTY_INITIALIZER;
         for (size_t i = 0; i < n_fses; i++) {
             ds_clear(&s);
-            ofp_print_flow_stats(&s, &fses[i], NULL, true);
+            ofp_print_flow_stats(&s, &fses[i], NULL, NULL, true);
             ovntrace_node_append(super, OVNTRACE_NODE_ACTION,
                                  "%s", ds_cstr(&s));
         }

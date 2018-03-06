@@ -65,6 +65,7 @@
 #include "tnl-ports.h"
 #include "tunnel.h"
 #include "util.h"
+#include "uuid.h"
 
 COVERAGE_DEFINE(xlate_actions);
 COVERAGE_DEFINE(xlate_actions_oversize);
@@ -149,6 +150,9 @@ struct xport {
     struct hmap_node ofp_node;       /* Node in parent xbridge 'xports' map. */ //用于挂接在xbridge的xport链上
     ofp_port_t ofp_port;             /* Key in parent xbridge 'xports' map. */
 
+    struct hmap_node uuid_node;      /* Node in global 'xports_uuid' map. */
+    struct uuid uuid;                /* Key in global 'xports_uuid' map. */
+
     //接口编号(datapath中的接口编号）
     odp_port_t odp_port;             /* Datapath port number or ODPP_NONE. */
 
@@ -180,6 +184,7 @@ struct xlate_ctx {
     struct xlate_in *xin;
     struct xlate_out *xout;
 
+    struct xlate_cfg *xcfg;
     const struct xbridge *xbridge;
 
     /* Flow at the last commit. */
@@ -508,6 +513,7 @@ struct xlate_cfg {
     struct hmap xbridges;//记录xbridge类型（所有的桥）
     struct hmap xbundles;//记录ofbundle类型（所有的bundle)
     struct hmap xports;//记录xport类型（所有的port)
+    struct hmap xports_uuid;
 };
 static OVSRCU_TYPE(struct xlate_cfg *) xcfgp = OVSRCU_INITIALIZER(NULL);//全局变量指向xlate_cfg
 //临时xcfg,用于创建一块临时内存，保证改变的事务性（xcfgp是生效的xcfg)
@@ -515,7 +521,6 @@ static struct xlate_cfg *new_xcfg = NULL;
 
 typedef void xlate_actions_handler(const struct ofpact *, size_t ofpacts_len,
                                    struct xlate_ctx *, bool);
-
 static bool may_receive(const struct xport *, struct xlate_ctx *);
 static void do_xlate_actions(const struct ofpact *, size_t ofpacts_len,
                              struct xlate_ctx *, bool);
@@ -562,6 +567,8 @@ static struct xbundle *xbundle_lookup(struct xlate_cfg *,
                                       const struct ofbundle *);
 static struct xport *xport_lookup(struct xlate_cfg *,
                                   const struct ofport_dpif *);
+static struct xport *xport_lookup_by_uuid(struct xlate_cfg *,
+                                          const struct uuid *);
 static struct xport *get_ofp_port(const struct xbridge *, ofp_port_t ofp_port);
 static struct skb_priority_to_dscp *get_skb_priority(const struct xport *,
                                                      uint32_t skb_priority);
@@ -699,7 +706,8 @@ xlate_report_actions(const struct xlate_ctx *ctx, enum oftrace_node_type type,
     if (OVS_UNLIKELY(ctx->xin->trace)) {
         struct ds s = DS_EMPTY_INITIALIZER;
         ds_put_format(&s, "%s: ", title);
-        ofpacts_format(ofpacts, ofpacts_len, NULL, &s);
+        struct ofpact_format_params fp = { .s = &s };
+        ofpacts_format(ofpacts, ofpacts_len, &fp);
         oftrace_report(ctx->xin->trace, type, ds_cstr(&s));
         ds_destroy(&s);
     }
@@ -720,7 +728,8 @@ xlate_report_action_set(const struct xlate_ctx *ctx, const char *verb)
         ofpacts_execute_action_set(&action_list, &ctx->action_set);
         if (action_list.size) {
             struct ds s = DS_EMPTY_INITIALIZER;
-            ofpacts_format(action_list.data, action_list.size, NULL, &s);
+            struct ofpact_format_params fp = { .s = &s };
+            ofpacts_format(action_list.data, action_list.size, &fp);
             xlate_report(ctx, OFT_DETAIL, "action set %s: %s",
                          verb, ds_cstr(&s));
             ds_destroy(&s);
@@ -830,6 +839,8 @@ xlate_xport_init(struct xlate_cfg *xcfg, struct xport *xport)
                 hash_pointer(xport->ofport, 0));
     hmap_insert(&xport->xbridge->xports, &xport->ofp_node,
                 hash_ofp_port(xport->ofp_port));
+    hmap_insert(&xcfg->xports_uuid, &xport->uuid_node,
+                uuid_hash(&xport->uuid));
 }
 
 //更新xbridge（使xbridge与ofproto一致）
@@ -1022,6 +1033,7 @@ xlate_xport_copy(struct xbridge *xbridge, struct xbundle *xbundle,
     new_xport->ofport = xport->ofport;
     new_xport->ofp_port = xport->ofp_port;
     new_xport->xbridge = xbridge;
+    new_xport->uuid = xport->uuid;
     xlate_xport_init(new_xcfg, new_xport);
 
     xlate_xport_set(new_xport, xport->odp_port, xport->netdev, xport->cfm,
@@ -1093,6 +1105,7 @@ xlate_txn_start(void)
     hmap_init(&new_xcfg->xbridges);
     hmap_init(&new_xcfg->xbundles);
     hmap_init(&new_xcfg->xports);
+    hmap_init(&new_xcfg->xports_uuid);
 
     xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     if (!xcfg) {
@@ -1122,6 +1135,7 @@ xlate_xcfg_free(struct xlate_cfg *xcfg)
     hmap_destroy(&xcfg->xbridges);
     hmap_destroy(&xcfg->xbundles);
     hmap_destroy(&xcfg->xports);
+    hmap_destroy(&xcfg->xports_uuid);
     free(xcfg);
 }
 
@@ -1284,6 +1298,7 @@ xlate_ofport_set(struct ofproto_dpif *ofproto, struct ofbundle *ofbundle,
         xport->ofport = ofport;
         xport->xbridge = xbridge_lookup(new_xcfg, ofproto);
         xport->ofp_port = ofp_port;
+        uuid_generate(&xport->uuid);
 
         xlate_xport_init(new_xcfg, xport);
     }
@@ -1348,6 +1363,7 @@ xlate_xport_remove(struct xlate_cfg *xcfg, struct xport *xport)
     hmap_destroy(&xport->skb_priorities);
 
     hmap_remove(&xcfg->xports, &xport->hmap_node);//将我自xport链中删除
+    hmap_remove(&xcfg->xports_uuid, &xport->uuid_node);
     hmap_remove(&xport->xbridge->xports, &xport->ofp_node);
 
     netdev_close(xport->netdev);
@@ -1377,6 +1393,28 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer, const struct flow *flow,
     struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     const struct xport *xport;
 
+    /* If packet is recirculated, xport can be retrieved from frozen state. */
+    if (flow->recirc_id) {
+        const struct recirc_id_node *recirc_id_node;
+
+        recirc_id_node = recirc_id_node_find(flow->recirc_id);
+
+        if (OVS_UNLIKELY(!recirc_id_node)) {
+            return NULL;
+        }
+
+        /* If recirculation was initiated due to bond (in_port = OFPP_NONE)
+         * then frozen state is static and xport_uuid is not defined, so xport
+         * cannot be restored from frozen state. */
+        if (recirc_id_node->state.metadata.in_port != OFPP_NONE) {
+            struct uuid xport_uuid = recirc_id_node->state.xport_uuid;
+            xport = xport_lookup_by_uuid(xcfg, &xport_uuid);
+            if (xport && xport->xbridge && xport->xbridge->ofproto) {
+                goto out;
+            }
+        }
+    }
+
     //查找xport（此流对的入接口）
     xport = xport_lookup(xcfg, tnl_port_should_receive(flow)//是否tunnel　接口收到报文
                          ? tnl_port_receive(flow)//tunnel收取到报文,则查询tunnel口
@@ -1384,6 +1422,8 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer, const struct flow *flow,
     if (OVS_UNLIKELY(!xport)) {
         return NULL;
     }
+
+out:
     *xportp = xport;
     if (ofp_in_port) {
         *ofp_in_port = xport->ofp_port;
@@ -1518,6 +1558,26 @@ xport_lookup(struct xlate_cfg *xcfg, const struct ofport_dpif *ofport)
     HMAP_FOR_EACH_IN_BUCKET (xport, hmap_node, hash_pointer(ofport, 0),
                              xports) {
         if (xport->ofport == ofport) {
+            return xport;
+        }
+    }
+    return NULL;
+}
+
+static struct xport *
+xport_lookup_by_uuid(struct xlate_cfg *xcfg, const struct uuid *uuid)
+{
+    struct hmap *xports;
+    struct xport *xport;
+
+    if (uuid_is_zero(uuid) || !xcfg) {
+        return NULL;
+    }
+
+    xports = &xcfg->xports_uuid;
+
+    HMAP_FOR_EACH_IN_BUCKET (xport, uuid_node, uuid_hash(uuid), xports) {
+        if (uuid_equals(&xport->uuid, uuid)) {
             return xport;
         }
     }
@@ -1906,10 +1966,9 @@ mirror_packet(struct xlate_ctx *ctx, struct xbundle *xbundle,
         int snaplen;
 
         /* Get the details of the mirror represented by the rightmost 1-bit. */
-        bool has_mirror = mirror_get(xbridge->mbridge, raw_ctz(mirrors),
-                                     &vlans, &dup_mirrors,
-                                     &out, &snaplen, &out_vlan);
-        ovs_assert(has_mirror);
+        ovs_assert(mirror_get(xbridge->mbridge, raw_ctz(mirrors),
+                              &vlans, &dup_mirrors,
+                              &out, &snaplen, &out_vlan));
 
 
         /* If this mirror selects on the basis of VLAN, and it does not select
@@ -1931,8 +1990,7 @@ mirror_packet(struct xlate_ctx *ctx, struct xbundle *xbundle,
 
         /* Send the packet to the mirror. */
         if (out) {
-            struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
-            struct xbundle *out_xbundle = xbundle_lookup(xcfg, out);
+            struct xbundle *out_xbundle = xbundle_lookup(ctx->xcfg, out);
             if (out_xbundle) {
                 output_normal(ctx, out_xbundle, &xvlan);
             }
@@ -2209,8 +2267,6 @@ output_normal(struct xlate_ctx *ctx, const struct xbundle *out_xbundle,
         xport = CONTAINER_OF(ovs_list_front(&out_xbundle->xports), struct xport,
                              bundle_node);
     } else {
-    	//有多个成员的xbundle
-        struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
         struct flow_wildcards *wc = ctx->wc;
         struct ofport_dpif *ofport;
 
@@ -2232,7 +2288,7 @@ output_normal(struct xlate_ctx *ctx, const struct xbundle *out_xbundle,
 
         ofport = bond_choose_output_slave(out_xbundle->bond,
                                           &ctx->xin->flow, wc, vid);
-        xport = xport_lookup(xcfg, ofport);
+        xport = xport_lookup(ctx->xcfg, ofport);
 
         if (!xport) {
         	//port不存在，丢包
@@ -2507,7 +2563,6 @@ update_mcast_snooping_table(const struct xlate_ctx *ctx,
                             const struct dp_packet *packet)
 {
     struct mcast_snooping *ms = ctx->xbridge->ms;
-    struct xlate_cfg *xcfg;
     struct xbundle *mcast_xbundle;
     struct mcast_port_bundle *fport;
 
@@ -2519,9 +2574,8 @@ update_mcast_snooping_table(const struct xlate_ctx *ctx,
     /* Don't learn from flood ports */
     mcast_xbundle = NULL;
     ovs_rwlock_wrlock(&ms->rwlock);
-    xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     LIST_FOR_EACH(fport, node, &ms->fport_list) {//包含在fport_list中的port不参与学习
-        mcast_xbundle = xbundle_lookup(xcfg, fport->port);
+        mcast_xbundle = xbundle_lookup(ctx->xcfg, fport->port);
         if (mcast_xbundle == in_xbundle) {
             break;
         }
@@ -2548,13 +2602,11 @@ xlate_normal_mcast_send_group(struct xlate_ctx *ctx,
                               const struct xvlan *xvlan)
     OVS_REQ_RDLOCK(ms->rwlock)
 {
-    struct xlate_cfg *xcfg;
     struct mcast_group_bundle *b;
     struct xbundle *mcast_xbundle;
 
-    xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     LIST_FOR_EACH(b, bundle_node, &grp->bundle_lru) {
-        mcast_xbundle = xbundle_lookup(xcfg, b->port);
+        mcast_xbundle = xbundle_lookup(ctx->xcfg, b->port);
         if (mcast_xbundle && mcast_xbundle != in_xbundle) {
             xlate_report(ctx, OFT_DETAIL, "forwarding to mcast group port");
             output_normal(ctx, mcast_xbundle, xvlan);
@@ -2576,13 +2628,11 @@ xlate_normal_mcast_send_mrouters(struct xlate_ctx *ctx,
                                  const struct xvlan *xvlan)
     OVS_REQ_RDLOCK(ms->rwlock)
 {
-    struct xlate_cfg *xcfg;
     struct mcast_mrouter_bundle *mrouter;
     struct xbundle *mcast_xbundle;
 
-    xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     LIST_FOR_EACH(mrouter, mrouter_node, &ms->mrouter_lru) {//遍历我们所有的路由侧端口
-        mcast_xbundle = xbundle_lookup(xcfg, mrouter->port);
+        mcast_xbundle = xbundle_lookup(ctx->xcfg, mrouter->port);
         if (mcast_xbundle && mcast_xbundle != in_xbundle
             && mrouter->vlan == xvlan->v[0].vid) {
             xlate_report(ctx, OFT_DETAIL, "forwarding to mcast router port");
@@ -2608,13 +2658,11 @@ xlate_normal_mcast_send_fports(struct xlate_ctx *ctx,
                                const struct xvlan *xvlan)
     OVS_REQ_RDLOCK(ms->rwlock)
 {
-    struct xlate_cfg *xcfg;
     struct mcast_port_bundle *fport;
     struct xbundle *mcast_xbundle;
 
-    xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     LIST_FOR_EACH(fport, node, &ms->fport_list) {
-        mcast_xbundle = xbundle_lookup(xcfg, fport->port);
+        mcast_xbundle = xbundle_lookup(ctx->xcfg, fport->port);
         if (mcast_xbundle && mcast_xbundle != in_xbundle) {
             xlate_report(ctx, OFT_DETAIL, "forwarding to mcast flood port");
             output_normal(ctx, mcast_xbundle, xvlan);
@@ -2636,14 +2684,14 @@ xlate_normal_mcast_send_rports(struct xlate_ctx *ctx,
                                const struct xvlan *xvlan)
     OVS_REQ_RDLOCK(ms->rwlock)
 {
-    struct xlate_cfg *xcfg;
     struct mcast_port_bundle *rport;
     struct xbundle *mcast_xbundle;
 
-    xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     LIST_FOR_EACH(rport, node, &ms->rport_list) {
-        mcast_xbundle = xbundle_lookup(xcfg, rport->port);
-        if (mcast_xbundle && mcast_xbundle != in_xbundle) {
+        mcast_xbundle = xbundle_lookup(ctx->xcfg, rport->port);
+        if (mcast_xbundle
+            && mcast_xbundle != in_xbundle
+            && mcast_xbundle->ofbundle != in_xbundle->ofbundle) {
             xlate_report(ctx, OFT_DETAIL,
                          "forwarding report to mcast flagged port");
             output_normal(ctx, mcast_xbundle, xvlan);
@@ -2665,6 +2713,7 @@ xlate_normal_flood(struct xlate_ctx *ctx, struct xbundle *in_xbundle,
 
     LIST_FOR_EACH (xbundle, list_node, &ctx->xbridge->xbundles) {
         if (xbundle != in_xbundle
+            && xbundle->ofbundle != in_xbundle->ofbundle
             && xbundle_includes_vlan(xbundle, xvlan)
             && xbundle->floodable
             && !xbundle_mirror_out(ctx->xbridge, xbundle)) {
@@ -2883,9 +2932,10 @@ xlate_normal(struct xlate_ctx *ctx)
         //与代码无关，由于fdb表学习，故三层接口在其发送报文时，我们总会得到其fdb表项
         //这样这里的转发就能将报文送到三层去。
         if (mac_port) {
-            struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
-            struct xbundle *mac_xbundle = xbundle_lookup(xcfg, mac_port);
-            if (mac_xbundle && mac_xbundle != in_xbundle) {
+            struct xbundle *mac_xbundle = xbundle_lookup(ctx->xcfg, mac_port);
+            if (mac_xbundle
+                && mac_xbundle != in_xbundle
+                && mac_xbundle->ofbundle != in_xbundle->ofbundle) {
                 xlate_report(ctx, OFT_DETAIL, "forwarding to learned port");
                 output_normal(ctx, mac_xbundle, &xvlan);//发送给fdb学习到的端口
             } else if (!mac_xbundle) {
@@ -2952,10 +3002,11 @@ compose_sample_action(struct xlate_ctx *ctx,
         ctx->xbridge, ctx->xin->flow.in_port.ofp_port);
     uint32_t pid = dpif_port_get_pid(ctx->xbridge->dpif, odp_port,
                                      flow_hash_5tuple(&ctx->xin->flow, 0));
-    int cookie_offset = odp_put_userspace_action(pid, cookie, sizeof *cookie,
-                                                 tunnel_out_port,
-                                                 include_actions,
-                                                 ctx->odp_actions);
+    size_t cookie_offset = odp_put_userspace_action(pid, cookie,
+                                                    sizeof *cookie,
+                                                    tunnel_out_port,
+                                                    include_actions,
+                                                    ctx->odp_actions);
 
     if (is_sample) {
         nl_msg_end_nested(ctx->odp_actions, actions_offset);
@@ -3134,13 +3185,13 @@ process_special(struct xlate_ctx *ctx, const struct xport *xport)
 //查找oflow->tunnel内的ip_dst地址对应的网关（为直连路由时，采用dst),
 //确定发送时需要采用的源ip(src参数）,以及对应的接口(out_port参数）
 static int
-tnl_route_lookup_flow(const struct flow *oflow,
+tnl_route_lookup_flow(const struct xlate_ctx *ctx,
+                      const struct flow *oflow,
                       struct in6_addr *ip, struct in6_addr *src,
                       struct xport **out_port)
 {
     char out_dev[IFNAMSIZ];
     struct xbridge *xbridge;
-    struct xlate_cfg *xcfg;
     struct in6_addr gw;
     struct in6_addr dst;
 
@@ -3156,10 +3207,7 @@ tnl_route_lookup_flow(const struct flow *oflow,
         *ip = dst;//直连路由
     }
 
-    xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
-    ovs_assert(xcfg);
-
-    HMAP_FOR_EACH (xbridge, hmap_node, &xcfg->xbridges) {
+    HMAP_FOR_EACH (xbridge, hmap_node, &ctx->xcfg->xbridges) {
         if (!strncmp(xbridge->name, out_dev, IFNAMSIZ)) {//找到桥
             struct xport *port;
 
@@ -3327,6 +3375,9 @@ native_tunnel_output(struct xlate_ctx *ctx, const struct xport *xport,
     char buf_sip6[INET6_ADDRSTRLEN];
     char buf_dip6[INET6_ADDRSTRLEN];
 
+    /* Store sFlow data. */
+    uint32_t sflow_n_outputs = ctx->sflow_n_outputs;
+
     /* Structures to backup Ethernet and IP of base_flow. */
     struct flow old_base_flow;
     struct flow old_flow;
@@ -3335,7 +3386,7 @@ native_tunnel_output(struct xlate_ctx *ctx, const struct xport *xport,
     memcpy(&old_base_flow, &ctx->base_flow, sizeof old_base_flow);
     memcpy(&old_flow, &ctx->xin->flow, sizeof old_flow);
 
-    err = tnl_route_lookup_flow(flow, &d_ip6, &s_ip6, &out_dev);
+    err = tnl_route_lookup_flow(ctx, flow, &d_ip6, &s_ip6, &out_dev);
     if (err) {
         xlate_report(ctx, OFT_WARN, "native tunnel routing failed");
         return err;
@@ -3484,6 +3535,10 @@ native_tunnel_output(struct xlate_ctx *ctx, const struct xport *xport,
     /* Restore the flows after the translation. */
     memcpy(&ctx->xin->flow, &old_flow, sizeof ctx->xin->flow);
     memcpy(&ctx->base_flow, &old_base_flow, sizeof ctx->base_flow);
+
+    /* Restore sFlow data. */
+    ctx->sflow_n_outputs = sflow_n_outputs;
+
     return 0;
 }
 
@@ -4565,6 +4620,7 @@ finish_freezing__(struct xlate_ctx *ctx, uint8_t table)
         .stack_size = ctx->stack.size,
         .mirrors = ctx->mirrors,
         .conntracked = ctx->conntracked,
+        .xport_uuid = ctx->xin->xport_uuid,
         .ofpacts = ctx->frozen_actions.data,
         .ofpacts_len = ctx->frozen_actions.size,
         .action_set = ctx->action_set.data,
@@ -4744,6 +4800,28 @@ compose_set_mpls_tc_action(struct xlate_ctx *ctx, uint8_t tc)
         ctx->wc->masks.mpls_lse[0] |= htonl(MPLS_TC_MASK);
         set_mpls_lse_tc(&ctx->xin->flow.mpls_lse[0], tc);
     }
+}
+
+static bool
+compose_dec_nsh_ttl_action(struct xlate_ctx *ctx)
+{
+    struct flow *flow = &ctx->xin->flow;
+
+    if ((flow->packet_type == htonl(PT_NSH)) ||
+        (flow->dl_type == htons(ETH_TYPE_NSH))) {
+        ctx->wc->masks.nsh.ttl = 0xff;
+        if (flow->nsh.ttl > 1) {
+            flow->nsh.ttl--;
+            return false;
+        } else {
+            xlate_controller_action(ctx, UINT16_MAX, OFPR_INVALID_TTL,
+                                    0, NULL, 0);
+        }
+    }
+
+    /* Stop processing for current table. */
+    xlate_report(ctx, OFT_WARN, "NSH decrement TTL exception");
+    return true;
 }
 
 static void
@@ -5064,7 +5142,8 @@ xlate_learn_action(struct xlate_ctx *ctx, const struct ofpact_learn *learn)
                 ds_put_cstr(&s, " send_flow_rem");
             }
             ds_put_cstr(&s, " actions=");
-            ofpacts_format(fm.ofpacts, fm.ofpacts_len, NULL, &s);
+            struct ofpact_format_params fp = { .s = &s };
+            ofpacts_format(fm.ofpacts, fm.ofpacts_len, &fp);
             xlate_report(ctx, OFT_DETAIL, "%s", ds_cstr(&s));
             ds_destroy(&s);
         }
@@ -5304,6 +5383,7 @@ reversible_actions(const struct ofpact *ofpacts, size_t ofpacts_len)
         case OFPACT_OUTPUT_TRUNC:
         case OFPACT_ENCAP:
         case OFPACT_DECAP:
+        case OFPACT_DEC_NSH_TTL:
             return false;
         }
     }
@@ -5531,6 +5611,7 @@ freeze_unroll_actions(const struct ofpact *a, const struct ofpact *end,
         case OFPACT_OUTPUT:
         case OFPACT_CONTROLLER:
         case OFPACT_DEC_MPLS_TTL:
+        case OFPACT_DEC_NSH_TTL:
         case OFPACT_DEC_TTL:
             /* These actions may generate asynchronous messages, which include
              * table ID and flow cookie information. */
@@ -5777,6 +5858,17 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc,
 }
 
 static void
+compose_ct_clear_action(struct xlate_ctx *ctx)
+{
+    clear_conntrack(ctx);
+    /* This action originally existed without dpif support. So to preserve
+     * compatibility, only append it if the dpif supports it. */
+    if (ctx->xbridge->support.ct_clear) {
+        nl_msg_put_flag(ctx->odp_actions,  OVS_ACTION_ATTR_CT_CLEAR);
+    }
+}
+
+static void
 rewrite_flow_encap_ethernet(struct xlate_ctx *ctx,
                             struct flow *flow,
                             struct flow_wildcards *wc)
@@ -5888,10 +5980,10 @@ rewrite_flow_push_nsh(struct xlate_ctx *ctx,
     /* Populate the flow with the new NSH header. */
     flow->packet_type = htonl(PT_NSH);
     flow->dl_type = htons(ETH_TYPE_NSH);
-    flow->nsh.flags = 0;    /* */
+    flow->nsh.flags = 0;
+    flow->nsh.ttl = 63;
     flow->nsh.np = np;
-    flow->nsh.spi = 0;
-    flow->nsh.si = 255;
+    flow->nsh.path_hdr = htonl(255);
 
     if (md_type == NSH_M_TYPE1) {
         flow->nsh.mdtype = NSH_M_TYPE1;
@@ -5904,6 +5996,7 @@ rewrite_flow_push_nsh(struct xlate_ctx *ctx,
     } else if (md_type == NSH_M_TYPE2) {
         flow->nsh.mdtype = NSH_M_TYPE2;
     }
+    flow->nsh.mdtype &= NSH_MDTYPE_MASK;
 
     return buf;
 }
@@ -6084,6 +6177,7 @@ recirc_for_mpls(const struct ofpact *a, struct xlate_ctx *ctx)
     case OFPACT_CLONE:
     case OFPACT_ENCAP:
     case OFPACT_DECAP:
+    case OFPACT_DEC_NSH_TTL:
     case OFPACT_UNROLL_XLATE:
     case OFPACT_CT:
     case OFPACT_CT_CLEAR:
@@ -6181,7 +6275,8 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
         //等它再输出时，再合并即可。
         if (OVS_UNLIKELY(ctx->xin->trace)) {
             struct ds s = DS_EMPTY_INITIALIZER;
-            ofpacts_format(a, OFPACT_ALIGN(a->len), NULL, &s);
+            struct ofpact_format_params fp = { .s = &s };
+            ofpacts_format(a, OFPACT_ALIGN(a->len), &fp);
             xlate_report(ctx, OFT_ACTION, "%s", ds_cstr(&s));
             ds_destroy(&s);
         }
@@ -6433,6 +6528,12 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             }
             break;
 
+        case OFPACT_DEC_NSH_TTL:
+            if (compose_dec_nsh_ttl_action(ctx)) {
+                return;
+            }
+            break;
+
         case OFPACT_DEC_TTL:
         	//减ttl,如果a参数指明了多个controller，则在ttl为0时，上报错误
             wc->masks.nw_ttl = 0xff;
@@ -6550,7 +6651,7 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             break;
 
         case OFPACT_CT_CLEAR:
-            clear_conntrack(ctx);
+            compose_ct_clear_action(ctx);
             break;
 
         case OFPACT_NAT:
@@ -6607,6 +6708,7 @@ xlate_in_init(struct xlate_in *xin, struct ofproto_dpif *ofproto,
     xin->odp_actions = odp_actions;
     xin->in_packet_out = false;
     xin->recirc_queue = NULL;
+    xin->xport_uuid = UUID_ZERO;
 
     /* Do recirc lookup. */
     xin->frozen_state = NULL;
@@ -6869,6 +6971,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         .xout = xout,
         .base_flow = *flow,//保存基准flow,生成action时用
         .orig_tunnel_ipv6_dst = flow_tnl_dst(&flow->tunnel),
+        .xcfg = xcfg,
         .xbridge = xbridge,
         .stack = OFPBUF_STUB_INITIALIZER(stack_stub),
         .rule = xin->rule,
@@ -7033,6 +7136,9 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
      * flow->in_port is the ultimate input port of the packet.) */
     struct xport *in_port = get_ofp_port(xbridge,
                                          ctx.base_flow.in_port.ofp_port);
+    if (in_port && !in_port->peer) {
+        ctx.xin->xport_uuid = in_port->uuid;
+    }
 
     if (flow->packet_type != htonl(PT_ETH) && in_port &&
         in_port->pt_mode == NETDEV_PT_LEGACY_L3 && ctx.table_id == 0) {
@@ -7276,6 +7382,7 @@ xlate_resume(struct ofproto_dpif *ofproto,
         .stack_size = pin->stack_size,
         .mirrors = pin->mirrors,
         .conntracked = pin->conntracked,
+        .xport_uuid = UUID_ZERO,
 
         /* When there are no actions, xlate_actions() will search the flow
          * table.  We don't want it to do that (we want it to resume), so

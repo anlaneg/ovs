@@ -126,8 +126,9 @@ insert_new_cpu_core(struct numa_node *n, unsigned core_id)
     return c;
 }
 
-/* Has the same effect as discover_numa_and_core(), but instead of reading
- * sysfs entries, extracts the info from 'dummy_config'.
+/* Has the same effect as discover_numa_and_core(), but instead of
+ * reading sysfs entries, extracts the info from the global variable
+ * 'dummy_config', which is set with ovs_numa_set_dummy().
  *
  * 'dummy_config' lists the numa_ids of each CPU separated by a comma, e.g.
  * - "0,0,0,0": four cores on numa socket 0.
@@ -136,7 +137,7 @@ insert_new_cpu_core(struct numa_node *n, unsigned core_id)
  *
  * The different numa ids must be consecutives or the function will abort. */
 static void
-discover_numa_and_core_dummy(const char *dummy_config)
+discover_numa_and_core_dummy(void)
 {
     char *conf = xstrdup(dummy_config);
     char *id, *saveptr = NULL;
@@ -275,20 +276,20 @@ get_numa_by_numa_id(int numa_id)
 }
 
 
-
 //ovs中numa,cpu初始化
-static bool
-ovs_numa_init__(const char *dummy_config)
+/* Initializes the numa module. */
+void
+ovs_numa_init(void)
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 
     if (ovsthread_once_start(&once)) {
         const struct numa_node *n;
 
-        if (!dummy_config) {//无dummy_config
+        if (dummy_numa) {
+            discover_numa_and_core_dummy();//dummy情况
+        } else {//无dummy_config
             discover_numa_and_core();//真实numa情况
-        } else {
-            discover_numa_and_core_dummy(dummy_config);//dummy情况
         }
 
         //显示相应的numa,core
@@ -305,10 +306,6 @@ ovs_numa_init__(const char *dummy_config)
         }
 
         ovsthread_once_done(&once);
-
-        return true;
-    } else {
-        return false;
     }
 }
 
@@ -324,17 +321,6 @@ ovs_numa_set_dummy(const char *config)
     ovs_assert(config);
     free(dummy_config);
     dummy_config = xstrdup(config);
-}
-
-/* Initializes the numa module. */
-void
-ovs_numa_init(void)
-{
-    if (dummy_numa) {
-        ovs_numa_init__(dummy_config);
-    } else {
-        ovs_numa_init__(NULL);
-    }
 }
 
 bool

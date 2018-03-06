@@ -28,7 +28,7 @@
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/ofp-actions.h"
 #include "openvswitch/ofp-msgs.h"
-#include "openvswitch/ofp-util.h"
+#include "openvswitch/ofp-monitor.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vconn.h"
 #include "openvswitch/vlog.h"
@@ -1795,9 +1795,9 @@ do_send_packet_ins(struct ofconn *ofconn, struct ovs_list *txq)
     LIST_FOR_EACH_POP (pin, list_node, txq) {
         if (rconn_send_with_limit(ofconn->rconn, pin,
                                   ofconn->packet_in_counter, 100) == EAGAIN) {
-            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
+            static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(5, 5);
 
-            VLOG_INFO_RL(&rl, "%s: dropping packet-in due to queue overflow",
+            VLOG_INFO_RL(&rll, "%s: dropping packet-in due to queue overflow",
                          rconn_get_name(ofconn->rconn));
         }
     }

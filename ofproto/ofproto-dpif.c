@@ -54,9 +54,7 @@
 #include "openvswitch/ofp-actions.h"
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/meta-flow.h"
-#include "openvswitch/ofp-parse.h"
 #include "openvswitch/ofp-print.h"
-#include "openvswitch/ofp-util.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/uuid.h"
 #include "openvswitch/vlog.h"
@@ -684,6 +682,8 @@ dealloc(struct ofproto *ofproto_)
 static void
 close_dpif_backer(struct dpif_backer *backer, bool del)
 {
+    struct simap_node *node;
+
     ovs_assert(backer->refcount > 0);
 
     if (--backer->refcount) {
@@ -692,6 +692,9 @@ close_dpif_backer(struct dpif_backer *backer, bool del)
 
     udpif_destroy(backer->udpif);
 
+    SIMAP_FOR_EACH (node, &backer->tnl_backers) {
+        dpif_port_del(backer->dpif, u32_to_odp(node->data), false);
+    }
     simap_destroy(&backer->tnl_backers);
     ovs_rwlock_destroy(&backer->odp_to_ofport_lock);
     hmap_destroy(&backer->odp_to_ofport_map);
@@ -1265,7 +1268,7 @@ check_ct_eventmask(struct dpif_backer *backer)
 
     /* Compose a dummy UDP packet. */
     dp_packet_init(&packet, 0);
-    flow_compose(&packet, &flow, 0);
+    flow_compose(&packet, &flow, NULL, 64);
 
     /* Execute the actions.  On older datapaths this fails with EINVAL, on
      * newer datapaths it succeeds. */
@@ -1291,6 +1294,39 @@ check_ct_eventmask(struct dpif_backer *backer)
     }
 
     return !error;
+}
+
+/* Tests whether 'backer''s datapath supports the OVS_ACTION_ATTR_CT_CLEAR
+ * action. */
+static bool
+check_ct_clear(struct dpif_backer *backer)
+{
+    struct odputil_keybuf keybuf;
+    uint8_t actbuf[NL_A_FLAG_SIZE];
+    struct ofpbuf actions;
+    struct ofpbuf key;
+    struct flow flow;
+    bool supported;
+
+    struct odp_flow_key_parms odp_parms = {
+        .flow = &flow,
+        .probe = true,
+    };
+
+    memset(&flow, 0, sizeof flow);
+    ofpbuf_use_stack(&key, &keybuf, sizeof keybuf);
+    odp_flow_key_from_flow(&odp_parms, &key);
+
+    ofpbuf_use_stack(&actions, &actbuf, sizeof actbuf);
+    nl_msg_put_flag(&actions, OVS_ACTION_ATTR_CT_CLEAR);
+
+    supported = dpif_probe_feature(backer->dpif, "ct_clear", &key,
+                                   &actions, NULL);
+
+    VLOG_INFO("%s: Datapath %s ct_clear action",
+              dpif_name(backer->dpif), (supported) ? "supports"
+                                                   : "does not support");
+    return supported;
 }
 
 //检查指定功能是否支持
@@ -1358,6 +1394,7 @@ check_support(struct dpif_backer *backer)
     backer->rt_support.clone = check_clone(backer);
     backer->rt_support.sample_nesting = check_max_sample_nesting(backer);
     backer->rt_support.ct_eventmask = check_ct_eventmask(backer);
+    backer->rt_support.ct_clear = check_ct_clear(backer);
 
     /* Flow fields. */
     backer->rt_support.odp.ct_state = check_ct_state(backer);
@@ -1756,11 +1793,9 @@ flush(struct ofproto *ofproto_)
 //填充各表的match,miss计数
 static void
 query_tables(struct ofproto *ofproto,
-             struct ofputil_table_features *features,
+             struct ofputil_table_features *features OVS_UNUSED,
              struct ofputil_table_stats *stats)
 {
-    strcpy(features->name, "classifier");
-
     if (stats) {
         int i;
 
@@ -3249,7 +3284,6 @@ bundle_remove(struct ofport *port_)
 static void
 send_pdu_cb(void *port_, const void *pdu, size_t pdu_size)
 {
-    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 10);
     struct ofport_dpif *port = port_;
     struct eth_addr ea;
     int error;
@@ -3267,7 +3301,8 @@ send_pdu_cb(void *port_, const void *pdu, size_t pdu_size)
         ofproto_dpif_send_packet(port, false, &packet);
         dp_packet_uninit(&packet);
     } else {
-        VLOG_ERR_RL(&rl, "port %s: cannot obtain Ethernet address of iface "
+        static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(1, 10);
+        VLOG_ERR_RL(&rll, "port %s: cannot obtain Ethernet address of iface "
                     "%s (%s)", port->bundle->name,
                     netdev_get_name(port->up.netdev), ovs_strerror(error));
     }
@@ -3314,8 +3349,8 @@ bundle_send_learning_packets(struct ofbundle *bundle)
     }
 
     if (n_errors) {
-        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
-        VLOG_WARN_RL(&rl, "bond %s: %d errors sending %d gratuitous learning "
+        static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(1, 5);
+        VLOG_WARN_RL(&rll, "bond %s: %d errors sending %d gratuitous learning "
                      "packets, last error was: %s",
                      bundle->name, n_errors, n_packets, ovs_strerror(error));
     } else {
@@ -4351,8 +4386,8 @@ check_mask(struct ofproto_dpif *ofproto, const struct miniflow *flow)
 static void
 report_unsupported_act(const char *action, const char *detail)
 {
-    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
-    VLOG_WARN_RL(&rl, "Rejecting %s action because datapath does not support"
+    static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(1, 5);
+    VLOG_WARN_RL(&rll, "Rejecting %s action because datapath does not support"
                  "%s%s (your kernel module may be out of date)",
                  action, detail ? " " : "", detail ? detail : "");
 }
@@ -5298,8 +5333,6 @@ dpif_set_support(struct dpif_backer_support *rt_support,
 #undef ODP_SUPPORT_FIELD
 
     if (!name) {
-        struct shash_node *node;
-
         SHASH_FOR_EACH (node, &all_fields) {
             display_support_field(node->name, node->data, ds);
         }

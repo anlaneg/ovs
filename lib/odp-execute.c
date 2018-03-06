@@ -35,6 +35,7 @@
 #include "unaligned.h"
 #include "util.h"
 #include "csum.h"
+#include "conntrack.h"
 
 /* Masked copy of an ethernet address. 'src' is already properly masked. */
 static void
@@ -197,10 +198,7 @@ odp_set_sctp(struct dp_packet *packet, const struct ovs_key_sctp *key,
 static void
 odp_set_tunnel_action(const struct nlattr *a, struct flow_tnl *tun_key)
 {
-    enum odp_key_fitness fitness;
-
-    fitness = odp_tun_key_from_attr(a, tun_key);
-    ovs_assert(fitness != ODP_FIT_ERROR);
+    ovs_assert(odp_tun_key_from_attr(a, tun_key) != ODP_FIT_ERROR);
 }
 
 static void
@@ -274,23 +272,26 @@ odp_set_nd(struct dp_packet *packet, const struct ovs_key_nd *key,
 /* Set the NSH header. Assumes the NSH header is present and matches the
  * MD format of the key. The slow path must take case of that. */
 static void
-odp_set_nsh(struct dp_packet *packet, const struct flow_nsh *key,
-            const struct flow_nsh *mask)
+odp_set_nsh(struct dp_packet *packet, const struct nlattr *a, bool has_mask)
 {
+    struct ovs_key_nsh key, mask;
     struct nsh_hdr *nsh = dp_packet_l3(packet);
     uint8_t mdtype = nsh_md_type(nsh);
     ovs_be32 path_hdr;
 
-    if (!mask) {
-        nsh->ver_flags_ttl_len = htons(key->flags << NSH_FLAGS_SHIFT) |
-                (nsh->ver_flags_ttl_len & ~htons(NSH_FLAGS_MASK));
-        path_hdr = htonl((ntohl(key->spi) << NSH_SPI_SHIFT) |
-                         key->si);
-        put_16aligned_be32(&nsh->path_hdr, path_hdr);
+    if (has_mask) {
+        odp_nsh_key_from_attr(a, &key, &mask);
+    } else {
+        odp_nsh_key_from_attr(a, &key, NULL);
+    }
+
+    if (!has_mask) {
+        nsh_set_flags_and_ttl(nsh, key.flags, key.ttl);
+        put_16aligned_be32(&nsh->path_hdr, key.path_hdr);
         switch (mdtype) {
             case NSH_M_TYPE1:
                 for (int i = 0; i < 4; i++) {
-                    put_16aligned_be32(&nsh->md1.context[i], key->context[i]);
+                    put_16aligned_be32(&nsh->md1.context[i], key.context[i]);
                 }
                 break;
             case NSH_M_TYPE2:
@@ -299,29 +300,32 @@ odp_set_nsh(struct dp_packet *packet, const struct flow_nsh *key,
                 break;
         }
     } else {
-        uint8_t flags = (ntohs(nsh->ver_flags_ttl_len) & NSH_FLAGS_MASK) >>
-                            NSH_FLAGS_SHIFT;
-        flags = key->flags | (flags & ~mask->flags);
-        nsh->ver_flags_ttl_len = htons(flags << NSH_FLAGS_SHIFT) |
-                (nsh->ver_flags_ttl_len & ~htons(NSH_FLAGS_MASK));
+        uint8_t flags = nsh_get_flags(nsh);
+        uint8_t ttl = nsh_get_ttl(nsh);
 
-        path_hdr = get_16aligned_be32(&nsh->path_hdr);
-        uint32_t spi = (ntohl(path_hdr) & NSH_SPI_MASK) >> NSH_SPI_SHIFT;
-        uint8_t si = (ntohl(path_hdr) & NSH_SI_MASK) >> NSH_SI_SHIFT;
-        uint32_t spi_mask = ntohl(mask->spi);
+        flags = key.flags | (flags & ~mask.flags);
+        ttl = key.ttl | (ttl & ~mask.ttl);
+        nsh_set_flags_and_ttl(nsh, flags, ttl);
+
+        uint32_t spi = ntohl(nsh_get_spi(nsh));
+        uint8_t si = nsh_get_si(nsh);
+        uint32_t spi_mask = nsh_path_hdr_to_spi_uint32(mask.path_hdr);
+        uint8_t si_mask = nsh_path_hdr_to_si(mask.path_hdr);
         if (spi_mask == 0x00ffffff) {
             spi_mask = UINT32_MAX;
         }
-        spi = ntohl(key->spi) | (spi & ~spi_mask);
-        si = key->si | (si & ~mask->si);
-        path_hdr = htonl((spi << NSH_SPI_SHIFT) | si);
+        spi = nsh_path_hdr_to_spi_uint32(key.path_hdr) | (spi & ~spi_mask);
+        si = nsh_path_hdr_to_si(key.path_hdr) | (si & ~si_mask);
+        path_hdr = nsh_get_path_hdr(nsh);
+        nsh_path_hdr_set_spi(&path_hdr, htonl(spi));
+        nsh_path_hdr_set_si(&path_hdr, si);
         put_16aligned_be32(&nsh->path_hdr, path_hdr);
         switch (mdtype) {
             case NSH_M_TYPE1:
                 for (int i = 0; i < 4; i++) {
                     ovs_be32 p = get_16aligned_be32(&nsh->md1.context[i]);
-                    ovs_be32 k = key->context[i];
-                    ovs_be32 m = mask->context[i];
+                    ovs_be32 k = key.context[i];
+                    ovs_be32 m = mask.context[i];
                     put_16aligned_be32(&nsh->md1.context[i], k | (p & ~m));
                 }
                 break;
@@ -359,9 +363,7 @@ odp_execute_set_action(struct dp_packet *packet, const struct nlattr *a)
         break;
 
     case OVS_KEY_ATTR_NSH: {
-        struct flow_nsh nsh;
-        odp_nsh_key_from_attr(a, &nsh);
-        odp_set_nsh(packet, &nsh, NULL);
+        odp_set_nsh(packet, a, false);
         break;
     }
 
@@ -492,23 +494,7 @@ odp_execute_masked_set_action(struct dp_packet *packet,
         break;
 
     case OVS_KEY_ATTR_NSH: {
-        struct flow_nsh nsh, nsh_mask;
-        struct {
-            struct nlattr nla;
-            uint8_t data[sizeof(struct ovs_nsh_key_base) + NSH_CTX_HDRS_MAX_LEN
-                         + 2 * NLA_HDRLEN];
-        } attr, mask;
-        size_t size = nl_attr_get_size(a) / 2;
-
-        mask.nla.nla_type = attr.nla.nla_type = nl_attr_type(a);
-        mask.nla.nla_len = attr.nla.nla_len = NLA_HDRLEN + size;
-        memcpy(attr.data, (char *)(a + 1), size);
-        memcpy(mask.data, (char *)(a + 1) + size, size);
-
-        odp_nsh_key_from_attr(&attr.nla, &nsh);
-        odp_nsh_key_from_attr(&mask.nla, &nsh_mask);
-        odp_set_nsh(packet, &nsh, &nsh_mask);
-
+        odp_set_nsh(packet, a, true);
         break;
     }
 
@@ -693,6 +679,7 @@ requires_datapath_assistance(const struct nlattr *a)
     case OVS_ACTION_ATTR_CLONE:
     case OVS_ACTION_ATTR_PUSH_NSH:
     case OVS_ACTION_ATTR_POP_NSH:
+    case OVS_ACTION_ATTR_CT_CLEAR:
         return false;
 
     case OVS_ACTION_ATTR_UNSPEC:
@@ -763,7 +750,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
                 struct flow flow;
                 uint32_t hash;
 
-                DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+                DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                     /* RSS hash can be used here instead of 5tuple for
                      * performance reasons. */
                     if (dp_packet_rss_valid(packet)) {
@@ -788,7 +775,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         		//在原有的以太头的目的mac后加一层vlan头
             const struct ovs_action_push_vlan *vlan = nl_attr_get(a);
 
-            DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 eth_push_vlan(packet, vlan->vlan_tpid, vlan->vlan_tci);
             }
             break;
@@ -796,7 +783,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
 
         case OVS_ACTION_ATTR_POP_VLAN:
             //将dstmac后的vlan取除，取除办法是丢掉dstmac后的eth-type,采用vlan头里的eth-type
-            DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 eth_pop_vlan(packet);
             }
             break;
@@ -806,36 +793,36 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         		//如果报文已有mpls标签，则放置在最外层
             const struct ovs_action_push_mpls *mpls = nl_attr_get(a);
 
-            DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 push_mpls(packet, mpls->mpls_ethertype, mpls->mpls_lse);
             }
             break;
          }
 
         case OVS_ACTION_ATTR_POP_MPLS:
-        		//移除最外层的mpls标签
-            DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+            //移除最外层的mpls标签
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 pop_mpls(packet, nl_attr_get_be16(a));
             }
             break;
 
         case OVS_ACTION_ATTR_SET:
-            DP_PACKET_BATCH_FOR_EACH (packet, batch) {
-                //对报文或者元数据进行修改（直接赋值方式）
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
+            //对报文或者元数据进行修改（直接赋值方式）
                 odp_execute_set_action(packet, nl_attr_get(a));
             }
             break;
 
         case OVS_ACTION_ATTR_SET_MASKED:
-             	//对报文或者元数据进行修改（mask方式，或操作赋值）
-            DP_PACKET_BATCH_FOR_EACH(packet, batch) {
+            //对报文或者元数据进行修改（mask方式，或操作赋值）
+            DP_PACKET_BATCH_FOR_EACH(i, packet, batch) {
                 odp_execute_masked_set_action(packet, nl_attr_get(a));
             }
             break;
 
         case OVS_ACTION_ATTR_SAMPLE:
             //采样
-            DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 odp_execute_sample(dp, packet, steal && last_action, a,
                                    dp_execute_action);
             }
@@ -853,7 +840,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
                         nl_attr_get_unspec(a, sizeof *trunc);
 
             batch->trunc = true;
-            DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 dp_packet_set_cutlen(packet, trunc->max_len);
             }
             break;
@@ -876,7 +863,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         		//在报文外层加一层以太头，（14字节长度），eth-type来源于报文的packet_type字段
             const struct ovs_action_push_eth *eth = nl_attr_get(a);
 
-            DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 push_eth(packet, &eth->addresses.eth_dst,
                          &eth->addresses.eth_src);
             }
@@ -884,8 +871,8 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         }
 
         case OVS_ACTION_ATTR_POP_ETH:
-        		//扔掉外层的以太头（14长度），packet_type将持有原来的eth-type
-            DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+            //扔掉外层的以太头（14长度），packet_type将持有原来的eth-type
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 pop_eth(packet);
             }
             break;
@@ -895,7 +882,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             struct nsh_hdr *nsh_hdr = ALIGNED_CAST(struct nsh_hdr *, buffer);
             nsh_reset_ver_flags_ttl_len(nsh_hdr);
             odp_nsh_hdr_from_attr(nl_attr_get(a), nsh_hdr, NSH_HDR_MAX_LEN);
-            DP_PACKET_BATCH_FOR_EACH (packet, batch) {
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 push_nsh(packet, nsh_hdr);
             }
             break;
@@ -913,6 +900,11 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             }
             break;
         }
+        case OVS_ACTION_ATTR_CT_CLEAR:
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
+                conntrack_clear(packet);
+            }
+            break;
 
         //这些动作需要在执行前合并，合并后将不包含这些动作，故挂掉
         case OVS_ACTION_ATTR_OUTPUT:

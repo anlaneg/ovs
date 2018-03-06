@@ -82,7 +82,7 @@ OVS_NO_RETURN static void usage(void);
 static void parse_options(int argc, char *argv[], struct shash *local_options);
 static void run_prerequisites(struct ctl_command[], size_t n_commands,
                               struct ovsdb_idl *);
-static void do_vtep_ctl(const char *args, struct ctl_command *, size_t n,
+static bool do_vtep_ctl(const char *args, struct ctl_command *, size_t n,
                         struct ovsdb_idl *);
 static struct vtep_ctl_lswitch *find_lswitch(struct vtep_ctl_context *,
                                              const char *name,
@@ -144,7 +144,10 @@ main(int argc, char *argv[])
 
         if (seqno != ovsdb_idl_get_seqno(idl)) {
             seqno = ovsdb_idl_get_seqno(idl);
-            do_vtep_ctl(args, commands, n_commands, idl);
+            if (do_vtep_ctl(args, commands, n_commands, idl)) {
+                free(args);
+                exit(EXIT_SUCCESS);
+            }
         }
 
         if (seqno == ovsdb_idl_get_seqno(idl)) {
@@ -358,6 +361,7 @@ MAC binding commands:\n\
   list-remote-macs LS                 list remote mac entries\n\
 \n\
 %s\
+%s\
 \n\
 Options:\n\
   --db=DATABASE               connect to DATABASE\n\
@@ -365,7 +369,8 @@ Options:\n\
   -t, --timeout=SECS          wait at most SECS seconds\n\
   --dry-run                   do not commit changes to database\n\
   --oneline                   print exactly one line of output per command\n",
-           program_name, program_name, ctl_get_db_cmd_usage(), ctl_default_db());
+           program_name, program_name, ctl_get_db_cmd_usage(),
+           ctl_list_db_tables_usage(), ctl_default_db());
     table_usage();
     vlog_usage();
     printf("\
@@ -2257,7 +2262,7 @@ run_prerequisites(struct ctl_command *commands, size_t n_commands,
     }
 }
 
-static void
+static bool
 do_vtep_ctl(const char *args, struct ctl_command *commands,
             size_t n_commands, struct ovsdb_idl *idl)
 {
@@ -2405,7 +2410,7 @@ do_vtep_ctl(const char *args, struct ctl_command *commands,
 
     ovsdb_idl_destroy(idl);
 
-    exit(EXIT_SUCCESS);
+    return true;
 
 try_again:
     /* Our transaction needs to be rerun, or a prerequisite was not met.  Free
@@ -2421,6 +2426,7 @@ try_again:
         free(c->table);
     }
     free(error);
+    return false;
 }
 
 static const struct ctl_command_syntax vtep_commands[] = {
@@ -2495,6 +2501,7 @@ static const struct ctl_command_syntax vtep_commands[] = {
 static void
 vtep_ctl_cmd_init(void)
 {
-    ctl_init(vteprec_table_classes, tables, cmd_show_tables, vtep_ctl_exit);
+    ctl_init(&vteprec_idl_class, vteprec_table_classes, tables,
+             cmd_show_tables, vtep_ctl_exit);
     ctl_register_commands(vtep_commands);
 }

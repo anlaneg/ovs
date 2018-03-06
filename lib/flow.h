@@ -127,12 +127,14 @@ void flow_set_mpls_tc(struct flow *, int idx, uint8_t tc);
 void flow_set_mpls_bos(struct flow *, int idx, uint8_t stack);
 void flow_set_mpls_lse(struct flow *, int idx, ovs_be32 lse);
 
-bool flow_compose(struct dp_packet *, const struct flow *, size_t);
+void flow_compose(struct dp_packet *, const struct flow *,
+                  const void *l7, size_t l7_len);
+void packet_expand(struct dp_packet *, const struct flow *, size_t size);
 
 bool parse_ipv6_ext_hdrs(const void **datap, size_t *sizep, uint8_t *nw_proto,
                          uint8_t *nw_frag);
 ovs_be16 parse_dl_type(const struct eth_header *data_, size_t size);
-bool parse_nsh(const void **datap, size_t *sizep, struct flow_nsh *key);
+bool parse_nsh(const void **datap, size_t *sizep, struct ovs_key_nsh *key);
 
 static inline uint64_t
 flow_get_xreg(const struct flow *flow, int idx)

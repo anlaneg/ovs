@@ -37,14 +37,15 @@ struct simap;
 struct pkt_metadata;
 
 #define SLOW_PATH_REASONS                                               \
-    /* These reasons are mutually exclusive. */                         \
     SPR(SLOW_CFM,        "cfm",        "Consists of CFM packets")       \
     SPR(SLOW_BFD,        "bfd",        "Consists of BFD packets")       \
     SPR(SLOW_LACP,       "lacp",       "Consists of LACP packets")      \
     SPR(SLOW_STP,        "stp",        "Consists of STP packets")       \
     SPR(SLOW_LLDP,       "lldp",       "Consists of LLDP packets")      \
     SPR(SLOW_ACTION,     "action",                                      \
-        "Uses action(s) not supported by datapath")
+        "Uses action(s) not supported by datapath")                     \
+    SPR(SLOW_MATCH,      "match",                                       \
+        "Datapath can't match specifically enough")
 
 /* Indexes for slow-path reasons.  Client code uses "enum slow_path_reason"
  * values instead of these, these are just a way to construct those. */
@@ -54,7 +55,7 @@ enum {
 #undef SPR
 };
 
-/* Reasons why a subfacet might not be fast-pathable.
+/* Reasons why a flow might not be fast-pathable.
  *
  * Each reason is a separate bit to allow reasons to be combined. */
 enum slow_path_reason {
@@ -159,9 +160,10 @@ struct odputil_keybuf {
 enum odp_key_fitness odp_tun_key_from_attr(const struct nlattr *,
                                            struct flow_tnl *);
 enum odp_key_fitness odp_nsh_key_from_attr(const struct nlattr *,
-                                           struct flow_nsh *);
+                                           struct ovs_key_nsh *,
+                                           struct ovs_key_nsh *);
 enum odp_key_fitness odp_nsh_hdr_from_attr(const struct nlattr *,
-                                           struct nsh_hdr *, size_t size);
+                                           struct nsh_hdr *, size_t);
 
 int odp_ufid_from_string(const char *s_, ovs_u128 *ufid);
 void odp_format_ufid(const ovs_u128 *ufid, struct ds *);

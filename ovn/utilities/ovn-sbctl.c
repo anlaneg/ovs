@@ -36,6 +36,7 @@
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/json.h"
 #include "openvswitch/ofp-actions.h"
+#include "openvswitch/ofp-flow.h"
 #include "openvswitch/ofp-print.h"
 #include "openvswitch/shash.h"
 #include "openvswitch/vconn.h"
@@ -325,6 +326,7 @@ SSL commands:\n\
 set the SSL configuration\n\
 \n\
 %s\
+%s\
 \n\
 Options:\n\
   --db=DATABASE               connect to DATABASE\n\
@@ -333,7 +335,7 @@ Options:\n\
   --dry-run                   do not commit changes to database\n\
   --oneline                   print exactly one line of output per command\n",
            program_name, program_name, ctl_get_db_cmd_usage(),
-           default_sb_db());
+           ctl_list_db_tables_usage(), default_sb_db());
     table_usage();
     vlog_usage();
     printf("\
@@ -796,7 +798,7 @@ sbctl_dump_openflow(struct vconn *vconn, const struct uuid *uuid, bool stats)
 
             ds_clear(&s);
             if (stats) {
-                ofp_print_flow_stats(&s, fs, NULL, true);
+                ofp_print_flow_stats(&s, fs, NULL, NULL, true);
             } else {
                 ds_put_format(&s, "%stable=%s%"PRIu8" ",
                               colors.special, colors.end, fs->table_id);
@@ -806,7 +808,8 @@ sbctl_dump_openflow(struct vconn *vconn, const struct uuid *uuid, bool stats)
                 }
 
                 ds_put_format(&s, "%sactions=%s", colors.actions, colors.end);
-                ofpacts_format(fs->ofpacts, fs->ofpacts_len, NULL, &s);
+                struct ofpact_format_params fp = { .s = &s };
+                ofpacts_format(fs->ofpacts, fs->ofpacts_len, &fp);
             }
             printf("    %s\n", ds_cstr(&s));
         }
@@ -1440,6 +1443,7 @@ static const struct ctl_command_syntax sbctl_commands[] = {
 static void
 sbctl_cmd_init(void)
 {
-    ctl_init(sbrec_table_classes, tables, cmd_show_tables, sbctl_exit);
+    ctl_init(&sbrec_idl_class, sbrec_table_classes, tables,
+             cmd_show_tables, sbctl_exit);
     ctl_register_commands(sbctl_commands);
 }

@@ -199,6 +199,7 @@ parse_options(int argc, char *argv[])
         {"version", no_argument, NULL, 'V'},
         {"timestamp", no_argument, NULL, OPT_TIMESTAMP},
         {"force", no_argument, NULL, OPT_FORCE},
+        {"timeout", required_argument, NULL, 't'},
         VLOG_LONG_OPTIONS,
         DAEMON_LONG_OPTIONS,
 #ifdef HAVE_OPENSSL
@@ -213,6 +214,7 @@ parse_options(int argc, char *argv[])
     table_style.format = TF_TABLE;
 
     for (;;) {
+        unsigned long int timeout;
         int c;
 
         c = getopt_long(argc, argv, short_options, long_options, NULL);
@@ -243,6 +245,16 @@ parse_options(int argc, char *argv[])
 
         case OPT_FORCE:
             force = true;
+            break;
+
+        case 't':
+            timeout = strtoul(optarg, NULL, 10);
+            if (timeout <= 0) {
+                ovs_fatal(0, "value %s on -t or --timeout is not at least 1",
+                          optarg);
+            } else {
+                time_alarm(timeout);
+            }
             break;
 
         case '?':
@@ -1612,6 +1624,7 @@ do_restore(struct jsonrpc *rpc, const char *database,
         VLOG_INFO("%s", ds_cstr(&s));
         ds_destroy(&s);
     }
+    ovsdb_schema_destroy(schema2);
 
     struct json *txn = json_array_create_empty();
     json_array_add(txn, json_string_create(schema->name));
@@ -1653,6 +1666,7 @@ do_restore(struct jsonrpc *rpc, const char *database,
             json_array_add(txn, ins_op);
         }
     }
+    ovsdb_destroy(backup);
     struct jsonrpc_msg *rq = jsonrpc_create_request("transact", txn, NULL);
     struct jsonrpc_msg *reply;
     check_txn(jsonrpc_transact_block(rpc, rq, &reply), &reply);

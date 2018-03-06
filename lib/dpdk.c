@@ -24,6 +24,7 @@
 
 #include <rte_log.h>
 #include <rte_memzone.h>
+#include <rte_version.h>
 #ifdef DPDK_PDUMP
 #include <rte_mempool.h>
 #include <rte_pdump.h>
@@ -518,6 +519,7 @@ dpdk_init(const struct smap *ovs_other_config)
 
         //ovs_other_config中的改动需要重启ovs
         if (ovsthread_once_start(&once_enable)) {
+            VLOG_INFO("Using %s", rte_version());
             VLOG_INFO("DPDK Enabled - initializing...");
             dpdk_init__(ovs_other_config);
             enabled = true;//只做一次
@@ -547,4 +549,10 @@ dpdk_set_lcore_id(unsigned cpu)
     /* NON_PMD_CORE_ID is reserved for use by non pmd threads. */
     ovs_assert(cpu != NON_PMD_CORE_ID);
     RTE_PER_LCORE(_lcore_id) = cpu;
+}
+
+void
+print_dpdk_version(void)
+{
+    puts(rte_version());
 }

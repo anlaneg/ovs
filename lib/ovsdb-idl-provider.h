@@ -95,6 +95,7 @@ struct ovsdb_idl_column {
     char *name;//列名称
     struct ovsdb_type type;//列类型
     bool is_mutable;
+    bool is_synthetic;
     void (*parse)(struct ovsdb_idl_row *, const struct ovsdb_datum *);//解析并填充row
     void (*unparse)(struct ovsdb_idl_row *);//反解析，释放解析占用的资源
 };

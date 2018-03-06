@@ -19,7 +19,7 @@
  *
  * ofproto-dpif provides an ofproto implementation for those platforms which
  * implement the netdev and dpif interface defined in netdev.h and dpif.h.  The
- * most important of which is the Linux Kernel Module (dpif-linux), but
+ * most important of which is the Linux Kernel Module (dpif-netlink), but
  * alternatives are supported such as a userspace only implementation
  * (dpif-netdev), and a dummy implementation used for unit testing.
  *
@@ -50,7 +50,6 @@
 #include "fail-open.h"
 #include "hmapx.h"
 #include "odp-util.h"
-#include "openvswitch/ofp-util.h"
 #include "id-pool.h"
 #include "ovs-thread.h"
 #include "ofproto-provider.h"
@@ -173,7 +172,10 @@ struct group_dpif *group_dpif_lookup(struct ofproto_dpif *,
     DPIF_SUPPORT_FIELD(size_t, sample_nesting, "Sample nesting")            \
                                                                             \
     /* OVS_CT_ATTR_EVENTMASK supported by OVS_ACTION_ATTR_CT action. */     \
-    DPIF_SUPPORT_FIELD(bool, ct_eventmask, "Conntrack eventmask")
+    DPIF_SUPPORT_FIELD(bool, ct_eventmask, "Conntrack eventmask")           \
+                                                                            \
+    /* True if the datapath supports OVS_ACTION_ATTR_CT_CLEAR action. */    \
+    DPIF_SUPPORT_FIELD(bool, ct_clear, "Conntrack clear")
 
 /* Stores the various features which the corresponding backer supports. */
 struct dpif_backer_support {

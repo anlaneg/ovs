@@ -89,6 +89,7 @@ Damien Millescamps              damien.millescamps@6wind.com
 Dan Carpenter                   dan.carpenter@oracle.com
 Dan McGregor                    dan.mcgregor@usask.ca
 Dan Wendlandt                   dan@nicira.com
+Dan Williams                    dcbw@redhat.com
 Daniel Alvarez                  dalvarez@redhat.com
 Daniel Borkmann                 dborkman@redhat.com
 Daniel Hiltgen                  daniel@netkine.com
@@ -129,6 +130,7 @@ Eziz Durdyyev                   ezizdurdy@gmail.com
 Flavio Fernandes                flavio@flaviof.com
 Flavio Leitner                  fbl@redhat.com
 Francesco Fusco                 ffusco@redhat.com
+Frode Nordahl                   frode.nordahl@gmail.com
 FUJITA Tomonori                 fujita.tomonori@lab.ntt.co.jp
 Gabe Beged-Dov                  gabe@begeddov.com
 Gaetano Catalli                 gaetano.catalli@gmail.com
@@ -178,6 +180,7 @@ Joe Stringer                    joe@ovn.org
 Jonathan Vestin                 jonavest@kau.se
 Jorge Arturo Sauma Vargas       jorge.sauma@hpe.com
 Jun Nakajima                    jun.nakajima@intel.com
+JunhanYan                       juyan@redhat.com
 JunoZhu                         zhunatuzi@gmail.com
 Justin Pettit                   jpettit@ovn.org
 Kaige Fu                        fukaige@huawei.com
@@ -215,7 +218,7 @@ Marcin Mirecki                  mmirecki@redhat.com
 Mario Cabrera                   mario.cabrera@hpe.com
 Mark D. Gray                    mark.d.gray@intel.com
 Mark Hamilton                   mhamilton@nicira.com
-Mark Kavanagh                   mark.b.kavanagh@intel.com
+Mark Kavanagh                   mark.b.kavanagh81@gmail.com
 Mark Maglana                    mmaglana@gmail.com
 Mark Michelson                  mmichels@redhat.com
 Markos Chandras                 mchandras@suse.de
@@ -275,6 +278,7 @@ Robert Åkerblom-Andersson       Robert.nr1@gmail.com
 Robert Wojciechowicz            robertx.wojciechowicz@intel.com
 Rob Hoes                        rob.hoes@citrix.com
 Roi Dayan                       roid@mellanox.com
+Róbert Mulik                    robert.mulik@ericsson.com
 Romain Lenglet                  romain.lenglet@berabera.info
 Russell Bryant                  russell@ovn.org
 RYAN D. MOATS                   rmoats@us.ibm.com
@@ -349,7 +353,7 @@ Yu Zhiguo                       yuzg@cn.fujitsu.com
 Yuanhan Liu                     yuanhan.liu@linux.intel.com
 Yunjian Wang                    wangyunjian@huawei.com
 ZhengLingyun                    konghuarukhr@163.com
-Zoltán Balogh                   zoltan.balogh@ericsson.com
+Zoltán Balogh                   zoltan.balogh.eth@gmail.com
 Zoltan Kiss                     zoltan.kiss@citrix.com
 Zongkai LI                      zealokii@gmail.com
 Zhi Yong Wu                     zwu.kernel@gmail.com
@@ -584,7 +588,6 @@ Yongqiang Liu                   liuyq7809@gmail.com
 ZHANG Zhiming                   zhangzhiming@yunshan.net.cn
 Zhangguanghui                   zhang.guanghui@h3c.com
 Ziyou Wang                      ziyouw@vmware.com
-Zoltán Balogh                   zoltan.balogh@ericsson.com
 ankur dwivedi                   ankurengg2003@gmail.com
 chen zhang                      3zhangchen9211@gmail.com
 james hopper                    jameshopper@email.com

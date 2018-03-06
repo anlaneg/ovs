@@ -1,12 +1,33 @@
-Post-v2.8.0
+Post-v2.9.0
+--------------------
+   - ovs-vswitchd:
+     * New options --l7 and --l7-len to "ofproto/trace" command.
+     * Previous versions gave OpenFlow tables default names of the form
+       "table#".  These are not helpful names for the purpose of accepting
+       and displaying table names, so now tables by default have no names.
+   - ovs-ofctl:
+     * ovs-ofctl now accepts and display table names in place of numbers.  By
+       default it always accepts names and in interactive use it displays them;
+       use --names or --no-names to override.  See ovs-ofctl(8) for details.
+   - ovs-vsctl: New commands "add-bond-iface" and "del-bond-iface".
+   - OpenFlow:
+     * OFPT_ROLE_STATUS is now available in OpenFlow 1.3.
+   - Linux kernel 4.14
+     * Add support for compiling OVS with the latest Linux 4.14 kernel
+
+v2.9.0 - 19 Feb 2018
 --------------------
    - NSH implementation now conforms to latest draft (draft-ietf-sfc-nsh-28).
+     * Add ttl field.
+     * Add a new action dec_nsh_ttl.
+     * Enable NSH support in kernel datapath.
    - OVSDB:
      * New high-level documentation in ovsdb(7).
      * New file format documentation for developers in ovsdb(5).
      * Protocol documentation moved from ovsdb-server(1) to ovsdb-server(7).
      * ovsdb-client: New "get-schema-cksum" and "query" commands.
      * ovsdb-client: New "backup" and "restore" commands.
+     * ovsdb-client: New --timeout option.
      * ovsdb-tool: New "db-name" and "schema-name" commands.
    - ovs-vsctl and other commands that display data in tables now support a
      --max-column-width option to limit column width.
@@ -23,6 +44,9 @@ Post-v2.8.0
          action 'nd_ns' to resolve unknown next hop MAC addresses for the
          IPv6 packets.
      * ovn-ctl: New commands run_nb_ovsdb and run_sb_ovsdb.
+   - OpenFlow:
+     * ct_clear action is now backed by kernel datapath. Support is probed for
+       when OVS starts.
    - Linux kernel 4.13
      * Add support for compiling OVS with the latest Linux 4.13 kernel
    - ovs-dpctl and related ovs-appctl commands:
@@ -30,6 +54,8 @@ Post-v2.8.0
        connection tracking entry.
      * New "ct-set-maxconns", "ct-get-maxconns", and "ct-get-nconns" commands
        for userspace datapath.
+   - No longer send packets to the Linux TAP device if it's DOWN unless it is
+     in another networking namespace.
    - DPDK:
      * Add support for DPDK v17.11
      * Add support for vHost IOMMU
@@ -40,10 +66,18 @@ Post-v2.8.0
           "management" statistics.
         - ovs-ofctl dump-ports command now prints new of set custom statistics
           if available (for OpenFlow 1.4+).
+     * New appctl command 'dpif-netdev/pmd-rxq-rebalance' to rebalance rxq to
+       pmd assignments.
+     * Add rxq utilization of pmd to appctl 'dpif-netdev/pmd-rxq-show'.
+     * Add support for vHost dequeue zero copy (experimental)
+   - Userspace datapath:
+     * Output packet batching support.
    - vswitchd:
      * Datapath IDs may now be specified as 0x1 (etc.) instead of 16 digits.
      * Configuring a controller, or unconfiguring all controllers, now deletes
        all groups and meters (as well as all flows).
+   - New --enable-sparse configure option enables "sparse" checking by default.
+   - Added additional information to vhost-user status.
 
 v2.8.0 - 31 Aug 2017
 --------------------
@@ -100,6 +134,7 @@ v2.8.0 - 31 Aug 2017
        gateway.
      * Add support for ACL logging.
      * ovn-northd now has native support for active-standby high availability.
+     * Add support for QoS bandwidth limt with DPDK.
    - Tracing with ofproto/trace now traces through recirculation.
    - OVSDB:
      * New support for role-based access control (see ovsdb-server(1)).

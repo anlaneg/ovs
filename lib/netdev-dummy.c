@@ -1081,7 +1081,7 @@ netdev_dummy_send(struct netdev *netdev, int qid OVS_UNUSED,
     int error = 0;
 
     struct dp_packet *packet;
-    DP_PACKET_BATCH_FOR_EACH(packet, batch) {
+    DP_PACKET_BATCH_FOR_EACH(i, packet, batch) {
         const void *buffer = dp_packet_data(packet);
         size_t size = dp_packet_size(packet);
 
@@ -1520,10 +1520,17 @@ eth_from_flow(const char *s, size_t packet_size)
     }
 
     packet = dp_packet_new(0);
-    if (!flow_compose(packet, &flow, packet_size)) {
-        dp_packet_delete(packet);
-        packet = NULL;
-    };
+    if (packet_size) {
+        flow_compose(packet, &flow, NULL, 0);
+        if (dp_packet_size(packet) < packet_size) {
+            packet_expand(packet, &flow, packet_size);
+        } else if (dp_packet_size(packet) > packet_size){
+            dp_packet_delete(packet);
+            packet = NULL;
+        }
+    } else {
+        flow_compose(packet, &flow, NULL, 64);
+    }
 
     ofpbuf_uninit(&odp_key);
     return packet;

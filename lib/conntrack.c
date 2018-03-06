@@ -1384,7 +1384,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
     struct conn_lookup_ctx ctx;
 
     //遍历处理每个包，对报文进行解析，将解析好的内容存放在ctx.key中
-    DP_PACKET_BATCH_FOR_EACH (packet, pkt_batch) {
+    DP_PACKET_BATCH_FOR_EACH (i, packet, pkt_batch) {
         if (!conn_key_extract(ct, packet, dl_type, &ctx, zone)) {
         	  //解析失败，此报文为分片或者格式不正确
             packet->md.ct_state = CS_INVALID;//连接状态置为无效状态
@@ -1396,6 +1396,14 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
     }
 
     return 0;
+}
+
+void
+conntrack_clear(struct dp_packet *packet)
+{
+    /* According to pkt_metadata_init(), ct_state == 0 is enough to make all of
+     * the conntrack fields invalid. */
+    packet->md.ct_state = 0;
 }
 
 static void
@@ -2482,6 +2490,10 @@ delete_conn(struct conn *conn)
     free(conn);
 }
 
+/* Convert a conntrack address 'a' into an IP address 'b' based on 'dl_type'.
+ *
+ * Note that 'dl_type' should be either "ETH_TYPE_IP" or "ETH_TYPE_IPv6"
+ * in network-byte order. */
 static void
 ct_endpoint_to_ct_dpif_inet_addr(const struct ct_addr *a,
                                  union ct_dpif_inet_addr *b,
@@ -2491,6 +2503,22 @@ ct_endpoint_to_ct_dpif_inet_addr(const struct ct_addr *a,
         b->ip = a->ipv4_aligned;
     } else if (dl_type == htons(ETH_TYPE_IPV6)){
         b->in6 = a->ipv6_aligned;
+    }
+}
+
+/* Convert an IP address 'a' into a conntrack address 'b' based on 'dl_type'.
+ *
+ * Note that 'dl_type' should be either "ETH_TYPE_IP" or "ETH_TYPE_IPv6"
+ * in network-byte order. */
+static void
+ct_dpif_inet_addr_to_ct_endpoint(const union ct_dpif_inet_addr *a,
+                                 struct ct_addr *b,
+                                 ovs_be16 dl_type)
+{
+    if (dl_type == htons(ETH_TYPE_IP)) {
+        b->ipv4_aligned = a->ip;
+    } else if (dl_type == htons(ETH_TYPE_IPV6)){
+        b->ipv6_aligned = a->in6;
     }
 }
 
@@ -2516,6 +2544,35 @@ conn_key_to_tuple(const struct conn_key *key, struct ct_dpif_tuple *tuple)
         tuple->src_port = key->src.port;
         tuple->dst_port = key->dst.port;
     }
+}
+
+static void
+tuple_to_conn_key(const struct ct_dpif_tuple *tuple, uint16_t zone,
+                  struct conn_key *key)
+{
+    if (tuple->l3_type == AF_INET) {
+        key->dl_type = htons(ETH_TYPE_IP);
+    } else if (tuple->l3_type == AF_INET6) {
+        key->dl_type = htons(ETH_TYPE_IPV6);
+    }
+    key->nw_proto = tuple->ip_proto;
+    ct_dpif_inet_addr_to_ct_endpoint(&tuple->src, &key->src.addr,
+                                     key->dl_type);
+    ct_dpif_inet_addr_to_ct_endpoint(&tuple->dst, &key->dst.addr,
+                                     key->dl_type);
+
+    if (tuple->ip_proto == IPPROTO_ICMP || tuple->ip_proto == IPPROTO_ICMPV6) {
+        key->src.icmp_id = tuple->icmp_id;
+        key->src.icmp_type = tuple->icmp_type;
+        key->src.icmp_code = tuple->icmp_code;
+        key->dst.icmp_id = tuple->icmp_id;
+        key->dst.icmp_type = reverse_icmp_type(tuple->icmp_type);
+        key->dst.icmp_code = tuple->icmp_code;
+    } else {
+        key->src.port = tuple->src_port;
+        key->dst.port = tuple->dst_port;
+    }
+    key->zone = zone;
 }
 
 static void
@@ -2628,6 +2685,29 @@ conntrack_flush(struct conntrack *ct, const uint16_t *zone)
     }
 
     return 0;
+}
+
+int
+conntrack_flush_tuple(struct conntrack *ct, const struct ct_dpif_tuple *tuple,
+                      uint16_t zone)
+{
+    struct conn_lookup_ctx ctx;
+    int error = 0;
+
+    memset(&ctx, 0, sizeof(ctx));
+    tuple_to_conn_key(tuple, zone, &ctx.key);
+    ctx.hash = conn_key_hash(&ctx.key, ct->hash_basis);
+    unsigned bucket = hash_to_bucket(ctx.hash);
+
+    ct_lock_lock(&ct->buckets[bucket].lock);
+    conn_key_lookup(&ct->buckets[bucket], &ctx, time_msec());
+    if (ctx.conn) {
+        conn_clean(ct, ctx.conn, &ct->buckets[bucket]);
+    } else {
+        error = ENOENT;
+    }
+    ct_lock_unlock(&ct->buckets[bucket].lock);
+    return error;
 }
 
 int
@@ -3194,11 +3274,9 @@ repl_ftp_v6_addr(struct dp_packet *pkt, struct ct_addr v6_addr_rep,
         return 0;
     }
 
-    const char *rc;
     char v6_addr_str[IPV6_SCAN_LEN] = {0};
-    rc = inet_ntop(AF_INET6, &v6_addr_rep.ipv6_aligned, v6_addr_str,
-              IPV6_SCAN_LEN - 1);
-    ovs_assert(rc != NULL);
+    ovs_assert(inet_ntop(AF_INET6, &v6_addr_rep.ipv6_aligned, v6_addr_str,
+                         IPV6_SCAN_LEN - 1));
 
     size_t replace_addr_size = strlen(v6_addr_str);
 

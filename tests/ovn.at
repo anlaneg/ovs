@@ -1082,6 +1082,18 @@ reg1[0] = dns_lookup();
 reg1[0] = dns_lookup("foo");
     dns_lookup doesn't take any parameters
 
+# set_meter
+set_meter(0);
+    Rate 0 for set_meter is not in valid.
+set_meter(1);
+    encodes as meter:1
+set_meter(100, 1000);
+    encodes as meter:2
+set_meter(100, 1000, );
+    Syntax error at `,' expecting `)'.
+set_meter(4294967295, 4294967295);
+    encodes as meter:3
+
 # put_nd_ra_opts
 reg1[0] = put_nd_ra_opts(addr_mode = "slaac", mtu = 1500, prefix = aef0::/64, slla = ae:01:02:03:04:05);
     encodes as controller(userdata=00.00.00.08.00.00.00.00.00.01.de.10.00.00.00.40.86.00.00.00.ff.00.ff.ff.00.00.00.00.00.00.00.00.05.01.00.00.00.00.05.dc.03.04.40.c0.ff.ff.ff.ff.ff.ff.ff.ff.00.00.00.00.ae.f0.00.00.00.00.00.00.00.00.00.00.00.00.00.00.01.01.ae.01.02.03.04.05,pause)
@@ -1185,7 +1197,7 @@ ovn-nbctl acl-add lsw0 to-lport 1000 'eth.type == 0x1237 && eth.src == $set1 && 
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Allow some time for ovn-northd and ovn-controller to catch up.
 # XXX This should be more systematic.
@@ -1443,8 +1455,8 @@ for i in 1 2 3; do
         else
            ip_addrs="192.168.0.$i"
         fi
-        ovn-nbctl lsp-set-addresses lp$i "f0:00:00:00:00:$i $ip_addrs"
-        ovn-nbctl lsp-set-port-security lp$i f0:00:00:00:00:$i
+        ovn-nbctl lsp-set-addresses lp$i "f0:00:00:00:00:0$i $ip_addrs"
+        ovn-nbctl lsp-set-port-security lp$i f0:00:00:00:00:0$i
     fi
 done
 ovn-nbctl acl-add lsw0 from-lport 1000 'eth.type == 0x1234' drop
@@ -1721,7 +1733,7 @@ done
 ovn-nbctl --wait=sb sync
 ovn-sbctl dump-flows
 
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # XXX This is now the 3rd copy of these functions in this file ...
 
@@ -1924,7 +1936,7 @@ ovs-vsctl add-port br-phys vif3 -- set Interface vif3 options:tx_pcap=hv3/vif3-t
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Allow some time for ovn-northd and ovn-controller to catch up.
 # XXX This should be more systematic.
@@ -2094,7 +2106,7 @@ ovs-vsctl add-port br-phys vif3 -- set Interface vif3 options:tx_pcap=hv3/vif3-t
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Allow some time for ovn-northd and ovn-controller to catch up.
 # XXX This should be more systematic.
@@ -2291,7 +2303,7 @@ done
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Allow some time for ovn-northd and ovn-controller to catch up.
 # XXX This should be more systematic.
@@ -2638,7 +2650,7 @@ done
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Allow some time for ovn-northd and ovn-controller to catch up.
 # XXX This should be more systematic.
@@ -3054,7 +3066,7 @@ ovs-vsctl -- add-port br-int hv2-vif1 -- \
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Allow some time for ovn-northd and ovn-controller to catch up.
 # XXX This should be more systematic.
@@ -3454,7 +3466,7 @@ ovs-vsctl -- add-port br-int hv2-vif1 -- \
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Allow some time for ovn-northd and ovn-controller to catch up.
 # XXX This should be more systematic.
@@ -3549,6 +3561,19 @@ AT_CHECK([ovn-nbctl lsp-set-type ln_port localnet])
 AT_CHECK([ovn-nbctl lsp-set-options ln_port network_name=physnet1])
 
 AT_CHECK([ovs-vsctl add-port br-int localvif1 -- set Interface localvif1 external_ids:iface-id=localvif1])
+
+# Wait for packet to be received.
+echo "fffffffffffff0000000000108060001080006040001f00000000001c0a80102000000000000c0a80102" > expected
+OVN_CHECK_PACKETS([hv/snoopvif-tx.pcap], [expected])
+
+# Check GARP packet when restart openflow connection.
+as hv
+OVS_APP_EXIT_AND_WAIT([ovs-vswitchd])
+
+OVS_WAIT_UNTIL([grep -c "waiting 4 seconds before reconnect" hv/ovn-controller.log])
+
+as hv
+start_daemon ovs-vswitchd --enable-dummy=system -vvconn -vofproto_dpif -vunixctl
 
 # Wait for packet to be received.
 echo "fffffffffffff0000000000108060001080006040001f00000000001c0a80102000000000000c0a80102" > expected
@@ -3666,7 +3691,7 @@ ovs-vsctl -- add-port br-int hv2-vif1 -- \
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Allow some time for ovn-northd and ovn-controller to catch up.
 # XXX This should be more systematic.
@@ -3806,7 +3831,7 @@ ovs-vsctl -- add-port br-int hv1-vif4 -- \
     options:rxq_pcap=hv1/vif4-rx.pcap \
     ofport-request=4
 
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 sleep 2
 
@@ -4152,7 +4177,7 @@ ovs-vsctl -- add-port br-int hv1-vif5 -- \
     options:rxq_pcap=hv1/vif5-rx.pcap \
     ofport-request=5
 
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 sleep 2
 
@@ -4379,7 +4404,7 @@ ovs-vsctl -- add-port br-int hv2-vif1 -- \
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 ovn-nbctl create Logical_Router name=R1
 ovn-nbctl create Logical_Router name=R2 options:chassis="hv2"
@@ -5288,7 +5313,7 @@ ovs-vsctl -- add-port br-int hv1-vif1 -- \
     options:rxq_pcap=hv1/vif1-rx.pcap \
     ofport-request=1
 
-ovn_populate_arp
+OVN_POPULATE_ARP
 sleep 2
 
 as hv1 ovs-vsctl show
@@ -5953,15 +5978,17 @@ OVN_CLEANUP([hv])
 AT_CLEANUP
 
 
-AT_SETUP([ovn -- DSCP marking check])
+AT_SETUP([ovn -- DSCP marking and meter check])
 AT_KEYWORDS([ovn])
 ovn_start
 
 ovn-nbctl ls-add lsw0
 ovn-nbctl --wait=sb lsp-add lsw0 lp1
 ovn-nbctl --wait=sb lsp-add lsw0 lp2
+ovn-nbctl --wait=sb lsp-add lsw0 lp3
 ovn-nbctl lsp-set-addresses lp1 f0:00:00:00:00:01
 ovn-nbctl lsp-set-addresses lp2 f0:00:00:00:00:02
+ovn-nbctl lsp-set-addresses lp3 f0:00:00:00:00:03
 ovn-nbctl lsp-set-port-security lp1 f0:00:00:00:00:01
 ovn-nbctl lsp-set-port-security lp2 f0:00:00:00:00:02
 ovn-nbctl --wait=sb sync
@@ -6020,19 +6047,60 @@ AT_CHECK([get_final_nw_tos], [0], [none
 check_tos 0
 
 # Mark DSCP with a valid value
-qos_id=$(ovn-nbctl --wait=hv -- --id=@lp1-qos create QoS priority=100 action=dscp=48 match="inport\=\=\"lp1\"" direction="from-lport" -- set Logical_Switch lsw0 qos_rules=@lp1-qos)
+qos_id=$(ovn-nbctl --wait=hv -- --id=@lp1-qos create QoS priority=100 action=dscp=48 match="inport\=\=\"lp1\"\ &&\ is_chassis_resident(\"lp1\")" direction="from-lport" -- set Logical_Switch lsw0 qos_rules=@lp1-qos)
+AT_CHECK([as hv ovn-nbctl qos-list lsw0 | wc -l], [0], [1
+])
 check_tos 48
+
+# check at hv without qos meter
+AT_CHECK([as hv ovs-ofctl dump-flows br-int -O OpenFlow13 | grep meter | wc -l], [0], [0
+])
+
+# Update the meter rate
+ovn-nbctl --wait=hv set QoS $qos_id bandwidth=rate=100
+
+# check at hv with a qos meter table
+AT_CHECK([as hv ovs-ofctl dump-meters br-int -O OpenFlow13 | grep rate=100 | wc -l], [0], [1
+])
+AT_CHECK([as hv ovs-ofctl dump-flows br-int -O OpenFlow13 | grep meter | wc -l], [0], [1
+])
 
 # Update the DSCP marking
 ovn-nbctl --wait=hv set QoS $qos_id action=dscp=63
 check_tos 63
 
+# Update the meter rate
+ovn-nbctl --wait=hv set QoS $qos_id bandwidth=rate=4294967295,burst=4294967295
+
+# check at hv with a qos meter table
+AT_CHECK([as hv ovs-ofctl dump-meters br-int -O OpenFlow13 | grep burst_size=4294967295 | wc -l], [0], [1
+])
+AT_CHECK([as hv ovs-ofctl dump-flows br-int -O OpenFlow13 | grep meter | wc -l], [0], [1
+])
+
 ovn-nbctl --wait=hv set QoS $qos_id match="outport\=\=\"lp2\"" direction="to-lport"
 check_tos 63
 
 # Disable DSCP marking
-ovn-nbctl --wait=hv clear Logical_Switch lsw0 qos_rules
+ovn-nbctl --wait=hv qos-del lsw0
+AT_CHECK([as hv ovn-nbctl qos-list lsw0 | wc -l], [0], [0
+])
 check_tos 0
+
+# check at hv without qos meter
+AT_CHECK([as hv ovs-ofctl dump-flows br-int -O OpenFlow13 | grep meter | wc -l], [0], [0
+])
+
+# check meter with chassis not resident
+ovn-nbctl qos-add lsw0 to-lport 1001 'inport=="lp3" && is_chassis_resident("lp3")' rate=11123 burst=111230
+AT_CHECK([as hv ovn-nbctl qos-list lsw0 | wc -l], [0], [1
+])
+
+# check no meter table
+AT_CHECK([as hv ovs-ofctl dump-flows br-int -O OpenFlow13 | grep meter | wc -l], [0], [0
+])
+AT_CHECK([as hv ovs-ofctl dump-meters br-int -O OpenFlow13 | grep rate=11123 | wc -l], [0], [0
+])
 
 OVN_CLEANUP([hv])
 AT_CLEANUP
@@ -6323,7 +6391,7 @@ ovs-vsctl -- add-port br-int vm2 -- \
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Allow some time for ovn-northd and ovn-controller to catch up.
 # XXX This should be more systematic.
@@ -6558,7 +6626,7 @@ ovn-nbctl lsp-add bob bob1 \
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Allow some time for ovn-northd and ovn-controller to catch up.
 # XXX This should be more systematic.
@@ -6690,7 +6758,7 @@ ovs-vsctl -- add-port br-int hv1-vif2 -- \
     options:rxq_pcap=hv1/vif2-rx.pcap \
     ofport-request=2
 
-ovn_populate_arp
+OVN_POPULATE_ARP
 sleep 2
 as hv1 ovs-vsctl show
 
@@ -6801,6 +6869,38 @@ test_dns() {
         udp_len=$(printf "%x" $udp_len)
         local reply=${src_mac}${dst_mac}0800450000${ip_len}0000000080110000
         reply=${reply}${dst_ip}${src_ip}0035923400${udp_len}0000${dns_reply}
+        echo $reply >> $inport.expected
+    else
+        for outport; do
+            echo $request >> $outport.expected
+        done
+    fi
+    as hv1 ovs-appctl netdev-dummy/receive hv1-vif$inport $request
+}
+
+test_dns6() {
+    local inport=$1 src_mac=$2 dst_mac=$3 src_ip=$4 dst_ip=$5 dns_reply=$6
+    local dns_query_data=$7
+    shift; shift; shift; shift; shift; shift; shift;
+    # Packet size => UDP header (8) +
+    #                DNS data (header + query)
+    ip_len=`expr 8 + ${#dns_query_data} / 2`
+    udp_len=$ip_len
+    ip_len=$(printf "%x" $ip_len)
+    udp_len=$(printf "%x" $udp_len)
+    local request=${dst_mac}${src_mac}86dd6000000000${ip_len}11ff${src_ip}${dst_ip}
+    request=${request}9234003500${udp_len}0000
+    #dns data
+    request=${request}${dns_query_data}
+
+    if test $dns_reply != 0; then
+        local dns_reply=$1
+        ip_len=`expr 8 + ${#dns_reply} / 2`
+        udp_len=$ip_len
+        ip_len=$(printf "%x" $ip_len)
+        udp_len=$(printf "%x" $udp_len)
+        local reply=${src_mac}${dst_mac}86dd6000000000${ip_len}11ff${dst_ip}${src_ip}
+        reply=${reply}0035923400${udp_len}0000${dns_reply}
         echo $reply >> $inport.expected
     else
         for outport; do
@@ -7005,6 +7105,25 @@ reset_pcap_file hv1-vif2 hv1/vif2
 rm -f 1.expected
 rm -f 2.expected
 
+# Try DNS query over IPv6
+set_dns_params vm1
+src_ip=aef00000000000000000000000000004
+dst_ip=aef00000000000000000000000000001
+dns_reply=1
+test_dns6 1 f00000000001 f000000000f0 $src_ip $dst_ip $dns_reply $dns_req_data $dns_resp_data
+
+# NXT_RESUMEs should be 9.
+OVS_WAIT_UNTIL([test 9 = `cat ofctl_monitor*.log | grep -c NXT_RESUME`])
+
+$PYTHON "$top_srcdir/utilities/ovs-pcap.in" hv1/vif1-tx.pcap > 1.packets
+cat 1.expected > expout
+AT_CHECK([cat 1.packets], [0], [expout])
+
+reset_pcap_file hv1-vif1 hv1/vif1
+reset_pcap_file hv1-vif2 hv1/vif2
+rm -f 1.expected
+rm -f 2.expected
+
 as hv1
  OVS_APP_EXIT_AND_WAIT([ovn-controller])
 OVS_APP_EXIT_AND_WAIT([ovs-vswitchd])
@@ -7063,7 +7182,7 @@ ovs-vsctl -- add-port br-int ext1-vif1 -- \
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 ovn-nbctl create Logical_Router name=R1
 
@@ -7246,7 +7365,7 @@ ovs-vsctl -- add-port br-int ext1-vif1 -- \
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 ovn-nbctl create Logical_Router name=R0
 ovn-nbctl create Logical_Router name=R1
@@ -7466,7 +7585,7 @@ ovs-vsctl -- add-port br-int hv3-vif1 -- \
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 ovn-nbctl create Logical_Router name=R1
 
@@ -8195,7 +8314,7 @@ ovs-vsctl -- add-port br-int hv2-vif1 -- \
 # Pre-populate the hypervisors' ARP tables so that we don't lose any
 # packets for ARP resolution (native tunneling doesn't queue packets
 # for ARP resolution).
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Allow some time for ovn-northd and ovn-controller to catch up.
 # XXX This should be more systematic.
@@ -8273,7 +8392,7 @@ done
 ovn-nbctl --wait=sb sync
 ovn-sbctl dump-flows
 
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 # Given the name of a logical port, prints the name of the hypervisor
 # on which it is located.
@@ -8392,7 +8511,7 @@ for i in 1 2; do
 
 done
 
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 ovn-nbctl create Logical_Router name=R1
 
@@ -8502,9 +8621,9 @@ AT_CHECK([as hv2 ovs-ofctl dump-flows br-int table=32 | grep active_backup | gre
 sleep 3 # let BFD sessions settle so we get the right flows on the right chassis
 
 # make sure that flows for handling the outside router port reside on gw1
-AT_CHECK([as gw1 ovs-ofctl dump-flows br-int table=23 | grep 00:00:02:01:02:04 | wc -l], [0], [[1
+AT_CHECK([as gw1 ovs-ofctl dump-flows br-int table=24 | grep 00:00:02:01:02:04 | wc -l], [0], [[1
 ]])
-AT_CHECK([as gw2 ovs-ofctl dump-flows br-int table=23 | grep 00:00:02:01:02:04 | wc -l], [0], [[0
+AT_CHECK([as gw2 ovs-ofctl dump-flows br-int table=24 | grep 00:00:02:01:02:04 | wc -l], [0], [[0
 ]])
 
 # make sure ARP responder flows for outside router port reside on gw1 too
@@ -8594,9 +8713,9 @@ AT_CHECK([ovs-vsctl --bare --columns bfd find Interface name=ovn-hv1-0],[0],
 sleep 3  # let BFD sessions settle so we get the right flows on the right chassis
 
 # make sure that flows for handling the outside router port reside on gw2 now
-AT_CHECK([as gw2 ovs-ofctl dump-flows br-int table=23 | grep 00:00:02:01:02:04 | wc -l], [0], [[1
+AT_CHECK([as gw2 ovs-ofctl dump-flows br-int table=24 | grep 00:00:02:01:02:04 | wc -l], [0], [[1
 ]])
-AT_CHECK([as gw1 ovs-ofctl dump-flows br-int table=23 | grep 00:00:02:01:02:04 | wc -l], [0], [[0
+AT_CHECK([as gw1 ovs-ofctl dump-flows br-int table=24 | grep 00:00:02:01:02:04 | wc -l], [0], [[0
 ]])
 
 # disconnect GW2 from the network, GW1 should take over
@@ -8608,9 +8727,9 @@ sleep 4
 bfd_dump
 
 # make sure that flows for handling the outside router port reside on gw2 now
-AT_CHECK([as gw1 ovs-ofctl dump-flows br-int table=23 | grep 00:00:02:01:02:04 | wc -l], [0], [[1
+AT_CHECK([as gw1 ovs-ofctl dump-flows br-int table=24 | grep 00:00:02:01:02:04 | wc -l], [0], [[1
 ]])
-AT_CHECK([as gw2 ovs-ofctl dump-flows br-int table=23 | grep 00:00:02:01:02:04 | wc -l], [0], [[0
+AT_CHECK([as gw2 ovs-ofctl dump-flows br-int table=24 | grep 00:00:02:01:02:04 | wc -l], [0], [[0
 ]])
 
 # check that the chassis redirect port has been reclaimed by the gw1 chassis
@@ -8811,7 +8930,7 @@ ovn-nbctl lsp-add inside inside1 \
         -- lsp-set-addresses inside1 "f0:00:00:01:22:01 192.168.1.101"
 
 
-ovn_populate_arp
+OVN_POPULATE_ARP
 
 ovn-nbctl create Logical_Router name=R1
 
