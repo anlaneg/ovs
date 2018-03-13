@@ -46,6 +46,10 @@ VLOG_DEFINE_THIS_MODULE(ovsdb_file);
  * compacting fails. */
 #define COMPACT_RETRY_MSEC      (60 * 1000)      /* 1 minute. */
 
+/* Maximum number of milliseconds before compacting the database regardless
+ * of its size. */
+#define COMPACT_MAX_MSEC        (24 * 60 * 60 * 1000) /* 24 hours. */
+
 /* A transaction being converted to JSON for writing to a file. */
 struct ovsdb_file_txn {
     struct json *json;          /* JSON for the whole transaction. */
@@ -640,6 +644,7 @@ ovsdb_file_commit(struct ovsdb_replica *replica,
     struct ovsdb_file *file = ovsdb_file_cast(replica);
     struct ovsdb_file_txn ftxn;
     struct ovsdb_error *error;
+    long long int next_compact_elapsed;
 
     ovsdb_file_txn_init(&ftxn);
     //构造日志json串
@@ -659,11 +664,15 @@ ovsdb_file_commit(struct ovsdb_replica *replica,
     /* If it has been at least COMPACT_MIN_MSEC ms since the last time we
      * compacted (or at least COMPACT_RETRY_MSEC ms since the last time we
      * tried), and if there are at least 100 transactions in the database, and
-     * if the database is at least 10 MB, and the database is at least 4x the
-     * size of the previous snapshot, then compact the database. */
-    if (time_msec() >= file->next_compact
+     * if the database is at least 10 MB, and the database is at least 2x the
+     * size of the previous snapshot, then compact the database. However, if
+     * it has been over COMPACT_MAX_MSEC ms, the database size is not taken
+     * into account. */
+    next_compact_elapsed = time_msec() - file->next_compact;
+    if (next_compact_elapsed >= 0
         && file->n_transactions >= 100
-        && ovsdb_log_grew_lots(file->log)) {
+        && (next_compact_elapsed >= COMPACT_MAX_MSEC
+            || ovsdb_log_grew_lots(file->log))) {
         error = ovsdb_file_compact(file);
         if (error) {
             char *s = ovsdb_error_to_string_free(error);
@@ -710,7 +719,7 @@ ovsdb_file_compact(struct ovsdb_file *file)
 
     comment = xasprintf("compacting database online "
                         "(%.3f seconds old, %u transactions)",
-                        (time_wall_msec() - file->last_compact) / 1000.0,
+                        (time_msec() - file->last_compact) / 1000.0,
                         file->n_transactions);
     VLOG_INFO("%s: %s", file->file_name, comment);
 
