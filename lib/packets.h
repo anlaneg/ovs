@@ -1246,13 +1246,55 @@ struct gre_base_hdr {
     ovs_be16 protocol;
 };
 
+/*
+ *    The GRE packet header has the form:
+       0                   1                   2                   3
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |C|R|K|S|s|Recur|  Flags  | Ver |         Protocol Type         |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |      Checksum (optional)      |       Offset (optional)       |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                         Key (optional)                        |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                    Sequence Number (optional)                 |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                         Routing (optional)
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      Flags and version (2 octets)
+      The GRE flags are encoded in the first two octets.  Bit 0 is the
+      most significant bit, bit 15 is the least significant bit.  Bits
+      13 through 15 are reserved for the Version field.  Bits 5 through
+      12 are reserved for future use and MUST be transmitted as zero.
+ */
+//以下为各标记位
+/*
+ *       Checksum Present (bit 0)
+      If the Checksum Present bit is set to 1, then the Checksum field
+      is present and contains valid information.
+      If either the Checksum Present bit or the Routing Present bit are
+      set, BOTH the Checksum and Offset fields are present in the GRE
+      packet.
+ */
 #define GRE_CSUM        0x8000
 #define GRE_ROUTING     0x4000
 #define GRE_KEY         0x2000
 #define GRE_SEQ         0x1000
 #define GRE_STRICT      0x0800
+
+/*
+ *       Recursion Control (bits 5-7)
+      Recursion control contains a three bit unsigned integer which
+      contains the number of additional encapsulations which are
+      permissible.  This SHOULD default to zero.
+ */
 #define GRE_REC         0x0700
 #define GRE_FLAGS       0x00F8
+/*
+ *       Version Number (bits 13-15)
+      The Version Number field MUST contain the value 0.  Other values
+      are outside of the scope of this document.
+ */
 #define GRE_VERSION     0x0007
 
 /* VXLAN protocol header */

@@ -280,7 +280,8 @@ netdev_tnl_ip_build_header(struct ovs_action_push_tnl *data,
 
     //填充以太头
     l3 = eth_build_header(data, params);
-    if (!params->is_ipv6) {//构造ipv4头
+    if (!params->is_ipv6) {
+    	//构造ipv4头
         ovs_be32 ip_src = in6_addr_get_mapped_ipv4(params->s_ip);
         struct ip_header *ip;
 
@@ -291,17 +292,19 @@ netdev_tnl_ip_build_header(struct ovs_action_push_tnl *data,
         ip->ip_ttl = params->flow->tunnel.ip_ttl;
         ip->ip_proto = next_proto;//预填充上层协议
         put_16aligned_be32(&ip->ip_src, ip_src);//填充源ip
-        put_16aligned_be32(&ip->ip_dst, params->flow->tunnel.ip_dst);
+        put_16aligned_be32(&ip->ip_dst, params->flow->tunnel.ip_dst);//填充目的ip
 
+        //ip层的不分片标记
         ip->ip_frag_off = (params->flow->tunnel.flags & FLOW_TNL_F_DONT_FRAGMENT) ?
                           htons(IP_DF) : 0;
 
         /* Checksum has already been zeroed by eth_build_header. */
         ip->ip_csum = csum(ip, sizeof *ip);//填充ip头部checksum
 
-        data->header_len += IP_HEADER_LEN;
+        data->header_len += IP_HEADER_LEN;//ip头部无选项
         return ip + 1;
-    } else {//ipv6头部填充
+    } else {
+    	//ipv6头部填充
         struct ovs_16aligned_ip6_hdr *ip6;
 
         ip6 = (struct ovs_16aligned_ip6_hdr *) l3;
@@ -339,6 +342,7 @@ udp_build_header(struct netdev_tunnel_config *tnl_cfg,
     return udp + 1;
 }
 
+//依据gre标记，获知gre报文头部长度
 static int
 gre_header_len(ovs_be16 flags)
 {
@@ -356,6 +360,7 @@ gre_header_len(ovs_be16 flags)
     return hlen;
 }
 
+//解析gre报文头
 static int
 parse_gre_header(struct dp_packet *packet,
                  struct flow_tnl *tnl)
@@ -366,17 +371,20 @@ parse_gre_header(struct dp_packet *packet,
     unsigned int ulen;
     uint16_t greh_protocol;
 
+    //解析ip头
     greh = netdev_tnl_ip_extract_tnl_md(packet, tnl, &ulen);
     if (!greh) {
         return -EINVAL;
     }
 
+    //目前仅支持csum,key,seq三种标记
     if (greh->flags & ~(htons(GRE_CSUM | GRE_KEY | GRE_SEQ))) {
         return -EINVAL;
     }
 
     hlen = ulen + gre_header_len(greh->flags);
     if (hlen > dp_packet_size(packet)) {
+    	//错误的报文（理论长度大于实际长度）
         return -EINVAL;
     }
 
@@ -384,10 +392,12 @@ parse_gre_header(struct dp_packet *packet,
     if (greh->flags & htons(GRE_CSUM)) {
         ovs_be16 pkt_csum;
 
+        //计算校验
         pkt_csum = csum(greh, dp_packet_size(packet) -
                               ((const unsigned char *)greh -
                                (const unsigned char *)dp_packet_eth(packet)));
         if (pkt_csum) {
+        	//校验失败
             return -EINVAL;
         }
         tnl->flags = FLOW_TNL_F_CSUM;
@@ -395,11 +405,13 @@ parse_gre_header(struct dp_packet *packet,
     }
 
     if (greh->flags & htons(GRE_KEY)) {
+    	//提取tunnel-id
         tnl->tun_id = be32_to_be64(get_16aligned_be32(options));
         tnl->flags |= FLOW_TNL_F_KEY;
         options++;
     }
 
+    //seq选项目前不处理
     if (greh->flags & htons(GRE_SEQ)) {
         options++;
     }
@@ -433,6 +445,7 @@ netdev_gre_pop_header(struct dp_packet *packet)
         goto err;
     }
 
+    //解析gre报文
     hlen = parse_gre_header(packet, tnl);
     if (hlen < 0) {
         goto err;
@@ -446,6 +459,7 @@ err:
     return NULL;
 }
 
+//完成gre报文填充
 void
 netdev_gre_push_header(struct dp_packet *packet,
                        const struct ovs_action_push_tnl *data)
@@ -455,6 +469,7 @@ netdev_gre_push_header(struct dp_packet *packet,
 
     greh = netdev_tnl_push_ip_header(packet, data->header, data->header_len, &ip_tot_size);
 
+    //如果有gre csum标记，则计算checksum并填充
     if (greh->flags & htons(GRE_CSUM)) {
         ovs_be16 *csum_opt = (ovs_be16 *) (greh + 1);
         *csum_opt = csum(greh, ip_tot_size);
@@ -477,13 +492,14 @@ netdev_gre_build_header(const struct netdev *netdev,
     ovs_mutex_lock(&dev->mutex);
     tnl_cfg = &dev->tnl_cfg;
 
-    //仅封装到ip头（47号为gre协议）
+    //封装到以太头，ip头（47号为gre协议）
     greh = netdev_tnl_ip_build_header(data, params, IPPROTO_GRE);
 
     if (params->flow->packet_type == htonl(PT_ETH)) {
-    		//指明负载封装的是以太网报文
+    	//指明负载封装的是以太网报文
         greh->protocol = htons(ETH_TYPE_TEB);
     } else if (pt_ns(params->flow->packet_type) == OFPHTN_ETHERTYPE) {
+    	//负载为其它类型的报文
         greh->protocol = pt_ns_type_be(params->flow->packet_type);
     } else {
         ovs_mutex_unlock(&dev->mutex);
@@ -491,16 +507,17 @@ netdev_gre_build_header(const struct netdev *netdev,
     }
     greh->flags = 0;
 
+    //填充gre选项（csum,key)
     options = (ovs_16aligned_be32 *) (greh + 1);
     if (params->flow->tunnel.flags & FLOW_TNL_F_CSUM) {
         greh->flags |= htons(GRE_CSUM);
-        put_16aligned_be32(options, 0);
+        put_16aligned_be32(options, 0);//填充32位bit的0 (16位的checksum,16位的offset)
         options++;
     }
 
     if (tnl_cfg->out_key_present) {
         greh->flags |= htons(GRE_KEY);
-        //通过gre key来包含tunnel_id
+        //通过gre key来包含tunnel_id（填充32位bit的tun_id）
         put_16aligned_be32(options, be64_to_be32(params->flow->tunnel.tun_id));
         options++;
     }

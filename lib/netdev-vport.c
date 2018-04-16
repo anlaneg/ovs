@@ -990,6 +990,7 @@ netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
                                             netdev_tnl_push_udp_header,
                                             netdev_geneve_pop_header,
                                             NETDEV_VPORT_GET_IFINDEX),
+		//gre形式的封装
         TUNNEL_CLASS("gre", "gre_sys", netdev_gre_build_header,
                                        netdev_gre_push_header,
                                        netdev_gre_pop_header,
