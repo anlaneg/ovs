@@ -287,6 +287,7 @@ netdev_tnl_ip_build_header(struct ovs_action_push_tnl *data,
 
         ip = (struct ip_header *) l3;
 
+        //注：ip->ip_id没有被添充（默认为0）
         ip->ip_ihl_ver = IP_IHL_VER(5, 4);//写死的ipv4头长度（不含扩展）
         ip->ip_tos = params->flow->tunnel.ip_tos;
         ip->ip_ttl = params->flow->tunnel.ip_ttl;
