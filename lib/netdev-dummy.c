@@ -1126,6 +1126,7 @@ netdev_dummy_send(struct netdev *netdev, int qid OVS_UNUSED,
             if (flow.dl_type == htons(ETH_TYPE_ARP)
                 && flow.nw_proto == ARP_OP_REQUEST
                 && flow.nw_dst == dev->address.s_addr) {
+            	//本设备收到arp 请求报文，进行arp响应
                 struct dp_packet *reply = dp_packet_new(0);
                 compose_arp(reply, ARP_OP_REPLY, dev->hwaddr, flow.dl_src,
                             false, flow.nw_dst, flow.nw_src);

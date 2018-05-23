@@ -1549,11 +1549,11 @@ compose_arp(struct dp_packet *b, uint16_t arp_op,
     compose_arp__(b);
 
     struct eth_header *eth = dp_packet_eth(b);
-    eth->eth_dst = broadcast ? eth_addr_broadcast : arp_tha;
+    eth->eth_dst = broadcast ? eth_addr_broadcast : arp_tha;//是否使用广播mac做为dstmac
     eth->eth_src = arp_sha;
 
     struct arp_eth_header *arp = dp_packet_l3(b);
-    arp->ar_op = htons(arp_op);
+    arp->ar_op = htons(arp_op);//给出arp操作符（请求或响应）
     arp->ar_sha = arp_sha;
     arp->ar_tha = arp_tha;
     put_16aligned_be32(&arp->ar_spa, arp_spa);
