@@ -1616,7 +1616,7 @@ static int ovs_dp_cmd_new(struct sk_buff *skb, struct genl_info *info)
 	parms.type = OVS_VPORT_TYPE_INTERNAL;
 	parms.options = NULL;
 	parms.dp = dp;
-	parms.port_no = OVSP_LOCAL;
+	parms.port_no = OVSP_LOCAL;//创建local接口
 	parms.upcall_portids = a[OVS_DP_ATTR_UPCALL_PID];
 
 	ovs_dp_change(dp, a);
@@ -1823,7 +1823,7 @@ static struct genl_ops dp_datapath_genl_ops[] = {
 	{ .cmd = OVS_DP_CMD_NEW,
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
 	  .policy = datapath_policy,
-	  .doit = ovs_dp_cmd_new
+	  .doit = ovs_dp_cmd_new//注册OVS_DP_CMD_NEW netlink消息处理回调
 	},
 	{ .cmd = OVS_DP_CMD_DEL,
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
@@ -2033,6 +2033,7 @@ restart:
 		if (vport)
 			goto exit_unlock_free;
 	} else {
+		//没有指明port_no,录找一个空闲的port_no
 		for (port_no = 1; ; port_no++) {
 			if (port_no >= DP_MAX_PORTS) {
 				err = -EFBIG;
@@ -2040,7 +2041,7 @@ restart:
 			}
 			vport = ovs_vport_ovsl(dp, port_no);
 			if (!vport)
-				break;
+				break;//此port_no为空闲
 		}
 	}
 
@@ -2048,8 +2049,8 @@ restart:
 	parms.type = nla_get_u32(a[OVS_VPORT_ATTR_TYPE]);
 	parms.options = a[OVS_VPORT_ATTR_OPTIONS];
 	parms.dp = dp;
-	parms.port_no = port_no;
-	parms.upcall_portids = a[OVS_VPORT_ATTR_UPCALL_PID];
+	parms.port_no = port_no;//指明port number
+	parms.upcall_portids = a[OVS_VPORT_ATTR_UPCALL_PID];//指明回应给哪个进程
 
 	vport = new_vport(&parms);
 	err = PTR_ERR(vport);
