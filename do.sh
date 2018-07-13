@@ -10,11 +10,18 @@ export DPDK_BUILD="$DPDK_DIR/$DPDK_TARGET"
 #    (echo "compile dpdk";cd $DPDK_DIR;make EXTRA_CFLAGS="-O0 -g" install T=$DPDK_TARGET DESTDIR=install);
 #}
 
-function compile_ovs()
+function compile_dpdk_ovs()
 {
     #apt-get install automake libtool libnuma-dev libpcap-dev
     (echo 'compile ovs';cd $OVS_DIR;./boot.sh;./configure --with-dpdk=$DPDK_BUILD --with-debug  CFLAGS='-g' ; make -j4 1>/dev/null);
 }
 
-compile_ovs
+function compile_ovs()
+{
+    #apt-get install automake libtool libnuma-dev libpcap-dev
+    (echo 'compile ovs';cd $OVS_DIR;./boot.sh;./configure --with-debug  CFLAGS='-g' ; make );
+}
 
+
+#compile_dpdk_ovs
+compile_ovs
