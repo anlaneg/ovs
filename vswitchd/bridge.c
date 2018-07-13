@@ -333,27 +333,27 @@ bridge_init_ofproto(const struct ovsrec_open_vswitch *cfg)
     int i;
 
     if (initialized) {
-    	//如果已初始化过，则不再进入
+        //如果已初始化过，则不再进入
         return;
     }
 
     shash_init(&iface_hints);
 
     if (cfg) {
-    	//配置中有多个交换机，每个交换机有多个port,每个port可能有多个interface
-    	//interface有对应port_id,我们取出这些配置，构造iface_hint
+        //配置中有多个交换机，每个交换机有多个port,每个port可能有多个interface
+        //interface有对应port_id,我们取出这些配置，构造iface_hint
         for (i = 0; i < cfg->n_bridges; i++) {
-        	//取出一个交换机的配置
+            //取出一个交换机的配置
             const struct ovsrec_bridge *br_cfg = cfg->bridges[i];
             int j;
 
             for (j = 0; j < br_cfg->n_ports; j++) {
-            	//取出某交换机上一个port配置
+                //取出某交换机上一个port配置
                 struct ovsrec_port *port_cfg = br_cfg->ports[j];
                 int k;
 
                 for (k = 0; k < port_cfg->n_interfaces; k++) {
-                	//取出某port上一个if的配置
+                    //取出某port上一个if的配置
                     struct ovsrec_interface *if_cfg = port_cfg->interfaces[k];
                     struct iface_hint *iface_hint;
 
