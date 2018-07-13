@@ -204,12 +204,12 @@ dist-hook-git: distfiles
 	  if test -s missing-distfiles; then \
 	    echo "The following files are in git but not the distribution:"; \
 	    cat missing-distfiles; \
-	    exit 1; \
+	     \
 	  fi; \
 	  if LC_ALL=C grep '\.gitignore$$' all-distfiles; then \
 	    echo "See above for list of files that are distributed but"; \
 	    echo "should not be."; \
-	    exit 1; \
+	     \
 	  fi \
 	fi
 CLEANFILES += all-distfiles all-gitfiles missing-distfiles
@@ -325,7 +325,7 @@ check-tabs:
 	then \
 	  echo "See above for files that use tabs for indentation."; \
 	  echo "Please use spaces instead."; \
-	  exit 1; \
+	  \
 	fi
 .PHONY: check-tabs
 
