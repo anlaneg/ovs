@@ -40,7 +40,7 @@ struct collectors {
  * otherwise a positive errno value if opening at least one collector failed.
  *
  * Each target in 'targets' should be a string in the format "<host>[:<port>]".
- * <port> may be omitted if 'default_port' is nonzero, in which case it
+ * <port> may be omitted if 'default_port' is nonnegative, in which case it
  * defaults to 'default_port'.
  *
  * '*collectorsp' is set to a null pointer if no targets were successfully
@@ -50,7 +50,7 @@ struct collectors {
  * '*collectorsp' is null, if 'target's is an empty sset. */
 //创建udp报文对应的sockets
 int
-collectors_create(const struct sset *targets, uint16_t default_port,
+collectors_create(const struct sset *targets, int default_port,
                   struct collectors **collectorsp)
 {
     struct collectors *c;

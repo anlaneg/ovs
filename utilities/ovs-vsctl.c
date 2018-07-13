@@ -136,7 +136,6 @@ main(int argc, char *argv[])
     struct shash local_options;
     unsigned int seqno;
     size_t n_commands;
-    char *args;
 
     set_program_name(argv[0]);//程序名称
     fatal_ignore_sigpipe();
@@ -147,12 +146,9 @@ main(int argc, char *argv[])
     //vsctl的命令添加
     vsctl_cmd_init();
 
-    /* Log our arguments.  This is often valuable for debugging systems. */
     //args仅仅出于debug目的而构造
-    args = process_escape_args(argv);
-    VLOG(ctl_might_write_to_db(argv) ? VLL_INFO : VLL_DBG, "Called as %s", args);
-
     /* Parse command line. */
+    char *args = process_escape_args(argv);
     shash_init(&local_options);
     //解析选项ovs-ctrl注册的命令option参数均放在local_options中
     parse_options(argc, argv, &local_options);
@@ -160,6 +156,8 @@ main(int argc, char *argv[])
     //从argv＋optind这句可知，需要先写选项，再写命令,解析命令
     commands = ctl_parse_commands(argc - optind, argv + optind, &local_options,
                                   &n_commands);
+    VLOG(ctl_might_write_to_db(commands, n_commands) ? VLL_INFO : VLL_DBG,
+         "Called as %s", args);
 
     if (timeout) {
         time_alarm(timeout);
@@ -417,6 +415,7 @@ Interface commands (a bond consists of multiple interfaces):\n\
 Controller commands:\n\
   get-controller BRIDGE      print the controllers for BRIDGE\n\
   del-controller BRIDGE      delete the controllers for BRIDGE\n\
+  [--inactivity-probe=MSECS]\n\
   set-controller BRIDGE TARGET...  set the controllers for BRIDGE\n\
   get-fail-mode BRIDGE       print the fail-mode for BRIDGE\n\
   del-fail-mode BRIDGE       delete the fail-mode for BRIDGE\n\
@@ -425,6 +424,7 @@ Controller commands:\n\
 Manager commands:\n\
   get-manager                print the managers\n\
   del-manager                delete the managers\n\
+  [--inactivity-probe=MSECS]\n\
   set-manager TARGET...      set the list of managers to TARGET...\n\
 \n\
 SSL commands:\n\
@@ -457,7 +457,7 @@ Options:\n\
     vlog_usage();
     printf("\
   --no-syslog             equivalent to --verbose=vsctl:syslog:warn\n");
-    stream_usage("database", true, true, false);
+    stream_usage("database", true, true, true);
     printf("\n\
 Other options:\n\
   -h, --help                  display this help message\n\
@@ -1043,7 +1043,8 @@ static struct cmd_show_table cmd_show_tables[] = {
      &ovsrec_interface_col_name,
      {&ovsrec_interface_col_type,
       &ovsrec_interface_col_options,
-      &ovsrec_interface_col_error},
+      &ovsrec_interface_col_error,
+      &ovsrec_interface_col_bfd_status},
      {NULL, NULL, NULL}
     },
 
@@ -1618,8 +1619,11 @@ add_port(struct ctl_context *ctx,
     }
 
     for (i = 0; i < n_settings; i++) {
-        ctl_set_column("Port", &port->header_, settings[i],
-                       ctx->symtab);
+        char *error = ctl_set_column("Port", &port->header_, settings[i],
+                                     ctx->symtab);
+        if (error) {
+            ctl_fatal("%s", error);
+        }
     }
 
     bridge_insert_port((bridge->parent ? bridge->parent->br_cfg
@@ -1773,9 +1777,9 @@ cmd_del_port(struct ctl_context *ctx)
             if (port->bridge != bridge) {
                 if (port->bridge->parent == bridge) {
                     ctl_fatal("bridge %s does not have a port %s (although "
-                                "its parent bridge %s does)",
+                                "its child bridge %s does)",
                                 ctx->argv[1], ctx->argv[2],
-                                bridge->parent->name);
+                                port->bridge->name);
                 } else {
                     ctl_fatal("bridge %s does not have a port %s",
                                 ctx->argv[1], ctx->argv[2]);
@@ -1882,6 +1886,7 @@ pre_controller(struct ctl_context *ctx)
     pre_get_info(ctx);
 
     ovsdb_idl_add_column(ctx->idl, &ovsrec_controller_col_target);
+    ovsdb_idl_add_column(ctx->idl, &ovsrec_controller_col_inactivity_probe);
 }
 
 static void
@@ -1942,18 +1947,24 @@ cmd_del_controller(struct ctl_context *ctx)
 }
 
 static struct ovsrec_controller **
-insert_controllers(struct ovsdb_idl_txn *txn, char *targets[], size_t n)
+insert_controllers(struct ctl_context *ctx, char *targets[], size_t n)
 {
     struct ovsrec_controller **controllers;
     size_t i;
+    const char *inactivity_probe = shash_find_data(&ctx->options,
+                                                   "--inactivity-probe");
 
     controllers = xmalloc(n * sizeof *controllers);
     for (i = 0; i < n; i++) {
         if (vconn_verify_name(targets[i]) && pvconn_verify_name(targets[i])) {
             VLOG_WARN("target type \"%s\" is possibly erroneous", targets[i]);
         }
-        controllers[i] = ovsrec_controller_insert(txn);
+        controllers[i] = ovsrec_controller_insert(ctx->txn);
         ovsrec_controller_set_target(controllers[i], targets[i]);
+        if (inactivity_probe) {
+            int64_t msecs = atoll(inactivity_probe);
+            ovsrec_controller_set_inactivity_probe(controllers[i], &msecs, 1);
+        }
     }
 
     return controllers;
@@ -1975,7 +1986,7 @@ cmd_set_controller(struct ctl_context *ctx)
     delete_controllers(br->controller, br->n_controller);
 
     n = ctx->argc - 2;
-    controllers = insert_controllers(ctx->txn, &ctx->argv[2], n);
+    controllers = insert_controllers(ctx, &ctx->argv[2], n);
     ovsrec_bridge_set_controller(br, controllers, n);
     free(controllers);
 }
@@ -2051,6 +2062,7 @@ pre_manager(struct ctl_context *ctx)
 {
     ovsdb_idl_add_column(ctx->idl, &ovsrec_open_vswitch_col_manager_options);
     ovsdb_idl_add_column(ctx->idl, &ovsrec_manager_col_target);
+    ovsdb_idl_add_column(ctx->idl, &ovsrec_manager_col_inactivity_probe);
 }
 
 static void
@@ -2102,10 +2114,13 @@ cmd_del_manager(struct ctl_context *ctx)
 }
 
 static void
-insert_managers(struct vsctl_context *vsctl_ctx, char *targets[], size_t n)
+insert_managers(struct vsctl_context *vsctl_ctx, char *targets[], size_t n,
+                struct shash *options)
 {
     struct ovsrec_manager **managers;
     size_t i;
+    const char *inactivity_probe = shash_find_data(options,
+                                                   "--inactivity-probe");
 
     /* Insert each manager in a new row in Manager table. */
     managers = xmalloc(n * sizeof *managers);
@@ -2115,6 +2130,10 @@ insert_managers(struct vsctl_context *vsctl_ctx, char *targets[], size_t n)
         }
         managers[i] = ovsrec_manager_insert(vsctl_ctx->base.txn);
         ovsrec_manager_set_target(managers[i], targets[i]);
+        if (inactivity_probe) {
+            int64_t msecs = atoll(inactivity_probe);
+            ovsrec_manager_set_inactivity_probe(managers[i], &msecs, 1);
+        }
     }
 
     /* Store uuids of new Manager rows in 'manager_options' column. */
@@ -2130,7 +2149,7 @@ cmd_set_manager(struct ctl_context *ctx)
 
     verify_managers(vsctl_ctx->ovs);
     delete_managers(vsctl_ctx->ovs);
-    insert_managers(vsctl_ctx, &ctx->argv[1], n);
+    insert_managers(vsctl_ctx, &ctx->argv[1], n, &ctx->options);
 }
 
 static void
@@ -2537,6 +2556,9 @@ run_prerequisites(struct ctl_command *commands, size_t n_commands,
 
             vsctl_context_init(&vsctl_ctx, c, idl, NULL, NULL, NULL);
             (c->syntax->prerequisites)(&vsctl_ctx.base);
+            if (vsctl_ctx.base.error) {
+                ctl_fatal("%s", vsctl_ctx.base.error);
+            }
             vsctl_context_done(&vsctl_ctx, c);
 
             ovs_assert(!c->output.string);
@@ -2592,7 +2614,6 @@ do_vsctl(const char *args, struct ctl_command *commands, size_t n_commands,
     struct ctl_command *c;
     struct shash_node *node;
     int64_t next_cfg = 0;
-    char *error = NULL;
     char *ppid_info = NULL;
 
     txn = the_idl_txn = ovsdb_idl_txn_create(idl);
@@ -2633,6 +2654,9 @@ do_vsctl(const char *args, struct ctl_command *commands, size_t n_commands,
         	//执行命令的run回调
             (c->syntax->run)(&vsctl_ctx.base);
         }
+        if (vsctl_ctx.base.error) {
+            ctl_fatal("%s", vsctl_ctx.base.error);
+        }
         vsctl_context_done_command(&vsctl_ctx, c);
 
         if (vsctl_ctx.base.try_again) {
@@ -2671,11 +2695,13 @@ do_vsctl(const char *args, struct ctl_command *commands, size_t n_commands,
             if (c->syntax->postprocess) {
                 vsctl_context_init(&vsctl_ctx, c, idl, txn, ovs, symtab);
                 (c->syntax->postprocess)(&vsctl_ctx.base);
+                if (vsctl_ctx.base.error) {
+                    ctl_fatal("%s", vsctl_ctx.base.error);
+                }
                 vsctl_context_done(&vsctl_ctx, c);
             }
         }
     }
-    error = xstrdup(ovsdb_idl_txn_get_error(txn));
 
     switch (status) {
     case TXN_UNCOMMITTED:
@@ -2694,7 +2720,7 @@ do_vsctl(const char *args, struct ctl_command *commands, size_t n_commands,
         goto try_again;
 
     case TXN_ERROR:
-        ctl_fatal("transaction error: %s", error);
+        ctl_fatal("transaction error: %s", ovsdb_idl_txn_get_error(txn));
 
     case TXN_NOT_LOCKED:
         /* Should not happen--we never call ovsdb_idl_set_lock(). */
@@ -2703,7 +2729,6 @@ do_vsctl(const char *args, struct ctl_command *commands, size_t n_commands,
     default:
         OVS_NOT_REACHED();
     }
-    free(error);
 
     ovsdb_symbol_table_destroy(symtab);
 
@@ -2780,7 +2805,6 @@ try_again:
         table_destroy(c->table);
         free(c->table);
     }
-    free(error);
     return false;
 }
 
@@ -2870,7 +2894,7 @@ static const struct ctl_command_syntax vsctl_commands[] = {
     {"del-controller", 1, 1, "BRIDGE", pre_controller, cmd_del_controller,
      NULL, "", RW},
     {"set-controller", 1, INT_MAX, "BRIDGE TARGET...", pre_controller,
-     cmd_set_controller, NULL, "", RW},
+     cmd_set_controller, NULL, "--inactivity-probe=", RW},
     {"get-fail-mode", 1, 1, "BRIDGE", pre_get_info, cmd_get_fail_mode, NULL,
      "", RO},
     {"del-fail-mode", 1, 1, "BRIDGE", pre_get_info, cmd_del_fail_mode, NULL,
@@ -2882,7 +2906,7 @@ static const struct ctl_command_syntax vsctl_commands[] = {
     {"get-manager", 0, 0, "", pre_manager, cmd_get_manager, NULL, "", RO},
     {"del-manager", 0, 0, "", pre_manager, cmd_del_manager, NULL, "", RW},
     {"set-manager", 1, INT_MAX, "TARGET...", pre_manager, cmd_set_manager,
-     NULL, "", RW},
+     NULL, "--inactivity-probe=", RW},
 
     /* SSL commands. */
     {"get-ssl", 0, 0, "", pre_cmd_get_ssl, cmd_get_ssl, NULL, "", RO},

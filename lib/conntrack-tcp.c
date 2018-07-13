@@ -179,7 +179,6 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
     uint16_t win = ntohs(tcp->tcp_winsz);//窗口大小
     uint32_t ack, end, seq, orig_seq;
     uint32_t p_len = tcp_payload_length(pkt);//此报文中包含的tcp负载（非ip total length - tcphdr length)
-    int ackskew;
 
     //如果tcp标记位有误，返回更新无效
     if (tcp_invalid_flags(tcp_flags)) {
@@ -219,7 +218,9 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
      */
 
     orig_seq = seq = ntohl(get_16aligned_be32(&tcp->tcp_seq));
+    bool check_ackskew = true;
     if (src->state < CT_DPIF_TCPS_SYN_SENT) {//close,listen状态时
+
         /* First packet from this end. Set its state */
 
         ack = ntohl(get_16aligned_be32(&tcp->tcp_ack));
@@ -260,6 +261,11 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
         if (src->seqhi == 1
                 || SEQ_GEQ(end + MAX(1, dst->max_win << dws), src->seqhi)) {
             src->seqhi = end + MAX(1, dst->max_win << dws);
+            /* We are either picking up a new connection or a connection which
+             * was already in place.  We are more permissive in terms of
+             * ackskew checking in these cases.
+             */
+            check_ackskew = false;
         }
 
         //更新最大窗口大小
@@ -298,8 +304,9 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
         end = seq;
     }
 
-    ackskew = dst->seqlo - ack; //当前方向的ack被反方向的seqlo减。（即当前方向在确认反方向-ackskew前的报文
+    //当前方向的ack被反方向的seqlo减。（即当前方向在确认反方向-ackskew前的报文
     //ip头部宣称的最大大小是2字节，故使用0xffff,而1500是作者考虑l2,l3头后加入的值
+    int ackskew = check_ackskew ? dst->seqlo - ack : 0;
 #define MAXACKWINDOW (0xffff + 1500)    /* 1500 is an arbitrary fudge factor */
     if (SEQ_GEQ(src->seqhi, end) //end一定要在自已的窗口范围以内
         /* Last octet inside other's window space */

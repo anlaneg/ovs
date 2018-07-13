@@ -26,12 +26,42 @@
 #include "openvswitch/ofp-meter.h"
 #include "openvswitch/ofp-msgs.h"
 #include "openvswitch/ofp-parse.h"
+#include "openvswitch/ofp-print.h"
 #include "openvswitch/ofp-table.h"
 #include "openvswitch/vlog.h"
+#include "ox-stat.h"
 
 VLOG_DEFINE_THIS_MODULE(ofp_monitor);
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+
+/* Returns a string form of 'reason'.  The return value is either a statically
+ * allocated constant string or the 'bufsize'-byte buffer 'reasonbuf'.
+ * 'bufsize' should be at least OFP_FLOW_REMOVED_REASON_BUFSIZE. */
+#define OFP_FLOW_REMOVED_REASON_BUFSIZE (INT_STRLEN(int) + 1)
+const char *
+ofp_flow_removed_reason_to_string(enum ofp_flow_removed_reason reason,
+                                  char *reasonbuf, size_t bufsize)
+{
+    switch (reason) {
+    case OFPRR_IDLE_TIMEOUT:
+        return "idle";
+    case OFPRR_HARD_TIMEOUT:
+        return "hard";
+    case OFPRR_DELETE:
+        return "delete";
+    case OFPRR_GROUP_DELETE:
+        return "group_delete";
+    case OFPRR_EVICTION:
+        return "eviction";
+    case OFPRR_METER_DELETE:
+        return "meter_delete";
+    case OVS_OFPRR_NONE:
+    default:
+        snprintf(reasonbuf, bufsize, "%d", (int) reason);
+        return reasonbuf;
+    }
+}
 
 /* Converts an OFPT_FLOW_REMOVED or NXT_FLOW_REMOVED message 'oh' into an
  * abstract ofputil_flow_removed in 'fr'.  Returns 0 if successful, otherwise
@@ -42,7 +72,36 @@ ofputil_decode_flow_removed(struct ofputil_flow_removed *fr,
 {
     struct ofpbuf b = ofpbuf_const_initializer(oh, ntohs(oh->length));
     enum ofpraw raw = ofpraw_pull_assert(&b);
-    if (raw == OFPRAW_OFPT11_FLOW_REMOVED) {
+    if (raw == OFPRAW_OFPT15_FLOW_REMOVED) {
+        const struct ofp15_flow_removed *ofr;
+        enum ofperr error;
+
+        ofr = ofpbuf_pull(&b, sizeof *ofr);
+
+        error = ofputil_pull_ofp11_match(&b, NULL, NULL,  &fr->match, NULL);
+        if (error) {
+            return error;
+        }
+
+        struct oxs_stats stats;
+        uint16_t statlen;
+        uint8_t oxs_field_set;
+        error = oxs_pull_stat(&b, &stats, &statlen, &oxs_field_set);
+        if (error) {
+            return error;
+        }
+
+        fr->cookie = ofr->cookie;
+        fr->priority = ntohs(ofr->priority);
+        fr->reason = ofr->reason;
+        fr->table_id = ofr->table_id;
+        fr->duration_sec = stats.duration_sec;
+        fr->duration_nsec = stats.duration_nsec;
+        fr->idle_timeout = ntohs(ofr->idle_timeout);
+        fr->hard_timeout = ntohs(ofr->hard_timeout);
+        fr->packet_count = stats.packet_count;
+        fr->byte_count = stats.byte_count;
+    } else if (raw == OFPRAW_OFPT11_FLOW_REMOVED) {
         const struct ofp12_flow_removed *ofr;
         enum ofperr error;
 
@@ -138,9 +197,7 @@ ofputil_encode_flow_removed(const struct ofputil_flow_removed *fr,
     case OFPUTIL_P_OF11_STD:
     case OFPUTIL_P_OF12_OXM:
     case OFPUTIL_P_OF13_OXM:
-    case OFPUTIL_P_OF14_OXM:
-    case OFPUTIL_P_OF15_OXM:
-    case OFPUTIL_P_OF16_OXM: {
+    case OFPUTIL_P_OF14_OXM: {
         struct ofp12_flow_removed *ofr;
 
         msg = ofpraw_alloc_xid(OFPRAW_OFPT11_FLOW_REMOVED,
@@ -161,7 +218,34 @@ ofputil_encode_flow_removed(const struct ofputil_flow_removed *fr,
         ofputil_put_ofp11_match(msg, &fr->match, protocol);
         break;
     }
+    case OFPUTIL_P_OF15_OXM:
+    case OFPUTIL_P_OF16_OXM: {
+        struct ofp15_flow_removed *ofr;
 
+        msg = ofpraw_alloc_xid(OFPRAW_OFPT15_FLOW_REMOVED,
+                               ofputil_protocol_to_ofp_version(protocol),
+                               htonl(0),
+                               ofputil_match_typical_len(protocol));
+        ofr = ofpbuf_put_zeros(msg, sizeof *ofr);
+        ofr->cookie = fr->cookie;
+        ofr->priority = htons(fr->priority);
+        ofr->reason = reason;
+        ofr->table_id = fr->table_id;
+        ofr->idle_timeout = htons(fr->idle_timeout);
+        ofr->hard_timeout = htons(fr->hard_timeout);
+        ofputil_put_ofp11_match(msg, &fr->match, protocol);
+
+        const struct oxs_stats oxs = {
+            .duration_sec = fr->duration_sec,
+            .duration_nsec = fr->duration_nsec,
+            .idle_age = UINT32_MAX,
+            .packet_count = fr->packet_count,
+            .byte_count = fr->byte_count,
+            .flow_count = UINT32_MAX,
+        };
+        oxs_put_stats(msg, &oxs);
+        break;
+    }
     case OFPUTIL_P_OF10_STD:
     case OFPUTIL_P_OF10_STD_TID: {
         struct ofp10_flow_removed *ofr;
@@ -210,6 +294,41 @@ ofputil_encode_flow_removed(const struct ofputil_flow_removed *fr,
     }
 
     return msg;
+}
+
+void
+ofputil_flow_removed_format(struct ds *s,
+                            const struct ofputil_flow_removed *fr,
+                            const struct ofputil_port_map *port_map,
+                            const struct ofputil_table_map *table_map)
+{
+    char reasonbuf[OFP_FLOW_REMOVED_REASON_BUFSIZE];
+
+    ds_put_char(s, ' ');
+    match_format(&fr->match, port_map, s, fr->priority);
+
+    ds_put_format(s, " reason=%s",
+                  ofp_flow_removed_reason_to_string(fr->reason, reasonbuf,
+                                                    sizeof reasonbuf));
+
+    if (fr->table_id != 255) {
+        ds_put_format(s, " table_id=");
+        ofputil_format_table(fr->table_id, table_map, s);
+    }
+
+    if (fr->cookie != htonll(0)) {
+        ds_put_format(s, " cookie:0x%"PRIx64, ntohll(fr->cookie));
+    }
+    ds_put_cstr(s, " duration");
+    ofp_print_duration(s, fr->duration_sec, fr->duration_nsec);
+    ds_put_format(s, " idle%"PRIu16, fr->idle_timeout);
+    if (fr->hard_timeout) {
+        /* The hard timeout was only added in OF1.2, so only print it if it is
+         * actually in use to avoid gratuitous change to the formatting. */
+        ds_put_format(s, " hard%"PRIu16, fr->hard_timeout);
+    }
+    ds_put_format(s, " pkts%"PRIu64" bytes%"PRIu64"\n",
+                  fr->packet_count, fr->byte_count);
 }
 
 /* ofputil_flow_monitor_request */
@@ -289,6 +408,47 @@ ofputil_append_flow_monitor_request(
     nfmr->out_port = htons(ofp_to_u16(rq->out_port));
     nfmr->match_len = htons(match_len);
     nfmr->table_id = rq->table_id;
+}
+
+static const char *
+nx_flow_monitor_flags_to_name(uint32_t bit)
+{
+    enum nx_flow_monitor_flags fmf = bit;
+
+    switch (fmf) {
+    case NXFMF_INITIAL: return "initial";
+    case NXFMF_ADD: return "add";
+    case NXFMF_DELETE: return "delete";
+    case NXFMF_MODIFY: return "modify";
+    case NXFMF_ACTIONS: return "actions";
+    case NXFMF_OWN: return "own";
+    }
+
+    return NULL;
+}
+
+void
+ofputil_flow_monitor_request_format(
+    struct ds *s, const struct ofputil_flow_monitor_request *request,
+    const struct ofputil_port_map *port_map,
+    const struct ofputil_table_map *table_map)
+{
+    ds_put_format(s, "\n id=%"PRIu32" flags=", request->id);
+    ofp_print_bit_names(s, request->flags, nx_flow_monitor_flags_to_name, ',');
+
+    if (request->out_port != OFPP_NONE) {
+        ds_put_cstr(s, " out_port=");
+        ofputil_format_port(request->out_port, port_map, s);
+    }
+
+    if (request->table_id != 0xff) {
+        ds_put_format(s, " table=");
+        ofputil_format_table(request->table_id, table_map, s);
+    }
+
+    ds_put_char(s, ' ');
+    match_format(&request->match, port_map, s, OFP_DEFAULT_PRIORITY);
+    ds_chomp(s, ' ');
 }
 
 static char * OVS_WARN_UNUSED_RESULT
@@ -567,6 +727,63 @@ ofputil_append_flow_update(const struct ofputil_flow_update *update,
     ofpmp_postappend(replies, start_ofs);
     update_->match.flow.tunnel.metadata.tab = orig_tun_table;
 }
+
+void
+ofputil_flow_update_format(struct ds *s,
+                           const struct ofputil_flow_update *update,
+                           const struct ofputil_port_map *port_map,
+                           const struct ofputil_table_map *table_map)
+{
+    char reasonbuf[OFP_FLOW_REMOVED_REASON_BUFSIZE];
+
+    ds_put_cstr(s, "\n event=");
+    switch (update->event) {
+    case NXFME_ADDED:
+        ds_put_cstr(s, "ADDED");
+        break;
+
+    case NXFME_DELETED:
+        ds_put_format(s, "DELETED reason=%s",
+                      ofp_flow_removed_reason_to_string(update->reason,
+                                                        reasonbuf,
+                                                        sizeof reasonbuf));
+        break;
+
+    case NXFME_MODIFIED:
+        ds_put_cstr(s, "MODIFIED");
+        break;
+
+    case NXFME_ABBREV:
+        ds_put_format(s, "ABBREV xid=0x%"PRIx32, ntohl(update->xid));
+        return;
+    }
+
+    ds_put_format(s, " table=");
+    ofputil_format_table(update->table_id, table_map, s);
+    if (update->idle_timeout != OFP_FLOW_PERMANENT) {
+        ds_put_format(s, " idle_timeout=%"PRIu16, update->idle_timeout);
+    }
+    if (update->hard_timeout != OFP_FLOW_PERMANENT) {
+        ds_put_format(s, " hard_timeout=%"PRIu16, update->hard_timeout);
+    }
+    ds_put_format(s, " cookie=%#"PRIx64, ntohll(update->cookie));
+
+    ds_put_char(s, ' ');
+    match_format(&update->match, port_map, s, OFP_DEFAULT_PRIORITY);
+
+    if (update->ofpacts_len) {
+        if (s->string[s->length - 1] != ' ') {
+            ds_put_char(s, ' ');
+        }
+        ds_put_cstr(s, "actions=");
+        struct ofpact_format_params fp = {
+            .port_map = port_map,
+            .table_map = table_map,
+            .s = s,
+        };
+        ofpacts_format(update->ofpacts, update->ofpacts_len, &fp);
+    }
+}
 
 /* Encodes 'rf' according to 'protocol', and returns the encoded message.
  * 'protocol' must be for OpenFlow 1.4 or later. */
@@ -662,6 +879,33 @@ ofputil_decode_requestforward(const struct ofp_header *outer,
 
     return 0;
 }
+
+void
+ofputil_format_requestforward(struct ds *string,
+                              enum ofp_version ofp_version,
+                              const struct ofputil_requestforward *rf,
+                              const struct ofputil_port_map *port_map,
+                              const struct ofputil_table_map *table_map)
+{
+    ds_put_cstr(string, " reason=");
+
+    switch (rf->reason) {
+    case OFPRFR_GROUP_MOD:
+        ds_put_cstr(string, "group_mod");
+        ofputil_group_mod_format__(string, ofp_version, rf->group_mod,
+                                   port_map, table_map);
+        break;
+
+    case OFPRFR_METER_MOD:
+        ds_put_cstr(string, "meter_mod");
+        ofputil_format_meter_mod(string, rf->meter_mod);
+        break;
+
+    case OFPRFR_N_REASONS:
+        OVS_NOT_REACHED();
+    }
+}
+
 
 /* Frees the content of 'rf', which should have been initialized through a
  * successful call to ofputil_decode_requestforward(). */

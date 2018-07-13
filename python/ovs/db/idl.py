@@ -22,6 +22,7 @@ import ovs.jsonrpc
 import ovs.ovsuuid
 import ovs.poller
 import ovs.vlog
+from ovs.db import custom_index
 from ovs.db import error
 
 import six
@@ -94,20 +95,21 @@ class Idl(object):
     IDL_S_MONITOR_REQUESTED = 1
     IDL_S_MONITOR_COND_REQUESTED = 2
 
-    def __init__(self, remote, schema, probe_interval=None):
+    def __init__(self, remote, schema_helper, probe_interval=None):
         """Creates and returns a connection to the database named 'db_name' on
         'remote', which should be in a form acceptable to
         ovs.jsonrpc.session.open().  The connection will maintain an in-memory
         replica of the remote database.
 
-        'schema' should be the schema for the remote database.  The caller may
-        have cut it down by removing tables or columns that are not of
-        interest.  The IDL will only replicate the tables and columns that
-        remain.  The caller may also add a attribute named 'alert' to selected
-        remaining columns, setting its value to False; if so, then changes to
-        those columns will not be considered changes to the database for the
-        purpose of the return value of Idl.run() and Idl.change_seqno.  This is
-        useful for columns that the IDL's client will write but not read.
+        'schema_helper' should be an instance of the SchemaHelper class which
+        generates schema for the remote database. The caller may have cut it
+        down by removing tables or columns that are not of interest.  The IDL
+        will only replicate the tables and columns that remain.  The caller may
+        also add an attribute named 'alert' to selected remaining columns,
+        setting its value to False; if so, then changes to those columns will
+        not be considered changes to the database for the purpose of the return
+        value of Idl.run() and Idl.change_seqno.  This is useful for columns
+        that the IDL's client will write but not read.
 
         As a convenience to users, 'schema' may also be an instance of the
         SchemaHelper class.
@@ -119,8 +121,8 @@ class Idl(object):
         milliseconds. If None it will just use the default value in OVS.
         """
 
-        assert isinstance(schema, SchemaHelper)
-        schema = schema.get_idl_schema()
+        assert isinstance(schema_helper, SchemaHelper)
+        schema = schema_helper.get_idl_schema()
 
         self.tables = schema.tables
         self.readonly = schema.readonly
@@ -148,10 +150,22 @@ class Idl(object):
                 if not hasattr(column, 'alert'):
                     column.alert = True
             table.need_table = False
-            table.rows = {}
+            table.rows = custom_index.IndexedRows(table)
             table.idl = self
             table.condition = [True]
             table.cond_changed = False
+
+    def index_create(self, table, name):
+        """Create a named multi-column index on a table"""
+        return self.tables[table].rows.index_create(name)
+
+    def index_irange(self, table, name, start, end):
+        """Return items in a named index between start/end inclusive"""
+        return self.tables[table].rows.indexes[name].irange(start, end)
+
+    def index_equal(self, table, name, value):
+        """Return items in a named index matching a value"""
+        return self.tables[table].rows.indexes[name].irange(value, value)
 
     def close(self):
         """Closes the connection to the database.  The IDL will no longer
@@ -359,7 +373,7 @@ class Idl(object):
         for table in six.itervalues(self.tables):
             if table.rows:
                 changed = True
-                table.rows = {}
+                table.rows = custom_index.IndexedRows(table)
 
         if changed:
             self.change_seqno += 1
@@ -425,10 +439,11 @@ class Idl(object):
                         (table.name in self.readonly) and
                         (column not in self.readonly[table.name])):
                     columns.append(column)
-            monitor_requests[table.name] = {"columns": columns}
+            monitor_request = {"columns": columns}
             if method == "monitor_cond" and table.condition != [True]:
-                monitor_requests[table.name]["where"] = table.condition
+                monitor_request["where"] = table.condition
                 table.cond_change = False
+            monitor_requests[table.name] = [monitor_request]
 
         msg = ovs.jsonrpc.Message.create_request(
             method, [self._db.name, str(self.uuid), monitor_requests])
@@ -511,8 +526,9 @@ class Idl(object):
             else:
                 row_update = row_update['initial']
             self.__add_default(table, row_update)
-            if self.__row_update(table, row, row_update):
-                changed = True
+            changed = self.__row_update(table, row, row_update)
+            table.rows[uuid] = row
+            if changed:
                 self.notify(ROW_CREATE, row)
         elif "modify" in row_update:
             if not row:
@@ -542,15 +558,19 @@ class Idl(object):
                           % (uuid, table.name))
         elif not old:
             # Insert row.
+            op = ROW_CREATE
             if not row:
                 row = self.__create_row(table, uuid)
                 changed = True
             else:
                 # XXX rate-limit
+                op = ROW_UPDATE
                 vlog.warn("cannot add existing row %s to table %s"
                           % (uuid, table.name))
-            if self.__row_update(table, row, new):
-                changed = True
+            changed |= self.__row_update(table, row, new)
+            if op == ROW_CREATE:
+                table.rows[uuid] = row
+            if changed:
                 self.notify(ROW_CREATE, row)
         else:
             op = ROW_UPDATE
@@ -561,8 +581,10 @@ class Idl(object):
                 # XXX rate-limit
                 vlog.warn("cannot modify missing row %s in table %s"
                           % (uuid, table.name))
-            if self.__row_update(table, row, new):
-                changed = True
+            changed |= self.__row_update(table, row, new)
+            if op == ROW_CREATE:
+                table.rows[uuid] = row
+            if changed:
                 self.notify(op, row, Row.from_json(self, table, uuid, old))
         return changed
 
@@ -638,8 +660,7 @@ class Idl(object):
         data = {}
         for column in six.itervalues(table.columns):
             data[column.name] = ovs.db.data.Datum.default(column.type)
-        row = table.rows[uuid] = Row(self, table, uuid, data)
-        return row
+        return Row(self, table, uuid, data)
 
     def __error(self):
         self._session.force_reconnect()
@@ -774,7 +795,11 @@ class Row(object):
         assert self._changes is not None
         assert self._mutations is not None
 
-        column = self._table.columns[column_name]
+        try:
+            column = self._table.columns[column_name]
+        except KeyError:
+            raise AttributeError("%s instance has no attribute '%s'" %
+                                 (self.__class__.__name__, column_name))
         datum = self._changes.get(column_name)
         inserts = None
         if '_inserts' in self._mutations.keys():
@@ -844,7 +869,17 @@ class Row(object):
             vlog.err("attempting to write bad value to column %s (%s)"
                      % (column_name, e))
             return
+        # Remove prior version of the Row from the index if it has the indexed
+        # column set, and the column changing is an indexed column
+        if hasattr(self, column_name):
+            for idx in self._table.rows.indexes.values():
+                if column_name in (c.column for c in idx.columns):
+                    idx.remove(self)
         self._idl.txn._write(self, column, datum)
+        for idx in self._table.rows.indexes.values():
+            # Only update the index if indexed columns change
+            if column_name in (c.column for c in idx.columns):
+                idx.add(self)
 
     def addvalue(self, column_name, key):
         self._idl.txn._txn_rows[self.uuid] = self
@@ -972,8 +1007,8 @@ class Row(object):
             del self._idl.txn._txn_rows[self.uuid]
         else:
             self._idl.txn._txn_rows[self.uuid] = self
-        self.__dict__["_changes"] = None
         del self._table.rows[self.uuid]
+        self.__dict__["_changes"] = None
 
     def fetch(self, column_name):
         self._idl.txn._fetch(self, column_name)
@@ -1145,6 +1180,10 @@ class Transaction(object):
 
         for row in six.itervalues(self._txn_rows):
             if row._changes is None:
+                # If we add the deleted row back to rows with _changes == None
+                # then __getattr__ will not work for the indexes
+                row.__dict__["_changes"] = {}
+                row.__dict__["_mutations"] = {}
                 row._table.rows[row.uuid] = row
             elif row._data is None:
                 del row._table.rows[row.uuid]

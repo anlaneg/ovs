@@ -288,71 +288,6 @@ Flushes the connection tracking entries in \fIzone\fR on \fIswitch\fR.
 This command uses an Open vSwitch extension that is only in Open
 vSwitch 2.6 and later.
 .
-.SS "OpenFlow 1.1+ Group Table Commands"
-.
-The following commands work only with switches that support OpenFlow
-1.1 or later.  Because support for OpenFlow 1.1 and later is still
-experimental in Open vSwitch, it is necessary to explicitly enable
-these protocol versions in \fBovs\-ofctl\fR (using \fB\-O\fR) and in
-the switch itself (with the \fBprotocols\fR column in the \fBBridge\fR
-table).  For more information, see ``Q: What versions of OpenFlow does
-Open vSwitch support?'' in the Open vSwitch FAQ.
-.
-.IP "\fBdump\-groups \fIswitch\fR [\fIgroup\fR]"
-Prints group entries in \fIswitch\fR's tables to console.  To dump
-only a specific group, specify its number as \fIgroup\fR.  Otherwise,
-if \fIgroup\fR is omitted, or if it is specified as \fBALL\fR, then
-all groups are printed.  Each line of output is a group entry as
-described in \fBGroup Syntax\fR below.
-.IP
-Only OpenFlow 1.5 and later support dumping a specific group.  Earlier
-versions of OpenFlow always dump all groups.
-.
-.IP "\fBdump\-group\-features \fIswitch"
-Prints to the console the group features of the \fIswitch\fR.
-.
-.IP "\fBdump\-group-stats \fIswitch \fR[\fIgroups\fR]"
-Prints to the console statistics for the specified \fIgroups in the
-\fIswitch\fR's tables.  If \fIgroups\fR is omitted then statistics for all
-groups are printed.  See \fBGroup Syntax\fR, below, for the syntax of
-\fIgroups\fR.
-.
-.SS "OpenFlow 1.3+ Switch Meter Table Commands"
-.
-These commands manage the meter table in an OpenFlow switch.  In each
-case, \fImeter\fR specifies a meter entry in the format described in
-\fBMeter Syntax\fR, below.
-.
-.PP
-OpenFlow 1.3 introduced support for meters, so these commands only
-work with switches that support OpenFlow 1.3 or later.  The caveats
-described for groups in the previous section also apply to meters.
-.
-.IP "\fBadd\-meter \fIswitch meter\fR"
-Add a meter entry to \fIswitch\fR's tables. The \fImeter\fR syntax is
-described in section \fBMeter Syntax\fR, below.
-.
-.IP "\fBmod\-meter \fIswitch meter\fR"
-Modify an existing meter.
-.
-.IP "\fBdel\-meters \fIswitch\fR"
-.IQ "\fBdel\-meter \fIswitch\fR [\fImeter\fR]"
-Delete entries from \fIswitch\fR's meter table.  \fImeter\fR can specify
-a single meter with syntax \fBmeter=\fIid\fR, or all meters with syntax
-\fBmeter=all\fR.
-.
-.IP "\fBdump\-meters \fIswitch\fR"
-.IQ "\fBdump\-meter \fIswitch\fR [\fImeter\fR]"
-Print meter configuration.  \fImeter\fR can specify a single meter with
-syntax \fBmeter=\fIid\fR, or all meters with syntax \fBmeter=all\fR.
-.
-.IP "\fBmeter\-stats \fIswitch\fR [\fImeter\fR]"
-Print meter statistics.  \fImeter\fR can specify a single meter with
-syntax \fBmeter=\fIid\fR, or all meters with syntax \fBmeter=all\fR.
-.
-.IP "\fBmeter\-features \fIswitch\fR"
-Print meter features.
-.
 .SS "OpenFlow Switch Flow Table Commands"
 .
 These commands manage the flow table in an OpenFlow switch.  In each
@@ -429,7 +364,7 @@ Connects to \fIswitch\fR and instructs it to execute the
 \fIpacket-out\fR OpenFlow message, specified as defined in
 \fBPacket\-Out Syntax\fR section.
 .
-.SS "OpenFlow Switch Group Table Commands"
+.SS "Group Table Commands"
 .
 These commands manage the group table in an OpenFlow switch.  In each
 case, \fIgroup\fR specifies a group entry in the format described in
@@ -437,7 +372,14 @@ case, \fIgroup\fR specifies a group entry in the format described in
 zero or more groups in the same syntax, one per line, and the optional
 \fB\-\-bundle\fR option operates the command as a single atomic
 transation, see option \fB\-\-bundle\fR, below.
-
+.PP
+The group commands work only with switches that support OpenFlow 1.1
+or later or the Open vSwitch group extensions to OpenFlow 1.0 (added
+in Open vSwitch 2.9.90).  For OpenFlow 1.1 or later, it is necessary
+to explicitly enable these protocol versions in \fBovs\-ofctl\fR
+(using \fB\-O\fR).  For more information, see ``Q: What versions of
+OpenFlow does Open vSwitch support?'' in the Open vSwitch FAQ.
+.
 .IP "[\fB\-\-bundle\fR] \fBadd\-group \fIswitch group\fR"
 .IQ "[\fB\-\-bundle\fR] \fBadd\-group \fIswitch \fB\- < \fIfile\fR"
 .IQ "[\fB\-\-bundle\fR] \fBadd\-groups \fIswitch file\fR"
@@ -478,6 +420,63 @@ buckets of the group are removed.
 Remove buckets to an existing group present in the \fIswitch\fR's group table.
 If no \fIcommand_bucket_id\fR is present in the group specification then all
 buckets of the group are removed.
+.
+.IP "\fBdump\-groups \fIswitch\fR [\fIgroup\fR]"
+Prints group entries in \fIswitch\fR's tables to console.  To dump
+only a specific group, specify its number as \fIgroup\fR.  Otherwise,
+if \fIgroup\fR is omitted, or if it is specified as \fBALL\fR, then
+all groups are printed.
+.IP
+Only OpenFlow 1.5 and later support dumping a specific group.  Earlier
+versions of OpenFlow always dump all groups.
+.
+.IP "\fBdump\-group\-features \fIswitch"
+Prints to the console the group features of the \fIswitch\fR.
+.
+.IP "\fBdump\-group\-stats \fIswitch \fR[\fIgroup\fR]"
+Prints to the console statistics for the specified \fIgroup\fR in
+\fIswitch\fR's tables.  If \fIgroup\fR is omitted then statistics for all
+groups are printed.
+.
+.SS "OpenFlow 1.3+ Switch Meter Table Commands"
+.
+These commands manage the meter table in an OpenFlow switch.  In each
+case, \fImeter\fR specifies a meter entry in the format described in
+\fBMeter Syntax\fR, below.
+.
+.PP
+OpenFlow 1.3 introduced support for meters, so these commands only work
+with switches that support OpenFlow 1.3 or later.  It is necessary to
+explicitly enable these protocol versions in \fBovs\-ofctl\fR (using
+\fB\-O\fR) and in the switch itself (with the \fBprotocols\fR column in
+the \fBBridge\fR table).  For more information, see ``Q: What versions
+of OpenFlow does Open vSwitch support?'' in the Open vSwitch FAQ.
+.
+.IP "\fBadd\-meter \fIswitch meter\fR"
+Add a meter entry to \fIswitch\fR's tables. The \fImeter\fR syntax is
+described in section \fBMeter Syntax\fR, below.
+.
+.IP "\fBmod\-meter \fIswitch meter\fR"
+Modify an existing meter.
+.
+.IP "\fBdel\-meters \fIswitch\fR [\fImeter\fR]"
+Delete entries from \fIswitch\fR's meter table.  To delete only a
+specific meter, specify its number as \fImeter\fR.  Otherwise, if
+\fImeter\fR is omitted, or if it is specified as \fBall\fR, then all
+meters are deleted.
+.
+.IP "\fBdump\-meters \fIswitch\fR [\fImeter\fR]"
+Print entries from \fIswitch\fR's meter table.  To print only a
+specific meter, specify its number as \fImeter\fR.  Otherwise, if
+\fImeter\fR is omitted, or if it is specified as \fBall\fR, then all
+meters are printed.
+.
+.IP "\fBmeter\-stats \fIswitch\fR [\fImeter\fR]"
+Print meter statistics.  \fImeter\fR can specify a single meter with
+syntax \fBmeter=\fIid\fR, or all meters with syntax \fBmeter=all\fR.
+.
+.IP "\fBmeter\-features \fIswitch\fR"
+Print meter features.
 .
 .SS OpenFlow Switch Bundle Command
 .
@@ -1241,9 +1240,7 @@ continue pipeline processing). As such, it is strongly recommended that
 multiple flows should not execute \fBct\fR to reassemble fragments from the
 same IP message.
 .IP
-Currently, connection tracking is only available on Linux kernels with the
-nf_conntrack module loaded. The \fBct\fR action was introduced in Open vSwitch
-2.5.
+The \fBct\fR action was introduced in Open vSwitch 2.5.
 .
 .IP \fBct_clear\fR
 Clears connection tracking state from the flow, zeroing
@@ -2122,28 +2119,23 @@ The selection method used to select a bucket for a select group.
 This is a string of 1 to 15 bytes in length known to lower layers.
 This field is optional for \fBadd\-group\fR, \fBadd\-groups\fR and
 \fBmod\-group\fR commands on groups of type \fBselect\fR. Prohibited
-otherwise. The default value is the empty string.
+otherwise.  If no selection method is specified, Open vSwitch up to
+release 2.9 applies the \fBhash\fR method with default fields. From
+2.10 onwards Open vSwitch defaults to the \fBdp_hash\fR method with symmetric
+L3/L4 hash algorithm, unless the weighted group buckets cannot be mapped to
+a maximum of 64 dp_hash values with sufficient accuracy.
+In those rare cases Open vSwitch 2.10 and later fall back to the \fBhash\fR
+method with the default set of hash fields.
 .RS
-.IP \fBhash\fR
-Use a hash computed over the fields specified with the \fBfields\fR
-option, see below.  \fBhash\fR uses the \fBselection_method_param\fR
-as the hash basis.
-.IP
-Note that the hashed fields become exact matched by the datapath
-flows.  For example, if the TCP source port is hashed, the created
-datapath flows will match the specific TCP source port value present
-in the packet received.  Since each TCP connection generally has a
-different source port value, a separate datapath flow will be need to
-be inserted for each TCP connection thus hashed to a select group
-bucket.
 .IP \fBdp_hash\fR
 Use a datapath computed hash value.  The hash algorithm varies accross
 different datapath implementations.  \fBdp_hash\fR uses the upper 32
 bits of the \fBselection_method_param\fR as the datapath hash
-algorithm selector, which currently must always be 0, corresponding to
-hash computation over the IP 5-tuple (selecting specific fields with
-the \fBfields\fR option is not allowed with \fBdp_hash\fR).  The lower
-32 bits are used as the hash basis.
+algorithm selector.  The supported values are \fB0\fR (corresponding to
+hash computation over the IP 5-tuple) and \fB1\fR (corresponding to a
+\fIsymmetric\fR hash computation over the IP 5-tuple).  Selecting specific
+fields with the \fBfields\fR option is not supported with \fBdp_hash\fR).
+The lower 32 bits are used as the hash basis.
 .IP
 Using \fBdp_hash\fR has the advantage that it does not require the
 generated datapath flows to exact match any additional packet header
@@ -2157,9 +2149,23 @@ when needed, and a second match is required to match some bits of its
 value.  This double-matching incurs a small additional latency cost
 for each packet, but this latency is orders of magnitude less than the
 latency of creating new datapath flows for new TCP connections.
+.IP \fBhash\fR
+Use a hash computed over the fields specified with the \fBfields\fR
+option, see below.  If no hash fields are specified, \fBhash\fR defaults
+to a symmetric hash over the combination of MAC addresses, VLAN tags,
+Ether type, IP addresses and L4 port numbers.  \fBhash\fR uses the
+\fBselection_method_param\fR as the hash basis.
+.IP
+Note that the hashed fields become exact matched by the datapath
+flows.  For example, if the TCP source port is hashed, the created
+datapath flows will match the specific TCP source port value present
+in the packet received.  Since each TCP connection generally has a
+different source port value, a separate datapath flow will be need to
+be inserted for each TCP connection thus hashed to a select group
+bucket.
 .RE
 .IP
-This option will use a Netronome OpenFlow extension which is only supported
+This option uses a Netronome OpenFlow extension which is only supported
 when using Open vSwitch 2.4 and later with OpenFlow 1.5 and later.
 
 .IP \fBselection_method_param\fR=\fIparam\fR
@@ -2169,7 +2175,7 @@ lower-layer that implements the \fBselection_method\fR.  It is optional if
 the \fBselection_method\fR field is specified as a non-empty string.
 Prohibited otherwise. The default value is zero.
 .IP
-This option will use a Netronome OpenFlow extension which is only supported
+This option uses a Netronome OpenFlow extension which is only supported
 when using Open vSwitch 2.4 and later with OpenFlow 1.5 and later.
 
 .IP \fBfields\fR=\fIfield\fR
@@ -2239,25 +2245,29 @@ multiple arguments.). Unless noted otherwise only the last instance
 of each field is honoured.
 .PP
 .IP \fBmeter=\fIid\fR
-The integer meter id of the meter.
+The identifier for the meter.  An integer is used to specify a
+user-defined meter.  In addition, the keywords "all", "controller", and
+"slowpath", are also supported as virtual meters.  The "controller" and
+"slowpath" virtual meters apply to packets sent to the controller and to
+the OVS userspace, respectively.
+.IP
 When this field is specified in \fBdel-meter\fR, \fBdump-meter\fR, or
-\fBmeter-stats\fR, the keyword "all" may be used to designate all meters.
-.
-This field is required, exept for \fBmeter-stats\fR, which dumps all stats
-when this field is not specified.
-
+\fBmeter-stats\fR, the keyword "all" may be used to designate all
+meters.  This field is required, except for \fBmeter-stats\fR, which
+dumps all stats when this field is not specified.
 .IP \fBkbps\fR
 .IQ \fBpktps\fR
-The unit for the meter band rate parameters, either kilobits per second, or
-packets per second, respectively.  One of these must be specified.  The burst
-size unit corresponds to the rate unit by dropping the "per second", i.e.,
-burst is in units of kilobits or packets, respectively.
+The unit for the \fBrate\fR and \fBburst_size\fR band parameters.
+\fBkbps\fR specifies kilobits per second, and \fBpktps\fR specifies
+packets per second.  A unit is required for the \fBadd-meter\fR and
+\fBmod-meter\fR commands.
 
 .IP \fBburst\fR
-Specify burst size for all bands, or none of them, if this flag is not given.
+If set, enables burst support for meter bands through the \fBburst_size\fR
+parameter.
 
 .IP \fBstats\fR
-Collect meter and band statistics.
+If set, enables the collection of meter and band statistics.
 
 .IP \fBbands\fR=\fIband_parameters\fR
 The \fBadd-meter\fR and \fBmod-meter\fR commands require at least one
@@ -2278,12 +2288,12 @@ Drop packets exceeding the band's rate limit.
 .IP "The other \fIband_parameters\fR are:"
 .IP \fBrate=\fIvalue\fR
 The relative rate limit for this band, in kilobits per second or packets per
-second, depending on the meter flags defined above.
+second, depending on whether \fBkbps\fR or \fBpktps\fR was specified.
 .IP \fBburst_size=\fIsize\fR
-The maximum burst allowed for the band.  If \fBpktps\fR is specified,
-then \fIsize\fR is a packet count, otherwise it is in kilobits.  If
-unspecified, the switch is free to select some reasonable value
-depending on its configuration.
+If \fBburst\fR is specified for the meter entry, configures the maximum
+burst allowed for the band in kilobits or packets, depending on whether
+\fBkbps\fR or \fBpktps\fR was specified.  If unspecified, the switch is
+free to select some reasonable value depending on its configuration.
 .RE
 .
 .SH OPTIONS

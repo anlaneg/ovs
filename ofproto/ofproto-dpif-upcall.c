@@ -231,7 +231,6 @@ struct upcall {
     bool ukey_persists;            /* Set true to keep 'ukey' beyond the
                                       lifetime of this upcall. */
 
-    uint64_t dump_seq;             /* udpif->dump_seq at translation time. */
     uint64_t reval_seq;            /* udpif->reval_seq at translation time. */
 
     /* Not used by the upcall callback interface. */
@@ -1164,8 +1163,7 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
          * with pushing its stats eventually. */
     }
 
-    upcall->dump_seq = seq_read(udpif->dump_seq);//取序列
-    upcall->reval_seq = seq_read(udpif->reval_seq);
+    upcall->reval_seq = seq_read(udpif->reval_seq);//取序列
 
     xerr = xlate_actions(&xin, &upcall->xout);//实现action转换
 
@@ -1567,15 +1565,15 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
             op = &ops[n_ops++];
             op->ukey = NULL;
             op->dop.type = DPIF_OP_EXECUTE;
-            op->dop.u.execute.packet = CONST_CAST(struct dp_packet *, packet);
-            op->dop.u.execute.flow = upcall->flow;
+            op->dop.execute.packet = CONST_CAST(struct dp_packet *, packet);
+            op->dop.execute.flow = upcall->flow;
             odp_key_to_dp_packet(upcall->key, upcall->key_len,
-                                 op->dop.u.execute.packet);
-            op->dop.u.execute.actions = upcall->odp_actions.data;
-            op->dop.u.execute.actions_len = upcall->odp_actions.size;
-            op->dop.u.execute.needs_help = (upcall->xout.slow & SLOW_ACTION) != 0;
-            op->dop.u.execute.probe = false;
-            op->dop.u.execute.mtu = upcall->mru;
+                                 op->dop.execute.packet);
+            op->dop.execute.actions = upcall->odp_actions.data;
+            op->dop.execute.actions_len = upcall->odp_actions.size;
+            op->dop.execute.needs_help = (upcall->xout.slow & SLOW_ACTION) != 0;
+            op->dop.execute.probe = false;
+            op->dop.execute.mtu = upcall->mru;
         }
     }
 
@@ -1635,8 +1633,13 @@ ukey_get_actions(struct udpif_key *ukey, const struct nlattr **actions, size_t *
 static void
 ukey_set_actions(struct udpif_key *ukey, const struct ofpbuf *actions)
 {
-    ovsrcu_postpone(ofpbuf_delete,
-                    ovsrcu_get_protected(struct ofpbuf *, &ukey->actions));
+    struct ofpbuf *old_actions = ovsrcu_get_protected(struct ofpbuf *,
+                                                      &ukey->actions);
+
+    if (old_actions) {
+        ovsrcu_postpone(ofpbuf_delete, old_actions);
+    }
+
     ovsrcu_set(&ukey->actions, ofpbuf_clone(actions));
 }
 
@@ -1645,7 +1648,7 @@ ukey_create__(const struct nlattr *key, size_t key_len,
               const struct nlattr *mask, size_t mask_len,
               bool ufid_present, const ovs_u128 *ufid,
               const unsigned pmd_id, const struct ofpbuf *actions,
-              uint64_t dump_seq, uint64_t reval_seq, long long int used,
+              uint64_t reval_seq, long long int used,
               uint32_t key_recirc_id, struct xlate_out *xout)
     OVS_NO_THREAD_SAFETY_ANALYSIS
 {
@@ -1666,7 +1669,7 @@ ukey_create__(const struct nlattr *key, size_t key_len,
     ukey_set_actions(ukey, actions);
 
     ovs_mutex_init(&ukey->mutex);
-    ukey->dump_seq = dump_seq;
+    ukey->dump_seq = 0;     /* Not yet dumped */
     ukey->reval_seq = reval_seq;
     ukey->state = UKEY_CREATED;
     ukey->state_thread = ovsthread_id_self();
@@ -1716,8 +1719,7 @@ ukey_create_from_upcall(struct upcall *upcall, struct flow_wildcards *wc)
 
     return ukey_create__(keybuf.data, keybuf.size, maskbuf.data, maskbuf.size,
                          true, upcall->ufid, upcall->pmd_id,
-                         &upcall->put_actions, upcall->dump_seq,
-                         upcall->reval_seq, 0,
+                         &upcall->put_actions, upcall->reval_seq, 0,
                          upcall->have_recirc_ref ? upcall->recirc->id : 0,
                          &upcall->xout);
 }
@@ -1729,7 +1731,7 @@ ukey_create_from_dpif_flow(const struct udpif *udpif,
 {
     struct dpif_flow full_flow;
     struct ofpbuf actions;
-    uint64_t dump_seq, reval_seq;
+    uint64_t reval_seq;
     uint64_t stub[DPIF_FLOW_BUFSIZE / 8];
     const struct nlattr *a;
     unsigned int left;
@@ -1766,12 +1768,11 @@ ukey_create_from_dpif_flow(const struct udpif *udpif,
         }
     }
 
-    dump_seq = seq_read(udpif->dump_seq);
     reval_seq = seq_read(udpif->reval_seq) - 1; /* Ensure revalidation. */
     ofpbuf_use_const(&actions, &flow->actions, flow->actions_len);
     *ukey = ukey_create__(flow->key, flow->key_len,
                           flow->mask, flow->mask_len, flow->ufid_present,
-                          &flow->ufid, flow->pmd_id, &actions, dump_seq,
+                          &flow->ufid, flow->pmd_id, &actions,
                           reval_seq, flow->stats.used, 0, NULL);
 
     return 0;
@@ -2276,12 +2277,12 @@ delete_op_init__(struct udpif *udpif, struct ukey_op *op,
 {
     op->ukey = NULL;
     op->dop.type = DPIF_OP_FLOW_DEL;
-    op->dop.u.flow_del.key = flow->key;
-    op->dop.u.flow_del.key_len = flow->key_len;
-    op->dop.u.flow_del.ufid = flow->ufid_present ? &flow->ufid : NULL;
-    op->dop.u.flow_del.pmd_id = flow->pmd_id;
-    op->dop.u.flow_del.stats = &op->stats;
-    op->dop.u.flow_del.terse = udpif_use_ufid(udpif);
+    op->dop.flow_del.key = flow->key;
+    op->dop.flow_del.key_len = flow->key_len;
+    op->dop.flow_del.ufid = flow->ufid_present ? &flow->ufid : NULL;
+    op->dop.flow_del.pmd_id = flow->pmd_id;
+    op->dop.flow_del.stats = &op->stats;
+    op->dop.flow_del.terse = udpif_use_ufid(udpif);
 }
 
 static void
@@ -2289,12 +2290,12 @@ delete_op_init(struct udpif *udpif, struct ukey_op *op, struct udpif_key *ukey)
 {
     op->ukey = ukey;
     op->dop.type = DPIF_OP_FLOW_DEL;
-    op->dop.u.flow_del.key = ukey->key;
-    op->dop.u.flow_del.key_len = ukey->key_len;
-    op->dop.u.flow_del.ufid = ukey->ufid_present ? &ukey->ufid : NULL;
-    op->dop.u.flow_del.pmd_id = ukey->pmd_id;
-    op->dop.u.flow_del.stats = &op->stats;
-    op->dop.u.flow_del.terse = udpif_use_ufid(udpif);
+    op->dop.flow_del.key = ukey->key;
+    op->dop.flow_del.key_len = ukey->key_len;
+    op->dop.flow_del.ufid = ukey->ufid_present ? &ukey->ufid : NULL;
+    op->dop.flow_del.pmd_id = ukey->pmd_id;
+    op->dop.flow_del.stats = &op->stats;
+    op->dop.flow_del.terse = udpif_use_ufid(udpif);
 }
 
 static void
@@ -2303,16 +2304,16 @@ put_op_init(struct ukey_op *op, struct udpif_key *ukey,
 {
     op->ukey = ukey;
     op->dop.type = DPIF_OP_FLOW_PUT;
-    op->dop.u.flow_put.flags = flags;
-    op->dop.u.flow_put.key = ukey->key;
-    op->dop.u.flow_put.key_len = ukey->key_len;
-    op->dop.u.flow_put.mask = ukey->mask;
-    op->dop.u.flow_put.mask_len = ukey->mask_len;
-    op->dop.u.flow_put.ufid = ukey->ufid_present ? &ukey->ufid : NULL;
-    op->dop.u.flow_put.pmd_id = ukey->pmd_id;
-    op->dop.u.flow_put.stats = NULL;
-    ukey_get_actions(ukey, &op->dop.u.flow_put.actions,
-                     &op->dop.u.flow_put.actions_len);
+    op->dop.flow_put.flags = flags;
+    op->dop.flow_put.key = ukey->key;
+    op->dop.flow_put.key_len = ukey->key_len;
+    op->dop.flow_put.mask = ukey->mask;
+    op->dop.flow_put.mask_len = ukey->mask_len;
+    op->dop.flow_put.ufid = ukey->ufid_present ? &ukey->ufid : NULL;
+    op->dop.flow_put.pmd_id = ukey->pmd_id;
+    op->dop.flow_put.stats = NULL;
+    ukey_get_actions(ukey, &op->dop.flow_put.actions,
+                     &op->dop.flow_put.actions_len);
 }
 
 /* Executes datapath operations 'ops' and attributes stats retrieved from the
@@ -2333,7 +2334,7 @@ push_dp_ops(struct udpif *udpif, struct ukey_op *ops, size_t n_ops)
         struct ukey_op *op = &ops[i];
         struct dpif_flow_stats *push, *stats, push_buf;
 
-        stats = op->dop.u.flow_del.stats;
+        stats = op->dop.flow_del.stats;
         push = &push_buf;
 
         if (op->dop.type != DPIF_OP_FLOW_DEL) {
@@ -2364,8 +2365,8 @@ push_dp_ops(struct udpif *udpif, struct ukey_op *ops, size_t n_ops)
         }
 
         if (push->n_packets || netflow_exists()) {
-            const struct nlattr *key = op->dop.u.flow_del.key;
-            size_t key_len = op->dop.u.flow_del.key_len;
+            const struct nlattr *key = op->dop.flow_del.key;
+            size_t key_len = op->dop.flow_del.key_len;
             struct netflow *netflow;
             struct reval_context ctx = {
                 .netflow = &netflow,
@@ -2736,11 +2737,11 @@ upcall_unixctl_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
         ufid_enabled = udpif_use_ufid(udpif);
 
         ds_put_format(&ds, "%s:\n", dpif_name(udpif->dpif));
-        ds_put_format(&ds, "\tflows         : (current %lu)"
+        ds_put_format(&ds, "  flows         : (current %lu)"
             " (avg %u) (max %u) (limit %u)\n", udpif_get_n_flows(udpif),
             udpif->avg_n_flows, udpif->max_n_flows, flow_limit);
-        ds_put_format(&ds, "\tdump duration : %lldms\n", udpif->dump_duration);
-        ds_put_format(&ds, "\tufid enabled : ");
+        ds_put_format(&ds, "  dump duration : %lldms\n", udpif->dump_duration);
+        ds_put_format(&ds, "  ufid enabled : ");
         if (ufid_enabled) {
             ds_put_format(&ds, "true\n");
         } else {
@@ -2755,7 +2756,7 @@ upcall_unixctl_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
             for (j = i; j < N_UMAPS; j += n_revalidators) {
                 elements += cmap_count(&udpif->ukeys[j].cmap);
             }
-            ds_put_format(&ds, "\t%u: (keys %d)\n", revalidator->id, elements);
+            ds_put_format(&ds, "  %u: (keys %d)\n", revalidator->id, elements);
         }
     }
 

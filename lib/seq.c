@@ -38,9 +38,9 @@ struct seq {
 
 /* A thread waiting on a particular seq. */
 struct seq_waiter {
-    struct seq *seq OVS_GUARDED;            /* Seq being waited for. */ //从属于哪个seq
-    struct hmap_node hmap_node OVS_GUARDED; /* In 'seq->waiters'. */ //加入到从属的seq对应的waiters哈希表时使用
-    unsigned int ovsthread_id OVS_GUARDED;  /* Key in 'waiters' hmap. */ //从属于哪个线程（ovs对线程的编号）
+    struct hmap_node hmap_node OVS_GUARDED; /* In 'seq->waiters'. *///从属于哪个seq
+    struct seq *seq OVS_GUARDED;            /* Seq being waited for. *///加入到从属的seq对应的waiters哈希表时使用
+    unsigned int ovsthread_id OVS_GUARDED;  /* Key in 'waiters' hmap. *///从属于哪个线程（ovs对线程的编号）
 
     struct seq_thread *thread OVS_GUARDED;  /* Thread preparing to wait. */
     struct ovs_list list_node OVS_GUARDED;  /* In 'thread->waiters'. */ //waiter本身由链串起来

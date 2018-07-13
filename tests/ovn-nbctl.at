@@ -178,22 +178,19 @@ AT_CLEANUP
 
 dnl ---------------------------------------------------------------------
 
-AT_SETUP([ovn-nbctl - ACLs])
-OVN_NBCTL_TEST_START
+m4_define([OVN_NBCTL_TEST_ACL],
+  [AT_CHECK([ovn-nbctl $2 --log acl-add $1 from-lport 600 udp drop])
+   AT_CHECK([ovn-nbctl $2 --log --name=test --severity=info acl-add $1 to-lport 500 udp drop])
+   AT_CHECK([ovn-nbctl $2 acl-add $1 from-lport 400 tcp drop])
+   AT_CHECK([ovn-nbctl $2 acl-add $1 to-lport 300 tcp drop])
+   AT_CHECK([ovn-nbctl $2 acl-add $1 from-lport 200 ip drop])
+   AT_CHECK([ovn-nbctl $2 acl-add $1 to-lport 100 ip drop])
+   dnl Add duplicated ACL
+   AT_CHECK([ovn-nbctl $2 acl-add $1 to-lport 100 ip drop], [1], [], [stderr])
+   AT_CHECK([grep 'already existed' stderr], [0], [ignore])
+   AT_CHECK([ovn-nbctl $2 --may-exist acl-add $1 to-lport 100 ip drop])
 
-AT_CHECK([ovn-nbctl ls-add ls0])
-AT_CHECK([ovn-nbctl --log acl-add ls0 from-lport 600 udp drop])
-AT_CHECK([ovn-nbctl --log --name=test --severity=info acl-add ls0 to-lport 500 udp drop])
-AT_CHECK([ovn-nbctl acl-add ls0 from-lport 400 tcp drop])
-AT_CHECK([ovn-nbctl acl-add ls0 to-lport 300 tcp drop])
-AT_CHECK([ovn-nbctl acl-add ls0 from-lport 200 ip drop])
-AT_CHECK([ovn-nbctl acl-add ls0 to-lport 100 ip drop])
-dnl Add duplicated ACL
-AT_CHECK([ovn-nbctl acl-add ls0 to-lport 100 ip drop], [1], [], [stderr])
-AT_CHECK([grep 'already existed' stderr], [0], [ignore])
-AT_CHECK([ovn-nbctl --may-exist acl-add ls0 to-lport 100 ip drop])
-
-AT_CHECK([ovn-nbctl acl-list ls0], [0], [dnl
+   AT_CHECK([ovn-nbctl $2 acl-list $1], [0], [dnl
 from-lport   600 (udp) drop log()
 from-lport   400 (tcp) drop
 from-lport   200 (ip) drop
@@ -202,29 +199,46 @@ from-lport   200 (ip) drop
   to-lport   100 (ip) drop
 ])
 
-dnl Delete in one direction.
-AT_CHECK([ovn-nbctl acl-del ls0 to-lport])
-AT_CHECK([ovn-nbctl acl-list ls0], [0], [dnl
+   dnl Delete in one direction.
+   AT_CHECK([ovn-nbctl $2 acl-del $1 to-lport])
+   AT_CHECK([ovn-nbctl $2 acl-list $1], [0], [dnl
 from-lport   600 (udp) drop log()
 from-lport   400 (tcp) drop
 from-lport   200 (ip) drop
 ])
 
-dnl Delete all ACLs.
-AT_CHECK([ovn-nbctl acl-del ls0])
-AT_CHECK([ovn-nbctl acl-list ls0], [0], [dnl
+   dnl Delete all ACLs.
+   AT_CHECK([ovn-nbctl $2 acl-del $1])
+   AT_CHECK([ovn-nbctl $2 acl-list $1], [0], [dnl
 ])
 
-AT_CHECK([ovn-nbctl acl-add ls0 from-lport 600 udp drop])
-AT_CHECK([ovn-nbctl acl-add ls0 from-lport 400 tcp drop])
-AT_CHECK([ovn-nbctl acl-add ls0 from-lport 200 ip drop])
+   AT_CHECK([ovn-nbctl $2 acl-add $1 from-lport 600 udp drop])
+   AT_CHECK([ovn-nbctl $2 acl-add $1 from-lport 400 tcp drop])
+   AT_CHECK([ovn-nbctl $2 acl-add $1 from-lport 200 ip drop])
 
-dnl Delete a single flow.
-AT_CHECK([ovn-nbctl acl-del ls0 from-lport 400 tcp])
-AT_CHECK([ovn-nbctl acl-list ls0], [0], [dnl
+   dnl Delete a single flow.
+   AT_CHECK([ovn-nbctl $2 acl-del $1 from-lport 400 tcp])
+   AT_CHECK([ovn-nbctl $2 acl-list $1], [0], [dnl
 from-lport   600 (udp) drop
 from-lport   200 (ip) drop
 ])
+])
+
+AT_SETUP([ovn-nbctl - ACLs])
+OVN_NBCTL_TEST_START
+
+AT_CHECK([ovn-nbctl ls-add ls0])
+OVN_NBCTL_TEST_ACL([ls0])
+AT_CHECK([ovn-nbctl ls-add ls1])
+OVN_NBCTL_TEST_ACL([ls1], [--type=switch])
+AT_CHECK([ovn-nbctl create port_group name=pg0], [0], [ignore])
+OVN_NBCTL_TEST_ACL([pg0], [--type=port-group])
+
+dnl Test when same name exists in logical switches and portgroups
+AT_CHECK([ovn-nbctl create port_group name=ls0], [0], [ignore])
+AT_CHECK([ovn-nbctl acl-add ls0 to-lport 100 ip drop], [1], [], [stderr])
+AT_CHECK([grep 'exists in both' stderr], [0], [ignore])
+AT_CHECK([ovn-nbctl --type=port-group acl-add ls0 to-lport 100 ip drop], [0], [ignore])
 
 OVN_NBCTL_TEST_STOP
 AT_CLEANUP
@@ -281,23 +295,23 @@ from-lport   200 (ip) rate=301 burst=1000102 dscp=19
 ])
 
 AT_CHECK([ovn-nbctl qos-add ls0 from-lport 600 ip rate=100010111111], [1], [],
-[ovn-nbctl: 100010111111: rate must in range 1...4294967295.
+[ovn-nbctl: 100010111111: rate must be in the range 1...4294967295
 ])
 
 AT_CHECK([ovn-nbctl qos-add ls0 from-lport 600 ip burst=100010111112 rate=100010], [1], [],
-[ovn-nbctl: 100010111112: burst must in range 1...4294967295.
+[ovn-nbctl: 100010111112: burst must be in the range 1...4294967295
 ])
 
 AT_CHECK([ovn-nbctl qos-add ls0 from-lport 600 ip dscp=-1], [1], [],
-[ovn-nbctl: -1: dscp must in range 0...63.
+[ovn-nbctl: -1: dscp must be in the range 0...63
 ])
 
 AT_CHECK([ovn-nbctl qos-add ls0 from-lport 600 ip dscpa=-1], [1], [],
-[ovn-nbctl: dscpa=-1: must be start of "dscp=", "rate=", "burst=".
+[ovn-nbctl: dscpa=-1: supported arguments are "dscp=", "rate=", and "burst="
 ])
 
 AT_CHECK([ovn-nbctl qos-add ls0 from-lport 600 ip burst=123], [1], [],
-[ovn-nbctl: One of the rate or dscp must be configured.
+[ovn-nbctl: Either "rate" and/or "dscp" must be specified
 ])
 
 OVN_NBCTL_TEST_STOP
@@ -460,44 +474,44 @@ AT_SETUP([ovn-nbctl - LBs])
 OVN_NBCTL_TEST_START
 
 dnl Add two LBs.
-AT_CHECK([ovn-nbctl lb-add lb0 30.0.0.10:80a 192.168.10.10:80,192.168.10.20:80 tcp], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 30.0.0.10:80a 192.168.10.10:80,192.168.10.20:80 tcp], [1], [],
 [ovn-nbctl: 30.0.0.10:80a: should be an IP address (or an IP address and a port number with : as a separator).
 ])
 
-AT_CHECK([ovn-nbctl lb-add lb0 30.0.0.10:a80 192.168.10.10:80,192.168.10.20:80 tcp], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 30.0.0.10:a80 192.168.10.10:80,192.168.10.20:80 tcp], [1], [],
 [ovn-nbctl: 30.0.0.10:a80: should be an IP address (or an IP address and a port number with : as a separator).
 ])
 
-AT_CHECK([ovn-nbctl lb-add lb0 30.0.0.10: 192.168.10.10:80,192.168.10.20:80 tcp], [1], [],
-[ovn-nbctl: 30.0.0.10:: should be an IP address (or an IP address and a port number with : as a separator).
-])
-
-AT_CHECK([ovn-nbctl lb-add lb0 30.0.0.10:80 192.168.10.10:80,192.168.10.20 tcp], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 30.0.0.10:80 192.168.10.10:80,192.168.10.20 tcp], [1], [],
 [ovn-nbctl: 192.168.10.20: should be an IP address and a port number with : as a separator.
 ])
 
-AT_CHECK([ovn-nbctl lb-add lb0 30.0.0.1a 192.168.10.10:80,192.168.10.20:80], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 30.0.0.1a 192.168.10.10:80,192.168.10.20:80], [1], [],
 [ovn-nbctl: 30.0.0.1a: should be an IP address (or an IP address and a port number with : as a separator).
 ])
 
-AT_CHECK([ovn-nbctl lb-add lb0 30.0.0 192.168.10.10:80,192.168.10.20:80], [1], [],
-[ovn-nbctl: 192.168.10.10:80: should be an IP address.
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 30.0.0 192.168.10.10:80,192.168.10.20:80], [1], [],
+[ovn-nbctl: 30.0.0: should be an IP address (or an IP address and a port number with : as a separator).
 ])
 
-AT_CHECK([ovn-nbctl lb-add lb0 30.0.0.10 192.168.10.10,192.168.10.20:80], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 30.0.0.10 192.168.10.10,192.168.10.20:80], [1], [],
 [ovn-nbctl: 192.168.10.20:80: should be an IP address.
 ])
 
-AT_CHECK([ovn-nbctl lb-add lb0 30.0.0.10 192.168.10.10:a80], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 30.0.0.10 192.168.10.10:a80], [1], [],
 [ovn-nbctl: 192.168.10.10:a80: should be an IP address.
 ])
 
-AT_CHECK([ovn-nbctl lb-add lb0 30.0.0.10 192.168.10.10:], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 30.0.0.10 192.168.10.10:], [1], [],
 [ovn-nbctl: 192.168.10.10:: should be an IP address.
 ])
 
-AT_CHECK([ovn-nbctl lb-add lb0 30.0.0.10 192.168.10.1a], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 30.0.0.10 192.168.10.1a], [1], [],
 [ovn-nbctl: 192.168.10.1a: should be an IP address.
+])
+
+AT_CHECK([ovn-nbctl lb-add lb0 30.0.0.10: 192.168.10.10:80,192.168.10.20:80 tcp], [1], [],
+[ovn-nbctl: Protocol is unnecessary when no port of vip is given.
 ])
 
 AT_CHECK([ovn-nbctl lb-add lb0 30.0.0.10 192.168.10.10 tcp], [1], [],
@@ -685,53 +699,53 @@ AT_SETUP([ovn-nbctl - LBs IPv6])
 OVN_NBCTL_TEST_START
 
 dnl A bunch of commands that should fail
-AT_CHECK([ovn-nbctl lb-add lb0 [[ae0f::10]]:80a [[fd0f::10]]:80,[[fd0f::20]]:80 tcp], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 [[ae0f::10]]:80a [[fd0f::10]]:80,[[fd0f::20]]:80 tcp], [1], [],
 [ovn-nbctl: [[ae0f::10]]:80a: should be an IP address (or an IP address and a port number with : as a separator).
 ])
 
 
-AT_CHECK([ovn-nbctl lb-add lb0 [[ae0f::10]]:a80 [[fd0f::10]]:80,[[fd0f::20]]:80 tcp], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 [[ae0f::10]]:a80 [[fd0f::10]]:80,[[fd0f::20]]:80 tcp], [1], [],
 [ovn-nbctl: [[ae0f::10]]:a80: should be an IP address (or an IP address and a port number with : as a separator).
 ])
 
 
-AT_CHECK([ovn-nbctl lb-add lb0 [[ae0f::10]]: [[fd0f::10]]:80,[[fd0f::20]]:80 tcp], [1], [],
-[ovn-nbctl: [[ae0f::10]]:: should be an IP address (or an IP address and a port number with : as a separator).
-])
-
-
-AT_CHECK([ovn-nbctl lb-add lb0 [[ae0f::10]]:80 [[fd0f::10]]:80,fd0f::20 tcp], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 [[ae0f::10]]:80 [[fd0f::10]]:80,fd0f::20 tcp], [1], [],
 [ovn-nbctl: fd0f::20: should be an IP address and a port number with : as a separator.
 ])
 
 
-AT_CHECK([ovn-nbctl lb-add lb0 ae0f::10fff [[fd0f::10]]:80,fd0f::20 tcp], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 ae0f::10fff [[fd0f::10]]:80,fd0f::20 tcp], [1], [],
 [ovn-nbctl: ae0f::10fff: should be an IP address (or an IP address and a port number with : as a separator).
 ])
 
 
-AT_CHECK([ovn-nbctl lb-add lb0 ae0f::10 [[fd0f::10]]:80,[[fd0f::20]]:80], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 ae0f::10 [[fd0f::10]]:80,[[fd0f::20]]:80], [1], [],
 [ovn-nbctl: [[fd0f::10]]:80: should be an IP address.
 ])
 
 
-AT_CHECK([ovn-nbctl lb-add lb0 ae0f::10 fd0f::10,[[fd0f::20]]:80], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 ae0f::10 fd0f::10,[[fd0f::20]]:80], [1], [],
 [ovn-nbctl: [[fd0f::20]]:80: should be an IP address.
 ])
 
 
-AT_CHECK([ovn-nbctl lb-add lb0 ae0f::10 [[fd0f::10]]:a80], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 ae0f::10 [[fd0f::10]]:a80], [1], [],
 [ovn-nbctl: [[fd0f::10]]:a80: should be an IP address.
 ])
 
 
-AT_CHECK([ovn-nbctl lb-add lb0 ae0f::10 [[fd0f::10]]:], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 ae0f::10 [[fd0f::10]]:], [1], [],
 [ovn-nbctl: [[fd0f::10]]:: should be an IP address.
 ])
 
 
-AT_CHECK([ovn-nbctl lb-add lb0 ae0f::10 fd0f::1001a], [1], [],
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 ae0f::10 fd0f::1001a], [1], [],
 [ovn-nbctl: fd0f::1001a: should be an IP address.
+])
+
+
+AT_CHECK([ovn-nbctl -vsocket_util:off lb-add lb0 [[ae0f::10]]: [[fd0f::10]]:80,[[fd0f::20]]:80 tcp], [1], [],
+[ovn-nbctl: Protocol is unnecessary when no port of vip is given.
 ])
 
 
@@ -1127,6 +1141,15 @@ lrp0-chassis2     5
 AT_CHECK([ovn-nbctl lrp-del-gateway-chassis lrp0 chassis2])
 AT_CHECK([ovn-nbctl lrp-get-gateway-chassis lrp0])
 
+AT_CHECK([ovn-nbctl lrp-set-gateway-chassis lrp0 chassis1 1])
+AT_CHECK([ovn-nbctl lrp-set-gateway-chassis lrp0 chassis2 10])
+AT_CHECK([ovn-nbctl lrp-set-gateway-chassis lrp0 chassis3 5])
+AT_CHECK([ovn-nbctl lrp-get-gateway-chassis lrp0], [0], [dnl
+lrp0-chassis2    10
+lrp0-chassis3     5
+lrp0-chassis1     1
+])
+
 OVN_NBCTL_TEST_STOP
 AT_CLEANUP
 
@@ -1341,6 +1364,20 @@ dnl Empty string should work too
 AT_CHECK([ovn-nbctl lsp-set-type lp0 ""])
 AT_CHECK([ovn-nbctl lsp-get-type lp0], [0], [dnl
 
+])
+
+OVN_NBCTL_TEST_STOP
+AT_CLEANUP
+
+dnl ---------------------------------------------------------------------
+
+AT_SETUP([ovn-nbctl - connection])
+OVN_NBCTL_TEST_START
+
+AT_CHECK([ovn-nbctl --inactivity-probe=30000 set-connection ptcp:6641:127.0.0.1 punix:$OVS_RUNDIR/ovnnb_db.sock])
+AT_CHECK([ovn-nbctl list connection | grep inactivity_probe], [0], [dnl
+inactivity_probe    : 30000
+inactivity_probe    : 30000
 ])
 
 OVN_NBCTL_TEST_STOP

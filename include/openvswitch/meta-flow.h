@@ -239,7 +239,7 @@ enum OVS_PACKED_ENUM mf_field_id {
      * Prerequisites: none.
      * Access: read-only.
      * NXM: NXM_NX_DP_HASH(35) since v2.2.
-     * OXM: NXOXM_ET_DP_HASH(0) since OF1.5 and v2.4.
+     * OXM: NXOXM_ET_DP_HASH(0) since v2.4.
      */
     MFF_DP_HASH,
 
@@ -449,6 +449,62 @@ enum OVS_PACKED_ENUM mf_field_id {
      * OXM: none.
      */
     MFF_TUN_GBP_FLAGS,
+
+    /* "tun_erspan_idx".
+     *
+     * ERSPAN index (direction/port number)
+     *
+     * Type: be32 (low 20 bits).
+     * Maskable: bitwise.
+     * Formatting: hexadecimal.
+     * Prerequisites: none.
+     * Access: read/write.
+     * NXM: none.
+     * OXM: NXOXM_ET_ERSPAN_IDX(11) since v2.10.
+     */
+    MFF_TUN_ERSPAN_IDX,
+
+    /* "tun_erspan_ver".
+     *
+     * ERSPAN version (v1 / v2)
+     *
+     * Type: u8 (low 4 bits).
+     * Maskable: bitwise.
+     * Formatting: decimal.
+     * Prerequisites: none.
+     * Access: read/write.
+     * NXM: none.
+     * OXM: NXOXM_ET_ERSPAN_VER(12) since v2.10.
+     */
+    MFF_TUN_ERSPAN_VER,
+
+    /* "tun_erspan_dir".
+     *
+     * ERSPAN mirrored traffic's direction
+     *
+     * Type: u8 (low 1 bits).
+     * Maskable: bitwise.
+     * Formatting: decimal.
+     * Prerequisites: none.
+     * Access: read/write.
+     * NXM: none.
+     * OXM: NXOXM_ET_ERSPAN_DIR(13) since v2.10.
+     */
+    MFF_TUN_ERSPAN_DIR,
+
+    /* "tun_erspan_hwid".
+     *
+     * ERSPAN Hardware ID
+     *
+     * Type: u8 (low 6 bits).
+     * Maskable: bitwise.
+     * Formatting: hexadecimal.
+     * Prerequisites: none.
+     * Access: read/write.
+     * NXM: none.
+     * OXM: NXOXM_ET_ERSPAN_HWID(14) since v2.10.
+     */
+    MFF_TUN_ERSPAN_HWID,
 
 #if TUN_METADATA_NUM_OPTS == 64
     /* "tun_metadata<N>".
@@ -1754,7 +1810,7 @@ enum OVS_PACKED_ENUM mf_field_id {
      * Prerequisites: NSH.
      * Access: read/write.
      * NXM: none.
-     * OXM: NXOXM_NSH_FLAGS(1) since OF1.3 and v2.8.
+     * OXM: NXOXM_NSH_FLAGS(1) since v2.8.
      */
     MFF_NSH_FLAGS,
 
@@ -1768,7 +1824,7 @@ enum OVS_PACKED_ENUM mf_field_id {
      * Prerequisites: NSH.
      * Access: read-only.
      * NXM: none.
-     * OXM: NXOXM_NSH_MDTYPE(2) since OF1.3 and v2.8.
+     * OXM: NXOXM_NSH_MDTYPE(2) since v2.8.
      */
     MFF_NSH_MDTYPE,
 
@@ -1782,7 +1838,7 @@ enum OVS_PACKED_ENUM mf_field_id {
      * Prerequisites: NSH.
      * Access: read-only.
      * NXM: none.
-     * OXM: NXOXM_NSH_NP(3) since OF1.3 and v2.8.
+     * OXM: NXOXM_NSH_NP(3) since v2.8.
      */
     MFF_NSH_NP,
 
@@ -1796,7 +1852,7 @@ enum OVS_PACKED_ENUM mf_field_id {
      * Prerequisites: NSH.
      * Access: read/write.
      * NXM: none.
-     * OXM: NXOXM_NSH_SPI(4) since OF1.3 and v2.8.
+     * OXM: NXOXM_NSH_SPI(4) since v2.8.
      */
     MFF_NSH_SPI,
 
@@ -1810,7 +1866,7 @@ enum OVS_PACKED_ENUM mf_field_id {
      * Prerequisites: NSH.
      * Access: read/write.
      * NXM: none.
-     * OXM: NXOXM_NSH_SI(5) since OF1.3 and v2.8.
+     * OXM: NXOXM_NSH_SI(5) since v2.8.
      */
     MFF_NSH_SI,
 
@@ -1824,10 +1880,10 @@ enum OVS_PACKED_ENUM mf_field_id {
      * Prerequisites: NSH.
      * Access: read/write.
      * NXM: none.
-     * OXM: NXOXM_NSH_C1(6) since OF1.3 and v2.8.        <1>
-     * OXM: NXOXM_NSH_C2(7) since OF1.3 and v2.8.        <2>
-     * OXM: NXOXM_NSH_C3(8) since OF1.3 and v2.8.        <3>
-     * OXM: NXOXM_NSH_C4(9) since OF1.3 and v2.8.        <4>
+     * OXM: NXOXM_NSH_C1(6) since v2.8.        <1>
+     * OXM: NXOXM_NSH_C2(7) since v2.8.        <2>
+     * OXM: NXOXM_NSH_C3(8) since v2.8.        <3>
+     * OXM: NXOXM_NSH_C4(9) since v2.8.        <4>
      */
     MFF_NSH_C1,
     MFF_NSH_C2,
@@ -1844,7 +1900,7 @@ enum OVS_PACKED_ENUM mf_field_id {
      * Prerequisites: NSH.
      * Access: read/write.
      * NXM: none.
-     * OXM: NXOXM_NSH_TTL(10) since OF1.3 and v2.9.
+     * OXM: NXOXM_NSH_TTL(10) since v2.9.
      */
     MFF_NSH_TTL,
 

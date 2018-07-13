@@ -139,11 +139,11 @@ vconn_usage(bool active, bool passive, bool bootstrap OVS_UNUSED)
     printf("\n");
     if (active) {
         printf("Active OpenFlow connection methods:\n");
-        printf("  tcp:IP[:PORT]           "
-               "PORT (default: %d) at remote IP\n", OFP_PORT);
+        printf("  tcp:HOST[:PORT]         "
+               "PORT (default: %d) at remote HOST\n", OFP_PORT);
 #ifdef HAVE_OPENSSL
-        printf("  ssl:IP[:PORT]           "
-               "SSL PORT (default: %d) at remote IP\n", OFP_PORT);
+        printf("  ssl:HOST[:PORT]         "
+               "SSL PORT (default: %d) at remote HOST\n", OFP_PORT);
 #endif
         printf("  unix:FILE               Unix domain socket named FILE\n");
     }
@@ -584,6 +584,7 @@ vconn_connect(struct vconn *vconn)
             break;
 
         case VCS_DISCONNECTED:
+            ovs_assert(vconn->error != 0);
             return vconn->error;
 
         default:
@@ -1421,10 +1422,6 @@ pvconn_close(struct pvconn *pvconn)
 /* Tries to accept a new connection on 'pvconn'.  If successful, stores the new
  * connection in '*new_vconn' and returns 0.  Otherwise, returns a positive
  * errno value.
- *
- * The new vconn will automatically negotiate an OpenFlow protocol version
- * acceptable to both peers on the connection.  The version negotiated will be
- * no lower than 'min_version' and no higher than 'max_version'.
  *
  * pvconn_accept() will not block waiting for a connection.  If no connection
  * is ready to be accepted, it returns EAGAIN immediately. */

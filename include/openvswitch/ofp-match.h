@@ -24,16 +24,12 @@
 struct vl_mff_map;
 struct flow_wildcards;
 struct match;
+struct ofputil_port_map;
 struct tun_table;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* Converting OFPFW10_NW_SRC_MASK and OFPFW10_NW_DST_MASK wildcard bit counts
- * to and from IP bitmasks. */
-ovs_be32 ofputil_wcbits_to_netmask(int wcbits);
-int ofputil_netmask_to_wcbits(ovs_be32 netmask);
 
 /* Work with ofp10_match. */
 void ofputil_wildcard_from_ofpfw10(uint32_t ofpfw, struct flow_wildcards *);
@@ -42,6 +38,10 @@ void ofputil_match_from_ofp10_match(const struct ofp10_match *,
 void ofputil_normalize_match(struct match *);
 void ofputil_normalize_match_quiet(struct match *);
 void ofputil_match_to_ofp10_match(const struct match *, struct ofp10_match *);
+void ofp10_match_print(struct ds *, const struct ofp10_match *,
+                       const struct ofputil_port_map *, int verbosity);
+char *ofp10_match_to_string(const struct ofp10_match *,
+                            const struct ofputil_port_map *, int verbosity);
 
 /* Work with ofp11_match. */
 enum ofperr ofputil_pull_ofp11_match(struct ofpbuf *, const struct tun_table *,
@@ -79,9 +79,12 @@ struct ofputil_tlv_table_reply {
 };
 
 struct ofpbuf *ofputil_encode_tlv_table_mod(enum ofp_version ofp_version,
-                                               struct ofputil_tlv_table_mod *);
-enum ofperr ofputil_decode_tlv_table_mod(const struct ofp_header *,
                                             struct ofputil_tlv_table_mod *);
+enum ofperr ofputil_decode_tlv_table_mod(const struct ofp_header *,
+                                         struct ofputil_tlv_table_mod *);
+void ofputil_format_tlv_table_mod(struct ds *,
+                                  const struct ofputil_tlv_table_mod *);
+
 struct ofpbuf *ofputil_encode_tlv_table_reply(
     const struct ofp_header *, struct ofputil_tlv_table_reply *);
 enum ofperr ofputil_decode_tlv_table_reply(
@@ -90,6 +93,8 @@ char *parse_ofp_tlv_table_mod_str(struct ofputil_tlv_table_mod *,
                                      uint16_t command, const char *string,
                                      enum ofputil_protocol *usable_protocols)
     OVS_WARN_UNUSED_RESULT;
+void ofputil_format_tlv_table_reply(struct ds *,
+                                    const struct ofputil_tlv_table_reply *);
 
 void ofputil_uninit_tlv_table(struct ovs_list *mappings);
 

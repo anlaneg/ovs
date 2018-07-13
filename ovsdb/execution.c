@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+/* Copyright (c) 2009, 2010, 2011, 2012, 2013, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
 
 #include <config.h>
 
+#include "ovsdb.h"
+
 #include <limits.h>
 
 #include "column.h"
@@ -25,7 +27,6 @@
 #include "ovsdb-data.h"
 #include "ovsdb-error.h"
 #include "ovsdb-parser.h"
-#include "ovsdb.h"
 #include "query.h"
 #include "rbac.h"
 #include "row.h"
@@ -99,11 +100,20 @@ lookup_executor(const char *name, bool *read_only)
     return NULL;
 }
 
-struct json *
-ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
-              const struct json *params, bool read_only,
-              const char *role, const char *id,
-              long long int elapsed_msec, long long int *timeout_msec)
+/* On success, returns a transaction and stores the results to return to the
+ * client in '*resultsp'.
+ *
+ * On failure, returns NULL.  If '*resultsp' is nonnull, then it is the results
+ * to return to the client.  If '*resultsp' is null, then the execution failed
+ * due to an unsatisfied "wait" operation and '*timeout_msec' is the time at
+ * which the transaction will time out.  (If 'timeout_msec' is null, this case
+ * never occurs--instead, an unsatisfied "wait" unconditionally fails.) */
+struct ovsdb_txn *
+ovsdb_execute_compose(struct ovsdb *db, const struct ovsdb_session *session,
+                      const struct json *params, bool read_only,
+                      const char *role, const char *id,
+                      long long int elapsed_msec, long long int *timeout_msec,
+                      bool *durable, struct json **resultsp)
 {
     struct ovsdb_execution x;
     struct ovsdb_error *error;
@@ -111,11 +121,12 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
     size_t n_operations;
     size_t i;
 
+    *durable = false;
     //必须是数组类型，且需要有数据，第一个成员必须为字符串，且为数据库名称
     if (params->type != JSON_ARRAY
-        || !params->u.array.n
-        || params->u.array.elems[0]->type != JSON_STRING
-        || strcmp(params->u.array.elems[0]->u.string, db->schema->name)) {
+        || !params->array.n
+        || params->array.elems[0]->type != JSON_STRING
+        || strcmp(params->array.elems[0]->string, db->schema->name)) {
         if (params->type != JSON_ARRAY) {
             error = ovsdb_syntax_error(params, NULL, "array expected");
         } else {
@@ -123,7 +134,8 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
                                        "as first parameter");
         }
 
-        return ovsdb_error_to_json_free(error);
+        *resultsp = ovsdb_error_to_json_free(error);
+        return NULL;
     }
 
     x.db = db;
@@ -138,11 +150,11 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
     results = NULL;
 
     results = json_array_create_empty();
-    n_operations = params->u.array.n - 1;
+    n_operations = params->array.n - 1;
     error = NULL;
     //逐个处理这一事务中的所有操作
     for (i = 1; i <= n_operations; i++) {
-        struct json *operation = params->u.array.elems[i];
+        struct json *operation = params->array.elems[i];
         struct ovsdb_error *parse_error;
         struct ovsdb_parser parser;
         struct json *result;
@@ -202,44 +214,56 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
         }
         if (error) {
             json_destroy(result);
-            result = ovsdb_error_to_json(error);
-        }
-        if (error && !strcmp(ovsdb_error_get_tag(error), "not supported")
-            && timeout_msec) {
-            ovsdb_txn_abort(x.txn);
-            *timeout_msec = x.timeout_msec;
-
-            json_destroy(result);
-            json_destroy(results);
-            results = NULL;
-            goto exit;
-        }
-
-        /* Add result to array. */
-        json_array_add(results, result);
-        if (error) {
+            json_array_add(results, ovsdb_error_to_json(error));
+            if (!strcmp(ovsdb_error_get_tag(error), "not supported")
+                && timeout_msec) {
+                *timeout_msec = x.timeout_msec;
+                json_destroy(results);
+                results = NULL;
+                goto exit;
+            }
             break;
         }
+        json_array_add(results, result);
     }
-
-    if (!error) {
-    	//用户主动调用commit命令时x.durable为True
-        error = ovsdb_txn_commit(x.txn, x.durable);
-        if (error) {
-            json_array_add(results, ovsdb_error_to_json(error));
-        }
-    } else {
-        ovsdb_txn_abort(x.txn);
-    }
-
     while (json_array(results)->n < n_operations) {
         json_array_add(results, json_null_create());
     }
 
 exit:
-    ovsdb_error_destroy(error);
+    if (error) {
+        ovsdb_txn_abort(x.txn);
+        x.txn = NULL;
+
+        ovsdb_error_destroy(error);
+    }
+    *resultsp = results;
+    *durable = x.durable;
     ovsdb_symbol_table_destroy(x.symtab);
 
+    return x.txn;
+}
+
+struct json *
+ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
+              const struct json *params, bool read_only,
+              const char *role, const char *id,
+              long long int elapsed_msec, long long int *timeout_msec)
+{
+    bool durable;
+    struct json *results;
+    struct ovsdb_txn *txn = ovsdb_execute_compose(
+        db, session, params, read_only, role, id, elapsed_msec, timeout_msec,
+        &durable, &results);
+    if (!txn) {
+        return results;
+    }
+
+    struct ovsdb_error *error = ovsdb_txn_propose_commit_block(txn, durable);
+    if (error) {
+        json_array_add(results, ovsdb_error_to_json(error));
+        ovsdb_error_destroy(error);
+    }
     return results;
 }
 
@@ -771,13 +795,13 @@ ovsdb_execute_wait(struct ovsdb_execution *x, struct ovsdb_parser *parser,
     if (!error) {
         /* Parse "rows" into 'expected'. */
         ovsdb_row_hash_init(&expected, &columns);
-        for (i = 0; i < rows->u.array.n; i++) {
+        for (i = 0; i < rows->array.n; i++) {
             struct ovsdb_row *row;
 
             //依据table创建行
             row = ovsdb_row_create(table);
             //解析行数据
-            error = ovsdb_row_from_json(row, rows->u.array.elems[i], x->symtab,
+            error = ovsdb_row_from_json(row, rows->array.elems[i], x->symtab,
                                         NULL);
             if (error) {
                 ovsdb_row_destroy(row);

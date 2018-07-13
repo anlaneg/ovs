@@ -238,6 +238,9 @@ enum ovs_vport_type {
 	OVS_VPORT_TYPE_GENEVE,	 /* Geneve tunnel. */
 	OVS_VPORT_TYPE_LISP = 105,  /* LISP tunnel */
 	OVS_VPORT_TYPE_STT = 106, /* STT tunnel */
+	OVS_VPORT_TYPE_ERSPAN = 107, /* ERSPAN tunnel. */
+	OVS_VPORT_TYPE_IP6ERSPAN = 108, /* ERSPAN tunnel. */
+	OVS_VPORT_TYPE_IP6GRE = 109,
 	__OVS_VPORT_TYPE_MAX
 };
 
@@ -395,6 +398,7 @@ enum ovs_tunnel_key_attr {
 	OVS_TUNNEL_KEY_ATTR_IPV6_SRC,		/* struct in6_addr src IPv6 address. */
 	OVS_TUNNEL_KEY_ATTR_IPV6_DST,		/* struct in6_addr dst IPv6 address. */
 	OVS_TUNNEL_KEY_ATTR_PAD,
+	OVS_TUNNEL_KEY_ATTR_ERSPAN_OPTS,	/* struct erspan_metadata */
 	__OVS_TUNNEL_KEY_ATTR_MAX
 };
 
@@ -720,6 +724,10 @@ struct ovs_action_push_vlan {
  */
 enum ovs_hash_alg {
 	OVS_HASH_ALG_L4,
+#ifndef __KERNEL__
+	OVS_HASH_ALG_SYM_L4,
+#endif
+	__OVS_HASH_MAX
 };
 
 /*
@@ -926,12 +934,12 @@ enum ovs_action_attr {//action类型
 	OVS_ACTION_ATTR_CT_CLEAR,     /* No argument. */
 	OVS_ACTION_ATTR_PUSH_NSH,     /* Nested OVS_NSH_KEY_ATTR_*. */
 	OVS_ACTION_ATTR_POP_NSH,      /* No argument. */
+	OVS_ACTION_ATTR_METER,         /* u32 meter number. */
 
 #ifndef __KERNEL__
 	OVS_ACTION_ATTR_TUNNEL_PUSH,   /* struct ovs_action_push_tnl*/ //隧道口添加
 	OVS_ACTION_ATTR_TUNNEL_POP,    /* u32 port number. */ //隧道口移除
 	OVS_ACTION_ATTR_CLONE,         /* Nested OVS_CLONE_ATTR_*.  */
-	OVS_ACTION_ATTR_METER,         /* u32 meter number. */
 #endif
 	__OVS_ACTION_ATTR_MAX,	      /* Nothing past this will be accepted
 				       * from userspace. */

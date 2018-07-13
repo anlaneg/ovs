@@ -39,7 +39,7 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
  * ..., 32 and higher wildcard the entire field.  This is the *opposite* of the
  * usual convention where e.g. /24 indicates that 8 bits (not 24 bits) are
  * wildcarded. */
-ovs_be32
+static ovs_be32
 ofputil_wcbits_to_netmask(int wcbits)
 {
     wcbits &= 0x3f;
@@ -52,7 +52,7 @@ ofputil_wcbits_to_netmask(int wcbits)
  *
  * If 'netmask' is not a CIDR netmask (see ip_is_cidr()), the return value will
  * still be in the valid range but isn't otherwise meaningful. */
-int
+static int
 ofputil_netmask_to_wcbits(ovs_be32 netmask)
 {
     return 32 - ip_count_cidr_bits(netmask);
@@ -65,7 +65,7 @@ ofputil_netmask_to_wcbits(ovs_be32 netmask)
 void
 ofputil_wildcard_from_ofpfw10(uint32_t ofpfw, struct flow_wildcards *wc)
 {
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 40);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
 
     /* Initialize most of wc. */
     flow_wildcards_init_catchall(wc);
@@ -724,6 +724,46 @@ ofputil_decode_tlv_table_mod(const struct ofp_header *oh,
                                         &ttm->mappings);
 }
 
+static void
+print_tlv_table(struct ds *s, const struct ovs_list *mappings)
+{
+    struct ofputil_tlv_map *map;
+
+    ds_put_cstr(s, " mapping table:\n");
+    ds_put_cstr(s, "  class  type  length  match field\n");
+    ds_put_cstr(s, " ------  ----  ------  --------------");
+
+    LIST_FOR_EACH (map, list_node, mappings) {
+        ds_put_format(s, "\n %#6"PRIx16"  %#4"PRIx8"  %6"PRIu8"  "
+                      "tun_metadata%"PRIu16,
+                      map->option_class, map->option_type, map->option_len,
+                      map->index);
+    }
+}
+
+void
+ofputil_format_tlv_table_mod(struct ds *s,
+                             const struct ofputil_tlv_table_mod *ttm)
+{
+    ds_put_cstr(s, "\n ");
+
+    switch (ttm->command) {
+    case NXTTMC_ADD:
+        ds_put_cstr(s, "ADD");
+        break;
+    case NXTTMC_DELETE:
+        ds_put_cstr(s, "DEL");
+        break;
+    case NXTTMC_CLEAR:
+        ds_put_cstr(s, "CLEAR");
+        break;
+    }
+
+    if (ttm->command != NXTTMC_CLEAR) {
+        print_tlv_table(s, &ttm->mappings);
+    }
+}
+
 struct ofpbuf *
 ofputil_encode_tlv_table_reply(const struct ofp_header *oh,
                                   struct ofputil_tlv_table_reply *ttr)
@@ -793,6 +833,25 @@ parse_ofp_tlv_table_mod_str(struct ofputil_tlv_table_mod *ttm,
     }
 
     return NULL;
+}
+
+void
+ofputil_format_tlv_table_reply(struct ds *s,
+                               const struct ofputil_tlv_table_reply *ttr)
+{
+    ds_put_char(s, '\n');
+
+    const struct ofputil_tlv_map *map;
+    int allocated_space = 0;
+    LIST_FOR_EACH (map, list_node, &ttr->mappings) {
+        allocated_space += map->option_len;
+    }
+
+    ds_put_format(s, " max option space=%"PRIu32" max fields=%"PRIu16"\n",
+                  ttr->max_option_space, ttr->max_fields);
+    ds_put_format(s, " allocated option space=%d\n", allocated_space);
+    ds_put_char(s, '\n');
+    print_tlv_table(s, &ttr->mappings);
 }
 
 void
@@ -953,3 +1012,157 @@ ofputil_normalize_match_quiet(struct match *match)
 {
     ofputil_normalize_match__(match, false);
 }
+
+static void OVS_PRINTF_FORMAT(5, 6)
+print_wild(struct ds *string, const char *leader, int is_wild,
+           int verbosity, const char *format, ...)
+{
+    if (is_wild && verbosity < 2) {
+        return;
+    }
+    ds_put_cstr(string, leader);
+    if (!is_wild) {
+        va_list args;
+
+        va_start(args, format);
+        ds_put_format_valist(string, format, args);
+        va_end(args);
+    } else {
+        ds_put_char(string, '*');
+    }
+    ds_put_char(string, ',');
+}
+
+static void
+print_wild_port(struct ds *string, const char *leader, int is_wild,
+                int verbosity, ofp_port_t port,
+                const struct ofputil_port_map *port_map)
+{
+    if (is_wild && verbosity < 2) {
+        return;
+    }
+    ds_put_cstr(string, leader);
+    if (!is_wild) {
+        ofputil_format_port(port, port_map, string);
+    } else {
+        ds_put_char(string, '*');
+    }
+    ds_put_char(string, ',');
+}
+
+static void
+print_ip_netmask(struct ds *string, const char *leader, ovs_be32 ip,
+                 uint32_t wild_bits, int verbosity)
+{
+    if (wild_bits >= 32 && verbosity < 2) {
+        return;
+    }
+    ds_put_cstr(string, leader);
+    if (wild_bits < 32) {
+        ds_put_format(string, IP_FMT, IP_ARGS(ip));
+        if (wild_bits) {
+            ds_put_format(string, "/%d", 32 - wild_bits);
+        }
+    } else {
+        ds_put_char(string, '*');
+    }
+    ds_put_char(string, ',');
+}
+
+void
+ofp10_match_print(struct ds *f, const struct ofp10_match *om,
+                  const struct ofputil_port_map *port_map, int verbosity)
+{
+    char *s = ofp10_match_to_string(om, port_map, verbosity);
+    ds_put_cstr(f, s);
+    free(s);
+}
+
+char *
+ofp10_match_to_string(const struct ofp10_match *om,
+                      const struct ofputil_port_map *port_map, int verbosity)
+{
+    struct ds f = DS_EMPTY_INITIALIZER;
+    uint32_t w = ntohl(om->wildcards);
+    bool skip_type = false;
+    bool skip_proto = false;
+
+    if (!(w & OFPFW10_DL_TYPE)) {
+        skip_type = true;
+        if (om->dl_type == htons(ETH_TYPE_IP)) {
+            if (!(w & OFPFW10_NW_PROTO)) {
+                skip_proto = true;
+                if (om->nw_proto == IPPROTO_ICMP) {
+                    ds_put_cstr(&f, "icmp,");
+                } else if (om->nw_proto == IPPROTO_TCP) {
+                    ds_put_cstr(&f, "tcp,");
+                } else if (om->nw_proto == IPPROTO_UDP) {
+                    ds_put_cstr(&f, "udp,");
+                } else if (om->nw_proto == IPPROTO_SCTP) {
+                    ds_put_cstr(&f, "sctp,");
+                } else {
+                    ds_put_cstr(&f, "ip,");
+                    skip_proto = false;
+                }
+            } else {
+                ds_put_cstr(&f, "ip,");
+            }
+        } else if (om->dl_type == htons(ETH_TYPE_ARP)) {
+            ds_put_cstr(&f, "arp,");
+        } else if (om->dl_type == htons(ETH_TYPE_RARP)){
+            ds_put_cstr(&f, "rarp,");
+        } else if (om->dl_type == htons(ETH_TYPE_MPLS)) {
+            ds_put_cstr(&f, "mpls,");
+        } else if (om->dl_type == htons(ETH_TYPE_MPLS_MCAST)) {
+            ds_put_cstr(&f, "mplsm,");
+        } else {
+            skip_type = false;
+        }
+    }
+    print_wild_port(&f, "in_port=", w & OFPFW10_IN_PORT, verbosity,
+                    u16_to_ofp(ntohs(om->in_port)), port_map);
+    print_wild(&f, "dl_vlan=", w & OFPFW10_DL_VLAN, verbosity,
+               "%d", ntohs(om->dl_vlan));
+    print_wild(&f, "dl_vlan_pcp=", w & OFPFW10_DL_VLAN_PCP, verbosity,
+               "%d", om->dl_vlan_pcp);
+    print_wild(&f, "dl_src=", w & OFPFW10_DL_SRC, verbosity,
+               ETH_ADDR_FMT, ETH_ADDR_ARGS(om->dl_src));
+    print_wild(&f, "dl_dst=", w & OFPFW10_DL_DST, verbosity,
+               ETH_ADDR_FMT, ETH_ADDR_ARGS(om->dl_dst));
+    if (!skip_type) {
+        print_wild(&f, "dl_type=", w & OFPFW10_DL_TYPE, verbosity,
+                   "0x%04x", ntohs(om->dl_type));
+    }
+    print_ip_netmask(&f, "nw_src=", om->nw_src,
+                     (w & OFPFW10_NW_SRC_MASK) >> OFPFW10_NW_SRC_SHIFT,
+                     verbosity);
+    print_ip_netmask(&f, "nw_dst=", om->nw_dst,
+                     (w & OFPFW10_NW_DST_MASK) >> OFPFW10_NW_DST_SHIFT,
+                     verbosity);
+    if (!skip_proto) {
+        if (om->dl_type == htons(ETH_TYPE_ARP) ||
+            om->dl_type == htons(ETH_TYPE_RARP)) {
+            print_wild(&f, "arp_op=", w & OFPFW10_NW_PROTO, verbosity,
+                       "%u", om->nw_proto);
+        } else {
+            print_wild(&f, "nw_proto=", w & OFPFW10_NW_PROTO, verbosity,
+                       "%u", om->nw_proto);
+        }
+    }
+    print_wild(&f, "nw_tos=", w & OFPFW10_NW_TOS, verbosity,
+               "%u", om->nw_tos);
+    if (om->nw_proto == IPPROTO_ICMP) {
+        print_wild(&f, "icmp_type=", w & OFPFW10_ICMP_TYPE, verbosity,
+                   "%d", ntohs(om->tp_src));
+        print_wild(&f, "icmp_code=", w & OFPFW10_ICMP_CODE, verbosity,
+                   "%d", ntohs(om->tp_dst));
+    } else {
+        print_wild(&f, "tp_src=", w & OFPFW10_TP_SRC, verbosity,
+                   "%d", ntohs(om->tp_src));
+        print_wild(&f, "tp_dst=", w & OFPFW10_TP_DST, verbosity,
+                   "%d", ntohs(om->tp_dst));
+    }
+    ds_chomp(&f, ',');
+    return ds_cstr(&f);
+}
+

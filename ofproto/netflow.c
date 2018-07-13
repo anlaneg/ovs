@@ -363,7 +363,7 @@ netflow_set_options(struct netflow *nf,
 
     collectors_destroy(nf->collectors);
     //开启多个socket
-    collectors_create(&nf_options->collectors, 0, &nf->collectors);
+    collectors_create(&nf_options->collectors, -1, &nf->collectors);
 
     old_timeout = nf->active_timeout;
     if (nf_options->active_timeout >= 0) {

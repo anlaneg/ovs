@@ -22,6 +22,7 @@
 #include "lib/vswitch-idl.h"
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/vlog.h"
+#include "ovn/lib/chassis-index.h"
 #include "ovn/lib/ovn-sb-idl.h"
 #include "ovn-controller.h"
 #include "lib/util.h"
@@ -76,10 +77,13 @@ get_cms_options(const struct smap *ext_ids)
 /* Returns this chassis's Chassis record, if it is available and is currently
  * amenable to a transaction. */
 const struct sbrec_chassis *
-chassis_run(struct controller_ctx *ctx, const char *chassis_id,
+chassis_run(struct ovsdb_idl_txn *ovnsb_idl_txn,
+            struct ovsdb_idl_index *sbrec_chassis_by_name,
+            const struct ovsrec_open_vswitch_table *ovs_table,
+            const char *chassis_id,
             const struct ovsrec_bridge *br_int)
 {
-    if (!ctx->ovnsb_idl_txn) {
+    if (!ovnsb_idl_txn) {
         return NULL;//无南向连接，不处理
     }
 
@@ -88,7 +92,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
     static bool inited = false;
 
     //查本机配置
-    cfg = ovsrec_open_vswitch_first(ctx->ovs_idl);
+    cfg = ovsrec_open_vswitch_table_first(ovs_table);
     if (!cfg) {
         VLOG_INFO("No Open_vSwitch row defined.");
         return NULL;
@@ -148,8 +152,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
 
     //向sb库检查是否包含本chassis的配置
     const struct sbrec_chassis *chassis_rec
-        = get_chassis(ctx->ovnsb_idl, chassis_id);
-
+        = chassis_lookup_by_name(sbrec_chassis_by_name, chassis_id);
     //ovn-encap-csum用于指出是否将encap的checksum下沉到网卡来做（true为不下沉，false为下沉）
     const char *encap_csum = smap_get_def(&cfg->external_ids,
                                           "ovn-encap-csum", "true");
@@ -227,7 +230,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
     }
 
     //向南向库中注册本chassis
-    ovsdb_idl_txn_add_comment(ctx->ovnsb_idl_txn,
+    ovsdb_idl_txn_add_comment(ovnsb_idl_txn,
                               "ovn-controller: registering chassis '%s'",
                               chassis_id);
 
@@ -237,7 +240,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
         smap_add(&ext_ids, "ovn-bridge-mappings", bridge_mappings);
         smap_add(&ext_ids, "datapath-type", datapath_type);
         smap_add(&ext_ids, "iface-types", iface_types_str);
-        chassis_rec = sbrec_chassis_insert(ctx->ovnsb_idl_txn);//向南向库中加入chassis_rec(相当于注册agent)
+        chassis_rec = sbrec_chassis_insert(ovnsb_idl_txn);//向南向库中加入chassis_rec(相当于注册agent)
         sbrec_chassis_set_name(chassis_rec, chassis_id);
         sbrec_chassis_set_hostname(chassis_rec, hostname);
         sbrec_chassis_set_external_ids(chassis_rec, &ext_ids);
@@ -251,7 +254,7 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
     for (int i = 0; i < n_encaps; i++) {
         const char *type = pop_tunnel_name(&req_tunnels);
 
-        encaps[i] = sbrec_encap_insert(ctx->ovnsb_idl_txn);
+        encaps[i] = sbrec_encap_insert(ovnsb_idl_txn);
 
         sbrec_encap_set_type(encaps[i], type);//不同的封装
         sbrec_encap_set_ip(encaps[i], encap_ip);
@@ -268,14 +271,14 @@ chassis_run(struct controller_ctx *ctx, const char *chassis_id,
 /* Returns true if the database is all cleaned up, false if more work is
  * required. */
 bool
-chassis_cleanup(struct controller_ctx *ctx,
+chassis_cleanup(struct ovsdb_idl_txn *ovnsb_idl_txn,
                 const struct sbrec_chassis *chassis_rec)
 {
     if (!chassis_rec) {
         return true;
     }
-    if (ctx->ovnsb_idl_txn) {
-        ovsdb_idl_txn_add_comment(ctx->ovnsb_idl_txn,
+    if (ovnsb_idl_txn) {
+        ovsdb_idl_txn_add_comment(ovnsb_idl_txn,
                                   "ovn-controller: unregistering chassis '%s'",
                                   chassis_rec->name);
         sbrec_chassis_delete(chassis_rec);

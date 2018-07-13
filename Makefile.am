@@ -72,6 +72,7 @@ PYCOV_CLEAN_FILES = build-aux/check-structs,cover
 EXTRA_DIST = \
 	AUTHORS.rst \
 	CONTRIBUTING.rst \
+	LICENSE \
 	MAINTAINERS.rst \
 	README.rst \
 	NOTICE \
@@ -82,16 +83,9 @@ EXTRA_DIST = \
 	.travis/osx-prepare.sh \
 	appveyor.yml \
 	boot.sh \
-	build-aux/cccl \
-	build-aux/cksum-schema-check \
-	build-aux/calculate-schema-cksum \
-	build-aux/dist-docs \
-	build-aux/dpdkstrip.py \
-	build-aux/sodepends.py \
-	build-aux/soexpand.py \
-	build-aux/xml2nroff \
 	poc/builders/Vagrantfile \
 	poc/playbook-centos-builder.yml \
+	poc/playbook-fedora-builder.yml \
 	poc/playbook-ubuntu-builder.yml \
 	$(MAN_FRAGMENTS) \
 	$(MAN_ROOTS) \
@@ -319,6 +313,21 @@ check-echo-n:
 	  exit 1; \
 	fi
 .PHONY: check-echo-n
+
+ALL_LOCAL += check-tabs
+check-tabs:
+	@cd $(srcdir); \
+	if test -e .git && (git --version) >/dev/null 2>&1 && \
+	  grep -ln "^	" \
+	    `git ls-files \
+	      | grep -v -f build-aux/initial-tab-whitelist` /dev/null \
+	      | $(EGREP) -v ':[ 	]*/?\*'; \
+	then \
+	  echo "See above for files that use tabs for indentation."; \
+	  echo "Please use spaces instead."; \
+	  exit 1; \
+	fi
+.PHONY: check-tabs
 
 ALL_LOCAL += thread-safety-check
 thread-safety-check:

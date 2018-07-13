@@ -234,7 +234,8 @@ add_prerequisite(struct action_context *ctx, const char *prerequisite)
     struct expr *expr;
     char *error;
 
-    expr = expr_parse_string(prerequisite, ctx->pp->symtab, NULL, &error);
+    expr = expr_parse_string(prerequisite, ctx->pp->symtab, NULL, NULL,
+                             &error);
     ovs_assert(!error);
     ctx->prereqs = expr_combine(EXPR_T_AND, ctx->prereqs, expr);
 }
@@ -842,17 +843,6 @@ encode_ct_nat(const struct ovnact_ct_nat *cn,
     ct = ofpacts->header;
     if (cn->ip) {
         ct->flags |= NX_CT_F_COMMIT;
-    } else if (snat && ep->is_gateway_router) {
-        /* For performance reasons, we try to prevent additional
-         * recirculations.  ct_snat which is used in a gateway router
-         * does not need a recirculation.  ct_snat(IP) does need a
-         * recirculation.  ct_snat in a distributed router needs
-         * recirculation regardless of whether an IP address is
-         * specified.
-         * XXX Should we consider a method to let the actions specify
-         * whether an action needs recirculation if there are more use
-         * cases?. */
-        ct->recirc_table = NX_CT_RECIRC_NONE;
     }
     ofpact_finish(ofpacts, &ct->ofpact);
     ofpbuf_push_uninit(ofpacts, ct_offset);
@@ -1158,9 +1148,27 @@ parse_ICMP4(struct action_context *ctx)
 }
 
 static void
+parse_ICMP6(struct action_context *ctx)
+{
+    parse_nested_action(ctx, OVNACT_ICMP6, "ip6");
+}
+
+static void
+parse_TCP_RESET(struct action_context *ctx)
+{
+    parse_nested_action(ctx, OVNACT_TCP_RESET, "tcp");
+}
+
+static void
 parse_ND_NA(struct action_context *ctx)
 {
     parse_nested_action(ctx, OVNACT_ND_NA, "nd_ns");
+}
+
+static void
+parse_ND_NA_ROUTER(struct action_context *ctx)
+{
+    parse_nested_action(ctx, OVNACT_ND_NA_ROUTER, "nd_ns");
 }
 
 static void
@@ -1197,9 +1205,27 @@ format_ICMP4(const struct ovnact_nest *nest, struct ds *s)
 }
 
 static void
+format_ICMP6(const struct ovnact_nest *nest, struct ds *s)
+{
+    format_nested_action(nest, "icmp6", s);
+}
+
+static void
+format_TCP_RESET(const struct ovnact_nest *nest, struct ds *s)
+{
+    format_nested_action(nest, "tcp_reset", s);
+}
+
+static void
 format_ND_NA(const struct ovnact_nest *nest, struct ds *s)
 {
     format_nested_action(nest, "nd_na", s);
+}
+
+static void
+format_ND_NA_ROUTER(const struct ovnact_nest *nest, struct ds *s)
+{
+    format_nested_action(nest, "nd_na_router", s);
 }
 
 static void
@@ -1251,7 +1277,23 @@ encode_ICMP4(const struct ovnact_nest *on,
              const struct ovnact_encode_params *ep,
              struct ofpbuf *ofpacts)
 {
-    encode_nested_actions(on, ep, ACTION_OPCODE_ICMP4, ofpacts);
+    encode_nested_actions(on, ep, ACTION_OPCODE_ICMP, ofpacts);
+}
+
+static void
+encode_ICMP6(const struct ovnact_nest *on,
+             const struct ovnact_encode_params *ep,
+             struct ofpbuf *ofpacts)
+{
+    encode_nested_actions(on, ep, ACTION_OPCODE_ICMP, ofpacts);
+}
+
+static void
+encode_TCP_RESET(const struct ovnact_nest *on,
+                 const struct ovnact_encode_params *ep,
+                 struct ofpbuf *ofpacts)
+{
+    encode_nested_actions(on, ep, ACTION_OPCODE_TCP_RESET, ofpacts);
 }
 
 static void
@@ -1260,6 +1302,14 @@ encode_ND_NA(const struct ovnact_nest *on,
              struct ofpbuf *ofpacts)
 {
     encode_nested_actions(on, ep, ACTION_OPCODE_ND_NA, ofpacts);
+}
+
+static void
+encode_ND_NA_ROUTER(const struct ovnact_nest *on,
+             const struct ovnact_encode_params *ep,
+             struct ofpbuf *ofpacts)
+{
+    encode_nested_actions(on, ep, ACTION_OPCODE_ND_NA_ROUTER, ofpacts);
 }
 
 static void
@@ -1627,7 +1677,7 @@ encode_put_dhcpv4_option(const struct ovnact_gen_option *o,
             if (c[i].masked) {
                 plen = (uint8_t) ip_count_cidr_bits(c[i].mask.ipv4);
             }
-            opt_header[1] += (1 + (plen / 8) + sizeof(ovs_be32)) ;
+            opt_header[1] += (1 + DIV_ROUND_UP(plen, 8) + sizeof(ovs_be32));
         }
 
         /* Copied from RFC 3442. Please refer to this RFC for the format of
@@ -1652,7 +1702,7 @@ encode_put_dhcpv4_option(const struct ovnact_gen_option *o,
                 plen = ip_count_cidr_bits(c[i].mask.ipv4);
             }
             ofpbuf_put(ofpacts, &plen, 1);
-            ofpbuf_put(ofpacts, &c[i].value.ipv4, plen / 8);
+            ofpbuf_put(ofpacts, &c[i].value.ipv4, DIV_ROUND_UP(plen, 8));
             ofpbuf_put(ofpacts, &c[i + 1].value.ipv4,
                        sizeof(ovs_be32));
         }
@@ -2280,8 +2330,14 @@ parse_action(struct action_context *ctx)
         parse_ARP(ctx);
     } else if (lexer_match_id(ctx->lexer, "icmp4")) {
         parse_ICMP4(ctx);
+    } else if (lexer_match_id(ctx->lexer, "icmp6")) {
+        parse_ICMP6(ctx);
+    } else if (lexer_match_id(ctx->lexer, "tcp_reset")) {
+        parse_TCP_RESET(ctx);
     } else if (lexer_match_id(ctx->lexer, "nd_na")) {
         parse_ND_NA(ctx);
+    } else if (lexer_match_id(ctx->lexer, "nd_na_router")) {
+        parse_ND_NA_ROUTER(ctx);
     } else if (lexer_match_id(ctx->lexer, "nd_ns")) {
         parse_ND_NS(ctx);
     } else if (lexer_match_id(ctx->lexer, "get_arp")) {

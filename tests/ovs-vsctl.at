@@ -487,6 +487,9 @@ AT_CHECK([RUN_OVS_VSCTL_TOGETHER(
   [get-controller br0],
 
   [set-controller br0 tcp:8.9.10.11 tcp:5.4.3.2],
+  [get-controller br0],
+
+  [--inactivity-probe=30000 set-controller br0 tcp:1.2.3.4],
   [get-controller br0])], [0], [
 
 
@@ -495,6 +498,8 @@ tcp:4.5.6.7
 
 
 tcp:5.4.3.2\ntcp:8.9.10.11
+
+tcp:1.2.3.4
 ])
 OVS_VSCTL_CLEANUP
 AT_CLEANUP
@@ -600,6 +605,23 @@ CHECK_PORTS([xapi1], [eth0.$1])
 CHECK_IFACES([xapi1], [eth0.$1])
 OVS_VSCTL_CLEANUP
 AT_CLEANUP
+
+AT_SETUP([simple fake bridge + del-port from parent (VLAN $1)])
+AT_KEYWORDS([ovs-vsctl fake-bridge del-port])
+OVS_VSCTL_SETUP
+OVS_VSCTL_SETUP_SIMPLE_FAKE_CONF([$1])
+AT_CHECK([RUN_OVS_VSCTL([del-port xenbr0 eth0.$1])], [1], [],
+ [ovs-vsctl: bridge xenbr0 does not have a port eth0.$1 (although its child bridge xapi1 does)
+])
+CHECK_PORTS([xenbr0], [eth0])
+CHECK_IFACES([xenbr0], [eth0])
+CHECK_PORTS([xapi1], [eth0.$1])
+CHECK_IFACES([xapi1], [eth0.$1])
+AT_CHECK([RUN_OVS_VSCTL([del-port xapi1 eth0.$1])])
+CHECK_PORTS([xenbr0], [eth0])
+CHECK_IFACES([xenbr0], [eth0])
+OVS_VSCTL_CLEANUP
+AT_CLEANUP
 ]) # OVS_VSCTL_FAKE_BRIDGE_TESTS
 
 OVS_VSCTL_FAKE_BRIDGE_TESTS([9])
@@ -660,6 +682,8 @@ AT_CHECK([RUN_OVS_VSCTL_TOGETHER(
   [get-manager],
   [set-manager tcp:8.9.10.11 tcp:5.4.3.2],
   [get-manager],
+  [--inactivity-probe=30000 set-manager tcp:1.2.3.4],
+  [get-manager],
   [del-manager],
   [get-manager])], [0], [
 
@@ -667,6 +691,8 @@ AT_CHECK([RUN_OVS_VSCTL_TOGETHER(
 tcp:4.5.6.7
 
 tcp:5.4.3.2\ntcp:8.9.10.11
+
+tcp:1.2.3.4
 
 
 ])

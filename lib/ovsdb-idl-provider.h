@@ -116,11 +116,11 @@ struct ovsdb_idl_table {
     unsigned char *modes;    /* OVSDB_IDL_* bitmasks, indexed by column. *///表模式
     bool need_table;         /* Monitor table even if no columns are selected
                               * for replication. */
-    struct shash columns;    /* Contains "const struct ovsdb_idl_column *"s. */ //按列名称索引列struct ovsdb_idl_column
-    struct hmap rows;        /* Contains "struct ovsdb_idl_row"s. */ //数据行hashtable（osdb_idl_row结构）
-    struct ovsdb_idl *idl;   /* Containing idl. */
+    struct shash columns;    /* Contains "const struct ovsdb_idl_column *"s. *///按列名称索引列struct ovsdb_idl_column
+    struct hmap rows;        /* Contains "struct ovsdb_idl_row"s. *///数据行hashtable（osdb_idl_row结构）
+    struct ovsdb_idl_db *db; /* Containing db. */
     unsigned int change_seqno[OVSDB_IDL_CHANGE_MAX];
-    struct shash indexes;    /* Contains "struct ovsdb_idl_index"s */
+    struct ovs_list indexes;    /* Contains "struct ovsdb_idl_index"s */
     struct ovs_list track_list; /* Tracked rows (ovsdb_idl_row.track_node). */
     //monitor条件
     struct ovsdb_idl_condition condition;
@@ -134,33 +134,6 @@ struct ovsdb_idl_class {
     size_t n_tables;//表数目
 };
 
-/*
- * Structure containing the per-column configuration of the index.
- */
-struct ovsdb_idl_index_column {
-    const struct ovsdb_idl_column *column; /* Column used for index key. */
-    column_comparator *comparer; /* Column comparison function. */
-    int sorting_order; /* Sorting order (ascending or descending). */
-};
-
-/*
- * Defines a IDL compound index
- */
-struct ovsdb_idl_index {
-    struct skiplist *skiplist;    /* Skiplist with pointers to rows. */
-    struct ovsdb_idl_index_column *columns; /* Columns configuration */
-    size_t n_columns;             /* Number of columns in index. */
-    size_t alloc_columns;         /* Size allocated memory for columns,
-                                     comparers and sorting order. */
-    bool ins_del;                 /* True if a row in the index is being
-                                     inserted or deleted; if true, the
-                                     search key is augmented with the
-                                     UUID and address in order to discriminate
-                                     between entries with identical keys. */
-    const struct ovsdb_idl_table *table; /* Table that owns this index */
-    const char *index_name;       /* The name of this index. */
-};
-
 struct ovsdb_idl_row *ovsdb_idl_get_row_arc(
     struct ovsdb_idl_row *src,
     const struct ovsdb_idl_table_class *dst_table,
@@ -170,6 +143,34 @@ void ovsdb_idl_txn_verify(const struct ovsdb_idl_row *,
                           const struct ovsdb_idl_column *);
 
 struct ovsdb_idl_txn *ovsdb_idl_txn_get(const struct ovsdb_idl_row *);
+
+/* Index internals. */
+
+struct ovsdb_idl_index {
+    struct ovs_list node;                   /* In ->table->indexes. */
+    struct ovsdb_idl_table *table;          /* The indexed table. */
+    struct ovsdb_idl_index_column *columns; /* The indexed columns. */
+    size_t n_columns;
+
+    /* Skiplist with pointers to rows. */
+    struct skiplist *skiplist;
+
+    /* True if a row in the index is being inserted or deleted.  If true, the
+       search key is augmented with the UUID and address to discriminate
+       between entries with identical keys. */
+    bool ins_del;
+};
+
+int ovsdb_idl_index_compare(struct ovsdb_idl_index *,
+                            const struct ovsdb_idl_row *a,
+                            const struct ovsdb_idl_row *b);
+
+void ovsdb_idl_index_write(struct ovsdb_idl_row *,
+                            const struct ovsdb_idl_column *,
+                            struct ovsdb_datum *,
+                            const struct ovsdb_idl_table_class *);
+struct ovsdb_idl_row *ovsdb_idl_index_init_row(struct ovsdb_idl_index *);
+void ovsdb_idl_index_destroy_row(const struct ovsdb_idl_row *);
 
 #ifdef __cplusplus
 }

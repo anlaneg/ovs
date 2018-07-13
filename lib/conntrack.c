@@ -129,7 +129,6 @@ extract_l3_ipv4(struct conn_key *key, const void *data, size_t size,
 static inline bool
 extract_l3_ipv6(struct conn_key *key, const void *data, size_t size,
                 const char **new_data);
-
 static struct alg_exp_node *
 expectation_lookup(struct hmap *alg_expectations, const struct conn_key *key,
                    uint32_t basis, bool src_ip_wc);
@@ -797,6 +796,7 @@ nat_clean(struct conntrack *ct, struct conn *conn,
     ct_lock_lock(&ct->buckets[bucket_rev_conn].lock);
     ct_rwlock_wrlock(&ct->resources_lock);
     //这个可以被优化掉，就像我之前做的一样，通过正向的conn可以计算出反向的conn时，则可以移除此次查询
+    long long now = time_msec();
     struct conn *rev_conn = conn_lookup(ct, &conn->rev_key, now);
     struct nat_conn_key_node *nat_conn_key_node =
         nat_conn_keys_lookup(&ct->nat_conn_keys, &conn->rev_key,
@@ -1212,8 +1212,11 @@ conn_update_state_alg(struct conntrack *ct, struct dp_packet *pkt,
         } else {
             *create_new_conn = conn_update_state(ct, pkt, ctx, &conn, now,
                                                 bucket);
-            handle_ftp_ctl(ct, ctx, pkt, conn, now, CT_FTP_CTL_OTHER,
-                           !!nat_action_info);
+
+            if (*create_new_conn == false) {
+                handle_ftp_ctl(ct, ctx, pkt, conn, now, CT_FTP_CTL_OTHER,
+                               !!nat_action_info);
+            }
         }
         return true;
     }
@@ -1314,9 +1317,10 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     }
 
     const struct alg_exp_node *alg_exp = NULL;
+    struct alg_exp_node alg_exp_entry;
+
     //如果需要创建新的connection
     if (OVS_UNLIKELY(create_new_conn)) {
-        struct alg_exp_node alg_exp_entry;
 
         ct_rwlock_rdlock(&ct->resources_lock);
         alg_exp = expectation_lookup(&ct->alg_expectations, &ctx->key,
@@ -1574,50 +1578,45 @@ clean_thread_main(void *f_)
     return NULL;
 }
 
-/* Key extraction */
-
-/* The function stores a pointer to the first byte after the header in
- * '*new_data', if 'new_data' is not NULL.  If it is NULL, the caller is
- * not interested in the header's tail,  meaning that the header has
- * already been parsed (e.g. by flow_extract): we take this as a hint to
- * save a few checks.  If 'validate_checksum' is true, the function returns
- * false if the IPv4 checksum is invalid. */
+/* 'Data' is a pointer to the beginning of the L3 header and 'new_data' is
+ * used to store a pointer to the first byte after the L3 header.  'Size' is
+ * the size of the packet beyond the data pointer. */
 static inline bool
 extract_l3_ipv4(struct conn_key *key, const void *data, size_t size,
                 const char **new_data, bool validate_checksum)
 {
-    if (new_data) {
-        if (OVS_UNLIKELY(size < IP_HEADER_LEN)) {
-            return false;
-        }
+    if (OVS_UNLIKELY(size < IP_HEADER_LEN)) {
+        return false;
     }
 
     const struct ip_header *ip = data;
     //ip长度
     size_t ip_len = IP_IHL(ip->ip_ihl_ver) * 4;
 
-    if (new_data) {
-    	    //检查长度
-        if (OVS_UNLIKELY(ip_len < IP_HEADER_LEN)) {
-            return false;
-        }
-        if (OVS_UNLIKELY(size < ip_len)) {
-            return false;
-        }
 
-        //注意，不支持分片返回false,遇分片报文，返回false
-        if (IP_IS_FRAGMENT(ip->ip_frag_off)) {
-    		//如果此代码被删除，需要考虑ovs是否可支持分片重组了？
-            return false;
-        }
+    //检查长度
+    if (OVS_UNLIKELY(ip_len < IP_HEADER_LEN)) {
+        return false;
+    }
 
-        //确定传输性首地址
-        *new_data = (char *) data + ip_len;
+    if (OVS_UNLIKELY(size < ip_len)) {
+        return false;
+    }
+
+    //注意，不支持分片返回false,遇分片报文，返回false
+    if (IP_IS_FRAGMENT(ip->ip_frag_off)) {
+    	//如果此代码被删除，需要考虑ovs是否可支持分片重组了？
+        return false;
     }
 
     //校验checksum
     if (validate_checksum && csum(data, ip_len) != 0) {
         return false;
+    }
+
+    if (new_data) {
+        //确定传输性首地址
+        *new_data = (char *) data + ip_len;
     }
 
     //解析地址，上层协议
@@ -1628,21 +1627,17 @@ extract_l3_ipv4(struct conn_key *key, const void *data, size_t size,
     return true;
 }
 
-/* The function stores a pointer to the first byte after the header in
- * '*new_data', if 'new_data' is not NULL.  If it is NULL, the caller is
- * not interested in the header's tail,  meaning that the header has
- * already been parsed (e.g. by flow_extract): we take this as a hint to
- * save a few checks. */
+/* 'Data' is a pointer to the beginning of the L3 header and 'new_data' is
+ * used to store a pointer to the first byte after the L3 header.  'Size' is
+ * the size of the packet beyond the data pointer. */
 static inline bool
 extract_l3_ipv6(struct conn_key *key, const void *data, size_t size,
                 const char **new_data)
 {
     const struct ovs_16aligned_ip6_hdr *ip6 = data;
 
-    if (new_data) {
-        if (OVS_UNLIKELY(size < sizeof *ip6)) {
-            return false;
-        }
+    if (OVS_UNLIKELY(size < sizeof *ip6)) {
+        return false;
     }
 
     data = ip6 + 1;
@@ -2200,8 +2195,6 @@ nat_ipv6_addr_increment(struct in6_addr *ipv6_aligned, uint32_t increment)
 
     memcpy(ipv6_hi, &addr6_64_hi, sizeof addr6_64_hi);
     memcpy(ipv6_lo, &addr6_64_lo, sizeof addr6_64_lo);
-
-    return;
 }
 
 static uint32_t
@@ -3415,7 +3408,6 @@ handle_ftp_ctl(struct conntrack *ct, const struct conn_lookup_ctx *ctx,
     uint8_t pad = dp_packet_l2_pad_size(pkt);
     th->tcp_csum = csum_finish(
         csum_continue(tcp_csum, th, tail - (char *) th - pad));
-    return;
 }
 
 static void
@@ -3429,5 +3421,4 @@ handle_tftp_ctl(struct conntrack *ct,
     expectation_create(ct, conn_for_expectation->key.src.port,
                        conn_for_expectation,
                        !!(pkt->md.ct_state & CS_REPLY_DIR), false, false);
-    return;
 }

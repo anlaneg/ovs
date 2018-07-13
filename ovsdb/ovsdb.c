@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+/* Copyright (c) 2009, 2010, 2011, 2012, 2013, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,20 @@
 #include "ovsdb.h"
 
 #include "column.h"
+#include "file.h"
+#include "monitor.h"
 #include "openvswitch/json.h"
 #include "ovsdb-error.h"
 #include "ovsdb-parser.h"
 #include "ovsdb-types.h"
 #include "simap.h"
+#include "storage.h"
 #include "table.h"
 #include "transaction.h"
+#include "trigger.h"
+
+#include "openvswitch/vlog.h"
+VLOG_DEFINE_THIS_MODULE(ovsdb);
 
 //创建模式对象（名称，版本，checksum)
 struct ovsdb_schema *
@@ -114,18 +121,18 @@ ovsdb_schema_check_ref_table(struct ovsdb_column *column,
     struct ovsdb_table_schema *refTable;
 
     //列必须是uuid类型，且列的refTableName被赋了值
-    if (base->type != OVSDB_TYPE_UUID || !base->u.uuid.refTableName) {
+    if (base->type != OVSDB_TYPE_UUID || !base->uuid.refTableName) {
         return NULL;
     }
 
     //检查refTableName指定的名称是否存在
-    refTable = shash_find_data(tables, base->u.uuid.refTableName);
+    refTable = shash_find_data(tables, base->uuid.refTableName);
     if (!refTable) {
     	//不存在，报错
         return ovsdb_syntax_error(NULL, NULL,
                                   "column %s %s refers to undefined table %s",
                                   column->name, base_name,
-                                  base->u.uuid.refTableName);
+                                  base->uuid.refTableName);
     }
 
     //没明白怎么回事，看起来和数据库时志恢复有关。
@@ -142,13 +149,27 @@ ovsdb_schema_check_ref_table(struct ovsdb_column *column,
     return NULL;
 }
 
+/* Attempts to parse 's' as a version string in the format "<x>.<y>.<z>".  If
+ * successful, stores each part of the version into 'version->x', 'version->y',
+ * and 'version->z', respectively, and returns true.  On failure, returns
+ * false. */
 //是否为类似1.2.3的格式
-static bool
-is_valid_version(const char *s)
+bool
+ovsdb_parse_version(const char *s, struct ovsdb_version *version)
 {
     int n = -1;
-    ignore(ovs_scan(s, "%*[0-9].%*[0-9].%*[0-9]%n", &n));
-    return n != -1 && s[n] == '\0';
+    return (ovs_scan(s, "%u.%u.%u%n", &version->x, &version->y, &version->z,
+                     &n)
+            && n != -1 && s[n] == '\0');
+}
+
+/* Returns true if 's' is a version string in the format "<x>.<y>.<z>",
+ * otherwie false. */
+bool
+ovsdb_is_valid_version(const char *s)
+{
+    struct ovsdb_version version;
+    return ovsdb_parse_version(s, &version);
 }
 
 /* Returns the number of tables in 'schema''s root set. */
@@ -168,7 +189,7 @@ root_set_size(const struct ovsdb_schema *schema)
 
 //通过json对象，构造数据库模式
 struct ovsdb_error *
-ovsdb_schema_from_json(struct json *json, struct ovsdb_schema **schemap)
+ovsdb_schema_from_json(const struct json *json, struct ovsdb_schema **schemap)
 {
     struct ovsdb_schema *schema;
     const struct json *name, *tables, *version_json, *cksum;
@@ -201,7 +222,8 @@ ovsdb_schema_from_json(struct json *json, struct ovsdb_schema **schemap)
     //版本号检查
     if (version_json) {
         version = json_string(version_json);
-        if (!is_valid_version(version)) {//无效的版本号
+	//无效的版本号
+        if (!ovsdb_is_valid_version(version)) {
             return ovsdb_syntax_error(json, NULL, "schema version \"%s\" not "
                                       "in format x.y.z", version);
         }
@@ -335,40 +357,11 @@ ovsdb_schema_equal(const struct ovsdb_schema *a,
 
     return equals;
 }
-
-static void
-ovsdb_set_ref_table(const struct shash *tables,
-                    struct ovsdb_base_type *base)
-{
-    if (base->type == OVSDB_TYPE_UUID && base->u.uuid.refTableName) {
-        struct ovsdb_table *table;
 
-        table = shash_find_data(tables, base->u.uuid.refTableName);
-        base->u.uuid.refTable = table;
-    }
-}
-
-//初始化ovsdb
-struct ovsdb *
-ovsdb_create(struct ovsdb_schema *schema)
+struct ovsdb_error * OVS_WARN_UNUSED_RESULT
+ovsdb_schema_check_for_ephemeral_columns(const struct ovsdb_schema *schema)
 {
     struct shash_node *node;
-    struct ovsdb *db;
-
-    db = xmalloc(sizeof *db);
-    db->schema = schema;
-    ovs_list_init(&db->replicas);
-    ovs_list_init(&db->triggers);
-    db->run_triggers = false;
-
-    shash_init(&db->tables);
-    SHASH_FOR_EACH (node, &schema->tables) {
-        struct ovsdb_table_schema *ts = node->data;
-        shash_add(&db->tables, node->name, ovsdb_table_create(ts));
-    }
-
-    /* Set all the refTables. */
-    //设置模式中的关联表
     SHASH_FOR_EACH (node, &schema->tables) {
         struct ovsdb_table_schema *table = node->data;
         struct shash_node *node2;
@@ -376,8 +369,102 @@ ovsdb_create(struct ovsdb_schema *schema)
         SHASH_FOR_EACH (node2, &table->columns) {
             struct ovsdb_column *column = node2->data;
 
-            ovsdb_set_ref_table(&db->tables, &column->type.key);
-            ovsdb_set_ref_table(&db->tables, &column->type.value);
+            if (column->index >= OVSDB_N_STD_COLUMNS && !column->persistent) {
+                return ovsdb_syntax_error(
+                    NULL, NULL, "Table %s column %s is ephemeral but "
+                    "clustered databases do not support ephemeral columns.",
+                    table->name, column->name);
+            }
+        }
+    }
+    return NULL;
+}
+
+void
+ovsdb_schema_persist_ephemeral_columns(struct ovsdb_schema *schema,
+                                       const char *filename)
+{
+    int n = 0;
+    const char *example_table = NULL;
+    const char *example_column = NULL;
+
+    struct shash_node *node;
+    SHASH_FOR_EACH (node, &schema->tables) {
+        struct ovsdb_table_schema *table = node->data;
+        struct shash_node *node2;
+
+        SHASH_FOR_EACH (node2, &table->columns) {
+            struct ovsdb_column *column = node2->data;
+
+            if (column->index >= OVSDB_N_STD_COLUMNS && !column->persistent) {
+                column->persistent = true;
+                example_table = table->name;
+                example_column = column->name;
+                n++;
+            }
+        }
+    }
+
+    if (n) {
+        VLOG_WARN("%s: changed %d columns in '%s' database from ephemeral to "
+                  "persistent, including '%s' column in '%s' table, because "
+                  "clusters do not support ephemeral columns",
+                  filename, n, schema->name, example_column, example_table);
+    }
+}
+
+static void
+ovsdb_set_ref_table(const struct shash *tables,
+                    struct ovsdb_base_type *base)
+{
+    if (base->type == OVSDB_TYPE_UUID && base->uuid.refTableName) {
+        struct ovsdb_table *table;
+
+        table = shash_find_data(tables, base->uuid.refTableName);
+        base->uuid.refTable = table;
+    }
+}
+
+/* Creates and returns a new ovsdb based on 'schema' and 'storage' and takes
+ * ownership of both.
+ *
+ * At least one of the arguments must be nonnull. */
+//初始化ovsdb
+struct ovsdb *
+ovsdb_create(struct ovsdb_schema *schema, struct ovsdb_storage *storage)
+{
+    struct shash_node *node;
+    struct ovsdb *db;
+
+    db = xzalloc(sizeof *db);
+    db->name = xstrdup(schema
+                       ? schema->name
+                       : ovsdb_storage_get_name(storage));
+    db->schema = schema;
+    db->storage = storage;
+    ovs_list_init(&db->monitors);
+    ovs_list_init(&db->triggers);
+    db->run_triggers = false;
+
+    shash_init(&db->tables);
+    if (schema) {
+        SHASH_FOR_EACH (node, &schema->tables) {
+            struct ovsdb_table_schema *ts = node->data;
+            shash_add(&db->tables, node->name, ovsdb_table_create(ts));
+        }
+
+        //设置模式中的关联表
+        /* Set all the refTables. */
+        SHASH_FOR_EACH (node, &schema->tables) {
+            struct ovsdb_table_schema *table = node->data;
+            struct shash_node *node2;
+
+            SHASH_FOR_EACH (node2, &table->columns) {
+                struct ovsdb_column *column = node2->data;
+
+                ovsdb_set_ref_table(&db->tables, &column->type.key);
+                ovsdb_set_ref_table(&db->tables, &column->type.value);
+            }
         }
     }
 
@@ -393,13 +480,14 @@ ovsdb_destroy(struct ovsdb *db)
     if (db) {
         struct shash_node *node;
 
-        /* Remove all the replicas. */
-        while (!ovs_list_is_empty(&db->replicas)) {
-            struct ovsdb_replica *r
-                = CONTAINER_OF(ovs_list_pop_back(&db->replicas),
-                               struct ovsdb_replica, node);
-            ovsdb_remove_replica(db, r);
-        }
+        /* Close the log. */
+        ovsdb_storage_close(db->storage);
+
+        /* Remove all the monitors. */
+        ovsdb_monitors_remove(db);
+
+        /* The caller must ensure that no triggers remain. */
+        ovs_assert(ovs_list_is_empty(&db->triggers));
 
         /* Delete all the tables.  This also deletes their schemas. */
         SHASH_FOR_EACH (node, &db->tables) {
@@ -411,9 +499,12 @@ ovsdb_destroy(struct ovsdb *db)
         /* The schemas, but not the table that points to them, were deleted in
          * the previous step, so we need to clear out the table.  We can't
          * destroy the table, because ovsdb_schema_destroy() will do that. */
-        shash_clear(&db->schema->tables);
+        if (db->schema) {
+            shash_clear(&db->schema->tables);
+            ovsdb_schema_destroy(db->schema);
+        }
 
-        ovsdb_schema_destroy(db->schema);
+        free(db->name);
         free(db);
     }
 }
@@ -423,6 +514,10 @@ ovsdb_destroy(struct ovsdb *db)
 void
 ovsdb_get_memory_usage(const struct ovsdb *db, struct simap *usage)
 {
+    if (!db->schema) {
+        return;
+    }
+
     const struct shash_node *node;
     unsigned int cells = 0;
 
@@ -442,23 +537,42 @@ ovsdb_get_table(const struct ovsdb *db, const char *name)
 {
     return shash_find_data(&db->tables, name);
 }
-
-void
-ovsdb_replica_init(struct ovsdb_replica *r,
-                   const struct ovsdb_replica_class *class)
+
+struct ovsdb_error * OVS_WARN_UNUSED_RESULT
+ovsdb_snapshot(struct ovsdb *db)
 {
-    r->class = class;
+    if (!db->storage) {
+        return NULL;
+    }
+
+    struct json *schema = ovsdb_schema_to_json(db->schema);
+    struct json *data = ovsdb_to_txn_json(db, "compacting database online");
+    struct ovsdb_error *error = ovsdb_storage_store_snapshot(db->storage,
+                                                             schema, data);
+    json_destroy(schema);
+    json_destroy(data);
+    return error;
 }
 
 void
-ovsdb_add_replica(struct ovsdb *db, struct ovsdb_replica *r)
+ovsdb_replace(struct ovsdb *dst, struct ovsdb *src)
 {
-    ovs_list_push_back(&db->replicas, &r->node);
-}
+    /* Cancel monitors. */
+    ovsdb_monitor_prereplace_db(dst);
 
-void
-ovsdb_remove_replica(struct ovsdb *db OVS_UNUSED, struct ovsdb_replica *r)
-{
-    ovs_list_remove(&r->node);
-    (r->class->destroy)(r);
+    /* Cancel triggers. */
+    struct ovsdb_trigger *trigger, *next;
+    LIST_FOR_EACH_SAFE (trigger, next, node, &dst->triggers) {
+        ovsdb_trigger_prereplace_db(trigger);
+    }
+
+    struct ovsdb_schema *tmp_schema = dst->schema;
+    dst->schema = src->schema;
+    src->schema = tmp_schema;
+
+    shash_swap(&dst->tables, &src->tables);
+
+    dst->rbac_role = ovsdb_get_table(dst, "RBAC_Role");
+
+    ovsdb_destroy(src);
 }

@@ -153,11 +153,11 @@ put_stack(enum mf_field_id field, struct ofpact_stack *stack)
 }
 
 //返回对应datapath的localnet_port
-static const struct sbrec_port_binding*
-get_localnet_port(struct hmap *local_datapaths, int64_t tunnel_key)
+static const struct sbrec_port_binding *
+get_localnet_port(const struct hmap *local_datapaths, int64_t tunnel_key)
 {
-    struct local_datapath *ld = get_local_datapath(local_datapaths,
-                                                   tunnel_key);
+    const struct local_datapath *ld = get_local_datapath(local_datapaths,
+                                                         tunnel_key);
     return ld ? ld->localnet_port : NULL;
 }
 
@@ -294,12 +294,12 @@ load_logical_ingress_metadata(const struct sbrec_port_binding *binding,
 }
 
 static void
-consider_port_binding(struct controller_ctx *ctx,
+consider_port_binding(struct ovsdb_idl_index *sbrec_chassis_by_name,
+                      struct ovsdb_idl_index *sbrec_port_binding_by_name,
                       enum mf_field_id mff_ovn_geneve,
                       const struct simap *ct_zones,
-                      const struct chassis_index *chassis_index,
-                      struct sset *active_tunnels,
-                      struct hmap *local_datapaths,
+                      const struct sset *active_tunnels,
+                      const struct hmap *local_datapaths,
                       const struct sbrec_port_binding *binding,
                       const struct sbrec_chassis *chassis,
                       struct ofpbuf *ofpacts_p,
@@ -321,7 +321,7 @@ consider_port_binding(struct controller_ctx *ctx,
         }
 
         const struct sbrec_port_binding *peer = lport_lookup_by_name(
-            ctx->ovnsb_idl, peer_name);
+            sbrec_port_binding_by_name, peer_name);
         if (!peer || strcmp(peer->type, binding->type)) {
         	//如果未找到对端或者对对端类型与binding不一致，则不处理
             return;
@@ -366,7 +366,7 @@ consider_port_binding(struct controller_ctx *ctx,
     }
 
     struct ovs_list *gateway_chassis
-        = gateway_chassis_get_ordered(binding, chassis_index);
+        = gateway_chassis_get_ordered(sbrec_chassis_by_name, binding);
 
     if (!strcmp(binding->type, "chassisredirect")
         && (binding->chassis == chassis
@@ -390,7 +390,8 @@ consider_port_binding(struct controller_ctx *ctx,
         const char *distributed_port = smap_get_def(&binding->options,
                                                     "distributed-port", "");
         const struct sbrec_port_binding *distributed_binding
-            = lport_lookup_by_name(ctx->ovnsb_idl, distributed_port);
+            = lport_lookup_by_name(sbrec_port_binding_by_name,
+                                   distributed_port);
 
         if (!distributed_binding) {
             /* Packet will be dropped. */
@@ -471,6 +472,17 @@ consider_port_binding(struct controller_ctx *ctx,
     } else {
         ofport = u16_to_ofp(simap_get(&localvif_to_ofport,
                                       binding->logical_port));
+        const char *requested_chassis = smap_get(&binding->options,
+                                                 "requested-chassis");
+        if (ofport && requested_chassis && requested_chassis[0] &&
+            strcmp(requested_chassis, chassis->name) &&
+            strcmp(requested_chassis, chassis->hostname)) {
+            /* Even though there is an ofport for this port_binding, it is
+             * requested on a different chassis. So ignore this ofport.
+             */
+            ofport = 0;
+        }
+
         if ((!strcmp(binding->type, "localnet")
             || !strcmp(binding->type, "l2gateway"))
             && ofport && binding->tag) {
@@ -724,7 +736,7 @@ out:
 static void
 consider_mc_group(enum mf_field_id mff_ovn_geneve,
                   const struct simap *ct_zones,
-                  struct hmap *local_datapaths,
+                  const struct hmap *local_datapaths,
                   const struct sbrec_chassis *chassis,
                   const struct sbrec_multicast_group *mc,
                   struct ofpbuf *ofpacts_p,
@@ -861,16 +873,19 @@ update_ofports(struct simap *old, struct simap *new)
 }
 
 void
-physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
+physical_run(struct ovsdb_idl_index *sbrec_chassis_by_name,
+             struct ovsdb_idl_index *sbrec_port_binding_by_name,
+             const struct sbrec_multicast_group_table *multicast_group_table,
+             const struct sbrec_port_binding_table *port_binding_table,
+             enum mf_field_id mff_ovn_geneve,
              const struct ovsrec_bridge *br_int,
              const struct sbrec_chassis *chassis,
              const struct simap *ct_zones,
-             struct hmap *flow_table, struct hmap *local_datapaths,
+             const struct hmap *local_datapaths,
              const struct sset *local_lports,
-             struct chassis_index *chassis_index,
-             struct sset *active_tunnels)
+             const struct sset *active_tunnels,
+             struct hmap *flow_table)
 {
-
     /* This bool tracks physical mapping changes. */
     bool physical_map_changed = false;
 
@@ -988,9 +1003,11 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
     /* Set up flows in table 0 for physical-to-logical translation and in table
      * 64 for logical-to-physical translation. */
     const struct sbrec_port_binding *binding;
-    SBREC_PORT_BINDING_FOR_EACH (binding, ctx->ovnsb_idl) {
-        consider_port_binding(ctx, mff_ovn_geneve, ct_zones,
-                              chassis_index, active_tunnels,
+    SBREC_PORT_BINDING_TABLE_FOR_EACH (binding, port_binding_table) {
+        consider_port_binding(sbrec_chassis_by_name,
+                              sbrec_port_binding_by_name,
+                              mff_ovn_geneve, ct_zones,
+                              active_tunnels,
                               local_datapaths, binding, chassis,
                               &ofpacts, flow_table);
     }
@@ -999,22 +1016,7 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
     const struct sbrec_multicast_group *mc;
     struct ofpbuf remote_ofpacts;
     ofpbuf_init(&remote_ofpacts, 0);
-    SBREC_MULTICAST_GROUP_FOR_EACH (mc, ctx->ovnsb_idl) {
-        /* Table 32, priority 150.
-         * =======================
-         *
-         * Multicast packets that should not be sent to other hypervisors.
-         */
-        struct match match = MATCH_CATCHALL_INITIALIZER;
-        match_set_metadata(&match, htonll(mc->datapath->tunnel_key));
-        match_set_reg(&match, MFF_LOG_OUTPORT - MFF_REG0, mc->tunnel_key);
-        match_set_reg_masked(&match, MFF_LOG_FLAGS - MFF_REG0,
-                             MLF_LOCAL_ONLY, MLF_LOCAL_ONLY);
-        ofpbuf_clear(&ofpacts);
-        put_resubmit(OFTABLE_LOCAL_OUTPUT, &ofpacts);
-        ofctrl_add_flow(flow_table, OFTABLE_REMOTE_OUTPUT, 150, 0, &match,
-                        &ofpacts);
-
+    SBREC_MULTICAST_GROUP_TABLE_FOR_EACH (mc, multicast_group_table) {
         consider_mc_group(mff_ovn_geneve, ct_zones, local_datapaths, chassis,
                           mc, &ofpacts, &remote_ofpacts, flow_table);
     }
@@ -1070,7 +1072,7 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
             continue;
         }
 
-        SBREC_PORT_BINDING_FOR_EACH (binding, ctx->ovnsb_idl) {
+        SBREC_PORT_BINDING_TABLE_FOR_EACH (binding, port_binding_table) {
             struct match match = MATCH_CATCHALL_INITIALIZER;
 
             if (!binding->chassis ||
@@ -1116,6 +1118,20 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
     /* Table 32, priority 150.
      * =======================
      *
+     * Packets that should not be sent to other hypervisors.
+     */
+    match_init_catchall(&match);
+    match_set_reg_masked(&match, MFF_LOG_FLAGS - MFF_REG0,
+                         MLF_LOCAL_ONLY, MLF_LOCAL_ONLY);
+    /* Resubmit to table 33. */
+    ofpbuf_clear(&ofpacts);
+    put_resubmit(OFTABLE_LOCAL_OUTPUT, &ofpacts);
+    ofctrl_add_flow(flow_table, OFTABLE_REMOTE_OUTPUT, 150, 0,
+                    &match, &ofpacts);
+
+    /* Table 32, priority 150.
+     * =======================
+     *
      * Handles packets received from ports of type "localport".  These ports
      * are present on every hypervisor.  Traffic that originates at one should
      * never go over a tunnel to a remote hypervisor, so resubmit them to table
@@ -1129,7 +1145,7 @@ physical_run(struct controller_ctx *ctx, enum mf_field_id mff_ovn_geneve,
          * rule with higher priority for every localport in this
          * datapath. */
         const struct sbrec_port_binding *pb = lport_lookup_by_name(
-            ctx->ovnsb_idl, localport);
+            sbrec_port_binding_by_name, localport);
         if (pb && !strcmp(pb->type, "localport")) {
             match_set_reg(&match, MFF_LOG_INPORT - MFF_REG0, pb->tunnel_key);
             match_set_metadata(&match, htonll(pb->datapath->tunnel_key));

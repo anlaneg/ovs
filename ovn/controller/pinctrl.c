@@ -66,22 +66,29 @@ static void pinctrl_handle_put_mac_binding(const struct flow *md,
                                            bool is_arp);
 static void init_put_mac_bindings(void);
 static void destroy_put_mac_bindings(void);
-static void run_put_mac_bindings(struct controller_ctx *);
-static void wait_put_mac_bindings(struct controller_ctx *);
+static void run_put_mac_bindings(
+    struct ovsdb_idl_txn *ovnsb_idl_txn,
+    struct ovsdb_idl_index *sbrec_datapath_binding_by_key,
+    struct ovsdb_idl_index *sbrec_port_binding_by_key,
+    const struct sbrec_mac_binding_table *);
+static void wait_put_mac_bindings(struct ovsdb_idl_txn *ovnsb_idl_txn);
 static void flush_put_mac_bindings(void);
 
 static void init_send_garps(void);
 static void destroy_send_garps(void);
 static void send_garp_wait(void);
-static void send_garp_run(struct controller_ctx *ctx,
-                          const struct ovsrec_bridge *,
-                          const struct sbrec_chassis *,
-                          const struct chassis_index *chassis_index,
-                          struct hmap *local_datapaths,
-                          struct sset *active_tunnels);
+static void send_garp_run(
+    struct ovsdb_idl_index *sbrec_chassis_by_name,
+    struct ovsdb_idl_index *sbrec_port_binding_by_datapath,
+    struct ovsdb_idl_index *sbrec_port_binding_by_name,
+    const struct ovsrec_bridge *,
+    const struct sbrec_chassis *,
+    const struct hmap *local_datapaths,
+    const struct sset *active_tunnels);
 static void pinctrl_handle_nd_na(const struct flow *ip_flow,
                                  const struct match *md,
-                                 struct ofpbuf *userdata);
+                                 struct ofpbuf *userdata,
+                                 bool is_router);
 static void reload_metadata(struct ofpbuf *ofpacts,
                             const struct match *md);
 static void pinctrl_handle_put_nd_ra_opts(
@@ -94,8 +101,11 @@ static void pinctrl_handle_nd_ns(const struct flow *ip_flow,
 static void init_ipv6_ras(void);
 static void destroy_ipv6_ras(void);
 static void ipv6_ra_wait(void);
-static void send_ipv6_ras(const struct controller_ctx *,
-                          struct hmap *local_datapaths);
+static void send_ipv6_ras(
+    struct ovsdb_idl_index *sbrec_port_binding_by_datapath,
+    struct ovsdb_idl_index *sbrec_port_binding_by_name,
+    const struct hmap *local_datapaths);
+;
 
 COVERAGE_DEFINE(pinctrl_drop_put_mac_binding);
 
@@ -130,8 +140,8 @@ pinctrl_setup(void)
                            rconn_get_version(swconn), 0));
 
     /* Set a packet-in format that supports userdata.  */
-    queue_msg(ofputil_make_set_packet_in_format(rconn_get_version(swconn),
-                                                NXPIF_NXT_PACKET_IN2));
+    queue_msg(ofputil_encode_set_packet_in_format(rconn_get_version(swconn),
+                                                  OFPUTIL_PACKET_IN_NXT2));
 }
 
 static void
@@ -220,15 +230,16 @@ pinctrl_handle_arp(const struct flow *ip_flow, const struct match *md,
 }
 
 static void
-pinctrl_handle_icmp4(const struct flow *ip_flow, const struct match *md,
-                     struct ofpbuf *userdata)
+pinctrl_handle_icmp(const struct flow *ip_flow, struct dp_packet *pkt_in,
+                    const struct match *md, struct ofpbuf *userdata)
 {
     /* This action only works for IP packets, and the switch should only send
      * us IP packets this way, but check here just to be sure. */
-    if (ip_flow->dl_type != htons(ETH_TYPE_IP)) {
+    if (ip_flow->dl_type != htons(ETH_TYPE_IP) &&
+        ip_flow->dl_type != htons(ETH_TYPE_IPV6)) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
         VLOG_WARN_RL(&rl,
-                     "ICMP4 action on non-IP packet (eth_type 0x%"PRIx16")",
+                     "ICMP action on non-IP packet (eth_type 0x%"PRIx16")",
                      ntohs(ip_flow->dl_type));
         return;
     }
@@ -243,21 +254,122 @@ pinctrl_handle_icmp4(const struct flow *ip_flow, const struct match *md,
     struct eth_header *eh = dp_packet_put_zeros(&packet, sizeof *eh);
     eh->eth_dst = ip_flow->dl_dst;
     eh->eth_src = ip_flow->dl_src;
-    eh->eth_type = htons(ETH_TYPE_IP);
 
-    struct ip_header *nh = dp_packet_put_zeros(&packet, sizeof *nh);
-    dp_packet_set_l3(&packet, nh);
-    nh->ip_ihl_ver = IP_IHL_VER(5, 4);
-    nh->ip_tot_len = htons(sizeof(struct ip_header) +
-                           sizeof(struct icmp_header));
-    nh->ip_proto = IPPROTO_ICMP;
-    nh->ip_frag_off = htons(IP_DF);
-    packet_set_ipv4(&packet, ip_flow->nw_src, ip_flow->nw_dst,
-                    ip_flow->nw_tos, 255);
+    if (get_dl_type(ip_flow) == htons(ETH_TYPE_IP)) {
+        struct ip_header *nh = dp_packet_put_zeros(&packet, sizeof *nh);
 
-    struct icmp_header *ih = dp_packet_put_zeros(&packet, sizeof *ih);
-    dp_packet_set_l4(&packet, ih);
-    packet_set_icmp(&packet, ICMP4_DST_UNREACH, 1);
+        eh->eth_type = htons(ETH_TYPE_IP);
+        dp_packet_set_l3(&packet, nh);
+        nh->ip_ihl_ver = IP_IHL_VER(5, 4);
+        nh->ip_tot_len = htons(sizeof(struct ip_header) +
+                               sizeof(struct icmp_header));
+        nh->ip_proto = IPPROTO_ICMP;
+        nh->ip_frag_off = htons(IP_DF);
+        packet_set_ipv4(&packet, ip_flow->nw_src, ip_flow->nw_dst,
+                        ip_flow->nw_tos, 255);
+
+        struct icmp_header *ih = dp_packet_put_zeros(&packet, sizeof *ih);
+        dp_packet_set_l4(&packet, ih);
+        packet_set_icmp(&packet, ICMP4_DST_UNREACH, 1);
+    } else {
+        struct ip6_hdr *nh = dp_packet_put_zeros(&packet, sizeof *nh);
+        struct icmp6_error_header *ih;
+        uint32_t icmpv6_csum;
+
+        eh->eth_type = htons(ETH_TYPE_IPV6);
+        dp_packet_set_l3(&packet, nh);
+        nh->ip6_vfc = 0x60;
+        nh->ip6_nxt = IPPROTO_ICMPV6;
+        nh->ip6_plen = htons(sizeof(*nh) + ICMP6_ERROR_HEADER_LEN);
+        packet_set_ipv6(&packet, &ip_flow->ipv6_src, &ip_flow->ipv6_dst,
+                        ip_flow->nw_tos, ip_flow->ipv6_label, 255);
+
+        ih = dp_packet_put_zeros(&packet, sizeof *ih);
+        dp_packet_set_l4(&packet, ih);
+        ih->icmp6_base.icmp6_type = ICMP6_DST_UNREACH;
+        ih->icmp6_base.icmp6_code = 1;
+        ih->icmp6_base.icmp6_cksum = 0;
+
+        uint8_t *data = dp_packet_put_zeros(&packet, sizeof *nh);
+        memcpy(data, dp_packet_l3(pkt_in), sizeof(*nh));
+
+        icmpv6_csum = packet_csum_pseudoheader6(dp_packet_l3(&packet));
+        ih->icmp6_base.icmp6_cksum = csum_finish(
+            csum_continue(icmpv6_csum, ih,
+                          sizeof(*nh) + ICMP6_ERROR_HEADER_LEN));
+    }
+
+    if (ip_flow->vlans[0].tci & htons(VLAN_CFI)) {
+        eth_push_vlan(&packet, htons(ETH_TYPE_VLAN_8021Q),
+                      ip_flow->vlans[0].tci);
+    }
+
+    set_actions_and_enqueue_msg(&packet, md, userdata);
+    dp_packet_uninit(&packet);
+}
+
+static void
+pinctrl_handle_tcp_reset(const struct flow *ip_flow, struct dp_packet *pkt_in,
+                         const struct match *md, struct ofpbuf *userdata)
+{
+    /* This action only works for TCP segments, and the switch should only send
+     * us TCP segments this way, but check here just to be sure. */
+    if (ip_flow->nw_proto != IPPROTO_TCP) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+        VLOG_WARN_RL(&rl, "TCP_RESET action on non-TCP packet");
+        return;
+    }
+
+    uint64_t packet_stub[128 / 8];
+    struct dp_packet packet;
+
+    dp_packet_use_stub(&packet, packet_stub, sizeof packet_stub);
+    dp_packet_clear(&packet);
+    packet.packet_type = htonl(PT_ETH);
+
+    struct eth_header *eh = dp_packet_put_zeros(&packet, sizeof *eh);
+    eh->eth_dst = ip_flow->dl_dst;
+    eh->eth_src = ip_flow->dl_src;
+
+    if (get_dl_type(ip_flow) == htons(ETH_TYPE_IPV6)) {
+        struct ip6_hdr *nh = dp_packet_put_zeros(&packet, sizeof *nh);
+
+        eh->eth_type = htons(ETH_TYPE_IPV6);
+        dp_packet_set_l3(&packet, nh);
+        nh->ip6_vfc = 0x60;
+        nh->ip6_nxt = IPPROTO_TCP;
+        nh->ip6_plen = htons(TCP_HEADER_LEN);
+        packet_set_ipv6(&packet, &ip_flow->ipv6_src, &ip_flow->ipv6_dst,
+                        ip_flow->nw_tos, ip_flow->ipv6_label, 255);
+    } else {
+        struct ip_header *nh = dp_packet_put_zeros(&packet, sizeof *nh);
+
+        eh->eth_type = htons(ETH_TYPE_IP);
+        dp_packet_set_l3(&packet, nh);
+        nh->ip_ihl_ver = IP_IHL_VER(5, 4);
+        nh->ip_tot_len = htons(IP_HEADER_LEN + TCP_HEADER_LEN);
+        nh->ip_proto = IPPROTO_TCP;
+        nh->ip_frag_off = htons(IP_DF);
+        packet_set_ipv4(&packet, ip_flow->nw_src, ip_flow->nw_dst,
+                        ip_flow->nw_tos, 255);
+    }
+
+    struct tcp_header *th = dp_packet_put_zeros(&packet, sizeof *th);
+    struct tcp_header *tcp_in = dp_packet_l4(pkt_in);
+    dp_packet_set_l4(&packet, th);
+    th->tcp_ctl = TCP_CTL(TCP_RST, 5);
+    if (ip_flow->tcp_flags & htons(TCP_ACK)) {
+        th->tcp_seq = tcp_in->tcp_ack;
+    } else {
+        uint32_t tcp_seq, ack_seq, tcp_len;
+
+        tcp_seq = ntohl(get_16aligned_be32(&tcp_in->tcp_seq));
+        tcp_len = TCP_OFFSET(tcp_in->tcp_ctl) * 4;
+        ack_seq = tcp_seq + dp_packet_l4_size(pkt_in) - tcp_len;
+        put_16aligned_be32(&th->tcp_ack, htonl(ack_seq));
+        put_16aligned_be32(&th->tcp_seq, 0);
+    }
+    packet_set_tcp_port(&packet, ip_flow->tp_dst, ip_flow->tp_src);
 
     if (ip_flow->vlans[0].tci & htons(VLAN_CFI)) {
         eth_push_vlan(&packet, htons(ETH_TYPE_VLAN_8021Q),
@@ -753,9 +865,9 @@ put_be32(struct ofpbuf *buf, ovs_be32 x)
 
 static void
 pinctrl_handle_dns_lookup(
+    const struct sbrec_dns_table *dns_table,
     struct dp_packet *pkt_in, struct ofputil_packet_in *pin,
-    struct ofpbuf *userdata, struct ofpbuf *continuation,
-    struct controller_ctx *ctx)
+    struct ofpbuf *userdata, struct ofpbuf *continuation)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
     enum ofp_version version = rconn_get_version(swconn);
@@ -848,7 +960,7 @@ pinctrl_handle_dns_lookup(
     uint64_t dp_key = ntohll(pin->flow_metadata.flow.metadata);
     const struct sbrec_dns *sbrec_dns;
     const char *answer_ips = NULL;
-    SBREC_DNS_FOR_EACH(sbrec_dns, ctx->ovnsb_idl) {
+    SBREC_DNS_TABLE_FOR_EACH (sbrec_dns, dns_table) {
         for (size_t i = 0; i < sbrec_dns->n_datapaths; i++) {
             if (sbrec_dns->datapaths[i]->tunnel_key == dp_key) {
                 answer_ips = smap_get(&sbrec_dns->records,
@@ -1006,7 +1118,8 @@ exit:
 }
 
 static void
-process_packet_in(const struct ofp_header *msg, struct controller_ctx *ctx)
+process_packet_in(const struct ofp_header *msg,
+                  const struct sbrec_dns_table *dns_table)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
@@ -1052,7 +1165,11 @@ process_packet_in(const struct ofp_header *msg, struct controller_ctx *ctx)
         break;
 
     case ACTION_OPCODE_ND_NA:
-        pinctrl_handle_nd_na(&headers, &pin.flow_metadata, &userdata);
+        pinctrl_handle_nd_na(&headers, &pin.flow_metadata, &userdata, false);
+        break;
+
+    case ACTION_OPCODE_ND_NA_ROUTER:
+        pinctrl_handle_nd_na(&headers, &pin.flow_metadata, &userdata, true);
         break;
 
     case ACTION_OPCODE_PUT_ND:
@@ -1066,7 +1183,8 @@ process_packet_in(const struct ofp_header *msg, struct controller_ctx *ctx)
         break;
 
     case ACTION_OPCODE_DNS_LOOKUP:
-        pinctrl_handle_dns_lookup(&packet, &pin, &userdata, &continuation, ctx);
+        pinctrl_handle_dns_lookup(dns_table,
+                                  &packet, &pin, &userdata, &continuation);
         break;
 
     case ACTION_OPCODE_LOG:
@@ -1082,8 +1200,14 @@ process_packet_in(const struct ofp_header *msg, struct controller_ctx *ctx)
         pinctrl_handle_nd_ns(&headers, &pin.flow_metadata, &userdata);
         break;
 
-    case ACTION_OPCODE_ICMP4:
-        pinctrl_handle_icmp4(&headers, &pin.flow_metadata, &userdata);
+    case ACTION_OPCODE_ICMP:
+        pinctrl_handle_icmp(&headers, &packet, &pin.flow_metadata,
+                            &userdata);
+        break;
+
+    case ACTION_OPCODE_TCP_RESET:
+        pinctrl_handle_tcp_reset(&headers, &packet, &pin.flow_metadata,
+                                 &userdata);
         break;
 
     default:
@@ -1094,8 +1218,8 @@ process_packet_in(const struct ofp_header *msg, struct controller_ctx *ctx)
 }
 
 static void
-pinctrl_recv(const struct ofp_header *oh, enum ofptype type,
-             struct controller_ctx *ctx)
+pinctrl_recv(const struct sbrec_dns_table *dns_table,
+             const struct ofp_header *oh, enum ofptype type)
 {
     if (type == OFPTYPE_ECHO_REQUEST) {
         queue_msg(ofputil_encode_echo_reply(oh));
@@ -1107,7 +1231,7 @@ pinctrl_recv(const struct ofp_header *oh, enum ofptype type,
         config.miss_send_len = UINT16_MAX;
         set_switch_config(swconn, &config);
     } else if (type == OFPTYPE_PACKET_IN) {
-        process_packet_in(oh, ctx);
+        process_packet_in(oh, dns_table);
     } else {
         if (VLOG_IS_DBG_ENABLED()) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(30, 300);
@@ -1121,12 +1245,18 @@ pinctrl_recv(const struct ofp_header *oh, enum ofptype type,
 }
 
 void
-pinctrl_run(struct controller_ctx *ctx,
+pinctrl_run(struct ovsdb_idl_txn *ovnsb_idl_txn,
+            struct ovsdb_idl_index *sbrec_chassis_by_name,
+            struct ovsdb_idl_index *sbrec_datapath_binding_by_key,
+            struct ovsdb_idl_index *sbrec_port_binding_by_datapath,
+            struct ovsdb_idl_index *sbrec_port_binding_by_key,
+            struct ovsdb_idl_index *sbrec_port_binding_by_name,
+            const struct sbrec_dns_table *dns_table,
+            const struct sbrec_mac_binding_table *mac_binding_table,
             const struct ovsrec_bridge *br_int,
             const struct sbrec_chassis *chassis,
-            const struct chassis_index *chassis_index,
-            struct hmap *local_datapaths,
-            struct sset *active_tunnels)
+            const struct hmap *local_datapaths,
+            const struct sset *active_tunnels)
 {
     char *target = xasprintf("unix:%s/%s.mgmt", ovs_rundir(), br_int->name);
     if (strcmp(target, rconn_get_target(swconn))) {
@@ -1158,15 +1288,18 @@ pinctrl_run(struct controller_ctx *ctx,
         enum ofptype type;
 
         ofptype_decode(&type, oh);
-        pinctrl_recv(oh, type, ctx);
+        pinctrl_recv(dns_table, oh, type);
         ofpbuf_delete(msg);
     }
 
-    run_put_mac_bindings(ctx);
+    run_put_mac_bindings(ovnsb_idl_txn, sbrec_datapath_binding_by_key,
+                         sbrec_port_binding_by_key, mac_binding_table);
     //为接口与nat考虑arp发送
-    send_garp_run(ctx, br_int, chassis, chassis_index, local_datapaths,
-                  active_tunnels);
-    send_ipv6_ras(ctx, local_datapaths);
+    send_garp_run(sbrec_chassis_by_name, sbrec_port_binding_by_datapath,
+                  sbrec_port_binding_by_name, br_int, chassis,
+                  local_datapaths, active_tunnels);
+    send_ipv6_ras(sbrec_port_binding_by_datapath,
+                  sbrec_port_binding_by_name, local_datapaths);
 }
 
 /* Table of ipv6_ra_state structures, keyed on logical port name */
@@ -1325,7 +1458,8 @@ ipv6_ra_send(struct ipv6_ra_state *ra)
     dp_packet_use_stub(&packet, packet_stub, sizeof packet_stub);
     compose_nd_ra(&packet, ra->config->eth_src, ra->config->eth_dst,
             &ra->config->ipv6_src, &ra->config->ipv6_dst,
-            255, ra->config->mo_flags, 0, 0, 0, ra->config->mtu);
+            255, ra->config->mo_flags, htons(IPV6_ND_RA_LIFETIME), 0, 0,
+            ra->config->mtu);
 
     for (int i = 0; i < ra->config->prefixes.n_ipv6_addrs; i++) {
         ovs_be128 addr;
@@ -1377,7 +1511,9 @@ ipv6_ra_wait(void)
 }
 
 static void
-send_ipv6_ras(const struct controller_ctx *ctx, struct hmap *local_datapaths)
+send_ipv6_ras(struct ovsdb_idl_index *sbrec_port_binding_by_datapath,
+              struct ovsdb_idl_index *sbrec_port_binding_by_name,
+              const struct hmap *local_datapaths)
 {
     struct shash_node *iter, *iter_next;
 
@@ -1390,16 +1526,13 @@ send_ipv6_ras(const struct controller_ctx *ctx, struct hmap *local_datapaths)
 
     const struct local_datapath *ld;
     HMAP_FOR_EACH (ld, hmap_node, local_datapaths) {
-        struct sbrec_port_binding *lpval;
-        const struct sbrec_port_binding *pb;
-        struct ovsdb_idl_index_cursor cursor;
+        struct sbrec_port_binding *target = sbrec_port_binding_index_init_row(
+            sbrec_port_binding_by_datapath);
+        sbrec_port_binding_index_set_datapath(target, ld->datapath);
 
-        lpval = sbrec_port_binding_index_init_row(ctx->ovnsb_idl,
-                                                  &sbrec_table_port_binding);
-        sbrec_port_binding_index_set_datapath(lpval, ld->datapath);
-        ovsdb_idl_initialize_cursor(ctx->ovnsb_idl, &sbrec_table_port_binding,
-                                    "lport-by-datapath", &cursor);
-        SBREC_PORT_BINDING_FOR_EACH_EQUAL (pb, &cursor, lpval) {
+        struct sbrec_port_binding *pb;
+        SBREC_PORT_BINDING_FOR_EACH_EQUAL (pb, target,
+                                           sbrec_port_binding_by_datapath) {
             if (!smap_get_bool(&pb->options, "ipv6_ra_send_periodic", false)) {
                 continue;
             }
@@ -1410,7 +1543,7 @@ send_ipv6_ras(const struct controller_ctx *ctx, struct hmap *local_datapaths)
             }
 
             const struct sbrec_port_binding *peer
-                = lport_lookup_by_name(ctx->ovnsb_idl, peer_s);
+                = lport_lookup_by_name(sbrec_port_binding_by_name, peer_s);
             if (!peer) {
                 continue;
             }
@@ -1447,7 +1580,7 @@ send_ipv6_ras(const struct controller_ctx *ctx, struct hmap *local_datapaths)
                 send_ipv6_ra_time = next_ra;
             }
         }
-        sbrec_port_binding_index_destroy_row(lpval);
+        sbrec_port_binding_index_destroy_row(target);
     }
 
     /* Remove those that are no longer in the SB database */
@@ -1461,9 +1594,9 @@ send_ipv6_ras(const struct controller_ctx *ctx, struct hmap *local_datapaths)
 }
 
 void
-pinctrl_wait(struct controller_ctx *ctx)
+pinctrl_wait(struct ovsdb_idl_txn *ovnsb_idl_txn)
 {
-    wait_put_mac_bindings(ctx);
+    wait_put_mac_bindings(ovnsb_idl_txn);
     rconn_run_wait(swconn);
     rconn_recv_wait(swconn);
     send_garp_wait();
@@ -1485,7 +1618,7 @@ pinctrl_destroy(void)
  * updating the MAC_Binding table in the southbound database.
  *
  * This code could be a lot simpler if the database could always be updated,
- * but in fact we can only update it when ctx->ovnsb_idl_txn is nonnull.  Thus,
+ * but in fact we can only update it when 'ovnsb_idl_txn' is nonnull.  Thus,
  * we buffer up a few put_mac_bindings (but we don't keep them longer
  * than 1 second) and apply them whenever a database transaction is
  * available. */
@@ -1571,7 +1704,10 @@ pinctrl_handle_put_mac_binding(const struct flow *md,
 }
 
 static void
-run_put_mac_binding(struct controller_ctx *ctx,
+run_put_mac_binding(struct ovsdb_idl_txn *ovnsb_idl_txn,
+                    struct ovsdb_idl_index *sbrec_datapath_binding_by_key,
+                    struct ovsdb_idl_index *sbrec_port_binding_by_key,
+                    const struct sbrec_mac_binding_table *mac_binding_table,
                     const struct put_mac_binding *pmb)
 {
     if (time_msec() > pmb->timestamp + 1000) {
@@ -1579,8 +1715,9 @@ run_put_mac_binding(struct controller_ctx *ctx,
     }
 
     /* Convert logical datapath and logical port key into lport. */
-    const struct sbrec_port_binding *pb
-        = lport_lookup_by_key(ctx->ovnsb_idl, pmb->dp_key, pmb->port_key);
+    const struct sbrec_port_binding *pb = lport_lookup_by_key(
+        sbrec_datapath_binding_by_key, sbrec_port_binding_by_key,
+        pmb->dp_key, pmb->port_key);
     if (!pb) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
@@ -1599,7 +1736,7 @@ run_put_mac_binding(struct controller_ctx *ctx,
      *
      * XXX This is not very efficient. */
     const struct sbrec_mac_binding *b;
-    SBREC_MAC_BINDING_FOR_EACH (b, ctx->ovnsb_idl) {
+    SBREC_MAC_BINDING_TABLE_FOR_EACH (b, mac_binding_table) {
         if (!strcmp(b->logical_port, pb->logical_port)
             && !strcmp(b->ip, pmb->ip_s)) {//接口相同，ip相同时，检查并更新mac绑定表
             if (strcmp(b->mac, mac_string)) {
@@ -1611,7 +1748,7 @@ run_put_mac_binding(struct controller_ctx *ctx,
 
     /* Add new IP-MAC binding for this logical port. */
     //添加一个新的mac绑定信息
-    b = sbrec_mac_binding_insert(ctx->ovnsb_idl_txn);
+    b = sbrec_mac_binding_insert(ovnsb_idl_txn);
     sbrec_mac_binding_set_logical_port(b, pb->logical_port);
     sbrec_mac_binding_set_ip(b, pmb->ip_s);
     sbrec_mac_binding_set_mac(b, mac_string);
@@ -1619,23 +1756,27 @@ run_put_mac_binding(struct controller_ctx *ctx,
 }
 
 static void
-run_put_mac_bindings(struct controller_ctx *ctx)
+run_put_mac_bindings(struct ovsdb_idl_txn *ovnsb_idl_txn,
+                     struct ovsdb_idl_index *sbrec_datapath_binding_by_key,
+                     struct ovsdb_idl_index *sbrec_port_binding_by_key,
+                     const struct sbrec_mac_binding_table *mac_binding_table)
 {
-    if (!ctx->ovnsb_idl_txn) {
+    if (!ovnsb_idl_txn) {
         return;
     }
 
     const struct put_mac_binding *pmb;
     HMAP_FOR_EACH (pmb, hmap_node, &put_mac_bindings) {
-        run_put_mac_binding(ctx, pmb);
+        run_put_mac_binding(ovnsb_idl_txn, sbrec_datapath_binding_by_key,
+                            sbrec_port_binding_by_key, mac_binding_table, pmb);
     }
     flush_put_mac_bindings();//清空put_mac_bindings表
 }
 
 static void
-wait_put_mac_bindings(struct controller_ctx *ctx)
+wait_put_mac_bindings(struct ovsdb_idl_txn *ovnsb_idl_txn)
 {
-    if (ctx->ovnsb_idl_txn && !hmap_is_empty(&put_mac_bindings)) {
+    if (ovnsb_idl_txn && !hmap_is_empty(&put_mac_bindings)) {
         poll_immediate_wake();
     }
 }
@@ -1703,7 +1844,8 @@ add_garp(const char *name, ofp_port_t ofport, int tag,
 /* Add or update a vif for which GARPs need to be announced. */
 static void
 send_garp_update(const struct sbrec_port_binding *binding_rec,
-                 struct simap *localnet_ofports, struct hmap *local_datapaths,
+                 struct simap *localnet_ofports,
+                 const struct hmap *local_datapaths,
                  struct shash *nat_addresses)
 {
     /* Find the localnet ofport to send this GARP. */
@@ -1833,13 +1975,15 @@ send_garp(struct garp_data *garp, long long int current_time)
 
 /* Get localnet vifs, local l3gw ports and ofport for localnet patch ports. */
 static void
-get_localnet_vifs_l3gwports(struct controller_ctx *ctx,
-                  const struct ovsrec_bridge *br_int,
-                  const struct sbrec_chassis *chassis,
-                  struct hmap *local_datapaths,
-                  struct sset *localnet_vifs,
-                  struct simap *localnet_ofports,
-                  struct sset *local_l3gw_ports)
+get_localnet_vifs_l3gwports(
+    struct ovsdb_idl_index *sbrec_port_binding_by_datapath,
+    struct ovsdb_idl_index *sbrec_port_binding_by_name,
+    const struct ovsrec_bridge *br_int,
+    const struct sbrec_chassis *chassis,
+    const struct hmap *local_datapaths,
+    struct sset *localnet_vifs,
+    struct simap *localnet_ofports,
+    struct sset *local_l3gw_ports)
 {
     for (int i = 0; i < br_int->n_ports; i++) {
         const struct ovsrec_port *port_rec = br_int->ports[i];
@@ -1874,7 +2018,7 @@ get_localnet_vifs_l3gwports(struct controller_ctx *ctx,
                 continue;
             }
             const struct sbrec_port_binding *pb
-                = lport_lookup_by_name(ctx->ovnsb_idl, iface_id);
+                = lport_lookup_by_name(sbrec_port_binding_by_name, iface_id);
             if (!pb) {
                 continue;
             }
@@ -1887,13 +2031,10 @@ get_localnet_vifs_l3gwports(struct controller_ctx *ctx,
         }
     }
 
+    struct sbrec_port_binding *target = sbrec_port_binding_index_init_row(
+        sbrec_port_binding_by_datapath);
+
     const struct local_datapath *ld;
-    struct ovsdb_idl_index_cursor cursor;
-    struct sbrec_port_binding *lpval;
-    lpval = sbrec_port_binding_index_init_row(ctx->ovnsb_idl,
-                                              &sbrec_table_port_binding);
-    ovsdb_idl_initialize_cursor(ctx->ovnsb_idl, &sbrec_table_port_binding,
-                                "lport-by-datapath", &cursor);
     HMAP_FOR_EACH (ld, hmap_node, local_datapaths) {
         const struct sbrec_port_binding *pb;
 
@@ -1906,27 +2047,27 @@ get_localnet_vifs_l3gwports(struct controller_ctx *ctx,
          * bindings of type "patch" since they might connect to
          * distributed gateway ports with NAT addresses. */
 
-        sbrec_port_binding_index_set_datapath(lpval, ld->datapath);
-
-        SBREC_PORT_BINDING_FOR_EACH_EQUAL (pb, &cursor, lpval) {
+        sbrec_port_binding_index_set_datapath(target, ld->datapath);
+        SBREC_PORT_BINDING_FOR_EACH_EQUAL (pb, target,
+                                           sbrec_port_binding_by_datapath) {
             if ((ld->has_local_l3gateway && !strcmp(pb->type, "l3gateway"))
                 || !strcmp(pb->type, "patch")) {
                 sset_add(local_l3gw_ports, pb->logical_port);
             }
         }
     }
-    sbrec_port_binding_index_destroy_row(lpval);
+    sbrec_port_binding_index_destroy_row(target);
 }
 
 static bool
-pinctrl_is_chassis_resident(struct controller_ctx *ctx,
+pinctrl_is_chassis_resident(struct ovsdb_idl_index *sbrec_chassis_by_name,
+                            struct ovsdb_idl_index *sbrec_port_binding_by_name,
                             const struct sbrec_chassis *chassis,
-                            const struct chassis_index *chassis_index,
-                            struct sset *active_tunnels,
+                            const struct sset *active_tunnels,
                             const char *port_name)
 {
     const struct sbrec_port_binding *pb
-        = lport_lookup_by_name(ctx->ovnsb_idl, port_name);
+        = lport_lookup_by_name(sbrec_port_binding_by_name, port_name);
     if (!pb || !pb->chassis) {
         return false;
     }
@@ -1934,7 +2075,7 @@ pinctrl_is_chassis_resident(struct controller_ctx *ctx,
         return pb->chassis == chassis;
     } else {
         struct ovs_list *gateway_chassis =
-            gateway_chassis_get_ordered(pb, chassis_index);
+            gateway_chassis_get_ordered(sbrec_chassis_by_name, pb);
         bool active = gateway_chassis_is_active(gateway_chassis,
                                                 chassis,
                                                 active_tunnels);
@@ -2013,13 +2154,13 @@ extract_addresses_with_port(const char *addresses,
 }
 
 static void
-consider_nat_address(struct controller_ctx *ctx,
+consider_nat_address(struct ovsdb_idl_index *sbrec_chassis_by_name,
+                     struct ovsdb_idl_index *sbrec_port_binding_by_name,
                      const char *nat_address,
                      const struct sbrec_port_binding *pb,
                      struct sset *nat_address_keys,
                      const struct sbrec_chassis *chassis,
-                     const struct chassis_index *chassis_index,
-                     struct sset *active_tunnels,
+                     const struct sset *active_tunnels,
                      struct shash *nat_addresses)
 {
     struct lport_addresses *laddrs = xmalloc(sizeof *laddrs);
@@ -2027,7 +2168,8 @@ consider_nat_address(struct controller_ctx *ctx,
     if (!extract_addresses_with_port(nat_address, laddrs, &lport)
         || (!lport && !strcmp(pb->type, "patch"))
         || (lport && !pinctrl_is_chassis_resident(
-            ctx, chassis, chassis_index, active_tunnels, lport))) {
+                sbrec_chassis_by_name, sbrec_port_binding_by_name, chassis,
+                active_tunnels, lport))) {
         destroy_lport_addresses(laddrs);
         free(laddrs);
         free(lport);
@@ -2046,28 +2188,30 @@ consider_nat_address(struct controller_ctx *ctx,
 }
 
 static void
-get_nat_addresses_and_keys(struct controller_ctx *ctx,
+get_nat_addresses_and_keys(struct ovsdb_idl_index *sbrec_chassis_by_name,
+                           struct ovsdb_idl_index *sbrec_port_binding_by_name,
                            struct sset *nat_address_keys,
                            struct sset *local_l3gw_ports,
                            const struct sbrec_chassis *chassis,
-                           const struct chassis_index *chassis_index,
-                           struct sset *active_tunnels,
+                           const struct sset *active_tunnels,
                            struct shash *nat_addresses)
 {
     const char *gw_port;
     SSET_FOR_EACH(gw_port, local_l3gw_ports) {
         const struct sbrec_port_binding *pb;
 
-        pb = lport_lookup_by_name(ctx->ovnsb_idl, gw_port);
+        pb = lport_lookup_by_name(sbrec_port_binding_by_name, gw_port);
         if (!pb) {
             continue;
         }
 
         if (pb->n_nat_addresses) {
             for (int i = 0; i < pb->n_nat_addresses; i++) {
-                consider_nat_address(ctx, pb->nat_addresses[i], pb,
+                consider_nat_address(sbrec_chassis_by_name,
+                                     sbrec_port_binding_by_name,
+                                     pb->nat_addresses[i], pb,
                                      nat_address_keys, chassis,
-                                     chassis_index, active_tunnels,
+                                     active_tunnels,
                                      nat_addresses);
             }
         } else {
@@ -2076,9 +2220,11 @@ get_nat_addresses_and_keys(struct controller_ctx *ctx,
             const char *nat_addresses_options = smap_get(&pb->options,
                                                          "nat-addresses");
             if (nat_addresses_options) {
-                consider_nat_address(ctx, nat_addresses_options, pb,
+                consider_nat_address(sbrec_chassis_by_name,
+                                     sbrec_port_binding_by_name,
+                                     nat_addresses_options, pb,
                                      nat_address_keys, chassis,
-                                     chassis_index, active_tunnels,
+                                     active_tunnels,
                                      nat_addresses);
             }
         }
@@ -2092,12 +2238,13 @@ send_garp_wait(void)
 }
 
 static void
-send_garp_run(struct controller_ctx *ctx,
+send_garp_run(struct ovsdb_idl_index *sbrec_chassis_by_name,
+              struct ovsdb_idl_index *sbrec_port_binding_by_datapath,
+              struct ovsdb_idl_index *sbrec_port_binding_by_name,
               const struct ovsrec_bridge *br_int,
               const struct sbrec_chassis *chassis,
-              const struct chassis_index *chassis_index,
-              struct hmap *local_datapaths,
-              struct sset *active_tunnels)
+              const struct hmap *local_datapaths,
+              const struct sset *active_tunnels)
 {
     struct sset localnet_vifs = SSET_INITIALIZER(&localnet_vifs);
     struct sset local_l3gw_ports = SSET_INITIALIZER(&local_l3gw_ports);
@@ -2107,11 +2254,16 @@ send_garp_run(struct controller_ctx *ctx,
 
     shash_init(&nat_addresses);
 
-    get_localnet_vifs_l3gwports(ctx, br_int, chassis, local_datapaths,
-                      &localnet_vifs, &localnet_ofports, &local_l3gw_ports);
+    get_localnet_vifs_l3gwports(sbrec_port_binding_by_datapath,
+                                sbrec_port_binding_by_name,
+                                br_int, chassis, local_datapaths,
+                                &localnet_vifs, &localnet_ofports,
+                                &local_l3gw_ports);
 
-    get_nat_addresses_and_keys(ctx, &nat_ip_keys, &local_l3gw_ports,
-                               chassis, chassis_index, active_tunnels,
+    get_nat_addresses_and_keys(sbrec_chassis_by_name,
+                               sbrec_port_binding_by_name,
+                               &nat_ip_keys, &local_l3gw_ports,
+                               chassis, active_tunnels,
                                &nat_addresses);
     /* For deleted ports and deleted nat ips, remove from send_garp_data. */
     //删除掉不再存在的接口及ip,不再对宣告它们的免费arp了
@@ -2127,9 +2279,8 @@ send_garp_run(struct controller_ctx *ctx,
     //更新为某接口发送免费arp
     const char *iface_id;
     SSET_FOR_EACH (iface_id, &localnet_vifs) {
-        const struct sbrec_port_binding *pb;
-
-        pb = lport_lookup_by_name(ctx->ovnsb_idl, iface_id);
+        const struct sbrec_port_binding *pb = lport_lookup_by_name(
+            sbrec_port_binding_by_name, iface_id);
         if (pb) {
             send_garp_update(pb, &localnet_ofports, local_datapaths,
                              &nat_addresses);
@@ -2140,9 +2291,8 @@ send_garp_run(struct controller_ctx *ctx,
     //更新为nat地址发送免费arp
     const char *gw_port;
     SSET_FOR_EACH (gw_port, &local_l3gw_ports) {
-        const struct sbrec_port_binding *pb;
-
-        pb = lport_lookup_by_name(ctx->ovnsb_idl, gw_port);
+        const struct sbrec_port_binding *pb
+            = lport_lookup_by_name(sbrec_port_binding_by_name, gw_port);
         if (pb) {
             send_garp_update(pb, &localnet_ofports, local_datapaths,
                              &nat_addresses);
@@ -2211,7 +2361,7 @@ reload_metadata(struct ofpbuf *ofpacts, const struct match *md)
 
 static void
 pinctrl_handle_nd_na(const struct flow *ip_flow, const struct match *md,
-                     struct ofpbuf *userdata)
+                     struct ofpbuf *userdata, bool is_router)
 {
     /* This action only works for IPv6 ND packets, and the switch should only
      * send us ND packets this way, but check here just to be sure. */
@@ -2225,13 +2375,15 @@ pinctrl_handle_nd_na(const struct flow *ip_flow, const struct match *md,
     struct dp_packet packet;
     dp_packet_use_stub(&packet, packet_stub, sizeof packet_stub);
 
-    /* xxx These flags are not exactly correct.  Look at section 7.2.4
-     * xxx of RFC 4861.  For example, we need to set ND_RSO_ROUTER for
-     * xxx router's interfaces and ND_RSO_SOLICITED only if it was
-     * xxx requested. */
+    /* These flags are not exactly correct.  Look at section 7.2.4
+     * of RFC 4861. */
+    uint32_t rso_flags = ND_RSO_SOLICITED | ND_RSO_OVERRIDE;
+    if (is_router) {
+        rso_flags |= ND_RSO_ROUTER;
+    }
     compose_nd_na(&packet, ip_flow->dl_dst, ip_flow->dl_src,
                   &ip_flow->nd_target, &ip_flow->ipv6_src,
-                  htonl(ND_RSO_SOLICITED | ND_RSO_OVERRIDE));
+                  htonl(rso_flags));
 
     /* Reload previous packet metadata and set actions from userdata. */
     set_actions_and_enqueue_msg(&packet, md, userdata);

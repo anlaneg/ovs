@@ -39,8 +39,8 @@ compare_chassis_prio_(const void *a_, const void *b_)
 }
 
 struct ovs_list*
-gateway_chassis_get_ordered(const struct sbrec_port_binding *binding,
-                            const struct chassis_index *chassis_index)
+gateway_chassis_get_ordered(struct ovsdb_idl_index *sbrec_chassis_by_name,
+                            const struct sbrec_port_binding *binding)
 {
     const char *redir_chassis_str;
     const struct sbrec_chassis *redirect_chassis = NULL;
@@ -53,7 +53,7 @@ gateway_chassis_get_ordered(const struct sbrec_port_binding *binding,
 
     if (redir_chassis_str) {
     	//有机框名称，则取此机框记录
-        redirect_chassis = chassis_lookup_by_name(chassis_index,
+        redirect_chassis = chassis_lookup_by_name(sbrec_chassis_by_name,
                                                   redir_chassis_str);
         if (!redirect_chassis) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);

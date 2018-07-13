@@ -130,26 +130,26 @@ ovsdb_base_type_init(struct ovsdb_base_type *base, enum ovsdb_atomic_type type)
         break;
 
     case OVSDB_TYPE_INTEGER:
-        base->u.integer.min = INT64_MIN;
-        base->u.integer.max = INT64_MAX;
+        base->integer.min = INT64_MIN;
+        base->integer.max = INT64_MAX;
         break;
 
     case OVSDB_TYPE_REAL:
-        base->u.real.min = -DBL_MAX;
-        base->u.real.max = DBL_MAX;
+        base->real.min = -DBL_MAX;
+        base->real.max = DBL_MAX;
         break;
 
     case OVSDB_TYPE_BOOLEAN:
         break;
 
     case OVSDB_TYPE_STRING:
-        base->u.string.minLen = 0;
-        base->u.string.maxLen = UINT_MAX;
+        base->string.minLen = 0;
+        base->string.maxLen = UINT_MAX;
         break;
 
     case OVSDB_TYPE_UUID:
-        base->u.uuid.refTableName = NULL;
-        base->u.uuid.refTable = NULL;
+        base->uuid.refTableName = NULL;
+        base->uuid.refTable = NULL;
         break;
 
     case OVSDB_N_TYPES:
@@ -209,8 +209,8 @@ ovsdb_base_type_clone(struct ovsdb_base_type *dst,
         break;
 
     case OVSDB_TYPE_UUID:
-        if (dst->u.uuid.refTableName) {
-            dst->u.uuid.refTableName = xstrdup(dst->u.uuid.refTableName);
+        if (dst->uuid.refTableName) {
+            dst->uuid.refTableName = xstrdup(dst->uuid.refTableName);
         }
         break;
 
@@ -241,7 +241,7 @@ ovsdb_base_type_destroy(struct ovsdb_base_type *base)
             break;
 
         case OVSDB_TYPE_UUID:
-            free(base->u.uuid.refTableName);
+            free(base->uuid.refTableName);
             break;
 
         case OVSDB_N_TYPES:
@@ -261,16 +261,16 @@ ovsdb_base_type_is_valid(const struct ovsdb_base_type *base)
         return true;
 
     case OVSDB_TYPE_INTEGER:
-        return base->u.integer.min <= base->u.integer.max;
+        return base->integer.min <= base->integer.max;
 
     case OVSDB_TYPE_REAL:
-        return base->u.real.min <= base->u.real.max;
+        return base->real.min <= base->real.max;
 
     case OVSDB_TYPE_BOOLEAN:
         return true;
 
     case OVSDB_TYPE_STRING:
-        return base->u.string.minLen <= base->u.string.maxLen;
+        return base->string.minLen <= base->string.maxLen;
 
     case OVSDB_TYPE_UUID:
         return true;
@@ -293,21 +293,21 @@ ovsdb_base_type_has_constraints(const struct ovsdb_base_type *base)
         OVS_NOT_REACHED();
 
     case OVSDB_TYPE_INTEGER:
-        return (base->u.integer.min != INT64_MIN
-                || base->u.integer.max != INT64_MAX);
+        return (base->integer.min != INT64_MIN
+                || base->integer.max != INT64_MAX);
 
     case OVSDB_TYPE_REAL:
-        return (base->u.real.min != -DBL_MAX
-                || base->u.real.max != DBL_MAX);
+        return (base->real.min != -DBL_MAX
+                || base->real.max != DBL_MAX);
 
     case OVSDB_TYPE_BOOLEAN:
         return false;
 
     case OVSDB_TYPE_STRING:
-        return base->u.string.minLen != 0 || base->u.string.maxLen != UINT_MAX;
+        return base->string.minLen != 0 || base->string.maxLen != UINT_MAX;
 
     case OVSDB_TYPE_UUID:
-        return base->u.uuid.refTableName != NULL;
+        return base->uuid.refTableName != NULL;
 
     case OVSDB_N_TYPES:
         OVS_NOT_REACHED();
@@ -333,12 +333,12 @@ parse_optional_uint(struct ovsdb_parser *parser, const char *member,
 
     json = ovsdb_parser_member(parser, member, OP_INTEGER | OP_OPTIONAL);
     if (json) {
-        if (json->u.integer < 0 || json->u.integer > UINT_MAX) {
+        if (json->integer < 0 || json->integer > UINT_MAX) {
             return ovsdb_syntax_error(json, NULL,
                                       "%s out of valid range 0 to %u",
                                       member, UINT_MAX);
         }
-        *uint = json->u.integer;
+        *uint = json->integer;
     }
     return NULL;
 }
@@ -405,9 +405,9 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
                                   OP_INTEGER | OP_OPTIONAL);
         max = ovsdb_parser_member(&parser, "maxInteger",
                                   OP_INTEGER | OP_OPTIONAL);
-        base->u.integer.min = min ? min->u.integer : INT64_MIN;
-        base->u.integer.max = max ? max->u.integer : INT64_MAX;
-        if (base->u.integer.min > base->u.integer.max) {
+        base->integer.min = min ? min->integer : INT64_MIN;
+        base->integer.max = max ? max->integer : INT64_MAX;
+        if (base->integer.min > base->integer.max) {
             error = ovsdb_syntax_error(json, NULL,
                                        "minInteger exceeds maxInteger");
         }
@@ -417,22 +417,22 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
 
         min = ovsdb_parser_member(&parser, "minReal", OP_NUMBER | OP_OPTIONAL);
         max = ovsdb_parser_member(&parser, "maxReal", OP_NUMBER | OP_OPTIONAL);
-        base->u.real.min = min ? json_real(min) : -DBL_MAX;
-        base->u.real.max = max ? json_real(max) : DBL_MAX;
-        if (base->u.real.min > base->u.real.max) {
+        base->real.min = min ? json_real(min) : -DBL_MAX;
+        base->real.max = max ? json_real(max) : DBL_MAX;
+        if (base->real.min > base->real.max) {
             error = ovsdb_syntax_error(json, NULL, "minReal exceeds maxReal");
         }
     } else if (base->type == OVSDB_TYPE_STRING) {
     	//string类型的约束构造
         if (!error) {
             error = parse_optional_uint(&parser, "minLength",
-                                        &base->u.string.minLen);
+                                        &base->string.minLen);
         }
         if (!error) {
             error = parse_optional_uint(&parser, "maxLength",
-                                        &base->u.string.maxLen);
+                                        &base->string.maxLen);
         }
-        if (!error && base->u.string.minLen > base->u.string.maxLen) {
+        if (!error && base->string.minLen > base->string.maxLen) {
             error = ovsdb_syntax_error(json, NULL,
                                        "minLength exceeds maxLength");
         }
@@ -445,10 +445,10 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
         if (refTable) {
             const struct json *refType;
 
-            base->u.uuid.refTableName = xstrdup(refTable->u.string);
+            base->uuid.refTableName = xstrdup(refTable->string);
 
             //这里没法设置refTable，原因是可能在解析之中，表还没有完全载入。
-            /* We can't set base->u.uuid.refTable here because we don't have
+            /* We can't set base->uuid.refTable here because we don't have
              * enough context (we might not even be running in ovsdb-server).
              * ovsdb_create() will set refTable later. */
 
@@ -457,11 +457,11 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
             if (refType) {
                 const char *refType_s = json_string(refType);
                 if (!strcmp(refType_s, "strong")) {
-                	//强引用
-                    base->u.uuid.refType = OVSDB_REF_STRONG;
+                    //强引用
+                    base->uuid.refType = OVSDB_REF_STRONG;
                 } else if (!strcmp(refType_s, "weak")) {
-                	//弱引用
-                    base->u.uuid.refType = OVSDB_REF_WEAK;
+                    //弱引用
+                    base->uuid.refType = OVSDB_REF_WEAK;
                 } else {
                     error = ovsdb_syntax_error(json, NULL, "refType must be "
                                                "\"strong\" or \"weak\" (not "
@@ -469,7 +469,7 @@ ovsdb_base_type_from_json(struct ovsdb_base_type *base,
                 }
             } else {
             	//默认为:强引用
-                base->u.uuid.refType = OVSDB_REF_STRONG;
+                base->uuid.refType = OVSDB_REF_STRONG;
             }
         }
     }
@@ -511,24 +511,24 @@ ovsdb_base_type_to_json(const struct ovsdb_base_type *base)
         OVS_NOT_REACHED();
 
     case OVSDB_TYPE_INTEGER:
-        if (base->u.integer.min != INT64_MIN) {
+        if (base->integer.min != INT64_MIN) {
             json_object_put(json, "minInteger",
-                            json_integer_create(base->u.integer.min));
+                            json_integer_create(base->integer.min));
         }
-        if (base->u.integer.max != INT64_MAX) {
+        if (base->integer.max != INT64_MAX) {
             json_object_put(json, "maxInteger",
-                            json_integer_create(base->u.integer.max));
+                            json_integer_create(base->integer.max));
         }
         break;
 
     case OVSDB_TYPE_REAL:
-        if (base->u.real.min != -DBL_MAX) {
+        if (base->real.min != -DBL_MAX) {
             json_object_put(json, "minReal",
-                            json_real_create(base->u.real.min));
+                            json_real_create(base->real.min));
         }
-        if (base->u.real.max != DBL_MAX) {
+        if (base->real.max != DBL_MAX) {
             json_object_put(json, "maxReal",
-                            json_real_create(base->u.real.max));
+                            json_real_create(base->real.max));
         }
         break;
 
@@ -536,21 +536,21 @@ ovsdb_base_type_to_json(const struct ovsdb_base_type *base)
         break;
 
     case OVSDB_TYPE_STRING:
-        if (base->u.string.minLen != 0) {
+        if (base->string.minLen != 0) {
             json_object_put(json, "minLength",
-                            json_integer_create(base->u.string.minLen));
+                            json_integer_create(base->string.minLen));
         }
-        if (base->u.string.maxLen != UINT_MAX) {
+        if (base->string.maxLen != UINT_MAX) {
             json_object_put(json, "maxLength",
-                            json_integer_create(base->u.string.maxLen));
+                            json_integer_create(base->string.maxLen));
         }
         break;
 
     case OVSDB_TYPE_UUID:
-        if (base->u.uuid.refTableName) {
+        if (base->uuid.refTableName) {
             json_object_put_string(json, "refTable",
-                                   base->u.uuid.refTableName);
-            if (base->u.uuid.refType == OVSDB_REF_WEAK) {
+                                   base->uuid.refTableName);
+            if (base->uuid.refType == OVSDB_REF_WEAK) {
                 json_object_put_string(json, "refType", "weak");
             }
         }
@@ -606,8 +606,8 @@ n_from_json(const struct json *json, unsigned int *n)
     if (!json) {
         return NULL;
     } else if (json->type == JSON_INTEGER
-               && json->u.integer >= 0 && json->u.integer < UINT_MAX) {
-        *n = json->u.integer;
+               && json->integer >= 0 && json->integer < UINT_MAX) {
+        *n = json->integer;
         return NULL;
     } else {
         return ovsdb_syntax_error(json, NULL, "bad min or max value");
@@ -703,7 +703,7 @@ ovsdb_type_from_json(struct ovsdb_type *type, const struct json *json)
 
         //采用字符串说明max
         if (max && max->type == JSON_STRING
-            && !strcmp(max->u.string, "unlimited")) {
+            && !strcmp(max->string, "unlimited")) {
             type->n_max = UINT_MAX;
         } else {
         	//采用整数说明max

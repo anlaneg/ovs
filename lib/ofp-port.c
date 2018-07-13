@@ -16,12 +16,14 @@
 
 #include <config.h>
 #include "openvswitch/ofp-port.h"
+#include <ctype.h>
 #include "byte-order.h"
 #include "flow.h"
 #include "openflow/intel-ext.h"
 #include "openvswitch/json.h"
 #include "openvswitch/ofp-errors.h"
 #include "openvswitch/ofp-msgs.h"
+#include "openvswitch/ofp-print.h"
 #include "openvswitch/ofp-prop.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
@@ -282,6 +284,83 @@ ofputil_port_to_string(ofp_port_t port,
     }
 
     snprintf(namebuf, bufsize, "%"PRIu32, port);
+}
+
+/* ofputil_port_config */
+
+static const char *
+ofputil_port_config_to_name(uint32_t bit)
+{
+    enum ofputil_port_config pc = bit;
+
+    switch (pc) {
+    case OFPUTIL_PC_PORT_DOWN:    return "PORT_DOWN";
+    case OFPUTIL_PC_NO_STP:       return "NO_STP";
+    case OFPUTIL_PC_NO_RECV:      return "NO_RECV";
+    case OFPUTIL_PC_NO_RECV_STP:  return "NO_RECV_STP";
+    case OFPUTIL_PC_NO_FLOOD:     return "NO_FLOOD";
+    case OFPUTIL_PC_NO_FWD:       return "NO_FWD";
+    case OFPUTIL_PC_NO_PACKET_IN: return "NO_PACKET_IN";
+    }
+
+    return NULL;
+}
+
+void
+ofputil_port_config_format(struct ds *s, enum ofputil_port_config config)
+{
+    ofp_print_bit_names(s, config, ofputil_port_config_to_name, ' ');
+    ds_put_char(s, '\n');
+}
+
+/* ofputil_port_state */
+
+static const char *
+ofputil_port_state_to_name(uint32_t bit)
+{
+    enum ofputil_port_state ps = bit;
+
+    switch (ps) {
+    case OFPUTIL_PS_LINK_DOWN: return "LINK_DOWN";
+    case OFPUTIL_PS_BLOCKED:   return "BLOCKED";
+    case OFPUTIL_PS_LIVE:      return "LIVE";
+
+    case OFPUTIL_PS_STP_LISTEN:
+    case OFPUTIL_PS_STP_LEARN:
+    case OFPUTIL_PS_STP_FORWARD:
+    case OFPUTIL_PS_STP_BLOCK:
+        /* Handled elsewhere. */
+        return NULL;
+    }
+
+    return NULL;
+}
+
+void
+ofputil_port_state_format(struct ds *s, enum ofputil_port_state state)
+{
+    enum ofputil_port_state stp_state;
+
+    /* The STP state is a 2-bit field so it doesn't fit in with the bitmask
+     * pattern.  We have to special case it.
+     *
+     * OVS doesn't support STP, so this field will always be 0 if we are
+     * talking to OVS, so we'd always print STP_LISTEN in that case.
+     * Therefore, we don't print anything at all if the value is STP_LISTEN, to
+     * avoid confusing users. */
+    stp_state = state & OFPUTIL_PS_STP_MASK;
+    if (stp_state) {
+        ds_put_cstr(s, (stp_state == OFPUTIL_PS_STP_LEARN ? "STP_LEARN"
+                        : stp_state == OFPUTIL_PS_STP_FORWARD ? "STP_FORWARD"
+                        : "STP_BLOCK"));
+        state &= ~OFPUTIL_PS_STP_MASK;
+        if (state) {
+            ofp_print_bit_names(s, state, ofputil_port_state_to_name, ' ');
+        }
+    } else {
+        ofp_print_bit_names(s, state, ofputil_port_state_to_name, ' ');
+    }
+    ds_put_char(s, '\n');
 }
 
 /* ofputil_phy_port */
@@ -722,6 +801,103 @@ ofputil_pull_phy_port(enum ofp_version ofp_version, struct ofpbuf *b,
         OVS_NOT_REACHED();
     }
 }
+
+void
+ofputil_phy_port_format(struct ds *s, const struct ofputil_phy_port *port)
+{
+    char name[sizeof port->name];
+    int j;
+
+    memcpy(name, port->name, sizeof name);
+    for (j = 0; j < sizeof name - 1; j++) {
+        if (!isprint((unsigned char) name[j])) {
+            break;
+        }
+    }
+    name[j] = '\0';
+
+    ds_put_char(s, ' ');
+    ofputil_format_port(port->port_no, NULL, s);
+    ds_put_format(s, "(%s): addr:"ETH_ADDR_FMT"\n",
+                  name, ETH_ADDR_ARGS(port->hw_addr));
+
+    if (!eth_addr64_is_zero(port->hw_addr64)) {
+        ds_put_format(s, "     addr64: "ETH_ADDR64_FMT"\n",
+                      ETH_ADDR64_ARGS(port->hw_addr64));
+    }
+
+    ds_put_cstr(s, "     config:     ");
+    ofputil_port_config_format(s, port->config);
+
+    ds_put_cstr(s, "     state:      ");
+    ofputil_port_state_format(s, port->state);
+
+    if (port->curr) {
+        ds_put_format(s, "     current:    ");
+        netdev_features_format(s, port->curr);
+    }
+    if (port->advertised) {
+        ds_put_format(s, "     advertised: ");
+        netdev_features_format(s, port->advertised);
+    }
+    if (port->supported) {
+        ds_put_format(s, "     supported:  ");
+        netdev_features_format(s, port->supported);
+    }
+    if (port->peer) {
+        ds_put_format(s, "     peer:       ");
+        netdev_features_format(s, port->peer);
+    }
+    ds_put_format(s, "     speed: %"PRIu32" Mbps now, "
+                  "%"PRIu32" Mbps max\n",
+                  port->curr_speed / UINT32_C(1000),
+                  port->max_speed / UINT32_C(1000));
+}
+
+/* qsort comparison function. */
+static int
+compare_ports(const void *a_, const void *b_)
+{
+    const struct ofputil_phy_port *a = a_;
+    const struct ofputil_phy_port *b = b_;
+    uint16_t ap = ofp_to_u16(a->port_no);
+    uint16_t bp = ofp_to_u16(b->port_no);
+
+    return ap < bp ? -1 : ap > bp;
+}
+
+/* Given a buffer 'b' that contains an array of OpenFlow ports of type
+ * 'ofp_version', writes a detailed description of each port into 'string'. */
+enum ofperr
+ofputil_phy_ports_format(struct ds *string, uint8_t ofp_version,
+                         struct ofpbuf *b)
+{
+    struct ofputil_phy_port *ports;
+    size_t allocated_ports, n_ports;
+    int retval;
+    size_t i;
+
+    ports = NULL;
+    allocated_ports = 0;
+    for (n_ports = 0; ; n_ports++) {
+        if (n_ports >= allocated_ports) {
+            ports = x2nrealloc(ports, &allocated_ports, sizeof *ports);
+        }
+
+        retval = ofputil_pull_phy_port(ofp_version, b, &ports[n_ports]);
+        if (retval) {
+            break;
+        }
+    }
+
+    qsort(ports, n_ports, sizeof *ports, compare_ports);
+    for (i = 0; i < n_ports; i++) {
+        ofputil_phy_port_format(string, &ports[i]);
+    }
+    free(ports);
+
+    return retval != EOF ? retval : 0;
+}
 
 /* ofputil_port_status */
 
@@ -792,6 +968,21 @@ ofputil_encode_port_status(const struct ofputil_port_status *ps,
     return b;
 }
 
+void
+ofputil_port_status_format(struct ds *s,
+                           const struct ofputil_port_status *ps)
+{
+    if (ps->reason == OFPPR_ADD) {
+        ds_put_format(s, " ADD:");
+    } else if (ps->reason == OFPPR_DELETE) {
+        ds_put_format(s, " DEL:");
+    } else if (ps->reason == OFPPR_MODIFY) {
+        ds_put_format(s, " MOD:");
+    }
+
+    ofputil_phy_port_format(s, &ps->desc);
+}
+
 /* ofputil_port_mod */
 
 static enum ofperr
@@ -1010,6 +1201,33 @@ ofputil_encode_port_mod(const struct ofputil_port_mod *pm,
     }
 
     return b;
+}
+
+void
+ofputil_port_mod_format(struct ds *s, const struct ofputil_port_mod *pm,
+                        const struct ofputil_port_map *port_map)
+{
+    ds_put_cstr(s, " port: ");
+    ofputil_format_port(pm->port_no, port_map, s);
+    ds_put_format(s, ": addr:"ETH_ADDR_FMT"\n",
+                  ETH_ADDR_ARGS(pm->hw_addr));
+    if (!eth_addr64_is_zero(pm->hw_addr64)) {
+        ds_put_format(s, "     addr64: "ETH_ADDR64_FMT"\n",
+                      ETH_ADDR64_ARGS(pm->hw_addr64));
+    }
+
+    ds_put_cstr(s, "     config: ");
+    ofputil_port_config_format(s, pm->config);
+
+    ds_put_cstr(s, "     mask:   ");
+    ofputil_port_config_format(s, pm->mask);
+
+    ds_put_cstr(s, "     advertise: ");
+    if (pm->advertise) {
+        netdev_features_format(s, pm->advertise);
+    } else {
+        ds_put_cstr(s, "UNCHANGED\n");
+    }
 }
 
 /* Encode a dump ports request for 'port', the encoded message
@@ -1596,6 +1814,151 @@ ofputil_decode_port_stats(struct ofputil_port_stats *ps, struct ofpbuf *msg)
                  "bytes at end", msg->size);
     return OFPERR_OFPBRC_BAD_LEN;
 }
+
+static void
+print_port_stat(struct ds *string, const char *leader, uint64_t stat, int more)
+{
+    ds_put_cstr(string, leader);
+    if (stat != UINT64_MAX) {
+        ds_put_format(string, "%"PRIu64, stat);
+    } else {
+        ds_put_char(string, '?');
+    }
+    if (more) {
+        ds_put_cstr(string, ", ");
+    } else {
+        ds_put_cstr(string, "\n");
+    }
+}
+
+static void
+print_port_stat_cond(struct ds *string, const char *leader, uint64_t stat)
+{
+    if (stat != UINT64_MAX) {
+        ds_put_format(string, "%s%"PRIu64", ", leader, stat);
+    }
+}
+
+void
+ofputil_format_port_stats(struct ds *string,
+                          const struct ofputil_port_stats *ps,
+                          const struct ofputil_port_map *port_map)
+{
+    ds_put_cstr(string, "  port ");
+    if (ofp_to_u16(ps->port_no) < 10) {
+        ds_put_char(string, ' ');
+    }
+    ofputil_format_port(ps->port_no, port_map, string);
+
+    ds_put_cstr(string, ": rx ");
+    print_port_stat(string, "pkts=", ps->stats.rx_packets, 1);
+    print_port_stat(string, "bytes=", ps->stats.rx_bytes, 1);
+    print_port_stat(string, "drop=", ps->stats.rx_dropped, 1);
+    print_port_stat(string, "errs=", ps->stats.rx_errors, 1);
+    print_port_stat(string, "frame=", ps->stats.rx_frame_errors, 1);
+    print_port_stat(string, "over=", ps->stats.rx_over_errors, 1);
+    print_port_stat(string, "crc=", ps->stats.rx_crc_errors, 0);
+
+    ds_put_cstr(string, "           tx ");
+    print_port_stat(string, "pkts=", ps->stats.tx_packets, 1);
+    print_port_stat(string, "bytes=", ps->stats.tx_bytes, 1);
+    print_port_stat(string, "drop=", ps->stats.tx_dropped, 1);
+    print_port_stat(string, "errs=", ps->stats.tx_errors, 1);
+    print_port_stat(string, "coll=", ps->stats.collisions, 0);
+
+    if (ps->duration_sec != UINT32_MAX) {
+        ds_put_cstr(string, "           duration=");
+        ofp_print_duration(string, ps->duration_sec, ps->duration_nsec);
+        ds_put_char(string, '\n');
+    }
+    struct ds string_ext_stats = DS_EMPTY_INITIALIZER;
+
+    ds_init(&string_ext_stats);
+
+    print_port_stat_cond(&string_ext_stats, "1_to_64_packets=",
+                         ps->stats.rx_1_to_64_packets);
+    print_port_stat_cond(&string_ext_stats, "65_to_127_packets=",
+                         ps->stats.rx_65_to_127_packets);
+    print_port_stat_cond(&string_ext_stats, "128_to_255_packets=",
+                         ps->stats.rx_128_to_255_packets);
+    print_port_stat_cond(&string_ext_stats, "256_to_511_packets=",
+                         ps->stats.rx_256_to_511_packets);
+    print_port_stat_cond(&string_ext_stats, "512_to_1023_packets=",
+                         ps->stats.rx_512_to_1023_packets);
+    print_port_stat_cond(&string_ext_stats, "1024_to_1522_packets=",
+                         ps->stats.rx_1024_to_1522_packets);
+    print_port_stat_cond(&string_ext_stats, "1523_to_max_packets=",
+                         ps->stats.rx_1523_to_max_packets);
+    print_port_stat_cond(&string_ext_stats, "broadcast_packets=",
+                         ps->stats.rx_broadcast_packets);
+    print_port_stat_cond(&string_ext_stats, "undersized_errors=",
+                         ps->stats.rx_undersized_errors);
+    print_port_stat_cond(&string_ext_stats, "oversize_errors=",
+                         ps->stats.rx_oversize_errors);
+    print_port_stat_cond(&string_ext_stats, "rx_fragmented_errors=",
+                         ps->stats.rx_fragmented_errors);
+    print_port_stat_cond(&string_ext_stats, "rx_jabber_errors=",
+                         ps->stats.rx_jabber_errors);
+
+    if (string_ext_stats.length != 0) {
+        /* If at least one statistics counter is reported: */
+        ds_put_cstr(string, "           rx rfc2819 ");
+        ds_put_buffer(string, string_ext_stats.string,
+                      string_ext_stats.length);
+        ds_put_cstr(string, "\n");
+        ds_destroy(&string_ext_stats);
+    }
+
+    ds_init(&string_ext_stats);
+
+    print_port_stat_cond(&string_ext_stats, "1_to_64_packets=",
+                         ps->stats.tx_1_to_64_packets);
+    print_port_stat_cond(&string_ext_stats, "65_to_127_packets=",
+                         ps->stats.tx_65_to_127_packets);
+    print_port_stat_cond(&string_ext_stats, "128_to_255_packets=",
+                         ps->stats.tx_128_to_255_packets);
+    print_port_stat_cond(&string_ext_stats, "256_to_511_packets=",
+                         ps->stats.tx_256_to_511_packets);
+    print_port_stat_cond(&string_ext_stats, "512_to_1023_packets=",
+                         ps->stats.tx_512_to_1023_packets);
+    print_port_stat_cond(&string_ext_stats, "1024_to_1522_packets=",
+                         ps->stats.tx_1024_to_1522_packets);
+    print_port_stat_cond(&string_ext_stats, "1523_to_max_packets=",
+                         ps->stats.tx_1523_to_max_packets);
+    print_port_stat_cond(&string_ext_stats, "multicast_packets=",
+                         ps->stats.tx_multicast_packets);
+    print_port_stat_cond(&string_ext_stats, "broadcast_packets=",
+                         ps->stats.tx_broadcast_packets);
+
+    if (string_ext_stats.length != 0) {
+        /* If at least one statistics counter is reported: */
+        ds_put_cstr(string, "           tx rfc2819 ");
+        ds_put_buffer(string, string_ext_stats.string,
+                      string_ext_stats.length);
+        ds_put_cstr(string, "\n");
+        ds_destroy(&string_ext_stats);
+    }
+
+    if (ps->custom_stats.size) {
+        ds_put_cstr(string, "           CUSTOM Statistics");
+        for (int i = 0; i < ps->custom_stats.size; i++) {
+            /* 3 counters in the row */
+            if (ps->custom_stats.counters[i].name[0]) {
+                if (i % 3 == 0) {
+                    ds_put_cstr(string, "\n");
+                    ds_put_cstr(string, "                      ");
+                } else {
+                    ds_put_char(string, ' ');
+                }
+                ds_put_format(string, "%s=%"PRIu64",",
+                              ps->custom_stats.counters[i].name,
+                              ps->custom_stats.counters[i].value);
+            }
+        }
+        ds_put_cstr(string, "\n");
+    }
+}
+
 
 /* Parse a port status request message into a 16 bit OpenFlow 1.0
  * port number and stores the latter in '*ofp10_port'.

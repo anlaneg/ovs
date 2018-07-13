@@ -56,6 +56,10 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
 static struct classifier cls;//router表对应的cls
 
+/* By default, use the system routing table.  For system-independent testing,
+ * the unit tests disable using the system routing table. */
+static bool use_system_routing_table = true;
+
 struct ovs_router_entry {
     struct cls_rule cr;
     char output_bridge[IFNAMSIZ];//从哪个桥发出
@@ -64,6 +68,7 @@ struct ovs_router_entry {
     struct in6_addr src_addr;//采用哪个源ip（由于自某个桥发出，故这个源ip将在此桥link up上选）
     uint8_t plen;
     uint8_t priority;
+    bool local;
     uint32_t mark;
 };
 
@@ -75,13 +80,22 @@ ovs_router_entry_cast(const struct cls_rule *cr)
 }
 
 //填充gw6,填充src6，在查询失败时
+/* Disables obtaining routes from the system routing table, for testing
+ * purposes. */
+void
+ovs_router_disable_system_routing_table(void)
+{
+    use_system_routing_table = false;
+}
+
 static bool
 ovs_router_lookup_fallback(const struct in6_addr *ip6_dst, char output_bridge[],
                            struct in6_addr *src6, struct in6_addr *gw6)
 {
     ovs_be32 src;
 
-    if (!route_table_fallback_lookup(ip6_dst, output_bridge, gw6)) {
+    if (!use_system_routing_table
+        || !route_table_fallback_lookup(ip6_dst, output_bridge, gw6)) {
         return false;
     }
     if (netdev_get_in4_by_name(output_bridge, (struct in_addr *)&src)) {
@@ -102,13 +116,28 @@ ovs_router_lookup(uint32_t mark, const struct in6_addr *ip6_dst,
     const struct cls_rule *cr;
     struct flow flow = {.ipv6_dst = *ip6_dst, .pkt_mark = mark};
 
-    cr = classifier_lookup(&cls, OVS_VERSION_MAX, &flow, NULL);//查路由表
+    if (src && ipv6_addr_is_set(src)) {
+        const struct cls_rule *cr_src;
+        struct flow flow_src = {.ipv6_dst = *src, .pkt_mark = mark};
+	//查路由表
+        cr_src = classifier_lookup(&cls, OVS_VERSION_MAX, &flow_src, NULL);
+        if (cr_src) {
+            struct ovs_router_entry *p_src = ovs_router_entry_cast(cr_src);
+            if (!p_src->local) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    cr = classifier_lookup(&cls, OVS_VERSION_MAX, &flow, NULL);
     if (cr) {
         struct ovs_router_entry *p = ovs_router_entry_cast(cr);
 
         ovs_strlcpy(output_bridge, p->output_bridge, IFNAMSIZ);
         *gw = p->gw;
-        if (src) {
+        if (src && !ipv6_addr_is_set(src)) {
             *src = p->src_addr;
         }
         return true;
@@ -198,7 +227,7 @@ out:
 
 //向路由表中插入(ip6_dst/plen 走gw,发出时源ip为output_bridge桥ip地址决定）
 static int
-ovs_router_insert__(uint32_t mark, uint8_t priority,
+ovs_router_insert__(uint32_t mark, uint8_t priority, bool local,
                     const struct in6_addr *ip6_dst,
                     uint8_t plen, const char output_bridge[],
                     const struct in6_addr *gw)
@@ -218,6 +247,7 @@ ovs_router_insert__(uint32_t mark, uint8_t priority,
     p->mark = mark;
     p->nw_addr = match.flow.ipv6_dst;
     p->plen = plen;
+    p->local = local;
     p->priority = priority;
     //自设备output_bridge上查找合适的ip地址
     err = get_src_addr(ip6_dst, output_bridge, &p->src_addr);
@@ -254,9 +284,13 @@ ovs_router_insert__(uint32_t mark, uint8_t priority,
 //路由表项插入
 void
 ovs_router_insert(uint32_t mark, const struct in6_addr *ip_dst, uint8_t plen,
-                  const char output_bridge[], const struct in6_addr *gw)
+                  bool local, const char output_bridge[], 
+                  const struct in6_addr *gw)
 {
-    ovs_router_insert__(mark, plen, ip_dst, plen, output_bridge, gw);
+    if (use_system_routing_table) {
+        uint8_t priority = local ? plen + 64 : plen;
+        ovs_router_insert__(mark, priority, local, ip_dst, plen, output_bridge, gw);
+    }
 }
 
 //表项删除
@@ -373,7 +407,7 @@ ovs_router_add(struct unixctl_conn *conn, int argc,
     }
 
     //加入ipaddr,masklen,bridge,gateway
-    err = ovs_router_insert__(mark, plen + 32, &ip6, plen, argv[2], &gw6);
+    err = ovs_router_insert__(mark, plen + 32, false, &ip6, plen, argv[2], &gw6);
     if (err) {
         unixctl_command_reply_error(conn, "Error while inserting route.");
     } else {
@@ -424,7 +458,7 @@ ovs_router_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
     ds_put_format(&ds, "Route Table:\n");
     CLS_FOR_EACH(rt, cr, &cls) {
         uint8_t plen;
-        if (rt->priority == rt->plen) {
+        if (rt->priority == rt->plen || rt->local) {
             ds_put_format(&ds, "Cached: ");
         } else {
             ds_put_format(&ds, "User: ");
@@ -446,6 +480,9 @@ ovs_router_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
         }
         ds_put_format(&ds, " SRC ");
         ipv6_format_mapped(&rt->src_addr, &ds);
+        if (rt->local) {
+            ds_put_format(&ds, " local");
+        }
         ds_put_format(&ds, "\n");
     }
     unixctl_command_reply(conn, ds_cstr(&ds));
@@ -457,7 +494,7 @@ static void
 ovs_router_lookup_cmd(struct unixctl_conn *conn, int argc,
                       const char *argv[], void *aux OVS_UNUSED)
 {
-    struct in6_addr gw, src;
+    struct in6_addr gw, src = in6addr_any;
     char iface[IFNAMSIZ];
     struct in6_addr ip6;
     unsigned int plen;

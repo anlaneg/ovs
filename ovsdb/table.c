@@ -165,7 +165,7 @@ ovsdb_table_schema_from_json(const struct json *json, const char *name,
             return ovsdb_syntax_error(json, NULL,
                                       "maxRows must be at least 1");
         }
-        n_max_rows = max_rows->u.integer;
+        n_max_rows = max_rows->integer;
     } else {
         n_max_rows = UINT_MAX;
     }
@@ -208,13 +208,13 @@ ovsdb_table_schema_from_json(const struct json *json, const char *name,
     	 */
         size_t i;
 
-        ts->indexes = xmalloc(indexes->u.array.n * sizeof *ts->indexes);
-        for (i = 0; i < indexes->u.array.n; i++) {
+        ts->indexes = xmalloc(indexes->array.n * sizeof *ts->indexes);
+        for (i = 0; i < indexes->array.n; i++) {
             struct ovsdb_column_set *index = &ts->indexes[i];
             size_t j;
 
             //构造索引列表（遍历每个json数组类型）
-            error = ovsdb_column_set_from_json(indexes->u.array.elems[i],
+            error = ovsdb_column_set_from_json(indexes->array.elems[i],
                                                ts, index);
             if (error) {
                 goto error;

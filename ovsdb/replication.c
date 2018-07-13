@@ -1,5 +1,5 @@
 /*
- * (c) Copyright 2016 Hewlett Packard Enterprise Development LP
+ * (c) Copyright 2016, 2017 Hewlett Packard Enterprise Development LP
  * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014, 2016, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -147,8 +147,8 @@ replication_add_local_db(const char *database, struct ovsdb *db)
 static void
 send_schema_requests(const struct json *result)
 {
-    for (size_t i = 0; i < result->u.array.n; i++) {
-        const struct json *name = result->u.array.elems[i];
+    for (size_t i = 0; i < result->array.n; i++) {
+        const struct json *name = result->array.elems[i];
         if (name->type == JSON_STRING) {
             /* Send one schema request for each remote DB. */
             const char *db_name = json_string(name);
@@ -203,13 +203,13 @@ replication_run(void)
         if (msg->type == JSONRPC_NOTIFY && state != RPL_S_ERR
             && !strcmp(msg->method, "update")) {
             if (msg->params->type == JSON_ARRAY
-                && msg->params->u.array.n == 2
-                && msg->params->u.array.elems[0]->type == JSON_STRING) {
-                char *db_name = msg->params->u.array.elems[0]->u.string;
+                && msg->params->array.n == 2
+                && msg->params->array.elems[0]->type == JSON_STRING) {
+                char *db_name = msg->params->array.elems[0]->string;
                 struct ovsdb *db = find_db(db_name);
                 if (db) {
                     struct ovsdb_error *error;
-                    error = process_notification(msg->params->u.array.elems[1],
+                    error = process_notification(msg->params->array.elems[1],
                                                  db);
                     if (error) {
                         ovsdb_error_assert(error);
@@ -539,7 +539,7 @@ reset_database(struct ovsdb *db)
         }
     }
 
-    return ovsdb_txn_commit(txn, false);
+    return ovsdb_txn_propose_commit_block(txn, false);
 }
 
 /* Create a monitor request for 'db'. The monitor request will include
@@ -618,7 +618,7 @@ process_notification(struct json *table_updates, struct ovsdb *db)
             return error;
         } else {
             /* Commit transaction. */
-            error = ovsdb_txn_commit(txn, false);
+            error = ovsdb_txn_propose_commit_block(txn, false);
         }
     }
 

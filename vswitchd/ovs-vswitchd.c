@@ -38,6 +38,8 @@
 #include "openflow/openflow.h"
 #include "ovsdb-idl.h"
 #include "ovs-rcu.h"
+#include "ovs-router.h"
+#include "ovs-thread.h"
 #include "openvswitch/poll-loop.h"
 #include "simap.h"
 #include "stream-ssl.h"
@@ -49,6 +51,7 @@
 #include "openvswitch/vconn.h"
 #include "openvswitch/vlog.h"
 #include "lib/vswitch-idl.h"
+#include "lib/dns-resolve.h"
 
 VLOG_DEFINE_THIS_MODULE(vswitchd);
 
@@ -77,7 +80,9 @@ main(int argc, char *argv[])
     int retval;
 
     set_program_name(argv[0]);//设置进程名称，进程版本号
+    ovsthread_id_init();
 
+    dns_resolve_init(true);
     ovs_cmdl_proctitle_init(argc, argv);//非linux机器不做作何处理
     service_start(&argc, &argv);//linux机器不做任何处理
     remote = parse_options(argc, argv, &unixctl_path);//解析命令行
@@ -142,6 +147,7 @@ main(int argc, char *argv[])
     service_stop();
     vlog_disable_async();
     ovsrcu_exit();
+    dns_resolve_destroy();
 
     return 0;
 }
@@ -225,6 +231,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         case OPT_DISABLE_SYSTEM:
         	//禁用system类型
             dp_blacklist_provider("system");
+            ovs_router_disable_system_routing_table();
             break;
 
         case '?':

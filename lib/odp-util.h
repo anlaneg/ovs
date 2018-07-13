@@ -147,7 +147,7 @@ void odp_portno_name_format(const struct hmap *portno_names,
  * add another field and forget to adjust this value.
  */
 #define ODPUTIL_FLOW_KEY_BYTES 640
-BUILD_ASSERT_DECL(FLOW_WC_SEQ == 40);
+BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
 
 /* A buffer with sufficient size and alignment to hold an nlattr-formatted flow
  * key.  An array of "struct nlattr" might not, in theory, be sufficiently
@@ -274,7 +274,8 @@ int parse_key_and_mask_to_match(const struct nlattr *key, size_t key_len,
 const char *odp_key_fitness_to_string(enum odp_key_fitness);
 
 void commit_odp_tunnel_action(const struct flow *, struct flow *base,
-                              struct ofpbuf *odp_actions);
+                              struct ofpbuf *odp_actions,
+                              const char *tnl_type);
 void commit_masked_set_action(struct ofpbuf *odp_actions,
                               enum ovs_key_attr key_type, const void *key,
                               const void *mask, size_t key_size);
@@ -284,6 +285,7 @@ enum slow_path_reason commit_odp_actions(const struct flow *,
                                          struct flow_wildcards *wc,
                                          bool use_masked,
                                          bool pending_encap,
+                                         bool pending_decap,
                                          struct ofpbuf *encap_data);
 
 /* ofproto-dpif interface.
@@ -356,7 +358,8 @@ size_t odp_put_userspace_action(uint32_t pid,
                                 bool include_actions,
                                 struct ofpbuf *odp_actions);
 void odp_put_tunnel_action(const struct flow_tnl *tunnel,
-                           struct ofpbuf *odp_actions);
+                           struct ofpbuf *odp_actions,
+                           const char *tnl_type);
 
 void odp_put_tnl_push_action(struct ofpbuf *odp_actions,
                              struct ovs_action_push_tnl *data);

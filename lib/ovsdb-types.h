@@ -87,19 +87,19 @@ struct ovsdb_base_type {
             //引用的类型（强，弱）
             enum ovsdb_ref_type refType;  /* Reference type. */
         } uuid;//OVSDB_TYPE_UUID类型
-    } u;
+    };
 };
 
 #define OVSDB_BASE_VOID_INIT    { .type = OVSDB_TYPE_VOID }
 #define OVSDB_BASE_INTEGER_INIT { .type = OVSDB_TYPE_INTEGER,           \
-                                  .u.integer = { INT64_MIN, INT64_MAX } }
+                                  .integer = { INT64_MIN, INT64_MAX } }
 #define OVSDB_BASE_REAL_INIT    { .type = OVSDB_TYPE_REAL,          \
-                                  .u.real = { -DBL_MAX, DBL_MAX } }
+                                  .real = { -DBL_MAX, DBL_MAX } }
 #define OVSDB_BASE_BOOLEAN_INIT { .type = OVSDB_TYPE_BOOLEAN }
 #define OVSDB_BASE_STRING_INIT  { .type = OVSDB_TYPE_STRING,    \
-                                  .u.string = { 0, UINT_MAX } }
+                                  .string = { 0, UINT_MAX } }
 #define OVSDB_BASE_UUID_INIT    { .type = OVSDB_TYPE_UUID,      \
-                                  .u.uuid = { NULL, NULL, 0 } }
+                                  .uuid = { NULL, NULL, 0 } }
 
 void ovsdb_base_type_init(struct ovsdb_base_type *, enum ovsdb_atomic_type);
 void ovsdb_base_type_clone(struct ovsdb_base_type *,
@@ -196,7 +196,7 @@ ovsdb_atomic_type_is_valid(enum ovsdb_atomic_type atomic_type)
 static inline bool
 ovsdb_base_type_is_ref(const struct ovsdb_base_type *base)
 {
-    return base->type == OVSDB_TYPE_UUID && base->u.uuid.refTableName;
+    return base->type == OVSDB_TYPE_UUID && base->uuid.refTableName;
 }
 
 //是否为强引用
@@ -204,14 +204,14 @@ static inline bool
 ovsdb_base_type_is_strong_ref(const struct ovsdb_base_type *base)
 {
     return (ovsdb_base_type_is_ref(base)
-            && base->u.uuid.refType == OVSDB_REF_STRONG);
+            && base->uuid.refType == OVSDB_REF_STRONG);
 }
 
 static inline bool
 ovsdb_base_type_is_weak_ref(const struct ovsdb_base_type *base)
 {
     return (ovsdb_base_type_is_ref(base)
-            && base->u.uuid.refType == OVSDB_REF_WEAK);
+            && base->uuid.refType == OVSDB_REF_WEAK);
 }
 
 //检查类型是否为标量，标量的定义：仅单个值，type->value为空

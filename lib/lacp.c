@@ -122,14 +122,17 @@ struct slave {
 
     enum slave_status status;     /* Slave status. */
     bool attached;                /* Attached. Traffic may flow. */
-    struct lacp_info partner;     /* Partner information. */ //对端信息
-    struct lacp_info ntt_actor;   /* Used to decide if we Need To Transmit. */ //partner发送的对端（即我们）
-    struct timer tx;              /* Next message transmission timer. */ //周期性pdu发送定时器
-    struct timer rx;              /* Expected message receive timer. */ //收超时定时器
+    struct lacp_info partner;     /* Partner information. *///对端信息
+    struct lacp_info ntt_actor;   /* Used to decide if we Need To Transmit. *///partner发送的对端（即我们）
+    struct timer tx;              /* Next message transmission timer. *///周期性pdu发送定时器
+    struct timer rx;              /* Expected message receive timer. *///收超时定时器
 
-    uint32_t count_rx_pdus;       /* dot3adAggPortStatsLACPDUsRx */ //收到pdu计数
-    uint32_t count_rx_pdus_bad;   /* dot3adAggPortStatsIllegalRx */ //收到错误pdu计数
-    uint32_t count_tx_pdus;       /* dot3adAggPortStatsLACPDUsTx */ //发送pdu计数
+    uint32_t count_rx_pdus;         /* dot3adAggPortStatsLACPDUsRx *///收到pdu计数
+    uint32_t count_rx_pdus_bad;     /* dot3adAggPortStatsIllegalRx *///收到错误pdu计数
+    uint32_t count_tx_pdus;         /* dot3adAggPortStatsLACPDUsTx *///发送pdu计数
+    uint32_t count_link_expired;    /* Num of times link expired */
+    uint32_t count_link_defaulted;  /* Num of times link defaulted */
+    uint32_t count_carrier_changed; /* Num of times link status changed */
 };
 
 static struct ovs_mutex mutex;
@@ -153,6 +156,7 @@ static bool info_tx_equal(struct lacp_info *, struct lacp_info *)
     OVS_REQUIRES(mutex);
 
 static unixctl_cb_func lacp_unixctl_show;
+static unixctl_cb_func lacp_unixctl_show_stats;
 
 /* Populates 'pdu' with a LACP PDU comprised of 'actor' and 'partner'. */
 static void
@@ -209,6 +213,8 @@ lacp_init(void)
 {
     unixctl_command_register("lacp/show", "[port]", 0, 1,
                              lacp_unixctl_show, NULL);//定义命令行
+    unixctl_command_register("lacp/show-stats", "[port]", 0, 1,
+                             lacp_unixctl_show_stats, NULL);
 }
 
 static void
@@ -464,6 +470,7 @@ lacp_slave_carrier_changed(const struct lacp *lacp, const void *slave_)
     if (slave->status == LACP_CURRENT || slave->lacp->active) {
         slave_set_expired(slave);
     }
+    slave->count_carrier_changed++;
 
 out:
     lacp_unlock();
@@ -533,9 +540,11 @@ lacp_run(struct lacp *lacp, lacp_send_pdu *send_pdu) OVS_EXCLUDED(mutex)
             if (slave->status == LACP_CURRENT) {
             		//原来是最新状态，现在这个状态未在规定时间内维护，故过期了
                 slave_set_expired(slave);
+                slave->count_link_expired++;
             } else if (slave->status == LACP_EXPIRED) {
             		//仍过期，指明状态无效，促使更新
                 slave_set_defaulted(slave);
+                slave->count_link_defaulted++;
             }
             //指明动态配置变更
             if (slave->status != old_status) {
@@ -919,15 +928,15 @@ lacp_print_details(struct ds *ds, struct lacp *lacp) OVS_REQUIRES(mutex)//lacp�
     int i;
 
     ds_put_format(ds, "---- %s ----\n", lacp->name);
-    ds_put_format(ds, "\tstatus: %s", lacp->active ? "active" : "passive");
+    ds_put_format(ds, "  status: %s", lacp->active ? "active" : "passive");
     if (lacp->negotiated) {
         ds_put_cstr(ds, " negotiated");
     }
     ds_put_cstr(ds, "\n");
 
-    ds_put_format(ds, "\tsys_id: " ETH_ADDR_FMT "\n", ETH_ADDR_ARGS(lacp->sys_id));
-    ds_put_format(ds, "\tsys_priority: %u\n", lacp->sys_priority);
-    ds_put_cstr(ds, "\taggregation key: ");
+    ds_put_format(ds, "  sys_id: " ETH_ADDR_FMT "\n", ETH_ADDR_ARGS(lacp->sys_id));
+    ds_put_format(ds, "  sys_priority: %u\n", lacp->sys_priority);
+    ds_put_cstr(ds, "  aggregation key: ");
     if (lacp->key_slave) {
         ds_put_format(ds, "%u", lacp->key_slave->key
                                 ? lacp->key_slave->key
@@ -937,7 +946,7 @@ lacp_print_details(struct ds *ds, struct lacp *lacp) OVS_REQUIRES(mutex)//lacp�
     }
     ds_put_cstr(ds, "\n");
 
-    ds_put_cstr(ds, "\tlacp_time: ");
+    ds_put_cstr(ds, "  lacp_time: ");
     if (lacp->fast) {
         ds_put_cstr(ds, "fast\n");
     } else {
@@ -971,38 +980,72 @@ lacp_print_details(struct ds *ds, struct lacp *lacp) OVS_REQUIRES(mutex)//lacp�
 
         ds_put_format(ds, "\nslave: %s: %s %s\n", slave->name, status,
                       slave->attached ? "attached" : "detached");
-        ds_put_format(ds, "\tport_id: %u\n", slave->port_id);
-        ds_put_format(ds, "\tport_priority: %u\n", slave->port_priority);
-        ds_put_format(ds, "\tmay_enable: %s\n", (slave_may_enable__(slave)
+        ds_put_format(ds, "  port_id: %u\n", slave->port_id);
+        ds_put_format(ds, "  port_priority: %u\n", slave->port_priority);
+        ds_put_format(ds, "  may_enable: %s\n", (slave_may_enable__(slave)
                                                  ? "true" : "false"));
 
-        ds_put_format(ds, "\n\tactor sys_id: " ETH_ADDR_FMT "\n",
+        ds_put_format(ds, "\n  actor sys_id: " ETH_ADDR_FMT "\n",
                       ETH_ADDR_ARGS(actor.sys_id));
-        ds_put_format(ds, "\tactor sys_priority: %u\n",
+        ds_put_format(ds, "  actor sys_priority: %u\n",
                       ntohs(actor.sys_priority));
-        ds_put_format(ds, "\tactor port_id: %u\n",
+        ds_put_format(ds, "  actor port_id: %u\n",
                       ntohs(actor.port_id));
-        ds_put_format(ds, "\tactor port_priority: %u\n",
+        ds_put_format(ds, "  actor port_priority: %u\n",
                       ntohs(actor.port_priority));
-        ds_put_format(ds, "\tactor key: %u\n",
+        ds_put_format(ds, "  actor key: %u\n",
                       ntohs(actor.key));
-        ds_put_cstr(ds, "\tactor state:");
+        ds_put_cstr(ds, "  actor state:");
         ds_put_lacp_state(ds, actor.state);
         ds_put_cstr(ds, "\n\n");
 
-        ds_put_format(ds, "\tpartner sys_id: " ETH_ADDR_FMT "\n",
+        ds_put_format(ds, "  partner sys_id: " ETH_ADDR_FMT "\n",
                       ETH_ADDR_ARGS(slave->partner.sys_id));
-        ds_put_format(ds, "\tpartner sys_priority: %u\n",
+        ds_put_format(ds, "  partner sys_priority: %u\n",
                       ntohs(slave->partner.sys_priority));
-        ds_put_format(ds, "\tpartner port_id: %u\n",
+        ds_put_format(ds, "  partner port_id: %u\n",
                       ntohs(slave->partner.port_id));
-        ds_put_format(ds, "\tpartner port_priority: %u\n",
+        ds_put_format(ds, "  partner port_priority: %u\n",
                       ntohs(slave->partner.port_priority));
-        ds_put_format(ds, "\tpartner key: %u\n",
+        ds_put_format(ds, "  partner key: %u\n",
                       ntohs(slave->partner.key));
-        ds_put_cstr(ds, "\tpartner state:");
+        ds_put_cstr(ds, "  partner state:");
         ds_put_lacp_state(ds, slave->partner.state);
         ds_put_cstr(ds, "\n");
+    }
+
+    shash_destroy(&slave_shash);
+    free(sorted_slaves);
+}
+
+static void
+lacp_print_stats(struct ds *ds, struct lacp *lacp) OVS_REQUIRES(mutex)
+{
+    struct shash slave_shash = SHASH_INITIALIZER(&slave_shash);
+    const struct shash_node **sorted_slaves = NULL;
+
+    struct slave *slave;
+    int i;
+
+    ds_put_format(ds, "---- %s statistics ----\n", lacp->name);
+
+    HMAP_FOR_EACH (slave, node, &lacp->slaves) {
+        shash_add(&slave_shash, slave->name, slave);
+    }
+    sorted_slaves = shash_sort(&slave_shash);
+
+    for (i = 0; i < shash_count(&slave_shash); i++) {
+        slave = sorted_slaves[i]->data;
+        ds_put_format(ds, "\nslave: %s:\n", slave->name);
+        ds_put_format(ds, "  RX PDUs: %u\n", slave->count_rx_pdus);
+        ds_put_format(ds, "  RX Bad PDUs: %u\n", slave->count_rx_pdus_bad);
+        ds_put_format(ds, "  TX PDUs: %u\n", slave->count_tx_pdus);
+        ds_put_format(ds, "  Link Expired: %u\n",
+                      slave->count_link_expired);
+        ds_put_format(ds, "  Link Defaulted: %u\n",
+                      slave->count_link_defaulted);
+        ds_put_format(ds, "  Carrier Status Changed: %u\n",
+                      slave->count_carrier_changed);
     }
 
     shash_destroy(&slave_shash);
@@ -1037,6 +1080,36 @@ out:
     lacp_unlock();
 }
 
+static void
+lacp_unixctl_show_stats(struct unixctl_conn *conn,
+                  int argc,
+                  const char *argv[],
+                  void *aux OVS_UNUSED) OVS_EXCLUDED(mutex)
+{
+    struct ds ds = DS_EMPTY_INITIALIZER;
+    struct lacp *lacp;
+
+    lacp_lock();
+    if (argc > 1) {
+        lacp = lacp_find(argv[1]);
+        if (!lacp) {
+            unixctl_command_reply_error(conn, "no such lacp object");
+            goto out;
+        }
+        lacp_print_stats(&ds, lacp);
+    } else {
+        LIST_FOR_EACH (lacp, node, all_lacps) {
+            lacp_print_stats(&ds, lacp);
+        }
+    }
+
+    unixctl_command_reply(conn, ds_cstr(&ds));
+    ds_destroy(&ds);
+
+out:
+    lacp_unlock();
+}
+
 /* Extract a snapshot of the current state and counters for a slave port.
    Return false if the slave is not active. */
 bool
@@ -1051,35 +1124,35 @@ lacp_get_slave_stats(const struct lacp *lacp, const void *slave_, struct lacp_sl
 
     slave = slave_lookup(lacp, slave_);
     if (slave) {
-	ret = true;
-	slave_get_actor(slave, &actor);
-	stats->dot3adAggPortActorSystemID = actor.sys_id;
-	stats->dot3adAggPortPartnerOperSystemID = slave->partner.sys_id;
-	stats->dot3adAggPortAttachedAggID = (lacp->key_slave->key ?
-					     lacp->key_slave->key :
-					     lacp->key_slave->port_id);
+        ret = true;
+        slave_get_actor(slave, &actor);
+        stats->dot3adAggPortActorSystemID = actor.sys_id;
+        stats->dot3adAggPortPartnerOperSystemID = slave->partner.sys_id;
+        stats->dot3adAggPortAttachedAggID = (lacp->key_slave->key ?
+                                             lacp->key_slave->key :
+                                             lacp->key_slave->port_id);
 
-	/* Construct my admin-state.  Assume aggregation is configured on. */
-	stats->dot3adAggPortActorAdminState = LACP_STATE_AGG;
-	if (lacp->active) {
-	    stats->dot3adAggPortActorAdminState |= LACP_STATE_ACT;
-	}
-	if (lacp->fast) {
-	    stats->dot3adAggPortActorAdminState |= LACP_STATE_TIME;
-	}
-	/* XXX Not sure how to know the partner admin state. It
-	 * might have to be captured and remembered during the
-	 * negotiation phase.
-	 */
-	stats->dot3adAggPortPartnerAdminState = 0;
+        /* Construct my admin-state.  Assume aggregation is configured on. */
+        stats->dot3adAggPortActorAdminState = LACP_STATE_AGG;
+        if (lacp->active) {
+            stats->dot3adAggPortActorAdminState |= LACP_STATE_ACT;
+        }
+        if (lacp->fast) {
+            stats->dot3adAggPortActorAdminState |= LACP_STATE_TIME;
+        }
+        /* XXX Not sure how to know the partner admin state. It
+         * might have to be captured and remembered during the
+         * negotiation phase.
+         */
+        stats->dot3adAggPortPartnerAdminState = 0;
 
-	stats->dot3adAggPortActorOperState = actor.state;
-	stats->dot3adAggPortPartnerOperState = slave->partner.state;
+        stats->dot3adAggPortActorOperState = actor.state;
+        stats->dot3adAggPortPartnerOperState = slave->partner.state;
 
-	/* Read out the latest counters */
-	stats->dot3adAggPortStatsLACPDUsRx = slave->count_rx_pdus;
-	stats->dot3adAggPortStatsIllegalRx = slave->count_rx_pdus_bad;
-	stats->dot3adAggPortStatsLACPDUsTx = slave->count_tx_pdus;
+        /* Read out the latest counters */
+        stats->dot3adAggPortStatsLACPDUsRx = slave->count_rx_pdus;
+        stats->dot3adAggPortStatsIllegalRx = slave->count_rx_pdus_bad;
+        stats->dot3adAggPortStatsLACPDUsTx = slave->count_tx_pdus;
     } else {
         ret = false;
     }

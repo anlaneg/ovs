@@ -162,10 +162,13 @@ preferred_encap(const struct sbrec_chassis *chassis_rec)
 
 //隧道接口处理
 void
-encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
+encaps_run(struct ovsdb_idl_txn *ovs_idl_txn,
+           const struct ovsrec_bridge_table *bridge_table,
+           const struct ovsrec_bridge *br_int,
+           const struct sbrec_chassis_table *chassis_table,
            const char *chassis_id)
 {
-    if (!ctx->ovs_idl_txn || !br_int) {
+    if (!ovs_idl_txn || !br_int) {
         return;
     }
 
@@ -178,7 +181,7 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
         .br_int = br_int
     };
 
-    tc.ovs_txn = ctx->ovs_idl_txn;
+    tc.ovs_txn = ovs_idl_txn;
     ovsdb_idl_txn_add_comment(tc.ovs_txn,
                               "ovn-controller: modifying OVS tunnels '%s'",
                               chassis_id);
@@ -187,7 +190,7 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
      *
      * Collect all the OVN-created tunnels into tc.tunnel_hmap. */
     //遍历每个br
-    OVSREC_BRIDGE_FOR_EACH(br, ctx->ovs_idl) {
+    OVSREC_BRIDGE_TABLE_FOR_EACH (br, bridge_table) {
     	//遍历br的每个port
         for (size_t i = 0; i < br->n_ports; i++) {
             const struct ovsrec_port *port = br->ports[i];
@@ -214,7 +217,7 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
     }
 
     //遍历南向库中的chassis记录
-    SBREC_CHASSIS_FOR_EACH(chassis_rec, ctx->ovnsb_idl) {
+    SBREC_CHASSIS_TABLE_FOR_EACH (chassis_rec, chassis_table) {
         if (strcmp(chassis_rec->name, chassis_id)) {
         	//查找到名称为chassis_id的这条记录(即属于本agent的记录），选择一种隧道类型
             /* Create tunnels to the other chassis. */
@@ -244,7 +247,8 @@ encaps_run(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int,
 /* Returns true if the database is all cleaned up, false if more work is
  * required. */
 bool
-encaps_cleanup(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int)
+encaps_cleanup(struct ovsdb_idl_txn *ovs_idl_txn,
+               const struct ovsrec_bridge *br_int)
 {
     if (!br_int) {
         return true;
@@ -261,8 +265,8 @@ encaps_cleanup(struct controller_ctx *ctx, const struct ovsrec_bridge *br_int)
     }
 
     bool any_changes = n != br_int->n_ports;
-    if (any_changes && ctx->ovs_idl_txn) {
-        ovsdb_idl_txn_add_comment(ctx->ovs_idl_txn,
+    if (any_changes && ovs_idl_txn) {
+        ovsdb_idl_txn_add_comment(ovs_idl_txn,
                                   "ovn-controller: destroying tunnels");
         ovsrec_bridge_verify_ports(br_int);
         ovsrec_bridge_set_ports(br_int, ports, n);

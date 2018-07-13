@@ -596,7 +596,7 @@ struct ofgroup {
     const struct ovs_list buckets;    /* Contains "struct ofputil_bucket"s. */ //组内的一系列动作
     const uint32_t n_buckets;//桶数目
 
-    const struct ofputil_group_props props;
+    struct ofputil_group_props props;
 
     //指出用此group做为action的规则
     struct rule_collection rules OVS_GUARDED;   /* Referring rules. */
@@ -1225,7 +1225,7 @@ struct ofproto_class {
      *
      * If this function is NULL then table 0 is always chosen. */
     enum ofperr (*rule_choose_table)(const struct ofproto *ofproto,
-                                     const struct match *match,
+                                     const struct minimatch *match,
                                      uint8_t *table_idp);
 
     /* Life-cycle functions for a "struct rule".

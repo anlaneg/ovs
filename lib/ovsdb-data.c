@@ -263,17 +263,17 @@ static struct ovsdb_error *
 unwrap_json(const struct json *json, const char *name,
             enum json_type value_type, const struct json **value)
 {
-    if (json->type != JSON_ARRAY //json不是数组类型
-        || json->u.array.n != 2 //成员数不为2
-        || json->u.array.elems[0]->type != JSON_STRING //成员0不是字符串
-        || (name && strcmp(json->u.array.elems[0]->u.string, name)) //有name，但与name不相同
-        || json->u.array.elems[1]->type != value_type)//成员1类型与value类型不一致
+    if (json->type != JSON_ARRAY//json不是数组类型
+        || json->array.n != 2//成员数不为2
+        || json->array.elems[0]->type != JSON_STRING//成员0不是字符串
+        || (name && strcmp(json->array.elems[0]->string, name))//有name，但与name不相同
+        || json->array.elems[1]->type != value_type)//成员1类型与value类型不一致
     {
         *value = NULL;
         return ovsdb_syntax_error(json, NULL, "expected [\"%s\", <%s>]", name,
                                   json_type_to_string(value_type));
     }
-    *value = json->u.array.elems[1];
+    *value = json->array.elems[1];
     return NULL;
 }
 
@@ -281,11 +281,11 @@ static struct ovsdb_error *
 parse_json_pair(const struct json *json,
                 const struct json **elem0, const struct json **elem1)
 {
-    if (json->type != JSON_ARRAY || json->u.array.n != 2) {
+    if (json->type != JSON_ARRAY || json->array.n != 2) {
         return ovsdb_syntax_error(json, NULL, "expected 2-element array");
     }
-    *elem0 = json->u.array.elems[0];
-    *elem1 = json->u.array.elems[1];
+    *elem0 = json->array.elems[0];
+    *elem1 = json->array.elems[1];
     return NULL;
 }
 
@@ -295,8 +295,8 @@ ovsdb_symbol_referenced(struct ovsdb_symbol *symbol,
 {
     ovs_assert(base->type == OVSDB_TYPE_UUID);
 
-    if (base->u.uuid.refTableName) {
-        switch (base->u.uuid.refType) {
+    if (base->uuid.refTableName) {
+        switch (base->uuid.refType) {
         case OVSDB_REF_STRONG:
             symbol->strong_ref = true;
             break;
@@ -381,17 +381,17 @@ ovsdb_atom_from_json__(union ovsdb_atom *atom,
 
     case OVSDB_TYPE_INTEGER:
         if (json->type == JSON_INTEGER) {
-            atom->integer = json->u.integer;
+            atom->integer = json->integer;
             return NULL;
         }
         break;
 
     case OVSDB_TYPE_REAL:
         if (json->type == JSON_INTEGER) {
-            atom->real = json->u.integer;
+            atom->real = json->integer;
             return NULL;
         } else if (json->type == JSON_REAL) {
-            atom->real = json->u.real;
+            atom->real = json->real;
             return NULL;
         }
         break;
@@ -408,7 +408,7 @@ ovsdb_atom_from_json__(union ovsdb_atom *atom,
 
     case OVSDB_TYPE_STRING:
         if (json->type == JSON_STRING) {
-            atom->string = xstrdup(json->u.string);
+            atom->string = xstrdup(json->string);
             return NULL;
         }
         break;
@@ -729,7 +729,7 @@ ovsdb_atom_to_string(const union ovsdb_atom *atom, enum ovsdb_atomic_type type,
             struct json json;
 
             json.type = JSON_STRING;
-            json.u.string = atom->string;
+            json.string = atom->string;
             json_to_ds(&json, 0, out);
         } else {
             ds_put_cstr(out, atom->string);
@@ -828,54 +828,54 @@ ovsdb_atom_check_constraints(const union ovsdb_atom *atom,
         OVS_NOT_REACHED();
 
     case OVSDB_TYPE_INTEGER:
-        if (atom->integer >= base->u.integer.min
-            && atom->integer <= base->u.integer.max) {
+        if (atom->integer >= base->integer.min
+            && atom->integer <= base->integer.max) {
             return NULL;
-        } else if (base->u.integer.min != INT64_MIN) {
-            if (base->u.integer.max != INT64_MAX) {
+        } else if (base->integer.min != INT64_MIN) {
+            if (base->integer.max != INT64_MAX) {
                 return ovsdb_error("constraint violation",
                                    "%"PRId64" is not in the valid range "
                                    "%"PRId64" to %"PRId64" (inclusive)",
                                    atom->integer,
-                                   base->u.integer.min, base->u.integer.max);
+                                   base->integer.min, base->integer.max);
             } else {
                 return ovsdb_error("constraint violation",
                                    "%"PRId64" is less than minimum allowed "
                                    "value %"PRId64,
-                                   atom->integer, base->u.integer.min);
+                                   atom->integer, base->integer.min);
             }
         } else {
             return ovsdb_error("constraint violation",
                                "%"PRId64" is greater than maximum allowed "
                                "value %"PRId64,
-                               atom->integer, base->u.integer.max);
+                               atom->integer, base->integer.max);
         }
         OVS_NOT_REACHED();
 
     case OVSDB_TYPE_REAL:
-        if (atom->real >= base->u.real.min && atom->real <= base->u.real.max) {
+        if (atom->real >= base->real.min && atom->real <= base->real.max) {
             return NULL;
-        } else if (base->u.real.min != -DBL_MAX) {
-            if (base->u.real.max != DBL_MAX) {
+        } else if (base->real.min != -DBL_MAX) {
+            if (base->real.max != DBL_MAX) {
                 return ovsdb_error("constraint violation",
                                    "%.*g is not in the valid range "
                                    "%.*g to %.*g (inclusive)",
                                    DBL_DIG, atom->real,
-                                   DBL_DIG, base->u.real.min,
-                                   DBL_DIG, base->u.real.max);
+                                   DBL_DIG, base->real.min,
+                                   DBL_DIG, base->real.max);
             } else {
                 return ovsdb_error("constraint violation",
                                    "%.*g is less than minimum allowed "
                                    "value %.*g",
                                    DBL_DIG, atom->real,
-                                   DBL_DIG, base->u.real.min);
+                                   DBL_DIG, base->real.min);
             }
         } else {
             return ovsdb_error("constraint violation",
                                "%.*g is greater than maximum allowed "
                                "value %.*g",
                                DBL_DIG, atom->real,
-                               DBL_DIG, base->u.real.max);
+                               DBL_DIG, base->real.max);
         }
         OVS_NOT_REACHED();
 
@@ -883,7 +883,7 @@ ovsdb_atom_check_constraints(const union ovsdb_atom *atom,
         return NULL;
 
     case OVSDB_TYPE_STRING:
-        return check_string_constraints(atom->string, &base->u.string);
+        return check_string_constraints(atom->string, &base->string);
 
     case OVSDB_TYPE_UUID:
         return NULL;
@@ -1231,9 +1231,9 @@ ovsdb_datum_from_json__(struct ovsdb_datum *datum,
     //map类型或set类型处理
     if (ovsdb_type_is_map(type)
         || (json->type == JSON_ARRAY
-            && json->u.array.n > 0 //多个成员
-            && json->u.array.elems[0]->type == JSON_STRING //成员类型为字符串
-            && !strcmp(json->u.array.elems[0]->u.string, "set"))) { //成员0的值为'set'
+            && json->array.n > 0//多个成员
+            && json->array.elems[0]->type == JSON_STRING//成员类型为字符串
+            && !strcmp(json->array.elems[0]->string, "set"))) {//成员0的值为'set'
         bool is_map = ovsdb_type_is_map(type);
         const char *class = is_map ? "map" : "set";
         const struct json *inner;
@@ -1252,7 +1252,7 @@ ovsdb_datum_from_json__(struct ovsdb_datum *datum,
             return error;
         }
 
-        n = inner->u.array.n;
+        n = inner->array.n;
         if (n < type->n_min || n > type->n_max) {
             return ovsdb_syntax_error(json, NULL, "%s must have %u to "
                                       "%u members but %"PRIuSIZE" are present",
@@ -1263,7 +1263,7 @@ ovsdb_datum_from_json__(struct ovsdb_datum *datum,
         datum->keys = xmalloc(n * sizeof *datum->keys);
         datum->values = is_map ? xmalloc(n * sizeof *datum->values) : NULL;
         for (i = 0; i < n; i++) {
-            const struct json *element = inner->u.array.elems[i];
+            const struct json *element = inner->array.elems[i];
             const struct json *key = NULL;
             const struct json *value = NULL;
 
@@ -1393,7 +1393,7 @@ ovsdb_base_to_json(const union ovsdb_atom *atom,
 {
     if (!use_row_names
         || base->type != OVSDB_TYPE_UUID
-        || !base->u.uuid.refTableName) {
+        || !base->uuid.refTableName) {
         return ovsdb_atom_to_json(atom, base->type);
     } else {
         return json_array_create_2(
@@ -1710,6 +1710,19 @@ ovsdb_datum_from_smap(struct ovsdb_datum *datum, const struct smap *smap)
     ovs_assert(i == datum->n);
 
     ovsdb_datum_sort_unique(datum, OVSDB_TYPE_STRING, OVSDB_TYPE_STRING);
+}
+
+struct ovsdb_error * OVS_WARN_UNUSED_RESULT
+ovsdb_datum_convert(struct ovsdb_datum *dst,
+                    const struct ovsdb_type *dst_type,
+                    const struct ovsdb_datum *src,
+                    const struct ovsdb_type *src_type)
+{
+    struct json *json = ovsdb_datum_to_json(src, src_type);
+    struct ovsdb_error *error = ovsdb_datum_from_json(dst, dst_type, json,
+                                                      NULL);
+    json_destroy(json);
+    return error;
 }
 
 static uint32_t

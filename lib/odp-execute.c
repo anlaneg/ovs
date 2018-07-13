@@ -697,8 +697,12 @@ requires_datapath_assistance(const struct nlattr *a)
  * Some actions (e.g. output actions) can only be executed by a datapath.  This
  * function implements those actions by passing the action and the packets to
  * 'dp_execute_action' (along with 'dp').  If 'dp_execute_action' is passed a
- * true 'may_steal' parameter then it may possibly modify and must definitely
- * free the packets passed into it, otherwise it must leave them unchanged. */
+ * true 'steal' parameter then it must definitely free the packets passed into
+ * it.  The packet can be modified whether 'steal' is false or true.  If a
+ * packet is removed from the batch, then the fate of the packet is determined
+ * by the code that does this removal, irrespective of the value of 'steal'.
+ * Otherwise, if the packet is not removed from the batch and 'steal' is false
+ * then the packet could either be cloned or not. */
 //ovs执行openflow生成的动作
 void
 odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
@@ -718,10 +722,10 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             if (dp_execute_action) {
                 /* Allow 'dp_execute_action' to steal the packet data if we do
                  * not need it any more. */
-                bool may_steal = steal && last_action;
+                bool should_steal = steal && last_action;
 
                 //执行a属性对应的动作
-                dp_execute_action(dp, batch, a, may_steal);
+                dp_execute_action(dp, batch, a, should_steal);
 
                 if (last_action || batch->count == 0) {
                     /* We do not need to free the packets.
@@ -737,16 +741,18 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
 
         //不需要datapath协助的工作
         switch ((enum ovs_action_attr) type) {
+
         case OVS_ACTION_ATTR_HASH: {
         	    //按报文计算hash值
             const struct ovs_action_hash *hash_act = nl_attr_get(a);
 
-            /* Calculate a hash value directly.  This might not match the
+            /* Calculate a hash value directly. This might not match the
              * value computed by the datapath, but it is much less expensive,
              * and the current use case (bonding) does not require a strict
              * match to work properly. */
+            switch (hash_act->hash_alg) {
             //目前仅支持这一种hash算法
-            if (hash_act->hash_alg == OVS_HASH_ALG_L4) {
+            case OVS_HASH_ALG_L4: {
                 struct flow flow;
                 uint32_t hash;
 
@@ -764,7 +770,22 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
                     }
                     packet->md.dp_hash = hash;
                 }
-            } else {
+                break;
+            }
+            case OVS_HASH_ALG_SYM_L4: {
+                struct flow flow;
+                uint32_t hash;
+
+                DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
+                    flow_extract(packet, &flow);
+                    hash = flow_hash_symmetric_l3l4(&flow,
+                                                    hash_act->hash_basis,
+                                                    false);
+                    packet->md.dp_hash = hash;
+                }
+                break;
+            }
+            default:
                 /* Assert on unknown hash algorithm.  */
                 OVS_NOT_REACHED();
             }

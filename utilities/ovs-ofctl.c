@@ -477,10 +477,8 @@ usage(void)
            "  queue-get-config SWITCH [PORT]  print queue config for PORT\n"
            "  add-meter SWITCH METER      add meter described by METER\n"
            "  mod-meter SWITCH METER      modify specific METER\n"
-           "  del-meter SWITCH METER      delete METER\n"
-           "  del-meters SWITCH           delete all meters\n"
-           "  dump-meter SWITCH METER     print METER configuration\n"
-           "  dump-meters SWITCH          print all meter configuration\n"
+           "  del-meters SWITCH [METER]   delete meters matching METER\n"
+           "  dump-meters SWITCH [METER]  print METER configuration\n"
            "  meter-stats SWITCH [METER]  print meter statistics\n"
            "  meter-features SWITCH       print meter features\n"
            "  add-tlv-map SWITCH MAP      add TLV option MAPpings\n"
@@ -514,6 +512,7 @@ usage(void)
            "  --sort[=field]              sort in ascending order\n"
            "  --rsort[=field]             sort in descending order\n"
            "  --names                     show port names instead of numbers\n"
+           "  --no-names                  show port numbers, but not names\n"
            "  --unixctl=SOCKET            set control socket name\n"
            "  --color[=always|never|auto] control use of color in output\n"
            "  -h, --help                  display this help message\n"
@@ -926,9 +925,9 @@ ofctl_dump_table_features(struct ovs_cmdl_context *ctx)
                     }
 
                     struct ds s = DS_EMPTY_INITIALIZER;
-                    ofp_print_table_features(&s, &tf, n ? &prev : NULL,
-                                             NULL, NULL,
-                                             tables_to_show(ctx->argv[1]));
+                    ofputil_table_features_format(
+                        &s, &tf, n ? &prev : NULL, NULL, NULL,
+                        tables_to_show(ctx->argv[1]));
                     puts(ds_cstr(&s));
                     ds_destroy(&s);
 
@@ -1571,8 +1570,10 @@ ofctl_dump_flows(struct ovs_cmdl_context *ctx)
         struct ds s = DS_EMPTY_INITIALIZER;
         for (size_t i = 0; i < n_fses; i++) {
             ds_clear(&s);
-            ofp_print_flow_stats(&s, &fses[i], ports_to_show(ctx->argv[1]),
-                                 tables_to_show(ctx->argv[1]), show_stats);
+            ofputil_flow_stats_format(&s, &fses[i],
+                                      ports_to_show(ctx->argv[1]),
+                                      tables_to_show(ctx->argv[1]),
+                                      show_stats);
             printf(" %s\n", ds_cstr(&s));
         }
         ds_destroy(&s);
@@ -1745,6 +1746,7 @@ ofctl_flow_mod__(const char *remote, struct ofputil_flow_mod *fms,
 
         transact_noreply(vconn, ofputil_encode_flow_mod(fm, protocol));
         free(CONST_CAST(struct ofpact *, fm->ofpacts));
+        minimatch_destroy(&fm->match);
     }
     vconn_close(vconn);
 }
@@ -1820,13 +1822,13 @@ ofctl_del_flows(struct ovs_cmdl_context *ctx)
 
 static bool
 set_packet_in_format(struct vconn *vconn,
-                     enum nx_packet_in_format packet_in_format,
+                     enum ofputil_packet_in_format packet_in_format,
                      bool must_succeed)
 {
     struct ofpbuf *spif;
 
-    spif = ofputil_make_set_packet_in_format(vconn_get_version(vconn),
-                                             packet_in_format);
+    spif = ofputil_encode_set_packet_in_format(vconn_get_version(vconn),
+                                               packet_in_format);
     if (must_succeed) {
         transact_noreply(vconn, spif);
     } else {
@@ -2303,13 +2305,13 @@ ofctl_monitor(struct ovs_cmdl_context *ctx)
         set_packet_in_format(vconn, preferred_packet_in_format, true);
     } else {
         /* Otherwise, we always prefer NXT_PACKET_IN2. */
-        if (!set_packet_in_format(vconn, NXPIF_NXT_PACKET_IN2, false)) {
+        if (!set_packet_in_format(vconn, OFPUTIL_PACKET_IN_NXT2, false)) {
             /* We can't get NXT_PACKET_IN2.  For OpenFlow 1.0 only, request
              * NXT_PACKET_IN.  (Before 2.6, Open vSwitch will accept a request
              * for NXT_PACKET_IN with OF1.1+, but even after that it still
              * sends packet-ins in the OpenFlow native format.) */
             if (vconn_get_version(vconn) == OFP10_VERSION) {
-                set_packet_in_format(vconn, NXPIF_NXT_PACKET_IN, false);
+                set_packet_in_format(vconn, OFPUTIL_PACKET_IN_NXT, false);
             }
         }
     }
@@ -2321,6 +2323,11 @@ static void
 ofctl_snoop(struct ovs_cmdl_context *ctx)
 {
     struct vconn *vconn;
+
+    /* We can't use the snoop vconn to send table features request or port
+     * description request messages to show names, because ovs-vswitchd will
+     * not respond to these messages on snoop vconn. */
+    use_names = 0;
 
     open_vconn__(ctx->argv[1], SNOOP, &vconn);
     monitor_vconn(vconn, false, false);
@@ -3307,7 +3314,7 @@ struct fte_version {
 /* A FTE entry that has been queued for later insertion after all
  * flows have been scanned to correctly allocation tunnel metadata. */
 struct fte_pending {
-    struct match *match;
+    struct minimatch match;
     int priority;
     struct fte_version *version;
     int index;
@@ -3440,14 +3447,14 @@ fte_free_all(struct flow_tables *tables)
  *
  * Takes ownership of 'version'. */
 static void
-fte_insert(struct flow_tables *tables, const struct match *match,
+fte_insert(struct flow_tables *tables, const struct minimatch *match,
            int priority, struct fte_version *version, int index)
 {
     struct classifier *cls = &tables->tables[version->table_id];
     struct fte *old, *fte;
 
     fte = xzalloc(sizeof *fte);
-    cls_rule_init(&fte->rule, match, priority);
+    cls_rule_init_from_minimatch(&fte->rule, match, priority);
     fte->versions[index] = version;
 
     old = fte_from_cls_rule(classifier_replace(cls, &fte->rule,
@@ -3496,40 +3503,45 @@ generate_tun_metadata(struct fte_state *state)
  * can just read the data from the match and rewrite it. On rewrite, it
  * will use the new table. */
 static void
-remap_match(struct fte_state *state, struct match *match)
+remap_match(struct fte_state *state, struct minimatch *minimatch)
 {
     int i;
 
-    if (!match->tun_md.valid) {
+    if (!minimatch->tun_md || !minimatch->tun_md->valid) {
         return;
     }
 
-    struct tun_metadata flow = match->flow.tunnel.metadata;
-    struct tun_metadata flow_mask = match->wc.masks.tunnel.metadata;
-    memset(&match->flow.tunnel.metadata, 0, sizeof match->flow.tunnel.metadata);
-    memset(&match->wc.masks.tunnel.metadata, 0,
-           sizeof match->wc.masks.tunnel.metadata);
-    match->tun_md.valid = false;
+    struct match match;
+    minimatch_expand(minimatch, &match);
 
-    match->flow.tunnel.metadata.tab = state->tun_tab;
-    match->wc.masks.tunnel.metadata.tab = match->flow.tunnel.metadata.tab;
+    struct tun_metadata flow = match.flow.tunnel.metadata;
+    struct tun_metadata flow_mask = match.wc.masks.tunnel.metadata;
+    memset(&match.flow.tunnel.metadata, 0, sizeof match.flow.tunnel.metadata);
+    memset(&match.wc.masks.tunnel.metadata, 0,
+           sizeof match.wc.masks.tunnel.metadata);
+    match.tun_md.valid = false;
+
+    match.flow.tunnel.metadata.tab = state->tun_tab;
+    match.wc.masks.tunnel.metadata.tab = match.flow.tunnel.metadata.tab;
 
     ULLONG_FOR_EACH_1 (i, flow_mask.present.map) {
         const struct mf_field *field = mf_from_id(MFF_TUN_METADATA0 + i);
-        int offset = match->tun_md.entry[i].loc.c.offset;
-        int len = match->tun_md.entry[i].loc.len;
+        int offset = match.tun_md.entry[i].loc.c.offset;
+        int len = match.tun_md.entry[i].loc.len;
         union mf_value value, mask;
 
         memset(&value, 0, field->n_bytes - len);
-        memset(&mask, match->tun_md.entry[i].masked ? 0 : 0xff,
+        memset(&mask, match.tun_md.entry[i].masked ? 0 : 0xff,
                field->n_bytes - len);
 
         memcpy(value.tun_metadata + field->n_bytes - len,
                flow.opts.u8 + offset, len);
         memcpy(mask.tun_metadata + field->n_bytes - len,
                flow_mask.opts.u8 + offset, len);
-        mf_set(field, &value, &mask, match, NULL);
+        mf_set(field, &value, &mask, &match, NULL);
     }
+    minimatch_destroy(minimatch);
+    minimatch_init(minimatch, &match);
 }
 
 /* In order to correctly handle tunnel metadata, we need to have
@@ -3576,25 +3588,26 @@ fte_state_destroy(struct fte_state *state)
  * fte_state_init(). fte_queue() is the first pass to be called as each
  * flow is read from its source. */
 static void
-fte_queue(struct fte_state *state, const struct match *match,
+fte_queue(struct fte_state *state, const struct minimatch *match,
           int priority, struct fte_version *version, int index)
 {
     struct fte_pending *pending = xmalloc(sizeof *pending);
     int i;
 
-    pending->match = xmemdup(match, sizeof *match);
+    minimatch_clone(&pending->match, match);
     pending->priority = priority;
     pending->version = version;
     pending->index = index;
     ovs_list_push_back(&state->fte_pending_list, &pending->list_node);
 
-    if (!match->tun_md.valid) {
+    if (!match->tun_md || !match->tun_md->valid) {
         return;
     }
 
-    ULLONG_FOR_EACH_1 (i, match->wc.masks.tunnel.metadata.present.map) {
-        if (match->tun_md.entry[i].loc.len > state->tun_metadata_size[i]) {
-            state->tun_metadata_size[i] = match->tun_md.entry[i].loc.len;
+    uint64_t map = miniflow_get_tun_metadata_present_map(&match->mask->masks);
+    ULLONG_FOR_EACH_1 (i, map) {
+        if (match->tun_md->entry[i].loc.len > state->tun_metadata_size[i]) {
+            state->tun_metadata_size[i] = match->tun_md->entry[i].loc.len;
         }
     }
 }
@@ -3613,10 +3626,10 @@ fte_fill(struct fte_state *state, struct flow_tables *tables)
     flow_tables_defer(tables);
 
     LIST_FOR_EACH_POP(pending, list_node, &state->fte_pending_list) {
-        remap_match(state, pending->match);
-        fte_insert(tables, pending->match, pending->priority, pending->version,
-                   pending->index);
-        free(pending->match);
+        remap_match(state, &pending->match);
+        fte_insert(tables, &pending->match, pending->priority,
+                   pending->version, pending->index);
+        minimatch_destroy(&pending->match);
         free(pending);
     }
 
@@ -3667,6 +3680,8 @@ read_flows_from_file(const char *filename, struct fte_state *state, int index)
         version->table_id = fm.table_id != OFPTT_ALL ? fm.table_id : 0;
 
         fte_queue(state, &fm.match, fm.priority, version, index);
+
+        minimatch_destroy(&fm.match);
     }
     ds_destroy(&s);
 
@@ -3712,7 +3727,10 @@ read_flows_from_switch(struct vconn *vconn,
         version->ofpacts = xmemdup(fs->ofpacts, fs->ofpacts_len);
         version->table_id = fs->table_id;
 
-        fte_queue(state, &fs->match, fs->priority, version, index);
+        struct minimatch match;
+        minimatch_init(&match, &fs->match);
+        fte_queue(state, &match, fs->priority, version, index);
+        minimatch_destroy(&match);
     }
 
     for (size_t i = 0; i < n_fses; i++) {
@@ -3742,7 +3760,7 @@ fte_make_flow_mod(const struct fte *fte, int index, uint16_t command,
         .out_group = OFPG_ANY,
         .flags = version->flags,
     };
-    minimatch_expand(&fte->rule.match, &fm.match);
+    minimatch_clone(&fm.match, &fte->rule.match);
     if (command == OFPFC_ADD || command == OFPFC_MODIFY ||
         command == OFPFC_MODIFY_STRICT) {
         fm.ofpacts = version->ofpacts;
@@ -3751,8 +3769,9 @@ fte_make_flow_mod(const struct fte *fte, int index, uint16_t command,
         fm.ofpacts = NULL;
         fm.ofpacts_len = 0;
     }
-
     ofm = ofputil_encode_flow_mod(&fm, protocol);
+    minimatch_destroy(&fm.match);
+
     ovs_list_push_back(packets, &ofm->list_node);
 }
 
@@ -4026,6 +4045,7 @@ ofctl_parse_flows__(struct ofputil_flow_mod *fms, size_t n_fms,
         ofpbuf_delete(msg);
 
         free(CONST_CAST(struct ofpact *, fm->ofpacts));
+        minimatch_destroy(&fm->match);
     }
 }
 
@@ -4502,10 +4522,13 @@ ofctl_check_vlan(struct ovs_cmdl_context *ctx)
     if (error_s) {
         ovs_fatal(0, "%s", error_s);
     }
+    struct match fm_match;
+    minimatch_expand(&fm.match, &fm_match);
     printf("%04"PRIx16"/%04"PRIx16"\n",
-           ntohs(fm.match.flow.vlans[0].tci),
-           ntohs(fm.match.wc.masks.vlans[0].tci));
+           ntohs(fm_match.flow.vlans[0].tci),
+           ntohs(fm_match.wc.masks.vlans[0].tci));
     free(string_s);
+    minimatch_destroy(&fm.match);
 
     /* Convert to and from NXM. */
     ofpbuf_init(&nxm, 0);
@@ -4779,6 +4802,24 @@ ofctl_compose_packet(struct ovs_cmdl_context *ctx)
     }
 }
 
+/* "parse-packet" reads an Ethernet packet from stdin and prints it out its
+ * extracted flow fields. */
+static void
+ofctl_parse_packet(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    char packet[65535];
+    ssize_t size = read(STDIN_FILENO, packet, sizeof packet);
+    if (size < 0) {
+        ovs_fatal(errno, "failed to read packet from stdin");
+    }
+
+    /* Make a copy of the packet in allocated memory to better allow Valgrind
+     * and Address Sanitizer to catch out-of-range access. */
+    void *packet_copy = xmemdup(packet, size);
+    ofp_print_packet(stdout, packet_copy, size, 0);
+    free(packet_copy);
+}
+
 static const struct ovs_cmdl_command all_commands[] = {
     { "show", "switch",
       1, 1, ofctl_show, OVS_RO },
@@ -4819,13 +4860,13 @@ static const struct ovs_cmdl_command all_commands[] = {
     { "mod-meter", "switch meter",
       2, 2, ofctl_mod_meter, OVS_RW },
     { "del-meter", "switch meter",
-      2, 2, ofctl_del_meters, OVS_RW },
+      1, 2, ofctl_del_meters, OVS_RW },
     { "del-meters", "switch",
-      1, 1, ofctl_del_meters, OVS_RW },
+      1, 2, ofctl_del_meters, OVS_RW },
     { "dump-meter", "switch meter",
-      2, 2, ofctl_dump_meters, OVS_RO },
+      1, 2, ofctl_dump_meters, OVS_RO },
     { "dump-meters", "switch",
-      1, 1, ofctl_dump_meters, OVS_RO },
+      1, 2, ofctl_dump_meters, OVS_RO },
     { "meter-stats", "switch [meter]",
       1, 2, ofctl_meter_stats, OVS_RO },
     { "meter-features", "switch",
@@ -4913,6 +4954,7 @@ static const struct ovs_cmdl_command all_commands[] = {
     { "encode-hello", NULL, 1, 1, ofctl_encode_hello, OVS_RW },
     { "parse-key-value", NULL, 1, INT_MAX, ofctl_parse_key_value, OVS_RW },
     { "compose-packet", NULL, 1, 2, ofctl_compose_packet, OVS_RO },
+    { "parse-packet", NULL, 0, 0, ofctl_parse_packet, OVS_RO },
 
     { NULL, NULL, 0, 0, NULL, OVS_RO },
 };

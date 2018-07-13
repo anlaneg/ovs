@@ -129,7 +129,7 @@ struct mf_ctx {
  * away.  Some GCC versions gave warnings on ALWAYS_INLINE, so these are
  * defined as macros. */
 
-#if (FLOW_WC_SEQ != 40)
+#if (FLOW_WC_SEQ != 41)
 #define MINIFLOW_ASSERT(X) ovs_assert(X)
 BUILD_MESSAGE("FLOW_WC_SEQ changed: miniflow_extract() will have runtime "
                "assertions enabled. Consider updating FLOW_WC_SEQ after "
@@ -641,6 +641,75 @@ flow_extract(struct dp_packet *packet, struct flow *flow)
     miniflow_expand(&m.mf, flow);
 }
 
+static inline bool
+ipv4_sanity_check(const struct ip_header *nh, size_t size,
+                  int *ip_lenp, uint16_t *tot_lenp)
+{
+    int ip_len;
+    uint16_t tot_len;
+
+    //长度不足标准ip头
+    if (OVS_UNLIKELY(size < IP_HEADER_LEN)) {
+        return false;
+    }
+    ip_len = IP_IHL(nh->ip_ihl_ver) * 4;//ip头长度
+
+    //错误的报文长度小于20
+    //错误的报文，宣称的长度与实际长度不符
+    if (OVS_UNLIKELY(ip_len < IP_HEADER_LEN || size < ip_len)) {
+        return false;
+    }
+
+    //总长度比报文实际长度大或ip头长度比总长度大，错误报文
+    //total值校验（2层不可能超过255字节）
+    tot_len = ntohs(nh->ip_tot_len);
+    if (OVS_UNLIKELY(tot_len > size || ip_len > tot_len ||
+                size - tot_len > UINT8_MAX)) {
+        return false;
+    }
+
+    *ip_lenp = ip_len;
+    *tot_lenp = tot_len;
+
+    return true;
+}
+
+static inline uint8_t
+ipv4_get_nw_frag(const struct ip_header *nh)
+{
+    uint8_t nw_frag = 0;
+
+    if (OVS_UNLIKELY(IP_IS_FRAGMENT(nh->ip_frag_off))) {
+        nw_frag = FLOW_NW_FRAG_ANY;
+        if (nh->ip_frag_off & htons(IP_FRAG_OFF_MASK)) {
+            nw_frag |= FLOW_NW_FRAG_LATER;
+        }
+    }
+
+    return nw_frag;
+}
+
+static inline bool
+ipv6_sanity_check(const struct ovs_16aligned_ip6_hdr *nh, size_t size)
+{
+    uint16_t plen;
+
+    if (OVS_UNLIKELY(size < sizeof *nh)) {
+        return false;
+    }
+
+    plen = ntohs(nh->ip6_plen);
+    if (OVS_UNLIKELY(plen + IPV6_HEADER_LEN > size)) {
+        return false;
+    }
+    /* Jumbo Payload option not supported yet. */
+    if (OVS_UNLIKELY(size - plen > UINT8_MAX)) {
+        return false;
+    }
+
+    return true;
+}
+
 /* Caller is responsible for initializing 'dst' with enough storage for
  * FLOW_U64S * 8 bytes. */
 //解析字段，填充dst中的数据，填充map信息，填充miniflow后面的buf
@@ -773,24 +842,7 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
         int ip_len;
         uint16_t tot_len;
 
-        //长度不足标准ip头
-        if (OVS_UNLIKELY(size < IP_HEADER_LEN)) {
-            goto out;
-        }
-        ip_len = IP_IHL(nh->ip_ihl_ver) * 4;//ip头长度
-
-        if (OVS_UNLIKELY(ip_len < IP_HEADER_LEN)) {//错误的报文长度小于20
-            goto out;
-        }
-        if (OVS_UNLIKELY(size < ip_len)) {//错误的报文，宣称的长度与实际长度不符
-            goto out;
-        }
-        tot_len = ntohs(nh->ip_tot_len);
-        if (OVS_UNLIKELY(tot_len > size || ip_len > tot_len)) {
-        	//总长度比报文实际长度大或ip头长度比总长度大，错误报文
-            goto out;
-        }
-        if (OVS_UNLIKELY(size - tot_len > UINT8_MAX)) {//total值校验（2层不可能超过255字节）
+        if (OVS_UNLIKELY(!ipv4_sanity_check(nh, size, &ip_len, &tot_len))) {
             goto out;
         }
         dp_packet_set_l2_pad_size(packet, size - tot_len);
@@ -813,32 +865,19 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
         nw_tos = nh->ip_tos;
         nw_ttl = nh->ip_ttl;
         nw_proto = nh->ip_proto;
-        if (OVS_UNLIKELY(IP_IS_FRAGMENT(nh->ip_frag_off))) {
-        	//分片报文
-            nw_frag = FLOW_NW_FRAG_ANY;
-            if (nh->ip_frag_off & htons(IP_FRAG_OFF_MASK)) {
-                nw_frag |= FLOW_NW_FRAG_LATER;//标记非首片
-            }
-        }
+        nw_frag = ipv4_get_nw_frag(nh);
         data_pull(&data, &size, ip_len);
-    } else if (dl_type == htons(ETH_TYPE_IPV6)) {//ipv6报文
-        const struct ovs_16aligned_ip6_hdr *nh;
+    } else if (dl_type == htons(ETH_TYPE_IPV6)) {
+        const struct ovs_16aligned_ip6_hdr *nh = data;
         ovs_be32 tc_flow;
         uint16_t plen;
 
-        if (OVS_UNLIKELY(size < sizeof *nh)) {
+        if (OVS_UNLIKELY(!ipv6_sanity_check(nh, size))) {
             goto out;
         }
-        nh = data_pull(&data, &size, sizeof *nh);
+        data_pull(&data, &size, sizeof *nh);
 
         plen = ntohs(nh->ip6_plen);
-        if (OVS_UNLIKELY(plen > size)) {
-            goto out;
-        }
-        /* Jumbo Payload option not supported yet. */
-        if (OVS_UNLIKELY(size - plen > UINT8_MAX)) {
-            goto out;
-        }
         dp_packet_set_l2_pad_size(packet, size - plen);
         size = plen;   /* Never pull padding. */
 
@@ -1012,6 +1051,73 @@ parse_dl_type(const struct eth_header *data_, size_t size)
     return parse_ethertype(&data, &size);
 }
 
+uint16_t
+parse_tcp_flags(struct dp_packet *packet)
+{
+    const void *data = dp_packet_data(packet);
+    const char *frame = (const char *)data;
+    size_t size = dp_packet_size(packet);
+    ovs_be16 dl_type;
+    uint8_t nw_frag = 0, nw_proto = 0;
+
+    if (packet->packet_type != htonl(PT_ETH)) {
+        return 0;
+    }
+
+    dp_packet_reset_offsets(packet);
+
+    data_pull(&data, &size, ETH_ADDR_LEN * 2);
+    dl_type = parse_ethertype(&data, &size);
+    if (OVS_UNLIKELY(eth_type_mpls(dl_type))) {
+        packet->l2_5_ofs = (char *)data - frame;
+    }
+    if (OVS_LIKELY(dl_type == htons(ETH_TYPE_IP))) {
+        const struct ip_header *nh = data;
+        int ip_len;
+        uint16_t tot_len;
+
+        if (OVS_UNLIKELY(!ipv4_sanity_check(nh, size, &ip_len, &tot_len))) {
+            return 0;
+        }
+        dp_packet_set_l2_pad_size(packet, size - tot_len);
+        packet->l3_ofs = (uint16_t)((char *)nh - frame);
+        nw_proto = nh->ip_proto;
+        nw_frag = ipv4_get_nw_frag(nh);
+
+        size = tot_len;   /* Never pull padding. */
+        data_pull(&data, &size, ip_len);
+    } else if (dl_type == htons(ETH_TYPE_IPV6)) {
+        const struct ovs_16aligned_ip6_hdr *nh = data;
+        uint16_t plen;
+
+        if (OVS_UNLIKELY(!ipv6_sanity_check(nh, size))) {
+            return 0;
+        }
+        packet->l3_ofs = (uint16_t)((char *)nh - frame);
+        data_pull(&data, &size, sizeof *nh);
+
+        plen = ntohs(nh->ip6_plen); /* Never pull padding. */
+        dp_packet_set_l2_pad_size(packet, size - plen);
+        size = plen;
+        if (!parse_ipv6_ext_hdrs__(&data, &size, &nw_proto, &nw_frag)) {
+            return 0;
+        }
+        nw_proto = nh->ip6_nxt;
+    } else {
+        return 0;
+    }
+
+    packet->l4_ofs = (uint16_t)((char *)data - frame);
+    if (!(nw_frag & FLOW_NW_FRAG_LATER) && nw_proto == IPPROTO_TCP &&
+        size >= TCP_HEADER_LEN) {
+        const struct tcp_header *tcp = data;
+
+        return TCP_FLAGS(tcp->tcp_ctl);
+    }
+
+    return 0;
+}
+
 /* For every bit of a field that is wildcarded in 'wildcards', sets the
  * corresponding bit in 'flow' to zero. */
 void
@@ -1045,7 +1151,7 @@ flow_get_metadata(const struct flow *flow, struct match *flow_metadata)
 {
     int i;
 
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 40);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
 
     match_init_catchall(flow_metadata);
     if (flow->tunnel.tun_id != htonll(0)) {
@@ -1072,6 +1178,18 @@ flow_get_metadata(const struct flow *flow, struct match *flow_metadata)
     }
     if (flow->tunnel.gbp_flags) {
         match_set_tun_gbp_flags(flow_metadata, flow->tunnel.gbp_flags);
+    }
+    if (flow->tunnel.erspan_ver) {
+        match_set_tun_erspan_ver(flow_metadata, flow->tunnel.erspan_ver);
+    }
+    if (flow->tunnel.erspan_idx) {
+        match_set_tun_erspan_idx(flow_metadata, flow->tunnel.erspan_idx);
+    }
+    if (flow->tunnel.erspan_dir) {
+        match_set_tun_erspan_dir(flow_metadata, flow->tunnel.erspan_dir);
+    }
+    if (flow->tunnel.erspan_hwid) {
+        match_set_tun_erspan_hwid(flow_metadata, flow->tunnel.erspan_hwid);
     }
     tun_metadata_get_fmd(&flow->tunnel, flow_metadata);
     if (flow->metadata != htonll(0)) {
@@ -1614,7 +1732,7 @@ flow_wildcards_init_for_packet(struct flow_wildcards *wc,
     memset(&wc->masks, 0x0, sizeof wc->masks);
 
     /* Update this function whenever struct flow changes. */
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 40);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
 
     if (flow_tnl_dst_is_set(&flow->tunnel)) {
     	//设置tunnel精确匹配
@@ -1632,6 +1750,10 @@ flow_wildcards_init_for_packet(struct flow_wildcards *wc,
         WC_MASK_FIELD(wc, tunnel.tp_dst);
         WC_MASK_FIELD(wc, tunnel.gbp_id);
         WC_MASK_FIELD(wc, tunnel.gbp_flags);
+        WC_MASK_FIELD(wc, tunnel.erspan_ver);
+        WC_MASK_FIELD(wc, tunnel.erspan_idx);
+        WC_MASK_FIELD(wc, tunnel.erspan_dir);
+        WC_MASK_FIELD(wc, tunnel.erspan_hwid);
 
         if (!(flow->tunnel.flags & FLOW_TNL_F_UDPIF)) {
             if (flow->tunnel.metadata.present.map) {
@@ -1766,7 +1888,7 @@ void
 flow_wc_map(const struct flow *flow, struct flowmap *map)
 {
     /* Update this function whenever struct flow changes. */
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 40);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
 
     flowmap_init(map);
 
@@ -1870,7 +1992,7 @@ void
 flow_wildcards_clear_non_packet_fields(struct flow_wildcards *wc)
 {
     /* Update this function whenever struct flow changes. */
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 40);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
 
     memset(&wc->masks.metadata, 0, sizeof wc->masks.metadata);
     memset(&wc->masks.regs, 0, sizeof wc->masks.regs);
@@ -2014,7 +2136,7 @@ flow_wildcards_set_xxreg_mask(struct flow_wildcards *wc, int idx,
 uint32_t
 miniflow_hash_5tuple(const struct miniflow *flow, uint32_t basis)
 {
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 40);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
     uint32_t hash = basis;
 
     if (flow) {
@@ -2048,7 +2170,7 @@ miniflow_hash_5tuple(const struct miniflow *flow, uint32_t basis)
         }
 
         /* Add both ports at once. */
-        hash = hash_add(hash, MINIFLOW_GET_U32(flow, tp_src));
+        hash = hash_add(hash, (OVS_FORCE uint32_t) miniflow_get_ports(flow));
     }
 out:
     return hash_finish(hash, 42);
@@ -2061,7 +2183,7 @@ ASSERT_SEQUENTIAL(ipv6_src, ipv6_dst);
 uint32_t
 flow_hash_5tuple(const struct flow *flow, uint32_t basis)
 {
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 40);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
     uint32_t hash = basis;
 
     if (flow) {
@@ -2149,6 +2271,45 @@ flow_hash_symmetric_l4(const struct flow *flow, uint32_t basis)
     return jhash_bytes(&fields, sizeof fields, basis);
 }
 
+/* Symmetrically Hashes non-IP 'flow' based on its L2 headers. */
+uint32_t
+flow_hash_symmetric_l2(const struct flow *flow, uint32_t basis)
+{
+    union {
+        struct {
+            ovs_be16 eth_type;
+            ovs_be16 vlan_tci;
+            struct eth_addr eth_addr;
+            ovs_be16 pad;
+        };
+        uint32_t word[3];
+    } fields;
+
+    uint32_t hash = basis;
+    int i;
+
+    if (flow->packet_type != htonl(PT_ETH)) {
+        /* Cannot hash non-Ethernet flows */
+        return 0;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(fields.eth_addr.be16); i++) {
+        fields.eth_addr.be16[i] =
+                flow->dl_src.be16[i] ^ flow->dl_dst.be16[i];
+    }
+    fields.vlan_tci = 0;
+    for (i = 0; i < FLOW_MAX_VLAN_HEADERS; i++) {
+        fields.vlan_tci ^= flow->vlans[i].tci & htons(VLAN_VID_MASK);
+    }
+    fields.eth_type = flow->dl_type;
+    fields.pad = 0;
+
+    hash = hash_add(hash, fields.word[0]);
+    hash = hash_add(hash, fields.word[1]);
+    hash = hash_add(hash, fields.word[2]);
+    return hash_finish(hash, basis);
+}
+
 /* Hashes 'flow' based on its L3 through L4 protocol information */
 uint32_t
 flow_hash_symmetric_l3l4(const struct flow *flow, uint32_t basis,
@@ -2169,8 +2330,8 @@ flow_hash_symmetric_l3l4(const struct flow *flow, uint32_t basis,
             hash = hash_add64(hash, a[i] ^ b[i]);
         }
     } else {
-        /* Cannot hash non-IP flows */
-        return 0;
+        /* Revert to hashing L2 headers */
+        return flow_hash_symmetric_l2(flow, basis);
     }
 
     hash = hash_add(hash, flow->nw_proto);
@@ -2658,7 +2819,7 @@ flow_push_mpls(struct flow *flow, int n, ovs_be16 mpls_eth_type,
 
         if (clear_flow_L3) {
             /* Clear all L3 and L4 fields and dp_hash. */
-            BUILD_ASSERT(FLOW_WC_SEQ == 40);
+            BUILD_ASSERT(FLOW_WC_SEQ == 41);
             memset((char *) flow + FLOW_SEGMENT_2_ENDS_AT, 0,
                    sizeof(struct flow) - FLOW_SEGMENT_2_ENDS_AT);
             flow->dp_hash = 0;

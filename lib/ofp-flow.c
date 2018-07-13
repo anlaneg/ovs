@@ -18,6 +18,7 @@
 #include "openvswitch/ofp-flow.h"
 #include <errno.h>
 #include "byte-order.h"
+#include "colors.h"
 #include "flow.h"
 #include "nx-match.h"
 #include "openvswitch/ofp-actions.h"
@@ -26,85 +27,17 @@
 #include "openvswitch/ofp-msgs.h"
 #include "openvswitch/ofp-parse.h"
 #include "openvswitch/ofp-port.h"
+#include "openvswitch/ofp-print.h"
 #include "openvswitch/ofp-table.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
 #include "util.h"
+#include "ox-stat.h"
 
 VLOG_DEFINE_THIS_MODULE(ofp_flow);
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
-
-/* Returns an NXT_SET_FLOW_FORMAT message that can be used to set the flow
- * format to 'nxff'.  */
-struct ofpbuf *
-ofputil_encode_nx_set_flow_format(enum nx_flow_format nxff)
-{
-    struct nx_set_flow_format *sff;
-    struct ofpbuf *msg;
-
-    ovs_assert(ofputil_nx_flow_format_is_valid(nxff));
-
-    msg = ofpraw_alloc(OFPRAW_NXT_SET_FLOW_FORMAT, OFP10_VERSION, 0);
-    sff = ofpbuf_put_zeros(msg, sizeof *sff);
-    sff->format = htonl(nxff);
-
-    return msg;
-}
-
-/* Returns the base protocol if 'flow_format' is a valid NXFF_* value, false
- * otherwise. */
-enum ofputil_protocol
-ofputil_nx_flow_format_to_protocol(enum nx_flow_format flow_format)
-{
-    switch (flow_format) {
-    case NXFF_OPENFLOW10:
-        return OFPUTIL_P_OF10_STD;
-
-    case NXFF_NXM:
-        return OFPUTIL_P_OF10_NXM;
-
-    default:
-        return 0;
-    }
-}
-
-/* Returns true if 'flow_format' is a valid NXFF_* value, false otherwise. */
-bool
-ofputil_nx_flow_format_is_valid(enum nx_flow_format flow_format)
-{
-    return ofputil_nx_flow_format_to_protocol(flow_format) != 0;
-}
-
-/* Returns a string version of 'flow_format', which must be a valid NXFF_*
- * value. */
-const char *
-ofputil_nx_flow_format_to_string(enum nx_flow_format flow_format)
-{
-    switch (flow_format) {
-    case NXFF_OPENFLOW10:
-        return "openflow10";
-    case NXFF_NXM:
-        return "nxm";
-    default:
-        OVS_NOT_REACHED();
-    }
-}
-
-/* Returns an OpenFlow message that can be used to turn the flow_mod_table_id
- * extension on or off (according to 'flow_mod_table_id'). */
-struct ofpbuf *
-ofputil_make_flow_mod_table_id(bool flow_mod_table_id)
-{
-    struct nx_flow_mod_table_id *nfmti;
-    struct ofpbuf *msg;
-
-    msg = ofpraw_alloc(OFPRAW_NXT_FLOW_MOD_TABLE_ID, OFP10_VERSION, 0);
-    nfmti = ofpbuf_put_zeros(msg, sizeof *nfmti);
-    nfmti->set = flow_mod_table_id;
-    return msg;
-}
-
+
 struct ofputil_flow_mod_flag {
     uint16_t raw_flag;
     enum ofp_version min_version, max_version;
@@ -173,6 +106,32 @@ ofputil_encode_flow_mod_flags(enum ofputil_flow_mod_flags flags,
     return htons(raw_flags);
 }
 
+void
+ofputil_flow_mod_flags_format(struct ds *s, enum ofputil_flow_mod_flags flags)
+{
+    if (flags & OFPUTIL_FF_SEND_FLOW_REM) {
+        ds_put_cstr(s, "send_flow_rem ");
+    }
+    if (flags & OFPUTIL_FF_CHECK_OVERLAP) {
+        ds_put_cstr(s, "check_overlap ");
+    }
+    if (flags & OFPUTIL_FF_RESET_COUNTS) {
+        ds_put_cstr(s, "reset_counts ");
+    }
+    if (flags & OFPUTIL_FF_NO_PKT_COUNTS) {
+        ds_put_cstr(s, "no_packet_counts ");
+    }
+    if (flags & OFPUTIL_FF_NO_BYT_COUNTS) {
+        ds_put_cstr(s, "no_byte_counts ");
+    }
+    if (flags & OFPUTIL_FF_HIDDEN_FIELDS) {
+        ds_put_cstr(s, "allow_hidden_fields ");
+    }
+    if (flags & OFPUTIL_FF_NO_READONLY) {
+        ds_put_cstr(s, "no_readonly_table ");
+    }
+}
+
 /* Converts an OFPT_FLOW_MOD or NXT_FLOW_MOD message 'oh' into an abstract
  * flow_mod in 'fm'.  Returns 0 if successful, otherwise an OpenFlow error
  * code.
@@ -180,6 +139,8 @@ ofputil_encode_flow_mod_flags(enum ofputil_flow_mod_flags flags,
  * Uses 'ofpacts' to store the abstract OFPACT_* version of 'oh''s actions.
  * The caller must initialize 'ofpacts' and retains ownership of it.
  * 'fm->ofpacts' will point into the 'ofpacts' buffer.
+ *
+ * On success, the caller must eventually destroy fm->match.
  *
  * Does not validate the flow_mod actions.  The caller should do that, with
  * ofpacts_check(). */
@@ -194,6 +155,7 @@ ofputil_decode_flow_mod(struct ofputil_flow_mod *fm,
 {
     ovs_be16 raw_flags;
     enum ofperr error;
+    struct match match;
     struct ofpbuf b = ofpbuf_const_initializer(oh, ntohs(oh->length));
     enum ofpraw raw = ofpraw_pull_assert(&b);
     if (raw == OFPRAW_OFPT11_FLOW_MOD) {
@@ -202,7 +164,7 @@ ofputil_decode_flow_mod(struct ofputil_flow_mod *fm,
 
         ofm = ofpbuf_pull(&b, sizeof *ofm);
 
-        error = ofputil_pull_ofp11_match(&b, tun_table, vl_mff_map, &fm->match,
+        error = ofputil_pull_ofp11_match(&b, tun_table, vl_mff_map, &match,
                                          NULL);
         if (error) {
             return error;
@@ -270,8 +232,8 @@ ofputil_decode_flow_mod(struct ofputil_flow_mod *fm,
             ofm = ofpbuf_pull(&b, sizeof *ofm);
 
             /* Translate the rule. */
-            ofputil_match_from_ofp10_match(&ofm->match, &fm->match);
-            ofputil_normalize_match(&fm->match);
+            ofputil_match_from_ofp10_match(&ofm->match, &match);
+            ofputil_normalize_match(&match);
 
             /* OpenFlow 1.0 says that exact-match rules have to have the
              * highest possible priority. */
@@ -298,7 +260,7 @@ ofputil_decode_flow_mod(struct ofputil_flow_mod *fm,
             /* Dissect the message. */
             nfm = ofpbuf_pull(&b, sizeof *nfm);
             error = nx_pull_match(&b, ntohs(nfm->match_len),
-                                  &fm->match, &fm->cookie, &fm->cookie_mask,
+                                  &match, &fm->cookie, &fm->cookie_mask,
                                   false, tun_table, vl_mff_map);
             if (error) {
                 return error;
@@ -340,11 +302,11 @@ ofputil_decode_flow_mod(struct ofputil_flow_mod *fm,
 
     /* Check for mismatched conntrack original direction tuple address fields
      * w.r.t. the IP version of the match. */
-    if (((fm->match.wc.masks.ct_nw_src || fm->match.wc.masks.ct_nw_dst)
-         && fm->match.flow.dl_type != htons(ETH_TYPE_IP))
-        || ((ipv6_addr_is_set(&fm->match.wc.masks.ct_ipv6_src)
-             || ipv6_addr_is_set(&fm->match.wc.masks.ct_ipv6_dst))
-            && fm->match.flow.dl_type != htons(ETH_TYPE_IPV6))) {
+    if (((match.wc.masks.ct_nw_src || match.wc.masks.ct_nw_dst)
+         && match.flow.dl_type != htons(ETH_TYPE_IP))
+        || ((ipv6_addr_is_set(&match.wc.masks.ct_ipv6_src)
+             || ipv6_addr_is_set(&match.wc.masks.ct_ipv6_dst))
+            && match.flow.dl_type != htons(ETH_TYPE_IPV6))) {
         return OFPERR_OFPBAC_MATCH_INCONSISTENT;
     }
 
@@ -381,9 +343,13 @@ ofputil_decode_flow_mod(struct ofputil_flow_mod *fm,
                 : OFPERR_OFPFMFC_TABLE_FULL);
     }
 
-    return ofpacts_check_consistency(fm->ofpacts, fm->ofpacts_len,
-                                     &fm->match, max_port,
-                                     fm->table_id, max_table, protocol);
+    error = ofpacts_check_consistency(fm->ofpacts, fm->ofpacts_len,
+                                      &match, max_port,
+                                      fm->table_id, max_table, protocol);
+    if (!error) {
+        minimatch_init(&fm->match, &match);
+    }
+    return error;
 }
 
 static ovs_be16
@@ -404,6 +370,9 @@ ofputil_encode_flow_mod(const struct ofputil_flow_mod *fm,
     enum ofp_version version = ofputil_protocol_to_ofp_version(protocol);
     ovs_be16 raw_flags = ofputil_encode_flow_mod_flags(fm->flags, version);
     struct ofpbuf *msg;
+
+    struct match match;
+    minimatch_expand(&fm->match, &match);
 
     switch (protocol) {
     case OFPUTIL_P_OF11_STD:
@@ -449,7 +418,7 @@ ofputil_encode_flow_mod(const struct ofputil_flow_mod *fm,
         } else {
             ofm->importance = 0;
         }
-        ofputil_put_ofp11_match(msg, &fm->match, protocol);
+        ofputil_put_ofp11_match(msg, &match, protocol);
         ofpacts_put_openflow_instructions(fm->ofpacts, fm->ofpacts_len, msg,
                                           version);
         break;
@@ -462,7 +431,7 @@ ofputil_encode_flow_mod(const struct ofputil_flow_mod *fm,
         msg = ofpraw_alloc(OFPRAW_OFPT10_FLOW_MOD, OFP10_VERSION,
                            fm->ofpacts_len);
         ofm = ofpbuf_put_zeros(msg, sizeof *ofm);
-        ofputil_match_to_ofp10_match(&fm->match, &ofm->match);
+        ofputil_match_to_ofp10_match(&match, &ofm->match);
         ofm->cookie = fm->new_cookie;
         ofm->command = ofputil_tid_command(fm, protocol);
         ofm->idle_timeout = htons(fm->idle_timeout);
@@ -486,7 +455,7 @@ ofputil_encode_flow_mod(const struct ofputil_flow_mod *fm,
         nfm = ofpbuf_put_zeros(msg, sizeof *nfm);
         nfm->command = ofputil_tid_command(fm, protocol);
         nfm->cookie = fm->new_cookie;
-        match_len = nx_put_match(msg, &fm->match, fm->cookie, fm->cookie_mask);
+        match_len = nx_put_match(msg, &match, fm->cookie, fm->cookie_mask);
         nfm = msg->msg;
         nfm->idle_timeout = htons(fm->idle_timeout);
         nfm->hard_timeout = htons(fm->hard_timeout);
@@ -506,6 +475,136 @@ ofputil_encode_flow_mod(const struct ofputil_flow_mod *fm,
 
     ofpmsg_update_length(msg);
     return msg;
+}
+
+enum ofperr
+ofputil_flow_mod_format(struct ds *s, const struct ofp_header *oh,
+                        const struct ofputil_port_map *port_map,
+                        const struct ofputil_table_map *table_map,
+                        int verbosity)
+{
+    struct ofputil_flow_mod fm;
+    struct ofpbuf ofpacts;
+    bool need_priority;
+    enum ofperr error;
+    enum ofpraw raw;
+    enum ofputil_protocol protocol;
+
+    protocol = ofputil_protocol_from_ofp_version(oh->version);
+    protocol = ofputil_protocol_set_tid(protocol, true);
+
+    ofpbuf_init(&ofpacts, 64);
+    error = ofputil_decode_flow_mod(&fm, oh, protocol, NULL, NULL, &ofpacts,
+                                    OFPP_MAX, 255);
+    if (error) {
+        ofpbuf_uninit(&ofpacts);
+        return error;
+    }
+
+    ds_put_char(s, ' ');
+    switch (fm.command) {
+    case OFPFC_ADD:
+        ds_put_cstr(s, "ADD");
+        break;
+    case OFPFC_MODIFY:
+        ds_put_cstr(s, "MOD");
+        break;
+    case OFPFC_MODIFY_STRICT:
+        ds_put_cstr(s, "MOD_STRICT");
+        break;
+    case OFPFC_DELETE:
+        ds_put_cstr(s, "DEL");
+        break;
+    case OFPFC_DELETE_STRICT:
+        ds_put_cstr(s, "DEL_STRICT");
+        break;
+    default:
+        ds_put_format(s, "cmd:%d", fm.command);
+    }
+    if (fm.table_id != 0
+        || ofputil_table_map_get_name(table_map, fm.table_id)) {
+        ds_put_format(s, " table:");
+        ofputil_format_table(fm.table_id, table_map, s);
+    }
+
+    ds_put_char(s, ' ');
+    ofpraw_decode(&raw, oh);
+    if (verbosity >= 3 && raw == OFPRAW_OFPT10_FLOW_MOD) {
+        const struct ofp10_flow_mod *ofm = ofpmsg_body(oh);
+        ofp10_match_print(s, &ofm->match, port_map, verbosity);
+
+        /* ofp_print_match() doesn't print priority. */
+        need_priority = true;
+    } else if (verbosity >= 3 && raw == OFPRAW_NXT_FLOW_MOD) {
+        const struct nx_flow_mod *nfm = ofpmsg_body(oh);
+        const void *nxm = nfm + 1;
+        char *nxm_s;
+
+        nxm_s = nx_match_to_string(nxm, ntohs(nfm->match_len));
+        ds_put_cstr(s, nxm_s);
+        free(nxm_s);
+
+        /* nx_match_to_string() doesn't print priority. */
+        need_priority = true;
+    } else {
+        struct match match;
+        minimatch_expand(&fm.match, &match);
+        match_format(&match, port_map, s, fm.priority);
+
+        /* match_format() does print priority. */
+        need_priority = false;
+    }
+
+    if (ds_last(s) != ' ') {
+        ds_put_char(s, ' ');
+    }
+    if (fm.new_cookie != htonll(0) && fm.new_cookie != OVS_BE64_MAX) {
+        ds_put_format(s, "cookie:0x%"PRIx64" ", ntohll(fm.new_cookie));
+    }
+    if (fm.cookie_mask != htonll(0)) {
+        ds_put_format(s, "cookie:0x%"PRIx64"/0x%"PRIx64" ",
+                ntohll(fm.cookie), ntohll(fm.cookie_mask));
+    }
+    if (fm.idle_timeout != OFP_FLOW_PERMANENT) {
+        ds_put_format(s, "idle:%"PRIu16" ", fm.idle_timeout);
+    }
+    if (fm.hard_timeout != OFP_FLOW_PERMANENT) {
+        ds_put_format(s, "hard:%"PRIu16" ", fm.hard_timeout);
+    }
+    if (fm.importance != 0) {
+        ds_put_format(s, "importance:%"PRIu16" ", fm.importance);
+    }
+    if (fm.priority != OFP_DEFAULT_PRIORITY && need_priority) {
+        ds_put_format(s, "pri:%d ", fm.priority);
+    }
+    if (fm.buffer_id != UINT32_MAX) {
+        ds_put_format(s, "buf:0x%"PRIx32" ", fm.buffer_id);
+    }
+    if (fm.out_port != OFPP_ANY) {
+        ds_put_format(s, "out_port:");
+        ofputil_format_port(fm.out_port, port_map, s);
+        ds_put_char(s, ' ');
+    }
+
+    if (oh->version == OFP10_VERSION || oh->version == OFP11_VERSION) {
+        /* Don't print the reset_counts flag for OF1.0 and OF1.1 because those
+         * versions don't really have such a flag and printing one is likely to
+         * confuse people. */
+        fm.flags &= ~OFPUTIL_FF_RESET_COUNTS;
+    }
+    ofputil_flow_mod_flags_format(s, fm.flags);
+
+    ds_put_cstr(s, "actions=");
+    struct ofpact_format_params fp = {
+        .port_map = port_map,
+        .table_map = table_map,
+        .s = s,
+    };
+    ofpacts_format(fm.ofpacts, fm.ofpacts_len, &fp);
+    ofpbuf_uninit(&ofpacts);
+    minimatch_destroy(&fm.match);
+
+    return 0;
 }
 
 static enum ofperr
@@ -609,6 +708,10 @@ ofputil_decode_flow_stats_request(struct ofputil_flow_stats_request *fsr,
         return ofputil_decode_ofpst11_flow_request(fsr, &b, true, tun_table,
                                                    vl_mff_map);
 
+    case OFPRAW_OFPST15_AGGREGATE_REQUEST:
+       return ofputil_decode_ofpst11_flow_request(fsr, &b, true,
+                                                  tun_table, vl_mff_map);
+
     case OFPRAW_NXST_FLOW_REQUEST:
         return ofputil_decode_nxst_flow_request(fsr, &b, false, tun_table,
                                                 vl_mff_map);
@@ -642,9 +745,15 @@ ofputil_encode_flow_stats_request(const struct ofputil_flow_stats_request *fsr,
     case OFPUTIL_P_OF16_OXM: {
         struct ofp11_flow_stats_request *ofsr;
 
-        raw = (fsr->aggregate
-               ? OFPRAW_OFPST11_AGGREGATE_REQUEST
-               : OFPRAW_OFPST11_FLOW_REQUEST);
+        if (protocol > OFPUTIL_P_OF14_OXM) {
+            raw = (fsr->aggregate
+                   ? OFPRAW_OFPST15_AGGREGATE_REQUEST
+                   : OFPRAW_OFPST11_FLOW_REQUEST);
+        } else {
+            raw = (fsr->aggregate
+                   ? OFPRAW_OFPST11_AGGREGATE_REQUEST
+                   : OFPRAW_OFPST11_FLOW_REQUEST);
+        }
         msg = ofpraw_alloc(raw, ofputil_protocol_to_ofp_version(protocol),
                            ofputil_match_typical_len(protocol));
         ofsr = ofpbuf_put_zeros(msg, sizeof *ofsr);
@@ -699,6 +808,26 @@ ofputil_encode_flow_stats_request(const struct ofputil_flow_stats_request *fsr,
     return msg;
 }
 
+void
+ofputil_flow_stats_request_format(struct ds *s,
+                                  const struct ofputil_flow_stats_request *fsr,
+                                  const struct ofputil_port_map *port_map,
+                                  const struct ofputil_table_map *table_map)
+{
+    if (fsr->table_id != 0xff) {
+        ds_put_format(s, " table=");
+        ofputil_format_table(fsr->table_id, table_map, s);
+    }
+
+    if (fsr->out_port != OFPP_ANY) {
+        ds_put_cstr(s, " out_port=");
+        ofputil_format_port(fsr->out_port, port_map, s);
+    }
+
+    ds_put_char(s, ' ');
+    match_format(&fsr->match, port_map, s, OFP_DEFAULT_PRIORITY);
+}
+
 char * OVS_WARN_UNUSED_RESULT
 parse_ofp_flow_stats_request_str(struct ofputil_flow_stats_request *fsr,
                                  bool aggregate, const char *string,
@@ -726,10 +855,13 @@ parse_ofp_flow_stats_request_str(struct ofputil_flow_stats_request *fsr,
     fsr->aggregate = aggregate;
     fsr->cookie = fm.cookie;
     fsr->cookie_mask = fm.cookie_mask;
-    fsr->match = fm.match;
+    minimatch_expand(&fm.match, &fsr->match);
     fsr->out_port = fm.out_port;
     fsr->out_group = fm.out_group;
     fsr->table_id = fm.table_id;
+
+    minimatch_destroy(&fm.match);
+
     return NULL;
 }
 
@@ -773,6 +905,59 @@ ofputil_decode_flow_stats_reply(struct ofputil_flow_stats *fs,
 
     if (!msg->size) {
         return EOF;
+    } else if (raw == OFPRAW_OFPST15_FLOW_REPLY) {
+        const struct ofp15_flow_desc *ofd;
+        size_t length;
+        uint16_t padded_match_len;
+        uint16_t stat_len;
+        uint8_t oxs_field_set;
+
+        ofd = ofpbuf_try_pull(msg, sizeof *ofd);
+        if (!ofd) {
+            VLOG_WARN_RL(&rl, "OFPST_FLOW reply has %" PRIu32
+                         " leftover " "bytes at end", msg->size);
+            return EINVAL;
+        }
+
+        length = ntohs(ofd->length);
+        if (length < sizeof *ofd) {
+            VLOG_WARN_RL(&rl, "OFPST_FLOW reply claims invalid "
+                         "length %" PRIuSIZE, length);
+            return EINVAL;
+        }
+
+        if (ofputil_pull_ofp11_match(msg, NULL, NULL, &fs->match,
+                                     &padded_match_len)) {
+            VLOG_WARN_RL(&rl, "OFPST_FLOW reply bad match");
+            return EINVAL;
+        }
+
+        fs->priority = ntohs(ofd->priority);
+        fs->table_id = ofd->table_id;
+        fs->cookie = ofd->cookie;
+        fs->idle_timeout = ntohs(ofd->idle_timeout);
+        fs->hard_timeout = ntohs(ofd->hard_timeout);
+        fs->importance = ntohs(ofd->importance);
+
+        error = ofputil_decode_flow_mod_flags(ofd->flags, -1, oh->version,
+                                                &fs->flags);
+        if (error) {
+            return error;
+        }
+
+        struct oxs_stats oxs;
+        if (oxs_pull_stat(msg, &oxs, &stat_len, &oxs_field_set)) {
+            VLOG_WARN_RL(&rl, "OXS OFPST_FLOW reply bad stats");
+            return EINVAL;
+        }
+        fs->duration_sec = oxs.duration_sec;
+        fs->duration_nsec = oxs.duration_nsec;
+        fs->packet_count = oxs.packet_count;
+        fs->byte_count = oxs.byte_count;
+        fs->idle_age = oxs.idle_age == UINT32_MAX ? -1 : oxs.idle_age;
+        fs->hard_age = -1;
+
+        instructions_len = length - sizeof *ofd - padded_match_len - stat_len;
     } else if (raw == OFPRAW_OFPST11_FLOW_REPLY
                || raw == OFPRAW_OFPST13_FLOW_REPLY) {
         const struct ofp11_flow_stats *ofs;
@@ -951,7 +1136,38 @@ ofputil_append_flow_stats_reply(const struct ofputil_flow_stats *fs,
     orig_tun_table = fs->match.flow.tunnel.metadata.tab;
     fs_->match.flow.tunnel.metadata.tab = tun_table;
 
-    if (raw == OFPRAW_OFPST11_FLOW_REPLY || raw == OFPRAW_OFPST13_FLOW_REPLY) {
+    if (raw == OFPRAW_OFPST15_FLOW_REPLY) {
+        struct ofp15_flow_desc *ofd;
+
+        ofpbuf_put_uninit(reply, sizeof *ofd);
+        oxm_put_match(reply, &fs->match, version);
+
+        struct oxs_stats oxs = {
+            .duration_sec = fs->duration_sec,
+            .duration_nsec = fs->duration_nsec,
+            .idle_age = fs->idle_age >= 0 ? fs->idle_age : UINT32_MAX,
+            .packet_count = fs->packet_count,
+            .byte_count = fs->byte_count,
+            .flow_count = UINT32_MAX,
+        };
+        oxs_put_stats(reply, &oxs);
+
+        ofpacts_put_openflow_instructions(fs->ofpacts, fs->ofpacts_len, reply,
+                                      version);
+
+        ofd = ofpbuf_at_assert(reply, start_ofs, sizeof *ofd);
+        ofd->length = htons(reply->size - start_ofs);
+        ofd->table_id = fs->table_id;
+        ofd->priority = htons(fs->priority);
+        ofd->idle_timeout = htons(fs->idle_timeout);
+        ofd->hard_timeout = htons(fs->hard_timeout);
+        ofd->cookie = fs->cookie;
+        memset(ofd->pad2, 0, sizeof ofd->pad2);
+        ofd->pad = 0;
+        ofd->importance = htons(fs->importance);
+        ofd->flags = ofputil_encode_flow_mod_flags(fs->flags, version);
+    } else if (raw == OFPRAW_OFPST11_FLOW_REPLY ||
+               raw == OFPRAW_OFPST13_FLOW_REPLY) {
         struct ofp11_flow_stats *ofs;
 
         ofpbuf_put_uninit(reply, sizeof *ofs);
@@ -1039,6 +1255,90 @@ ofputil_append_flow_stats_reply(const struct ofputil_flow_stats *fs,
     fs_->match.flow.tunnel.metadata.tab = orig_tun_table;
 }
 
+static void
+print_flow_stat(struct ds *string, const char *leader, uint64_t stat)
+{
+    ds_put_format(string, "%s%s=%s", colors.param, leader, colors.end);
+    if (stat != UINT64_MAX) {
+        ds_put_format(string, "%"PRIu64, stat);
+    } else {
+        ds_put_char(string, '?');
+    }
+    ds_put_cstr(string, ", ");
+}
+
+/* Appends a textual form of 'fs' to 'string', translating port numbers to
+ * names using 'port_map' (if provided).  If 'show_stats' is true, the output
+ * includes the flow duration, packet and byte counts, and its idle and hard
+ * ages, otherwise they are omitted. */
+void
+ofputil_flow_stats_format(struct ds *string,
+                          const struct ofputil_flow_stats *fs,
+                          const struct ofputil_port_map *port_map,
+                          const struct ofputil_table_map *table_map,
+                          bool show_stats)
+{
+    if (show_stats || fs->cookie) {
+        ds_put_format(string, "%scookie=%s0x%"PRIx64", ",
+                      colors.param, colors.end, ntohll(fs->cookie));
+    }
+    if (show_stats) {
+        ds_put_format(string, "%sduration=%s", colors.param, colors.end);
+        ofp_print_duration(string, fs->duration_sec, fs->duration_nsec);
+        ds_put_cstr(string, ", ");
+    }
+
+    if (show_stats || fs->table_id
+        || ofputil_table_map_get_name(table_map, fs->table_id) != NULL) {
+        ds_put_format(string, "%stable=%s", colors.special, colors.end);
+        ofputil_format_table(fs->table_id, table_map, string);
+        ds_put_cstr(string, ", ");
+    }
+    if (show_stats) {
+        print_flow_stat(string, "n_packets", fs->packet_count);
+        print_flow_stat(string, "n_bytes", fs->byte_count);
+    }
+    if (fs->idle_timeout != OFP_FLOW_PERMANENT) {
+        ds_put_format(string, "%sidle_timeout=%s%"PRIu16", ",
+                      colors.param, colors.end, fs->idle_timeout);
+    }
+    if (fs->hard_timeout != OFP_FLOW_PERMANENT) {
+        ds_put_format(string, "%shard_timeout=%s%"PRIu16", ",
+                      colors.param, colors.end, fs->hard_timeout);
+    }
+    if (fs->flags) {
+        ofputil_flow_mod_flags_format(string, fs->flags);
+    }
+    if (fs->importance != 0) {
+        ds_put_format(string, "%simportance=%s%"PRIu16", ",
+                      colors.param, colors.end, fs->importance);
+    }
+    if (show_stats && fs->idle_age >= 0) {
+        ds_put_format(string, "%sidle_age=%s%d, ",
+                      colors.param, colors.end, fs->idle_age);
+    }
+    if (show_stats && fs->hard_age >= 0 && fs->hard_age != fs->duration_sec) {
+        ds_put_format(string, "%shard_age=%s%d, ",
+                      colors.param, colors.end, fs->hard_age);
+    }
+
+    /* Print the match, followed by a space (but omit the space if the match
+     * was an empty string). */
+    size_t length = string->length;
+    match_format(&fs->match, port_map, string, fs->priority);
+    if (string->length != length) {
+        ds_put_char(string, ' ');
+    }
+
+    ds_put_format(string, "%sactions=%s", colors.actions, colors.end);
+    struct ofpact_format_params fp = {
+        .port_map = port_map,
+        .table_map = table_map,
+        .s = string,
+    };
+    ofpacts_format(fs->ofpacts, fs->ofpacts_len, &fp);
+}
+
 /* Converts abstract ofputil_aggregate_stats 'stats' into an OFPST_AGGREGATE or
  * NXST_AGGREGATE reply matching 'request', and returns the message. */
 struct ofpbuf *
@@ -1053,20 +1353,33 @@ ofputil_encode_aggregate_stats_reply(
     enum ofpraw raw;
 
     ofpraw_decode(&raw, request);
-    if (raw == OFPRAW_OFPST10_AGGREGATE_REQUEST) {
-        packet_count = unknown_to_zero(stats->packet_count);
-        byte_count = unknown_to_zero(stats->byte_count);
+    if (raw == OFPRAW_OFPST15_AGGREGATE_REQUEST) {
+        msg = ofpraw_alloc_stats_reply(request, 0);
+
+        struct oxs_stats oxs = {
+            .duration_sec = UINT32_MAX,
+            .duration_nsec = UINT32_MAX,
+            .idle_age = UINT32_MAX,
+            .packet_count = stats->packet_count,
+            .byte_count = stats->byte_count,
+            .flow_count = stats->flow_count,
+        };
+        oxs_put_stats(msg, &oxs);
     } else {
-        packet_count = stats->packet_count;
-        byte_count = stats->byte_count;
+        if (raw == OFPRAW_OFPST10_AGGREGATE_REQUEST) {
+            packet_count = unknown_to_zero(stats->packet_count);
+            byte_count = unknown_to_zero(stats->byte_count);
+        } else {
+            packet_count = stats->packet_count;
+            byte_count = stats->byte_count;
+        }
+
+        msg = ofpraw_alloc_stats_reply(request, 0);
+        asr = ofpbuf_put_zeros(msg, sizeof *asr);
+        put_32aligned_be64(&asr->packet_count, htonll(packet_count));
+        put_32aligned_be64(&asr->byte_count, htonll(byte_count));
+        asr->flow_count = htonl(stats->flow_count);
     }
-
-    msg = ofpraw_alloc_stats_reply(request, 0);
-    asr = ofpbuf_put_zeros(msg, sizeof *asr);
-    put_32aligned_be64(&asr->packet_count, htonll(packet_count));
-    put_32aligned_be64(&asr->byte_count, htonll(byte_count));
-    asr->flow_count = htonl(stats->flow_count);
-
     return msg;
 }
 
@@ -1075,16 +1388,39 @@ ofputil_decode_aggregate_stats_reply(struct ofputil_aggregate_stats *stats,
                                      const struct ofp_header *reply)
 {
     struct ofpbuf msg = ofpbuf_const_initializer(reply, ntohs(reply->length));
-    ofpraw_pull_assert(&msg);
+    enum ofpraw raw;
 
-    struct ofp_aggregate_stats_reply *asr = msg.msg;
-    stats->packet_count = ntohll(get_32aligned_be64(&asr->packet_count));
-    stats->byte_count = ntohll(get_32aligned_be64(&asr->byte_count));
-    stats->flow_count = ntohl(asr->flow_count);
+    raw = ofpraw_pull_assert(&msg);
+    if (raw == OFPRAW_OFPST15_AGGREGATE_REPLY) {
+        struct oxs_stats oxs;
+        uint16_t statlen;
+        uint8_t oxs_field_set;
+        enum ofperr error = oxs_pull_stat(&msg, &oxs, &statlen,
+                                          &oxs_field_set);
+        if (error) {
+            return error;
+        }
+        stats->packet_count = oxs.packet_count;
+        stats->byte_count = oxs.byte_count;
+        stats->flow_count = oxs.flow_count;
+    } else {
+        struct ofp_aggregate_stats_reply *asr = msg.msg;
+        stats->packet_count = ntohll(get_32aligned_be64(&asr->packet_count));
+        stats->byte_count = ntohll(get_32aligned_be64(&asr->byte_count));
+        stats->flow_count = ntohl(asr->flow_count);
+    }
 
     return 0;
 }
 
+void
+ofputil_aggregate_stats_format(struct ds *s,
+                               const struct ofputil_aggregate_stats *as)
+{
+    ds_put_format(s, " packet_count=%"PRIu64, as->packet_count);
+    ds_put_format(s, " byte_count=%"PRIu64, as->byte_count);
+    ds_put_format(s, " flow_count=%"PRIu32, as->flow_count);
+}
 
 /* Parses 'str_value' as the value of subfield 'name', and updates
  * 'match' appropriately.  Restricts the set of usable protocols to ones
@@ -1206,7 +1542,6 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
     }
 
     *fm = (struct ofputil_flow_mod) {
-        .match = MATCH_CATCHALL_INITIALIZER,
         .priority = OFP_DEFAULT_PRIORITY,
         .table_id = 0xff,
         .command = command,
@@ -1226,19 +1561,20 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
         }
     }
 
+    struct match match = MATCH_CATCHALL_INITIALIZER;
     while (ofputil_parse_key_value(&string, &name, &value)) {
         const struct ofp_protocol *p;
         const struct mf_field *mf;
         char *error = NULL;
 
         if (ofp_parse_protocol(name, &p)) {
-            match_set_dl_type(&fm->match, htons(p->dl_type));
+            match_set_dl_type(&match, htons(p->dl_type));
             if (p->nw_proto) {
-                match_set_nw_proto(&fm->match, p->nw_proto);
+                match_set_nw_proto(&match, p->nw_proto);
             }
-            match_set_default_packet_type(&fm->match);
+            match_set_default_packet_type(&match);
         } else if (!strcmp(name, "eth")) {
-            match_set_packet_type(&fm->match, htonl(PT_ETH));
+            match_set_packet_type(&match, htonl(PT_ETH));
         } else if (fields & F_FLAGS && !strcmp(name, "send_flow_rem")) {
             fm->flags |= OFPUTIL_FF_SEND_FLOW_REM;
         } else if (fields & F_FLAGS && !strcmp(name, "check_overlap")) {
@@ -1257,9 +1593,9 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
              /* ignore these fields. */
         } else if ((mf = mf_from_name(name)) != NULL) {
             error = ofp_parse_field(mf, value, port_map,
-                                    &fm->match, usable_protocols);
+                                    &match, usable_protocols);
         } else if (strchr(name, '[')) {
-            error = parse_subfield(name, value, &fm->match, usable_protocols);
+            error = parse_subfield(name, value, &match, usable_protocols);
         } else {
             if (!*value) {
                 return xasprintf("field %s missing value", name);
@@ -1345,13 +1681,13 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
     }
     /* Copy ethertype to flow->dl_type for matches on packet_type
      * (OFPHTN_ETHERTYPE, ethertype). */
-    if (fm->match.wc.masks.packet_type == OVS_BE32_MAX &&
-            pt_ns(fm->match.flow.packet_type) == OFPHTN_ETHERTYPE) {
-        fm->match.flow.dl_type = pt_ns_type_be(fm->match.flow.packet_type);
+    if (match.wc.masks.packet_type == OVS_BE32_MAX &&
+            pt_ns(match.flow.packet_type) == OFPHTN_ETHERTYPE) {
+        match.flow.dl_type = pt_ns_type_be(match.flow.packet_type);
     }
     /* Check for usable protocol interdependencies between match fields. */
-    if (fm->match.flow.dl_type == htons(ETH_TYPE_IPV6)) {
-        const struct flow_wildcards *wc = &fm->match.wc;
+    if (match.flow.dl_type == htons(ETH_TYPE_IPV6)) {
+        const struct flow_wildcards *wc = &match.wc;
         /* Only NXM and OXM support matching L3 and L4 fields within IPv6.
          *
          * (IPv6 specific fields as well as arp_sha, arp_tha, nw_frag, and
@@ -1387,7 +1723,7 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
         if (!error) {
             enum ofperr err;
 
-            err = ofpacts_check(ofpacts.data, ofpacts.size, &fm->match,
+            err = ofpacts_check(ofpacts.data, ofpacts.size, &match,
                                 OFPP_MAX, fm->table_id, 255, usable_protocols);
             if (!err && !*usable_protocols) {
                 err = OFPERR_OFPBAC_MATCH_INCONSISTENT;
@@ -1409,6 +1745,7 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
         fm->ofpacts_len = 0;
         fm->ofpacts = NULL;
     }
+    minimatch_init(&fm->match, &match);
 
     return NULL;
 }
@@ -1426,7 +1763,10 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
  * name is treated as "add".
  *
  * Returns NULL if successful, otherwise a malloc()'d string describing the
- * error.  The caller is responsible for freeing the returned string. */
+ * error.  The caller is responsible for freeing the returned string.
+ *
+ * On success, the caller is responsible for freeing fm->ofpacts and
+ * fm->match. */
 char * OVS_WARN_UNUSED_RESULT
 parse_ofp_str(struct ofputil_flow_mod *fm, int command, const char *str_,
               const struct ofputil_port_map *port_map,
@@ -1444,6 +1784,37 @@ parse_ofp_str(struct ofputil_flow_mod *fm, int command, const char *str_,
     }
 
     free(string);
+    return error;
+}
+
+/* Parses 'string' as an OFPT_FLOW_MOD or NXT_FLOW_MOD with command 'command'
+ * (one of OFPFC_*) into 'fm'.
+ *
+ * If 'command' is given as -2, 'string' may begin with a command name ("add",
+ * "modify", "delete", "modify_strict", or "delete_strict").  A missing command
+ * name is treated as "add".
+ *
+ * Returns NULL if successful, otherwise a malloc()'d string describing the
+ * error.  The caller is responsible for freeing the returned string. */
+char * OVS_WARN_UNUSED_RESULT
+parse_ofp_flow_mod_str(struct ofputil_flow_mod *fm, const char *string,
+                       const struct ofputil_port_map *port_map,
+                       const struct ofputil_table_map *table_map,
+                       int command,
+                       enum ofputil_protocol *usable_protocols)
+{
+    char *error = parse_ofp_str(fm, command, string, port_map, table_map,
+                                usable_protocols);
+
+    if (!error) {
+        /* Normalize a copy of the match.  This ensures that non-normalized
+         * flows get logged but doesn't affect what gets sent to the switch, so
+         * that the switch can do whatever it likes with the flow. */
+        struct match match;
+        minimatch_expand(&fm->match, &match);
+        ofputil_normalize_match(&match);
+    }
+
     return error;
 }
 
@@ -1499,6 +1870,7 @@ parse_ofp_flow_mod_file(const char *file_name,
 
             for (i = 0; i < *n_fms; i++) {
                 free(CONST_CAST(struct ofpact *, (*fms)[i].ofpacts));
+                minimatch_destroy(&(*fms)[i].match);
             }
             free(*fms);
             *fms = NULL;

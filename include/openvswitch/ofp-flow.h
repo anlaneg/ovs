@@ -31,15 +31,6 @@ struct ofputil_table_map;
 extern "C" {
 #endif
 
-/* nx_flow_format */
-struct ofpbuf *ofputil_encode_nx_set_flow_format(enum nx_flow_format);
-enum ofputil_protocol ofputil_nx_flow_format_to_protocol(enum nx_flow_format);
-bool ofputil_nx_flow_format_is_valid(enum nx_flow_format);
-const char *ofputil_nx_flow_format_to_string(enum nx_flow_format);
-
-/* NXT_FLOW_MOD_TABLE_ID extension. */
-struct ofpbuf *ofputil_make_flow_mod_table_id(bool flow_mod_table_id);
-
 /* Protocol-independent flow_mod flags. */
 enum ofputil_flow_mod_flags {
     /* Flags that are maintained with a flow as part of its state.
@@ -73,6 +64,8 @@ enum ofputil_flow_mod_flags {
                                           to be modified */
 };
 
+void ofputil_flow_mod_flags_format(struct ds *, enum ofputil_flow_mod_flags);
+
 /* Protocol-independent flow_mod.
  *
  * The handling of cookies across multiple versions of OpenFlow is a bit
@@ -80,7 +73,7 @@ enum ofputil_flow_mod_flags {
 struct ofputil_flow_mod {
     struct ovs_list list_node; /* For queuing flow_mods. */
 
-    struct match match;
+    struct minimatch match;
     int priority;
 
     /* Cookie matching.  The flow_mod affects only flows that have cookies that
@@ -132,6 +125,10 @@ enum ofperr ofputil_decode_flow_mod(struct ofputil_flow_mod *,
                                     uint8_t max_table);
 struct ofpbuf *ofputil_encode_flow_mod(const struct ofputil_flow_mod *,
                                        enum ofputil_protocol);
+enum ofperr ofputil_flow_mod_format(struct ds *, const struct ofp_header *,
+                                    const struct ofputil_port_map *,
+                                    const struct ofputil_table_map *,
+                                    int verbosity);
 
 char *parse_ofp_str(struct ofputil_flow_mod *, int command, const char *str_,
                     const struct ofputil_port_map *,
@@ -181,6 +178,10 @@ char *parse_ofp_flow_stats_request_str(struct ofputil_flow_stats_request *,
                                        enum ofputil_protocol *usable_protocols)
     OVS_WARN_UNUSED_RESULT;
 
+void ofputil_flow_stats_request_format(
+    struct ds *, const struct ofputil_flow_stats_request *,
+    const struct ofputil_port_map *, const struct ofputil_table_map *);
+
 /* Flow stats reply, independent of protocol. */
 struct ofputil_flow_stats {
     struct match match;
@@ -209,11 +210,16 @@ void ofputil_append_flow_stats_reply(const struct ofputil_flow_stats *,
                                      struct ovs_list *replies,
                                      const struct tun_table *);
 
+void ofputil_flow_stats_format(struct ds *, const struct ofputil_flow_stats *,
+                               const struct ofputil_port_map *,
+                               const struct ofputil_table_map *,
+                               bool show_stats);
+
 /* Aggregate stats reply, independent of protocol. */
 struct ofputil_aggregate_stats {
     uint64_t packet_count;      /* Packet count, UINT64_MAX if unknown. */
     uint64_t byte_count;        /* Byte count, UINT64_MAX if unknown. */
-    uint32_t flow_count;
+    uint32_t flow_count;        /* Number of flows, UINT32_MAX if unknown. */
 };
 
 struct ofpbuf *ofputil_encode_aggregate_stats_reply(
@@ -222,6 +228,8 @@ struct ofpbuf *ofputil_encode_aggregate_stats_reply(
 enum ofperr ofputil_decode_aggregate_stats_reply(
     struct ofputil_aggregate_stats *,
     const struct ofp_header *reply);
+void ofputil_aggregate_stats_format(struct ds *,
+                                    const struct ofputil_aggregate_stats *);
 
 #ifdef __cplusplus
 }

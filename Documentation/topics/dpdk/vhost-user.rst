@@ -29,6 +29,11 @@ The DPDK datapath provides DPDK-backed vHost user ports as a primary way to
 interact with guests. For more information on vHost User, refer to the `QEMU
 documentation`_ on same.
 
+.. important::
+
+   To use any DPDK-backed interface, you must ensure your bridge is configured
+   correctly. For more information, refer to :doc:`bridge`.
+
 Quick Example
 -------------
 
@@ -105,6 +110,9 @@ Once the vhost-user ports have been added to the switch, they must be added to
 the guest. There are two ways to do this: using QEMU directly, or using
 libvirt.
 
+.. note::
+   IOMMU is not supported with vhost-user ports.
+
 Adding vhost-user ports to the guest (QEMU)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -127,11 +135,10 @@ an additional set of parameters::
     -netdev type=vhost-user,id=mynet2,chardev=char2,vhostforce
     -device virtio-net-pci,mac=00:00:00:00:00:02,netdev=mynet2
 
-In addition,       QEMU must allocate the VM's memory on hugetlbfs. vhost-user
-ports access a virtio-net device's virtual rings and packet buffers mapping the
-VM's physical memory on hugetlbfs. To enable vhost-user ports to map the VM's
-memory into their process address space, pass the following parameters to
-QEMU::
+In addition, QEMU must allocate the VM's memory on hugetlbfs. vhost-user ports
+access a virtio-net device's virtual rings and packet buffers mapping the VM's
+physical memory on hugetlbfs. To enable vhost-user ports to map the VM's memory
+into their process address space, pass the following parameters to QEMU::
 
     -object memory-backend-file,id=mem,size=4096M,mem-path=/dev/hugepages,share=on
     -numa node,memdev=mem -mem-prealloc
@@ -151,18 +158,18 @@ where:
   The number of vectors, which is ``$q`` * 2 + 2
 
 The vhost-user interface will be automatically reconfigured with required
-number of rx and tx queues after connection of virtio device.  Manual
+number of Rx and Tx queues after connection of virtio device.  Manual
 configuration of ``n_rxq`` is not supported because OVS will work properly only
 if ``n_rxq`` will match number of queues configured in QEMU.
 
-A least 2 PMDs should be configured for the vswitch when using multiqueue.
+A least two PMDs should be configured for the vswitch when using multiqueue.
 Using a single PMD will cause traffic to be enqueued to the same vhost queue
 rather than being distributed among different vhost queues for a vhost-user
 interface.
 
 If traffic destined for a VM configured with multiqueue arrives to the vswitch
-via a physical DPDK port, then the number of rxqs should also be set to at
-least 2 for that physical DPDK port. This is required to increase the
+via a physical DPDK port, then the number of Rx queues should also be set to at
+least two for that physical DPDK port. This is required to increase the
 probability that a different PMD will handle the multiqueue transmission to the
 guest using a different vhost queue.
 
@@ -184,20 +191,13 @@ where:
 Adding vhost-user ports to the guest (libvirt)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. TODO(stephenfin): This seems like something that wouldn't be acceptable in
-   production. Is this really required?
-
-To begin, you must change the user and group that libvirt runs under, configure
-access control policy and restart libvirtd.
+To begin, you must change the user and group that qemu runs under, and restart
+libvirtd.
 
 - In ``/etc/libvirt/qemu.conf`` add/edit the following lines::
 
       user = "root"
       group = "root"
-
-- Disable SELinux or set to permissive mode::
-
-      $ setenforce 0
 
 - Finally, restart the libvirtd process, For example, on Fedora::
 
@@ -320,9 +320,9 @@ To begin, instantiate a guest as described in :ref:`dpdk-vhost-user` or
 DPDK sources to VM and build DPDK::
 
     $ cd /root/dpdk/
-    $ wget http://fast.dpdk.org/rel/dpdk-17.11.tar.xz
-    $ tar xf dpdk-17.11.tar.xz
-    $ export DPDK_DIR=/root/dpdk/dpdk-17.11
+    $ wget http://fast.dpdk.org/rel/dpdk-17.11.3.tar.xz
+    $ tar xf dpdk-17.11.3.tar.xz
+    $ export DPDK_DIR=/root/dpdk/dpdk-stable-17.11.3
     $ export DPDK_TARGET=x86_64-native-linuxapp-gcc
     $ export DPDK_BUILD=$DPDK_DIR/$DPDK_TARGET
     $ cd $DPDK_DIR
@@ -354,28 +354,6 @@ Setup huge pages and DPDK devices using UIO::
 Finally, start the application::
 
     # TODO
-
-.. important::
-
-  DPDK v17.11 virtio PMD contains a bug in the vectorized Rx function that
-  affects testpmd/DPDK guest applications. As such, guest DPDK applications
-  should use a non-vectorized Rx function.
-
-The DPDK v17.11 virtio net driver contains a bug that prevents guest DPDK
-applications from receiving packets when the vectorized Rx function is used.
-This only occurs when guest-bound traffic is live before a DPDK application is
-started within the guest, and where two or more forwarding cores are used. As
-such, it is not recommended for guests which execute DPDK applications to use
-the virtio vectorized Rx function. A simple method of ensuring that a non-
-vectorized Rx function is used is to enable mergeable buffers for the guest,
-with the following QEMU command line option::
-
-    mrg_rxbuf=on
-
-Additional details regarding the virtio driver bug are available on the
-`DPDK mailing list`_.
-
-.. _DPDK mailing list: http://dpdk.org/ml/archives/dev/2017-December/082801.html
 
 .. _dpdk-vhost-user-xml:
 
@@ -420,17 +398,11 @@ Sample XML
       <on_reboot>restart</on_reboot>
       <on_crash>destroy</on_crash>
       <devices>
-        <emulator>/usr/bin/qemu-kvm</emulator>
+        <emulator>/usr/bin/qemu-system-x86_64</emulator>
         <disk type='file' device='disk'>
           <driver name='qemu' type='qcow2' cache='none'/>
           <source file='/root/CentOS7_x86_64.qcow2'/>
           <target dev='vda' bus='virtio'/>
-        </disk>
-        <disk type='dir' device='disk'>
-          <driver name='qemu' type='fat'/>
-          <source dir='/usr/src/dpdk-stable-17.05.2'/>
-          <target dev='vdb' bus='virtio'/>
-          <readonly/>
         </disk>
         <interface type='vhostuser'>
           <mac address='00:00:00:00:00:01'/>
@@ -458,6 +430,12 @@ Sample XML
     </domain>
 
 .. _QEMU documentation: http://git.qemu-project.org/?p=qemu.git;a=blob;f=docs/specs/vhost-user.txt;h=7890d7169;hb=HEAD
+
+Jumbo Frames
+------------
+
+DPDK vHost User ports can be configured to use Jumbo Frames. For more
+information, refer to :doc:`jumbo-frames`.
 
 vhost-user Dequeue Zero Copy (experimental)
 -------------------------------------------
@@ -530,4 +508,4 @@ issue can be found on
 
 Further information can be found in the
 `DPDK documentation
-<http://dpdk.readthedocs.io/en/v17.05/prog_guide/vhost_lib.html>`__
+<http://dpdk.readthedocs.io/en/v17.11/prog_guide/vhost_lib.html>`__

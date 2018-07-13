@@ -1271,7 +1271,12 @@ static const struct net_device_ops geneve_netdev_ops = {
 	.ndo_stop		= geneve_stop,
 	.ndo_start_xmit		= geneve_dev_xmit,
 	.ndo_get_stats64	= ip_tunnel_get_stats64,
+#ifdef	HAVE_RHEL7_MAX_MTU
+	.ndo_size		= sizeof(struct net_device_ops),
+	.extended.ndo_change_mtu = geneve_change_mtu,
+#else
 	.ndo_change_mtu		= geneve_change_mtu,
+#endif
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= eth_mac_addr,
 #ifdef HAVE_NDO_FILL_METADATA_DST
@@ -1331,7 +1336,11 @@ static void geneve_setup(struct net_device *dev)
 
 	dev->netdev_ops = &geneve_netdev_ops;
 	dev->ethtool_ops = &geneve_ethtool_ops;
+#ifndef HAVE_NEEDS_FREE_NETDEV
 	dev->destructor = free_netdev;
+#else
+	dev->needs_free_netdev = true;
+#endif
 
 	SET_NETDEV_DEVTYPE(dev, &geneve_type);
 
@@ -1365,7 +1374,12 @@ static const struct nla_policy geneve_policy[IFLA_GENEVE_MAX + 1] = {
 	[IFLA_GENEVE_UDP_ZERO_CSUM6_RX]	= { .type = NLA_U8 },
 };
 
+#ifdef  HAVE_EXT_ACK_IN_RTNL_LINKOPS
+static int geneve_validate(struct nlattr *tb[], struct nlattr *data[],
+			   struct netlink_ext_ack *extack)
+#else
 static int geneve_validate(struct nlattr *tb[], struct nlattr *data[])
+#endif
 {
 	if (tb[IFLA_ADDRESS]) {
 		if (nla_len(tb[IFLA_ADDRESS]) != ETH_ALEN)
@@ -1484,8 +1498,14 @@ static int geneve_configure(struct net *net, struct net_device *dev,
 	return 0;
 }
 
+#ifdef  HAVE_EXT_ACK_IN_RTNL_LINKOPS
+static int geneve_newlink(struct net *net, struct net_device *dev,
+			  struct nlattr *tb[], struct nlattr *data[],
+			  struct netlink_ext_ack *extack)
+#else
 static int geneve_newlink(struct net *net, struct net_device *dev,
 			  struct nlattr *tb[], struct nlattr *data[])
+#endif
 {
 	__be16 dst_port = htons(GENEVE_UDP_PORT);
 	__u8 ttl = 0, tos = 0;

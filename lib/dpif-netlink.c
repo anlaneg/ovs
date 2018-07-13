@@ -45,6 +45,7 @@
 #include "netlink-notifier.h"
 #include "netlink-socket.h"
 #include "netlink.h"
+#include "netnsid.h"
 #include "odp-util.h"
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/flow.h"
@@ -786,6 +787,15 @@ get_vport_type(const struct dpif_netlink_vport *vport)
     case OVS_VPORT_TYPE_STT:
         return "stt";
 
+    case OVS_VPORT_TYPE_ERSPAN:
+        return "erspan";
+
+    case OVS_VPORT_TYPE_IP6ERSPAN:
+        return "ip6erspan"; 
+
+    case OVS_VPORT_TYPE_IP6GRE:
+        return "ip6gre";
+
     case OVS_VPORT_TYPE_UNSPEC:
     case __OVS_VPORT_TYPE_MAX:
         break;
@@ -807,12 +817,18 @@ netdev_to_ovs_vport_type(const char *type)
         return OVS_VPORT_TYPE_STT;
     } else if (!strcmp(type, "geneve")) {
         return OVS_VPORT_TYPE_GENEVE;
-    } else if (strstr(type, "gre")) {
-        return OVS_VPORT_TYPE_GRE;
     } else if (!strcmp(type, "vxlan")) {
         return OVS_VPORT_TYPE_VXLAN;
     } else if (!strcmp(type, "lisp")) {
         return OVS_VPORT_TYPE_LISP;
+    } else if (!strcmp(type, "erspan")) {
+        return OVS_VPORT_TYPE_ERSPAN;
+    } else if (!strcmp(type, "ip6erspan")) {
+        return OVS_VPORT_TYPE_IP6ERSPAN;
+    } else if (!strcmp(type, "ip6gre")) {
+        return OVS_VPORT_TYPE_IP6GRE;
+    } else if (!strcmp(type, "gre")) {
+        return OVS_VPORT_TYPE_GRE;
     } else {
         return OVS_VPORT_TYPE_UNSPEC;
     }
@@ -1288,7 +1304,7 @@ dpif_netlink_port_poll(const struct dpif *dpif_, char **devnamep)
         int error;
 
         ofpbuf_use_stub(&buf, buf_stub, sizeof buf_stub);
-        error = nl_sock_recv(dpif->port_notifier, &buf, false);
+        error = nl_sock_recv(dpif->port_notifier, &buf, NULL, false);
         if (!error) {
             struct dpif_netlink_vport vport;
 
@@ -1447,13 +1463,13 @@ dpif_netlink_init_flow_del(struct dpif_netlink *dpif,
 }
 
 enum {
-    DUMP_OVS_FLOWS_BIT       = 0,
-    DUMP_OFFLOADED_FLOWS_BIT = 1,
+    DUMP_OVS_FLOWS_BIT    = 0,
+    DUMP_NETDEV_FLOWS_BIT = 1,
 };
 
 enum {
-    DUMP_OVS_FLOWS       = (1 << DUMP_OVS_FLOWS_BIT),
-    DUMP_OFFLOADED_FLOWS = (1 << DUMP_OFFLOADED_FLOWS_BIT),
+    DUMP_OVS_FLOWS    = (1 << DUMP_OVS_FLOWS_BIT),
+    DUMP_NETDEV_FLOWS = (1 << DUMP_NETDEV_FLOWS_BIT),
 };
 
 struct dpif_netlink_flow_dump {
@@ -1479,7 +1495,7 @@ start_netdev_dump(const struct dpif *dpif_,
 {
     ovs_mutex_init(&dump->netdev_lock);
 
-    if (!(dump->type & DUMP_OFFLOADED_FLOWS)) {
+    if (!(dump->type & DUMP_NETDEV_FLOWS)) {
         dump->netdev_dumps_num = 0;
         dump->netdev_dumps = NULL;
         return;
@@ -1502,7 +1518,7 @@ dpif_netlink_get_dump_type(char *str) {
     }
     if ((netdev_is_flow_api_enabled() && !str)
         || (str && (!strcmp(str, "offloaded") || !strcmp(str, "dpctl")))) {
-        type |= DUMP_OFFLOADED_FLOWS;
+        type |= DUMP_NETDEV_FLOWS;
     }
 
     return type;
@@ -1640,7 +1656,8 @@ dpif_netlink_flow_to_dpif_flow(struct dpif *dpif, struct dpif_flow *dpif_flow,
                        &dpif_flow->ufid);
     }
     dpif_netlink_flow_get_stats(datapath_flow, &dpif_flow->stats);
-    dpif_flow->offloaded = false;
+    dpif_flow->attrs.offloaded = false;
+    dpif_flow->attrs.dp_layer = "ovs";
 }
 
 /* The design is such that all threads are working together on the first dump
@@ -1682,6 +1699,7 @@ dpif_netlink_netdev_match_to_dpif_flow(struct match *match,
                                        struct ofpbuf *mask_buf,
                                        struct nlattr *actions,
                                        struct dpif_flow_stats *stats,
+                                       struct dpif_flow_attrs *attrs,
                                        ovs_u128 *ufid,
                                        struct dpif_flow *flow,
                                        bool terse OVS_UNUSED)
@@ -1724,7 +1742,7 @@ dpif_netlink_netdev_match_to_dpif_flow(struct match *match,
 
     flow->pmd_id = PMD_ID_NULL;
 
-    flow->offloaded = true;
+    memcpy(&flow->attrs, attrs, sizeof *attrs);
 
     return 0;
 }
@@ -1756,6 +1774,7 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         struct match match;
         struct nlattr *actions;
         struct dpif_flow_stats stats;
+        struct dpif_flow_attrs attrs;
         ovs_u128 ufid;
         bool has_next;
 
@@ -1763,7 +1782,7 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         ofpbuf_use_stack(&act, actbuf, sizeof *actbuf);
         ofpbuf_use_stack(&mask, maskbuf, sizeof *maskbuf);
         has_next = netdev_flow_dump_next(netdev_dump, &match,
-                                        &actions, &stats,
+                                        &actions, &stats, &attrs,
                                         &ufid,
                                         &thread->nl_flows,
                                         &act);
@@ -1772,6 +1791,7 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
                                                    &key, &mask,
                                                    actions,
                                                    &stats,
+                                                   &attrs,
                                                    &ufid,
                                                    f,
                                                    dump->up.terse);
@@ -1907,7 +1927,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
 
         switch (op->type) {
         case DPIF_OP_FLOW_PUT:
-            put = &op->u.flow_put;
+            put = &op->flow_put;
             dpif_netlink_init_flow_put(dpif, put, &flow);
             if (put->stats) {
                 flow.nlmsg_flags |= NLM_F_ECHO;
@@ -1917,7 +1937,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
             break;
 
         case DPIF_OP_FLOW_DEL:
-            del = &op->u.flow_del;
+            del = &op->flow_del;
             dpif_netlink_init_flow_del(dpif, del, &flow);
             if (del->stats) {
                 flow.nlmsg_flags |= NLM_F_ECHO;
@@ -1929,26 +1949,26 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
         case DPIF_OP_EXECUTE:
             /* Can't execute a packet that won't fit in a Netlink attribute. */
             if (OVS_UNLIKELY(nl_attr_oversized(
-                                 dp_packet_size(op->u.execute.packet)))) {
+                                 dp_packet_size(op->execute.packet)))) {
                 /* Report an error immediately if this is the first operation.
                  * Otherwise the easiest thing to do is to postpone to the next
                  * call (when this will be the first operation). */
                 if (i == 0) {
                     VLOG_ERR_RL(&error_rl,
                                 "dropping oversized %"PRIu32"-byte packet",
-                                dp_packet_size(op->u.execute.packet));
+                                dp_packet_size(op->execute.packet));
                     op->error = ENOBUFS;
                     return 1;
                 }
                 n_ops = i;
             } else {
-                dpif_netlink_encode_execute(dpif->dp_ifindex, &op->u.execute,
+                dpif_netlink_encode_execute(dpif->dp_ifindex, &op->execute,
                                             &aux->request);
             }
             break;
 
         case DPIF_OP_FLOW_GET:
-            get = &op->u.flow_get;
+            get = &op->flow_get;
             dpif_netlink_init_flow_get(dpif, get, &flow);
             aux->txn.reply = get->buffer;
             dpif_netlink_flow_to_ofpbuf(&flow, &aux->request);
@@ -1976,7 +1996,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
 
         switch (op->type) {
         case DPIF_OP_FLOW_PUT:
-            put = &op->u.flow_put;
+            put = &op->flow_put;
             if (put->stats) {
                 if (!op->error) {
                     struct dpif_netlink_flow reply;
@@ -1991,7 +2011,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
             break;
 
         case DPIF_OP_FLOW_DEL:
-            del = &op->u.flow_del;
+            del = &op->flow_del;
             if (del->stats) {
                 if (!op->error) {
                     struct dpif_netlink_flow reply;
@@ -2009,7 +2029,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
             break;
 
         case DPIF_OP_FLOW_GET:
-            get = &op->u.flow_get;
+            get = &op->flow_get;
             if (!op->error) {
                 struct dpif_netlink_flow reply;
 
@@ -2039,6 +2059,7 @@ parse_flow_get(struct dpif_netlink *dpif, struct dpif_flow_get *get)
     struct match match;
     struct nlattr *actions;
     struct dpif_flow_stats stats;
+    struct dpif_flow_attrs attrs;
     struct ofpbuf buf;
     uint64_t act_buf[1024 / 8];
     struct odputil_keybuf maskbuf;
@@ -2049,7 +2070,7 @@ parse_flow_get(struct dpif_netlink *dpif, struct dpif_flow_get *get)
 
     ofpbuf_use_stack(&buf, &act_buf, sizeof act_buf);
     err = netdev_ports_flow_get(dpif->dpif.dpif_class, &match,
-                                &actions, get->ufid, &stats, &buf);
+                                &actions, get->ufid, &stats, &attrs, &buf);
     if (err) {
         return err;
     }
@@ -2060,7 +2081,7 @@ parse_flow_get(struct dpif_netlink *dpif, struct dpif_flow_get *get)
     ofpbuf_use_stack(&act, &actbuf, sizeof actbuf);
     ofpbuf_use_stack(&mask, &maskbuf, sizeof maskbuf);
     dpif_netlink_netdev_match_to_dpif_flow(&match, &key, &mask, actions,
-                                           &stats,
+                                           &stats, &attrs,
                                            (ovs_u128 *) get->ufid,
                                            dpif_flow,
                                            false);
@@ -2080,7 +2101,6 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
     odp_port_t in_port;
     const struct nlattr *nla;
     size_t left;
-    int outputs = 0;
     struct netdev *dev;
     struct offload_info info;
     ovs_be16 dst_port = 0;
@@ -2107,19 +2127,12 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
         return EOPNOTSUPP;
     }
 
-    /* Get tunnel dst port and count outputs */
+    /* Get tunnel dst port */
     NL_ATTR_FOR_EACH(nla, left, put->actions, put->actions_len) {
         if (nl_attr_type(nla) == OVS_ACTION_ATTR_OUTPUT) {
             const struct netdev_tunnel_config *tnl_cfg;
             struct netdev *outdev;
             odp_port_t out_port;
-
-            outputs++;
-            if (outputs > 1) {
-                VLOG_DBG_RL(&rl, "offloading multiple ports isn't supported");
-                err = EOPNOTSUPP;
-                goto out;
-            }
 
             out_port = nl_attr_get_odp_port(nla);
             outdev = netdev_ports_get(out_port, dpif_class);
@@ -2149,12 +2162,12 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
             struct dpif_op op;
 
             op.type = DPIF_OP_FLOW_DEL;
-            op.u.flow_del.key = put->key;
-            op.u.flow_del.key_len = put->key_len;
-            op.u.flow_del.ufid = put->ufid;
-            op.u.flow_del.pmd_id = put->pmd_id;
-            op.u.flow_del.stats = NULL;
-            op.u.flow_del.terse = false;
+            op.flow_del.key = put->key;
+            op.flow_del.key_len = put->key_len;
+            op.flow_del.ufid = put->ufid;
+            op.flow_del.pmd_id = put->pmd_id;
+            op.flow_del.stats = NULL;
+            op.flow_del.terse = false;
 
             opp = &op;
             dpif_netlink_operate__(dpif, &opp, 1);
@@ -2195,7 +2208,7 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
 
     switch (op->type) {
     case DPIF_OP_FLOW_PUT: {
-        struct dpif_flow_put *put = &op->u.flow_put;
+        struct dpif_flow_put *put = &op->flow_put;
 
         if (!put->ufid) {
             break;
@@ -2206,7 +2219,7 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
         break;
     }
     case DPIF_OP_FLOW_DEL: {
-        struct dpif_flow_del *del = &op->u.flow_del;
+        struct dpif_flow_del *del = &op->flow_del;
 
         if (!del->ufid) {
             break;
@@ -2218,9 +2231,9 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
         break;
     }
     case DPIF_OP_FLOW_GET: {
-        struct dpif_flow_get *get = &op->u.flow_get;
+        struct dpif_flow_get *get = &op->flow_get;
 
-        if (!op->u.flow_get.ufid) {
+        if (!op->flow_get.ufid) {
             break;
         }
 
@@ -2622,7 +2635,7 @@ dpif_netlink_recv_windows(struct dpif_netlink *dpif, uint32_t handler_id,
                 return EAGAIN;
             }
 
-            error = nl_sock_recv(sock_pool[i].nl_sock, buf, false);
+            error = nl_sock_recv(sock_pool[i].nl_sock, buf, NULL, false);
             if (error == ENOBUFS) {
                 /* ENOBUFS typically means that we've received so many
                  * packets that the buffer overflowed.  Try again
@@ -2697,7 +2710,7 @@ dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id,
                 return EAGAIN;
             }
 
-            error = nl_sock_recv(ch->sock, buf, false);
+            error = nl_sock_recv(ch->sock, buf, NULL, false);
             if (error == ENOBUFS) {
                 /* ENOBUFS typically means that we've received so many
                  * packets that the buffer overflowed.  Try again
@@ -3009,7 +3022,7 @@ dpif_netlink_init(void)
         error = nl_lookup_genl_family(OVS_DATAPATH_FAMILY,
                                       &ovs_datapath_family);
         if (error) {
-            VLOG_WARN("Generic Netlink family '%s' does not exist. "
+            VLOG_INFO("Generic Netlink family '%s' does not exist. "
                       "The Open vSwitch kernel module is probably not loaded.",
                       OVS_DATAPATH_FAMILY);
         }
@@ -3072,6 +3085,7 @@ dpif_netlink_vport_from_ofpbuf(struct dpif_netlink_vport *vport,
         [OVS_VPORT_ATTR_STATS] = { NL_POLICY_FOR(struct ovs_vport_stats),
                                    .optional = true },
         [OVS_VPORT_ATTR_OPTIONS] = { .type = NL_A_NESTED, .optional = true },
+        [OVS_VPORT_ATTR_NETNSID] = { .type = NL_A_U32, .optional = true },
     };
 
     dpif_netlink_vport_init(vport);
@@ -3106,6 +3120,12 @@ dpif_netlink_vport_from_ofpbuf(struct dpif_netlink_vport *vport,
     if (a[OVS_VPORT_ATTR_OPTIONS]) {
         vport->options = nl_attr_get(a[OVS_VPORT_ATTR_OPTIONS]);
         vport->options_len = nl_attr_get_size(a[OVS_VPORT_ATTR_OPTIONS]);
+    }
+    if (a[OVS_VPORT_ATTR_NETNSID]) {
+        netnsid_set(&vport->netnsid,
+                    nl_attr_get_u32(a[OVS_VPORT_ATTR_NETNSID]));
+    } else {
+        netnsid_set_local(&vport->netnsid);
     }
     return 0;
 }
