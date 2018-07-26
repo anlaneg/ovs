@@ -1001,6 +1001,7 @@ netdev_linux_construct(struct netdev *netdev_)
  * situation we share a single file descriptor, and consequently
  * buffers, across all readers.  Therefore once data is read it will
  * be unavailable to other reads for tap devices. */
+//构造tap接口
 static int
 netdev_linux_construct_tap(struct netdev *netdev_)
 {
