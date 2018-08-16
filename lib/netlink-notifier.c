@@ -192,10 +192,11 @@ nln_run(struct nln *nln)
         int error;
 
         ofpbuf_use_stub(&buf, buf_stub, sizeof buf_stub);
+        //读取socket,收取数据
         error = nl_sock_recv(nln->notify_sock, &buf, NULL, false);
         if (!error) {
+        	//解析收取到的数据
             int group = nln->parse(&buf, nln->change);
-
             if (group != 0) {
                 nln_report(nln, nln->change, group);//调用回调
             } else {
