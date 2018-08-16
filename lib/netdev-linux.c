@@ -789,6 +789,7 @@ netdev_linux_run(const struct netdev_class *netdev_class OVS_UNUSED)
         if (!error) {
             struct rtnetlink_change change;
 
+            //解析数据
             if (rtnetlink_parse(&buf, &change)) {
                 struct netdev *netdev_ = NULL;
                 char dev_name[IFNAMSIZ];

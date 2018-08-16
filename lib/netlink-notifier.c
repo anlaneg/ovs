@@ -34,6 +34,7 @@ COVERAGE_DEFINE(nln_changed);
 
 struct nln {
     struct nl_sock *notify_sock; /* Netlink socket. */
+    //记录所有需要通知的notifier
     struct ovs_list all_notifiers;   /* All nln notifiers. */
     bool has_run;                /* Guard for run and wait functions. */
 
@@ -47,7 +48,9 @@ struct nln_notifier {
     struct ovs_list node;        /* In struct nln's 'all_notifiers' list. */
     struct nln *nln;             /* Parent nln. */
 
+    //监听那个组播组
     int multicast_group;         /* Multicast group we listen on. */
+    //收到通知时，回调此函数
     nln_notify_func *cb;
     void *aux;
 };
@@ -106,6 +109,7 @@ nln_notifier_create(struct nln *nln, int multicast_group, nln_notify_func *cb,
     if (!nln->notify_sock) {
         struct nl_sock *sock;
 
+        //创建sock
         error = nl_sock_create(nln->protocol, &sock);
         if (error) {
             VLOG_WARN("could not create netlink socket: %s",
@@ -119,6 +123,7 @@ nln_notifier_create(struct nln *nln, int multicast_group, nln_notify_func *cb,
         nln_run(nln);
     }
 
+    //加入到组播组$multicast_group
     error = nl_sock_join_mcgroup(nln->notify_sock, multicast_group);
     if (error) {
         VLOG_WARN("could not join netlink multicast group: %s",
@@ -132,6 +137,7 @@ nln_notifier_create(struct nln *nln, int multicast_group, nln_notify_func *cb,
     notifier->aux = aux;
     notifier->nln = nln;
 
+    //将notifier加入到通知链表中
     ovs_list_push_back(&nln->all_notifiers, &notifier->node);
 
     return notifier;
@@ -156,6 +162,7 @@ nln_notifier_destroy(struct nln_notifier *notifier)
             }
         }
         if (count == 0) {
+        	//没有人关心此组播组时，离开
             nl_sock_leave_mcgroup(nln->notify_sock, notifier->multicast_group);
         }
 
@@ -223,6 +230,7 @@ nln_wait(struct nln *nln)
     }
 }
 
+//触发notifier
 void
 nln_report(const struct nln *nln, void *change, int group)
 {
@@ -232,6 +240,7 @@ nln_report(const struct nln *nln, void *change, int group)
         COVERAGE_INC(nln_changed);
     }
 
+    //触发通知
     LIST_FOR_EACH (notifier, node, &nln->all_notifiers) {
         if (!change || group == notifier->multicast_group) {
             notifier->cb(change, notifier->aux);

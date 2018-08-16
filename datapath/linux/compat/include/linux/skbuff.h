@@ -149,11 +149,13 @@ static inline struct dst_entry *skb_dst(const struct sk_buff *skb)
 	return (struct dst_entry *)skb->dst;
 }
 
+//设置路由信息（注：struct rtable的首个成员为struct dst_entry),故skb_dst与skb_rtable可以存在
 static inline void skb_dst_set(struct sk_buff *skb, struct dst_entry *dst)
 {
 	skb->dst = dst;
 }
 
+//取路由查询结果
 static inline struct rtable *skb_rtable(const struct sk_buff *skb)
 {
 	return (struct rtable *)skb->dst;

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include <config.h>
+//#include <config.h>
 
 #include "route-table.h"
 
@@ -46,7 +46,6 @@ VLOG_DEFINE_THIS_MODULE(route_table);
 
 //主要是对linux kernel的路由表进行监听
 //获知路由表发生了变化
-
 struct route_data {
     /* Copied from struct rtmsg. */
     unsigned char rtm_dst_len;
@@ -185,7 +184,7 @@ route_table_reset(void)
         struct route_table_msg msg;
 
         if (route_table_parse(&reply, &msg)) {
-        		//处理netlink消息，进行路由表项的添加删除
+        	//处理netlink消息，进行路由表项的添加删除
             route_table_handle_msg(&msg);
         }
     }

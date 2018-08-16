@@ -93,6 +93,7 @@ struct nl_sock {
     uint32_t next_seq;
     uint32_t pid;
     int protocol;
+    //收取buffer
     unsigned int rcvbuf;        /* Receive buffer size (SO_RCVBUF). */
 };
 
@@ -112,6 +113,7 @@ static void nl_pool_release(struct nl_sock *);
 /* Creates a new netlink socket for the given netlink 'protocol'
  * (NETLINK_ROUTE, NETLINK_GENERIC, ...).  Returns 0 and sets '*sockp' to the
  * new socket if successful, otherwise returns a positive errno value. */
+//创建netlink socket,并通过其连接到kernel
 int
 nl_sock_create(int protocol, struct nl_sock **sockp)
 {
@@ -167,6 +169,7 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
     /* Initialize the type/ioctl to Generic */
     sock->read_ioctl = OVS_IOCTL_READ;
 #else
+    //创建netlink socket
     sock->fd = socket(AF_NETLINK, SOCK_RAW, protocol);
     if (sock->fd < 0) {
         VLOG_ERR("fcntl: %s", ovs_strerror(errno));
@@ -553,6 +556,7 @@ nl_sock_leave_mcgroup(struct nl_sock *sock, unsigned int multicast_group)
     }
     sock->read_ioctl = OVS_IOCTL_READ;
 #else
+    //离开组播组
     if (setsockopt(sock->fd, SOL_NETLINK, NETLINK_DROP_MEMBERSHIP,
                    &multicast_group, sizeof multicast_group) < 0) {
         VLOG_WARN("could not leave multicast group %u (%s)",
@@ -703,6 +707,7 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, int *nsid, bool wait)
             }
         }
 #else
+        //读取fd
         retval = recvmsg(sock->fd, &msg, wait ? 0 : MSG_DONTWAIT);
 #endif
         error = (retval < 0 ? errno
@@ -720,6 +725,7 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, int *nsid, bool wait)
     }
 
     if (msg.msg_flags & MSG_TRUNC) {
+    	//报文被截短，报错
         VLOG_ERR_RL(&rl, "truncated message (longer than %"PRIuSIZE" bytes)",
                     sizeof tail);
         return E2BIG;
