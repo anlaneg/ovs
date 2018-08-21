@@ -135,6 +135,7 @@ route_table_run(void)
         rtnetlink_run();
         nln_run(nln);
 
+        //通过run,发现路由表发生变更，重新载入
         if (!route_table_valid) {
             route_table_reset();//重新载入
         }
