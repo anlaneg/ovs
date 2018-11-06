@@ -1088,11 +1088,8 @@ set_patch_config(struct netdev *dev_, const struct smap *args, char **errp)//pat
 }
 
 static int
-<<<<<<< HEAD
-get_stats(const struct netdev *netdev, struct netdev_stats *stats)//获取统计信息
-=======
+//获取统计信息
 netdev_vport_get_stats(const struct netdev *netdev, struct netdev_stats *stats)
->>>>>>> upstream/master
 {
     struct netdev_vport *dev = netdev_vport_cast(netdev);
 
@@ -1134,94 +1131,6 @@ netdev_vport_get_ifindex(const struct netdev *netdev_)
 #define NETDEV_FLOW_OFFLOAD_API
 #endif /* __linux__ */
 
-<<<<<<< HEAD
-#define VPORT_FUNCTIONS(GET_CONFIG, SET_CONFIG,             \
-                        GET_TUNNEL_CONFIG, GET_STATUS,      \
-                        BUILD_HEADER,                       \
-                        PUSH_HEADER, POP_HEADER,            \
-                        GET_IFINDEX)                        \
-    NULL,                                                   \
-    netdev_vport_run,                                       \
-    netdev_vport_wait,                                      \
-                                                            \
-    netdev_vport_alloc,                                     \
-    netdev_vport_construct,                                 \
-    netdev_vport_destruct,                                  \
-    netdev_vport_dealloc,                                   \
-    GET_CONFIG,                                             \
-    SET_CONFIG,                                             \
-    GET_TUNNEL_CONFIG,                                      \
-    BUILD_HEADER,                                           \
-    PUSH_HEADER,                                            \
-    POP_HEADER,                                             \
-    NULL,                       /* get_numa_id */           \
-    NULL,                       /* set_tx_multiq */         \
-                                                            \
-    NULL,                       /* send */                  \
-    NULL,                       /* send_wait */             \
-                                                            \
-    netdev_vport_set_etheraddr,                             \
-    netdev_vport_get_etheraddr,                             \
-    NULL,                       /* get_mtu */               \
-    NULL,                       /* set_mtu */               \
-    GET_IFINDEX,                                            \
-    NULL,                       /* get_carrier */           \
-    NULL,                       /* get_carrier_resets */    \
-    NULL,                       /* get_miimon */            \
-    get_stats,                                              \
-    NULL,                       /* get_custom_stats */      \
-                                                            \
-    NULL,                       /* get_features */          \
-    NULL,                       /* set_advertisements */    \
-    get_pt_mode,                                            \
-                                                            \
-    NULL,                       /* set_policing */          \
-    NULL,                       /* get_qos_types */         \
-    NULL,                       /* get_qos_capabilities */  \
-    NULL,                       /* get_qos */               \
-    NULL,                       /* set_qos */               \
-    NULL,                       /* get_queue */             \
-    NULL,                       /* set_queue */             \
-    NULL,                       /* delete_queue */          \
-    NULL,                       /* get_queue_stats */       \
-    NULL,                       /* queue_dump_start */      \
-    NULL,                       /* queue_dump_next */       \
-    NULL,                       /* queue_dump_done */       \
-    NULL,                       /* dump_queue_stats */      \
-                                                            \
-    NULL,                       /* set_in4 */               \
-    NULL,                       /* get_addr_list */         \
-    NULL,                       /* add_router */            \
-    NULL,                       /* get_next_hop */          \
-    GET_STATUS,                                             \
-    NULL,                       /* arp_lookup */            \
-                                                            \
-    netdev_vport_update_flags,                              \
-    NULL,                       /* reconfigure */           \
-                                                            \
-    NULL,                   /* rx_alloc */                  \
-    NULL,                   /* rx_construct */              \
-    NULL,                   /* rx_destruct */               \
-    NULL,                   /* rx_dealloc */                \
-    NULL,                   /* rx_recv */                   \
-    NULL,                   /* rx_wait */                   \
-    NULL,                   /* rx_drain */                  \
-                                                            \
-    NETDEV_FLOW_OFFLOAD_API,                                 \
-    NULL                    /* get_block_id */
-
-
-#define TUNNEL_CLASS(NAME, DPIF_PORT, BUILD_HEADER, PUSH_HEADER, POP_HEADER,   \
-                     GET_IFINDEX)                                              \
-    { DPIF_PORT,                                                               \
-        { NAME, false,                                                         \
-          VPORT_FUNCTIONS(get_tunnel_config,/*tunnel口配置获取，依据tnl_cfg生成*/ \
-                          set_tunnel_config,/*tunnel口配置设置，设置到tnl_cfg上*/  \
-                          get_netdev_tunnel_config,                            \
-                          tunnel_get_status,                                   \
-                          BUILD_HEADER, PUSH_HEADER, POP_HEADER,               \
-                          GET_IFINDEX) }}
-=======
 #define VPORT_FUNCTIONS_COMMON                      \
     .run = netdev_vport_run,                        \
     .wait = netdev_vport_wait,                      \
@@ -1242,48 +1151,17 @@ netdev_vport_get_ifindex(const struct netdev *netdev_)
     .set_config = set_tunnel_config,                \
     .get_tunnel_config = get_netdev_tunnel_config,  \
     .get_status = tunnel_get_status
->>>>>>> upstream/master
 
 void
 netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
 {
     /* The name of the dpif_port should be short enough to accomodate adding
      * a port number to the end if one is necessary. */
-<<<<<<< HEAD
-    static const struct vport_class vport_classes[] = {
-    		//geneve相较vxlan，头部的内容要更丰富一些
-        TUNNEL_CLASS("geneve", "genev_sys", netdev_geneve_build_header,
-                                            netdev_tnl_push_udp_header,
-                                            netdev_geneve_pop_header,
-                                            NETDEV_VPORT_GET_IFINDEX),
-		//gre形式的封装
-        TUNNEL_CLASS("gre", "gre_sys", netdev_gre_build_header,
-                                       netdev_gre_push_header,
-                                       netdev_gre_pop_header,
-                                       NULL),
-        TUNNEL_CLASS("vxlan", "vxlan_sys", netdev_vxlan_build_header,//封装vxlan，生成header
-                                           netdev_tnl_push_udp_header,//应用header,完成封装
-                                           netdev_vxlan_pop_header,//解封装vxlan
-                                           NETDEV_VPORT_GET_IFINDEX),
-        TUNNEL_CLASS("lisp", "lisp_sys", NULL, NULL, NULL, NULL),
-        TUNNEL_CLASS("stt", "stt_sys", NULL, NULL, NULL, NULL),
-        TUNNEL_CLASS("erspan", "erspan_sys", netdev_erspan_build_header,
-                                             netdev_erspan_push_header,
-                                             netdev_erspan_pop_header,
-                                             NULL),
-        TUNNEL_CLASS("ip6erspan", "ip6erspan_sys", netdev_erspan_build_header,
-                                                   netdev_erspan_push_header,
-                                                   netdev_erspan_pop_header,
-                                                   NULL),
-        TUNNEL_CLASS("ip6gre", "ip6gre_sys", netdev_gre_build_header,
-                                             netdev_gre_push_header,
-                                             netdev_gre_pop_header,
-                                             NULL),
-=======
     static struct vport_class vport_classes[] = {
         { "genev_sys",
           {
               TUNNEL_FUNCTIONS_COMMON,
+    	      //geneve相较vxlan，头部的内容要更丰富一些
               .type = "geneve",
               .build_header = netdev_geneve_build_header,
               .push_header = netdev_tnl_push_udp_header,
@@ -1295,7 +1173,7 @@ netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
         { "gre_sys",
           {
               TUNNEL_FUNCTIONS_COMMON,
-              .type = "gre",
+              .type = "gre", //gre形式的封装
               .build_header = netdev_gre_build_header,
               .push_header = netdev_gre_push_header,
               .pop_header = netdev_gre_pop_header,
@@ -1358,7 +1236,6 @@ netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
           },
           {{NULL, NULL, 0, 0}}
         },
->>>>>>> upstream/master
     };
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 
@@ -1366,12 +1243,9 @@ netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
         int i;
 
         for (i = 0; i < ARRAY_SIZE(vport_classes); i++) {
-<<<<<<< HEAD
-            netdev_register_provider(&vport_classes[i].netdev_class);//注册vport,vport中隧道部分注册
-=======
             simap_init(&vport_classes[i].global_cfg_tracker);
+	    //注册vport,vport中隧道部分注册
             netdev_register_provider(&vport_classes[i].netdev_class);
->>>>>>> upstream/master
         }
 
         unixctl_command_register("tnl/egress_port_range", "min max", 0, 2,
@@ -1385,25 +1259,15 @@ netdev_vport_tunnel_register(void)//vport tunnel类型构造handler实现
 void
 netdev_vport_patch_register(void)//vport中patch口注册
 {
-<<<<<<< HEAD
-    static const struct vport_class patch_class =
-        { NULL,
-            { "patch", false,
-              VPORT_FUNCTIONS(get_patch_config,//获取对端
-                              set_patch_config,//设置对端
-                              NULL,
-                              NULL, NULL, NULL, NULL, NULL) }};
-=======
     static struct vport_class patch_class = {
         NULL,
         { VPORT_FUNCTIONS_COMMON,
           .type = "patch",
-          .get_config = get_patch_config,
-          .set_config = set_patch_config,
+          .get_config = get_patch_config,//获取对端
+          .set_config = set_patch_config,//设置对端
         },
         {{NULL, NULL, 0, 0}}
     };
     simap_init(&patch_class.global_cfg_tracker);
->>>>>>> upstream/master
     netdev_register_provider(&patch_class.netdev_class);
 }

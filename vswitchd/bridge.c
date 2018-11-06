@@ -1866,6 +1866,7 @@ iface_do_create(const struct bridge *br,
     iface_set_netdev_mtu(iface_cfg, netdev);//配置mtu
 
     *ofp_portp = iface_pick_ofport(iface_cfg);//ofp_portp是来源于配置
+
     //向ofproto内添加这个port
     error = ofproto_port_add(br->ofproto, netdev, ofp_portp);
     if (error) {

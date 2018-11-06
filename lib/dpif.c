@@ -146,6 +146,7 @@ dp_register_provider__(const struct dpif_class *new_class)//dpif_class注册
     if (sset_contains(&dpif_blacklist, new_class->type)) {
         VLOG_DBG("attempted to register blacklisted provider: %s",
                  new_class->type);
+        //拒绝掉在黑名单中的dpif
         return EINVAL;
     }
 
@@ -233,7 +234,7 @@ dp_unregister_provider(const char *type)
 
 /* Blacklists a provider.  Causes future calls of dp_register_provider() with
  * a dpif_class which implements 'type' to fail. */
-//向dpif_blacklist中添加type
+//向dpif_blacklist中添加type（会禁止注册指定的dpif)
 void
 dp_blacklist_provider(const char *type)
 {

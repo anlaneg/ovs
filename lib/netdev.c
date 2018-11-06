@@ -416,7 +416,8 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)
     if (!netdev) {
         struct netdev_registered_class *rc;
 
-        rc = netdev_lookup_class(type && type[0] ? type : "system");//如果type未指定，采用system
+        //如果type未指定，采用system
+        rc = netdev_lookup_class(type && type[0] ? type : "system");
         if (rc && ovs_refcount_try_ref_rcu(&rc->refcnt)) {
         	//为netdev申请内存
             netdev = rc->class->alloc();
@@ -430,7 +431,7 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)
                 netdev->last_reconfigure_seq =
                     seq_read(netdev->reconfigure_seq);
                 netdev->hw_info.oor = false;
-		//将netdev加入netdev_shash,并返回对应结点
+                //将netdev加入netdev_shash,并返回对应结点
                 netdev->node = shash_add(&netdev_shash, name, netdev);
 
                 /* By default enable one tx and rx queue per netdev. */
@@ -2176,8 +2177,9 @@ netdev_is_reconf_required(struct netdev *netdev)
  *
  * When this function is called, no call to netdev_rxq_recv() or netdev_send()
  * must be issued. */
+//执行netdev的重新配置
 int
-netdev_reconfigure(struct netdev *netdev)//执行netdev的重新配置
+netdev_reconfigure(struct netdev *netdev)
 {
     const struct netdev_class *class = netdev->netdev_class;
 

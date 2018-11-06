@@ -700,6 +700,7 @@ dpdk_mp_create(struct netdev_dpdk *dev, int mtu, bool per_port_mp)
          */
         mbuf_priv_data_len += (aligned_mbuf_size - pkt_size);
 
+        //创建mpool
         dmp->mp = rte_pktmbuf_pool_create(mp_name, n_mbufs, MP_CACHE_SZ,
                                           mbuf_priv_data_len,
                                           mbuf_size,
@@ -748,6 +749,7 @@ dpdk_mp_get(struct netdev_dpdk *dev, int mtu, bool per_port_mp)
     /* Check if shared memory is being used, if so check existing mempools
      * to see if reuse is possible. */
     if (!per_port_mp) {
+    	//检查是否有已存在的mp,如果有，直接重用
         LIST_FOR_EACH (dmp, list_node, &dpdk_mp_list) {
             if (dmp->socket_id == dev->requested_socket_id
                 && dmp->mtu == mtu) {
@@ -781,6 +783,7 @@ dpdk_mp_get(struct netdev_dpdk *dev, int mtu, bool per_port_mp)
                     }
                 }
             } else {
+            	//当创建的mp,挂接在dpdk_mp_list上
                 ovs_list_push_back(&dpdk_mp_list, &dmp->list_node);
             }
         }
@@ -811,8 +814,9 @@ dpdk_mp_put(struct dpdk_mp *dmp)
  * mempool on requested_socket_id with mbuf size corresponding to the
  * requested_mtu. On success, a new configuration will be applied.
  * On error, device will be left unchanged. */
+//配置dev的内存池（mbuf池）
 static int
-netdev_dpdk_mempool_configure(struct netdev_dpdk *dev)//配置dev的内存池（mbuf池）
+netdev_dpdk_mempool_configure(struct netdev_dpdk *dev)
     OVS_REQUIRES(dev->mutex)
 {
     uint32_t buf_size = dpdk_buf_size(dev->requested_mtu);
@@ -3932,6 +3936,7 @@ static const struct dpdk_qos_ops egress_policer_ops = {
     egress_policer_run //出口qos运行
 };
 
+//接口重配置
 static int
 netdev_dpdk_reconfigure(struct netdev *netdev)
 {

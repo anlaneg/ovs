@@ -6142,7 +6142,7 @@ const struct ofproto_class ofproto_dpif_class = {
     port_modified,
     port_reconfigured,
     port_query_by_name,
-    port_add,
+    port_add,//向ofproto中添加netdev
     port_del,
     port_set_config,
     port_get_stats,

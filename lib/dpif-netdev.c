@@ -465,11 +465,14 @@ struct dp_netdev_port {
     struct netdev *netdev;//port对应的netdev
     struct hmap_node node;      /* Node in dp_netdev's 'ports'. */
     struct netdev_saved_flags *sf;//保存的flags
-    struct dp_netdev_rxq *rxqs;//port的收队列数组
-    unsigned n_rxq;             /* Number of elements in 'rxqs' *///port的收队列数组
+    //port的收队列数组
+    struct dp_netdev_rxq *rxqs;
+    //port的收队列数组大小
+    unsigned n_rxq;             /* Number of elements in 'rxqs' */
     unsigned *txq_used;         /* Number of threads that use each tx queue. */
     struct ovs_mutex txq_used_mutex;
-    char *type;                 /* Port type as requested by user. */ //netdev class类型
+    //netdev class类型
+    char *type;                 /* Port type as requested by user. */
     //收队列的cpu亲昵性
     char *rxq_affinity_list;    /* Requested affinity of rx queues. */
 };
@@ -1487,8 +1490,8 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     int error;
 
     dp = xzalloc(sizeof *dp);
-    shash_add(&dp_netdevs, name, dp);//将创建的dp加入到dp_netdevs链上，由netdev负责的所有dp均在此链上。
-
+    //将创建的dp加入到dp_netdevs链上，由netdev负责的所有dp均在此链上。
+    shash_add(&dp_netdevs, name, dp);
     *CONST_CAST(const struct dpif_class **, &dp->class) = class;
     *CONST_CAST(const char **, &dp->name) = xstrdup(name);
     ovs_refcount_init(&dp->ref_cnt);
@@ -1781,13 +1784,15 @@ port_create(const char *devname, const char *type,
     *portp = NULL;
 
     /* Open and validate network device. */
-    error = netdev_open(devname, type, &netdev);//构造netdev
+    //构造netdev
+    error = netdev_open(devname, type, &netdev);
     if (error) {
         return error;
     }
     /* XXX reject non-Ethernet devices */
 
-    netdev_get_flags(netdev, &flags);//获取其状态
+    //获取其状态
+    netdev_get_flags(netdev, &flags);
     if (flags & NETDEV_LOOPBACK) {
         VLOG_ERR("%s: cannot add a loopback device", devname);
         error = EINVAL;
@@ -1828,11 +1833,13 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
     int error;
 
     /* Reject devices already in 'dp'. */
-    if (!get_port_by_name(dp, devname, &port)) {//确保port在datapath中不存在
+    if (!get_port_by_name(dp, devname, &port)) {
+    	//确保port在datapath中不存在
         return EEXIST;
     }
 
-    error = port_create(devname, type, port_no, &port);//创建接口（及其队列，配置dev）
+    //创建接口（及其队列，配置dev）
+    error = port_create(devname, type, port_no, &port);
     if (error) {
         return error;
     }
@@ -1840,6 +1847,7 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
     hmap_insert(&dp->ports, &port->node, hash_port_no(port_no));
     seq_change(dp->port_seq);
 
+    //datapath重新配置
     reconfigure_datapath(dp);
 
     return 0;
@@ -1857,7 +1865,8 @@ dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
 
     ovs_mutex_lock(&dp->port_mutex);
     dpif_port = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
-    if (*port_nop != ODPP_NONE) {//已存在
+    if (*port_nop != ODPP_NONE) {
+    	//已存在
         port_no = *port_nop;
         error = dp_netdev_lookup_port(dp, *port_nop) ? EBUSY : 0;
     } else {
@@ -4247,7 +4256,7 @@ port_reconfigure(struct dp_netdev_port *port)
     int i, err;
 
     /* Closes the existing 'rxq's. */
-    //先释放掉当前port上所有存在的队列
+    //先释放掉当前port上所有存在的收队列
     for (i = 0; i < port->n_rxq; i++) {
         netdev_rxq_close(port->rxqs[i].rx);
         port->rxqs[i].rx = NULL;
@@ -4258,7 +4267,8 @@ port_reconfigure(struct dp_netdev_port *port)
 
     /* Allows 'netdev' to apply the pending configuration changes. */
     if (netdev_is_reconf_required(netdev) || port->need_reconfigure) {
-        err = netdev_reconfigure(netdev);//使netdev生效
+    	//使netdev生效
+        err = netdev_reconfigure(netdev);
         if (err && (err != EOPNOTSUPP)) {
             VLOG_ERR("Failed to set interface %s new configuration",
                      netdev_get_name(netdev));
@@ -4782,7 +4792,8 @@ reconfigure_datapath(struct dp_netdev *dp)
      * reconfiguring the ports, because a port cannot be reconfigured while
      * it's being used. */
     //同步点，等待受影响的pmds完成reload
-    reload_affected_pmds(dp);//在重新配置port前,pmd中需要先移除掉无用port，故使pmd执行reload
+    //在重新配置port前,pmd中需要先移除掉无用port，故使pmd执行reload
+    reload_affected_pmds(dp);
 
     /* Step 3: Reconfigure ports. */
 
@@ -4795,11 +4806,14 @@ reconfigure_datapath(struct dp_netdev *dp)
         int err;
 
         if (!port->need_reconfigure) {
-            continue;//不需要配置，跳过
+        	//不需要配置，跳过
+            continue;
         }
 
+        //如果重新配置port失败，则此port将自dp中移除
         err = port_reconfigure(port);
         if (err) {
+        	//将失败的port自datapath中移除掉
             hmap_remove(&dp->ports, &port->node);
             seq_change(dp->port_seq);
             port_destroy(port);
@@ -4826,6 +4840,7 @@ reconfigure_datapath(struct dp_netdev *dp)
         }
     }
 
+    //队列调度
     /* Add pinned queues and mark pmd threads isolated. */
     rxq_scheduling(dp, true);
 
@@ -5090,6 +5105,7 @@ pmd_load_queues_and_ports(struct dp_netdev_pmd_thread *pmd,
     return i;
 }
 
+//pmd线程任务函数
 static void *
 pmd_thread_main(void *f_)
 {
@@ -5758,7 +5774,7 @@ dp_netdev_add_rxq_to_pmd(struct dp_netdev_pmd_thread *pmd,
         }
     }
 
-    //构造poll,并加入到pmd->poll_list
+    //构造poll,并加入到pmd->poll_list（以便pmd线程可以轮循环它）
     poll = xmalloc(sizeof *poll);
     poll->rxq = rxq;
     hmap_insert(&pmd->poll_list, &poll->node, hash);
