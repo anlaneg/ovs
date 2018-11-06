@@ -14,51 +14,122 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This version of the script is intended to be used on kernel version
-# 3.10.0 major revision 693 only. It is packaged in the openvswitch kmod RPM
-# built using the rhel6 spec file, and run in the post-install for minor 
-# revision 693 kernels.
+# This version of the script is intended to be used on kernel version 3.10.0
+# major revision 327 (RHEL 7.2) and 693 (RHEL 7.4), and kernel version 4.4.x,
+# x >= 73 (SLES 12 SP3) only. It is packaged in the openvswitch kmod RPM
+# and run in the post-install scripts.
 #
-# Due to some backward incompatible changes introduced in minor revision 17.1,
+# For kernel 3.10.0-693,
+# due to some backward incompatible changes introduced in minor revision 17.1,
 # kernel modules built against kernels newer than 17.1 cannot be loaded on
 # system running kernels older than 17.1, vice versa.
+#
+# For kernel 3.10.0-327,
+# due to some backward incompatible changes introduced in minor revision 41.3,
+# kernel modules built against kernels newer than 41.3 cannot be loaded on
+# system running kernels older than 41.3, vice versa.
+#
+# For kernel >= 4.4.73,
+# kernel modules built with 4.4.73 can run on systems with kernel versions from
+# 4.4.73 to 4.4.114; modules built against 4.4.120 can run on systems from
+# 4.4.120 onwards.
 #
 # This script checks the current running kernel version, and update symlinks
 # for the openvswitch kernel modules in the appropriate kernel directory,
 # provided the kmod RPM has installed kernel modules files built from both
-# 1.1 and 17.1 minor revisions.
-# 
+# minor revisions.
+#
 # In case of a kernel minor revision change after the openvswitch kmod package
 # is installed, this script shall be run manually after system reboots and
 # switches to a different kernel
+if [ -n "$(rpm -qa kmod-openvswitch)" ]; then
+    rpmname="kmod-openvswitch"
+elif [ -n "$(rpm -qa openvswitch-kmod)" ]; then
+    rpmname="openvswitch-kmod"
+else
+    echo "openvswitch kmod package not installed, existing"
+    exit 1
+fi
+#echo $rpmname
 script_name=$(basename -- "$0")
 current_kernel=$(uname -r)
 echo current kernel is $current_kernel
 
-IFS=. read installed_major installed_minor installed_micro \
-    installed_arch installed_build <<<"${current_kernel##*-}"
-# echo installed_major=$installed_major installed_minor=$installed_minor \
-# installed_micro=$installed_micro installed_arch=$installed_arch \
-# installed_build=$installed_build
+IFS='.\|-' read mainline_major mainline_minor mainline_patch major_rev \
+    minor_rev _extra <<<"${current_kernel}"
+# echo mainline_major=$mainline_major mainline_minor=$mainline_minor \
+# mainline_patch=$mainline_patch major_rev=$major_rev minor_rev=$minor_rev
 
-expected_base_minor="el7"
-expected_minor=11
+expected_rhel_base_minor="el7"
+if [ "$mainline_major" = "3" ] && [ "$mainline_minor" = "10" ]; then
+    if [ "$major_rev" = "327" ]; then
+#        echo "rhel72"
+        comp_ver=36
+        ver_offset=4
+        installed_ver="$minor_rev"
+    elif [ "$major_rev" = "693" ]; then
+#        echo "rhel74"
+        comp_ver=11
+        ver_offset=4
+        installed_ver="$minor_rev"
+    fi
+elif [ "$mainline_major" = "4" ] && [ "$mainline_minor" = "4" ]; then
+    if [ "$mainline_patch" -ge "73" ]; then
+#        echo "sles12sp3"
+        comp_ver=114
+        ver_offset=2
+        installed_ver="$mainline_patch"
+    fi
+fi
+
+if [ X"$ver_offset" = X ]; then
+    echo "This script is not intended to run on kernel $(uname -r)"
+    exit 1
+fi
+
+#IFS='.\|-' read -r -a version_nums <<<"${current_kernel}"
+#echo ver_offset=$ver_offset
+#echo installed_ver="$installed_ver"
+#echo installed_ver="${version_nums[$ver_offset]}"
+
+kmod_versions=()
+kversion=$(rpm -ql ${rpmname} | grep '\.ko$' | \
+           sed -n -e 's/^\/lib\/modules\/\(.*\)\/extra\/.*$/\1/p' | \
+           sort | uniq)
+for kv in $kversion; do
+    IFS='.\|-' read -r -a kv_nums <<<"${kv}"
+    kmod_versions+=(${kv_nums[$ver_offset]})
+done
+sorted_kmod_vers=$(printf "%s\n" "${kmod_versions[@]}" | \
+                       sort -n)
+#echo "$sorted_kmod_vers"
+
+if [ ! -n "$sorted_kmod_vers" ]; then
+    echo "No kernel modules found from package $rpmname, exiting"
+    exit 1
+else
+    # first line for kmod_low_ver, last for kmod_high_ver
+    kmod_low_ver=$(echo "$sorted_kmod_vers" | head -1)
+    kmod_high_ver=$(echo "$sorted_kmod_vers" | tail -1)
+fi
+#echo "Installing KMOD with minor revisions $kmod_low_ver and \
+#$kmod_high_ver"
 
 found_match=false
 for kname in `ls -d /lib/modules/*`
 do
-    IFS=. read major minor micro arch build <<<"${kname##*-}"
-#   echo major=$major minor=$minor micro=$micro arch=$arch build=$build
-    if [ "$installed_minor" = "$expected_base_minor" ] ||
-       [ "$installed_minor" -le "$expected_minor" ]; then
-        if [ "$minor" = "1" ]; then
+    IFS='.\|-' read -r -a pkg_ver_nums <<<"${kname}"
+    pkg_ver=${pkg_ver_nums[$ver_offset]}
+    if [ "$installed_ver" = "$expected_rhel_base_minor" ] ||
+       [ "$installed_ver" -le "$comp_ver" ]; then
+        if [ "$pkg_ver" = "$kmod_low_ver" ]; then
             requested_kernel=$kname
             found_match="true"
             echo "Installing Openvswitch KMOD from kernel $kname"
             break
         fi
     else
-        if [ "$minor" = "17" ]; then
+        if [ "$pkg_ver" = "$kmod_high_ver" ]; then
             requested_kernel=$kname
             found_match="true"
             echo "Installing Openvswitch KMOD from kernel $kname"
@@ -73,17 +144,15 @@ if [ "$found_match" = "false" ]; then
 fi
 
 if [ "$requested_kernel" != "/lib/modules/$current_kernel" ]; then
-    if [ -x "/sbin/weak-modules" ]; then
-        if [ ! -d /lib/modules/$current_kernel/weak-updates/openvswitch ]; then
-            mkdir -p /lib/modules/$current_kernel/weak-updates
-            mkdir -p /lib/modules/$current_kernel/weak-updates/openvswitch
-        fi
-        for m in openvswitch vport-gre vport-stt vport-geneve \
-            vport-lisp vport-vxlan; do
-            ln -f -s $requested_kernel/extra/openvswitch/$m.ko \
-                /lib/modules/$current_kernel/weak-updates/openvswitch/$m.ko
-        done
+    if [ ! -d /lib/modules/$current_kernel/weak-updates/openvswitch ]; then
+        mkdir -p /lib/modules/$current_kernel/weak-updates
+        mkdir -p /lib/modules/$current_kernel/weak-updates/openvswitch
     fi
+    for m in openvswitch vport-gre vport-stt vport-geneve \
+        vport-lisp vport-vxlan; do
+        ln -f -s $requested_kernel/extra/openvswitch/$m.ko \
+            /lib/modules/$current_kernel/weak-updates/openvswitch/$m.ko
+    done
 else
     echo Proper OVS kernel modules already configured
 fi

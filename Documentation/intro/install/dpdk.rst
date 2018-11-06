@@ -29,10 +29,12 @@ This document describes how to build and install Open vSwitch using a DPDK
 datapath. Open vSwitch can use the DPDK library to operate entirely in
 userspace.
 
-.. seealso::
+.. important::
 
     The :doc:`releases FAQ </faq/releases>` lists support for the required
-    versions of DPDK for each version of Open vSwitch.
+    versions of DPDK for each version of Open vSwitch. If building OVS and
+    DPDK outside of the master build tree users should consult this list
+    first.
 
 Build requirements
 ------------------
@@ -40,7 +42,7 @@ Build requirements
 In addition to the requirements described in :doc:`general`, building Open
 vSwitch with DPDK will require the following:
 
-- DPDK 17.11.3
+- DPDK 17.11.4
 
 - A `DPDK supported NIC`_
 
@@ -69,9 +71,9 @@ Install DPDK
 #. Download the `DPDK sources`_, extract the file and set ``DPDK_DIR``::
 
        $ cd /usr/src/
-       $ wget http://fast.dpdk.org/rel/dpdk-17.11.3.tar.xz
-       $ tar xf dpdk-17.11.3.tar.xz
-       $ export DPDK_DIR=/usr/src/dpdk-stable-17.11.3
+       $ wget http://fast.dpdk.org/rel/dpdk-17.11.4.tar.xz
+       $ tar xf dpdk-17.11.4.tar.xz
+       $ export DPDK_DIR=/usr/src/dpdk-stable-17.11.4
        $ cd $DPDK_DIR
 
 #. (Optional) Configure DPDK as a shared library
@@ -659,7 +661,6 @@ The average number of packets per output batch can be checked in PMD stats::
 Limitations
 ------------
 
-- Currently DPDK ports does not use HW offload functionality.
 - Network Interface Firmware requirements: Each release of DPDK is
   validated against a specific firmware version for a supported Network
   Interface. New firmware versions introduce bug fixes, performance

@@ -431,7 +431,7 @@ monitor_daemon(pid_t daemon_pid)
     /* Running in new daemon process. */
     //开启新的deamon
     ovs_cmdl_proctitle_restore();
-    set_subprogram_name("");
+    set_subprogram_name(program_name);
 }
 
 /* If daemonization is configured, then starts daemonization, by forking and

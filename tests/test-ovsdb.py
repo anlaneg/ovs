@@ -595,9 +595,16 @@ def do_idl(schema_file, remote, *commands):
         idl.index_create("simple3", "simple3_by_name")
 
     if commands:
-        error, stream = ovs.stream.Stream.open_block(
-            ovs.stream.Stream.open(remote))
-        if error:
+        remotes = remote.split(',')
+        stream = None
+        for r in remotes:
+            error, stream = ovs.stream.Stream.open_block(
+                ovs.stream.Stream.open(r))
+            if not error and stream:
+                break
+            stream = None
+
+        if not stream:
             sys.stderr.write("failed to connect to \"%s\"" % remote)
             sys.exit(1)
         rpc = ovs.jsonrpc.Connection(stream)
@@ -815,6 +822,7 @@ def main(argv):
         sys.stderr.write("%s: %s\n" % (ovs.util.PROGRAM_NAME, geo.msg))
         sys.exit(1)
 
+    timeout = None
     for key, value in options:
         if key in ['-h', '--help']:
             usage()
@@ -826,9 +834,10 @@ def main(argv):
             except TypeError:
                 raise error.Error("value %s on -t or --timeout is not at "
                                   "least 1" % value)
-            signal_alarm(timeout)
         else:
             sys.exit(0)
+
+    signal_alarm(timeout)
 
     if not args:
         sys.stderr.write("%s: missing command argument "

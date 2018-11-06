@@ -76,6 +76,7 @@ void flow_extract(struct dp_packet *, struct flow *);
 void flow_zero_wildcards(struct flow *, const struct flow_wildcards *);
 void flow_unwildcard_tp_ports(const struct flow *, struct flow_wildcards *);
 void flow_get_metadata(const struct flow *, struct match *flow_metadata);
+struct netdev *flow_get_tunnel_netdev(struct flow_tnl *tunnel);
 
 const char *ct_state_to_string(uint32_t state);
 uint32_t ct_state_from_string(const char *);
@@ -102,10 +103,10 @@ static inline int flow_compare_3way(const struct flow *, const struct flow *);
 static inline bool flow_equal(const struct flow *, const struct flow *);
 static inline size_t flow_hash(const struct flow *, uint32_t basis);
 
-void flow_set_dl_vlan(struct flow *, ovs_be16 vid);
+void flow_set_dl_vlan(struct flow *, ovs_be16 vid, int id);
 void flow_fix_vlan_tpid(struct flow *);
 void flow_set_vlan_vid(struct flow *, ovs_be16 vid);
-void flow_set_vlan_pcp(struct flow *, uint8_t pcp);
+void flow_set_vlan_pcp(struct flow *, uint8_t pcp, int id);
 
 void flow_limit_vlans(int vlan_limit);
 int flow_count_vlan_headers(const struct flow *);
@@ -244,6 +245,7 @@ uint32_t flow_hash_symmetric_l4(const struct flow *flow, uint32_t basis);
 uint32_t flow_hash_symmetric_l2(const struct flow *flow, uint32_t basis);
 uint32_t flow_hash_symmetric_l3l4(const struct flow *flow, uint32_t basis,
                          bool inc_udp_ports );
+uint32_t flow_hash_symmetric_l3(const struct flow *flow, uint32_t basis);
 
 /* Initialize a flow with random fields that matter for nx_hash_fields. */
 void flow_random_hash_fields(struct flow *);
@@ -1233,6 +1235,28 @@ static inline bool is_stp(const struct flow *flow)
 {
     return (flow->dl_type == htons(FLOW_DL_TYPE_NONE)
             && eth_addr_equals(flow->dl_dst, eth_addr_stp));
+}
+
+/* Returns true if flow->tp_dst equals 'port'.  If 'wc' is nonnull, sets
+ * appropriate bits in wc->masks.tp_dst to account for the test.
+ *
+ * The caller must already have ensured that 'flow' is a protocol for which
+ * tp_dst is relevant. */
+static inline bool tp_dst_equals(const struct flow *flow, uint16_t port,
+                                 struct flow_wildcards *wc)
+{
+    uint16_t diff = port ^ ntohs(flow->tp_dst);
+    if (wc) {
+        if (diff) {
+            /* Set mask for the most significant mismatching bit. */
+            int ofs = raw_clz64((uint64_t) diff << 48); /* range [0,15] */
+            wc->masks.tp_dst |= htons(0x8000 >> ofs);
+        } else {
+            /* Must match all bits. */
+            wc->masks.tp_dst = OVS_BE16_MAX;
+        }
+    }
+    return !diff;
 }
 
 #endif /* flow.h */

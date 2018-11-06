@@ -253,6 +253,7 @@ parse_options(int argc, char *argv[])
     char *short_options = ovs_cmdl_long_options_to_short_options(long_options);
     uint32_t versions;
     enum ofputil_protocol version_protocols;
+    unsigned int timeout = 0;
 
     /* For now, ovs-ofctl only enables OpenFlow 1.0 by default.  This is
      * because ovs-ofctl implements command such as "add-flow" as raw OpenFlow
@@ -272,7 +273,6 @@ parse_options(int argc, char *argv[])
     set_allowed_ofp_versions("OpenFlow10");
 
     for (;;) {
-        unsigned long int timeout;
         int c;
 
         c = getopt_long(argc, argv, short_options, long_options, NULL);
@@ -282,12 +282,8 @@ parse_options(int argc, char *argv[])
 
         switch (c) {
         case 't':
-            timeout = strtoul(optarg, NULL, 10);
-            if (timeout <= 0) {
-                ovs_fatal(0, "value %s on -t or --timeout is not at least 1",
-                          optarg);
-            } else {
-                time_alarm(timeout);
+            if (!str_to_uint(optarg, 10, &timeout) || !timeout) {
+                ovs_fatal(0, "value %s on -t or --timeout is invalid", optarg);
             }
             break;
 
@@ -392,6 +388,8 @@ parse_options(int argc, char *argv[])
             abort();
         }
     }
+
+    ctl_timeout_setup(timeout);
 
     if (n_criteria) {
         /* Always do a final sort pass based on priority. */
@@ -890,6 +888,8 @@ ofctl_dump_table_features(struct ovs_cmdl_context *ctx)
     bool done = false;
 
     struct ofputil_table_features prev;
+    int first_ditto = -1, last_ditto = -1;
+    struct ds s = DS_EMPTY_INITIALIZER;
     int n = 0;
 
     send_openflow_buffer(vconn, request);
@@ -924,12 +924,9 @@ ofctl_dump_table_features(struct ovs_cmdl_context *ctx)
                         break;
                     }
 
-                    struct ds s = DS_EMPTY_INITIALIZER;
                     ofputil_table_features_format(
                         &s, &tf, n ? &prev : NULL, NULL, NULL,
-                        tables_to_show(ctx->argv[1]));
-                    puts(ds_cstr(&s));
-                    ds_destroy(&s);
+                        &first_ditto, &last_ditto);
 
                     prev = tf;
                     n++;
@@ -947,6 +944,11 @@ ofctl_dump_table_features(struct ovs_cmdl_context *ctx)
         }
         ofpbuf_delete(reply);
     }
+
+    ofputil_table_features_format_finish(&s, first_ditto, last_ditto);
+    const char *p = ds_cstr(&s);
+    puts(p + (*p == '\n'));
+    ds_destroy(&s);
 
     vconn_close(vconn);
 }
@@ -1543,7 +1545,7 @@ compare_flows(const void *afs_, const void *bfs_)
         }
     }
 
-    return 0;
+    return a < b ? -1 : 1;
 }
 
 static void
@@ -1565,7 +1567,9 @@ ofctl_dump_flows(struct ovs_cmdl_context *ctx)
         run(vconn_dump_flows(vconn, &fsr, protocol, &fses, &n_fses),
             "dump flows");
 
-        qsort(fses, n_fses, sizeof *fses, compare_flows);
+        if (n_criteria) {
+            qsort(fses, n_fses, sizeof *fses, compare_flows);
+        }
 
         struct ds s = DS_EMPTY_INITIALIZER;
         for (size_t i = 0; i < n_fses; i++) {
@@ -2743,12 +2747,12 @@ static void
 ofctl_ofp_parse_pcap(struct ovs_cmdl_context *ctx)
 {
     struct tcp_reader *reader;
-    FILE *file;
+    struct pcap_file *p_file;
     int error;
     bool first;
 
-    file = ovs_pcap_open(ctx->argv[1], "rb");
-    if (!file) {
+    p_file = ovs_pcap_open(ctx->argv[1], "rb");
+    if (!p_file) {
         ovs_fatal(errno, "%s: open failed", ctx->argv[1]);
     }
 
@@ -2759,7 +2763,7 @@ ofctl_ofp_parse_pcap(struct ovs_cmdl_context *ctx)
         long long int when;
         struct flow flow;
 
-        error = ovs_pcap_read(file, &packet, &when);
+        error = ovs_pcap_read(p_file, &packet, &when);
         if (error) {
             break;
         }
@@ -2781,7 +2785,8 @@ ofctl_ofp_parse_pcap(struct ovs_cmdl_context *ctx)
 
                     oh = dp_packet_data(payload);
                     length = ntohs(oh->length);
-                    if (dp_packet_size(payload) < length) {
+                    if (dp_packet_size(payload) < length
+                        || length < sizeof *oh) {
                         break;
                     }
 
@@ -2808,7 +2813,7 @@ ofctl_ofp_parse_pcap(struct ovs_cmdl_context *ctx)
         dp_packet_delete(packet);
     }
     tcp_reader_close(reader);
-    fclose(file);
+    ovs_pcap_close(p_file);
 }
 
 static void
@@ -2955,7 +2960,8 @@ bundle_group_mod__(const char *remote, struct ofputil_group_mod *gms,
 
     for (i = 0; i < n_gms; i++) {
         struct ofputil_group_mod *gm = &gms[i];
-        struct ofpbuf *request = ofputil_encode_group_mod(version, gm);
+        struct ofpbuf *request = ofputil_encode_group_mod(version, gm,
+                                                          NULL, -1);
 
         ovs_list_push_back(&requests, &request->list_node);
         ofputil_uninit_group_mod(gm);
@@ -2988,7 +2994,7 @@ ofctl_group_mod__(const char *remote, struct ofputil_group_mod *gms,
 
     for (i = 0; i < n_gms; i++) {
         gm = &gms[i];
-        request = ofputil_encode_group_mod(version, gm);
+        request = ofputil_encode_group_mod(version, gm, NULL, -1);
         transact_noreply(vconn, request);
         ofputil_uninit_group_mod(gm);
     }
@@ -4248,15 +4254,16 @@ ofctl_parse_actions__(const char *version_s, bool instructions)
                      &of_in, of_in.size, version, NULL, NULL, &ofpacts);
         if (!error && instructions) {
             /* Verify actions, enforce consistency. */
-            enum ofputil_protocol protocol;
-            struct match match;
-
-            memset(&match, 0, sizeof match);
-            protocol = ofputil_protocols_from_ofp_version(version);
-            error = ofpacts_check_consistency(ofpacts.data, ofpacts.size,
-                                              &match, OFPP_MAX,
-                                              table_id ? atoi(table_id) : 0,
-                                              OFPTT_MAX + 1, protocol);
+            struct match match = MATCH_CATCHALL_INITIALIZER;
+            struct ofpact_check_params cp = {
+                .match = &match,
+                .max_ports = OFPP_MAX,
+                .table_id = table_id ? atoi(table_id) : 0,
+                .n_tables = OFPTT_MAX + 1,
+            };
+            error = ofpacts_check_consistency(
+                ofpacts.data, ofpacts.size,
+                ofputil_protocols_from_ofp_version(version), &cp);
         }
         if (error) {
             printf("bad %s %s: %s\n\n",
@@ -4453,7 +4460,7 @@ ofctl_parse_pcap(struct ovs_cmdl_context *ctx)
     int error = 0;
     for (int i = 1; i < ctx->argc; i++) {
         const char *filename = ctx->argv[i];
-        FILE *pcap = ovs_pcap_open(filename, "rb");
+        struct pcap_file *pcap = ovs_pcap_open(filename, "rb");
         if (!pcap) {
             error = errno;
             ovs_error(error, "%s: open failed", filename);
@@ -4479,7 +4486,7 @@ ofctl_parse_pcap(struct ovs_cmdl_context *ctx)
             putchar('\n');
             dp_packet_delete(packet);
         }
-        fclose(pcap);
+        ovs_pcap_close(pcap);
     }
     exit(error);
 }
@@ -4780,8 +4787,10 @@ ofctl_compose_packet(struct ovs_cmdl_context *ctx)
     free(l7);
 
     if (print_pcap) {
-        ovs_pcap_write_header(stdout);
-        ovs_pcap_write(stdout, &p);
+        struct pcap_file *p_file = ovs_pcap_stdout();
+        ovs_pcap_write_header(p_file);
+        ovs_pcap_write(p_file, &p);
+        ovs_pcap_close(p_file);
     } else {
         ovs_hex_dump(stdout, dp_packet_data(&p), dp_packet_size(&p), 0, false);
     }

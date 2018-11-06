@@ -236,15 +236,18 @@ table_print_timestamp__(const struct table *table, struct ds *s)
     }
 }
 
+static bool first_table = true;
+
 static void
 table_print_table__(const struct table *table, const struct table_style *style,
                     struct ds *s)
 {
-    static int n = 0;
     int *widths;
     size_t x, y;
 
-    if (n++ > 0) {
+    if (first_table) {
+        first_table = false;
+    } else {
         ds_put_char(s, '\n');
     }
 
@@ -318,10 +321,11 @@ static void
 table_print_list__(const struct table *table, const struct table_style *style,
                    struct ds *s)
 {
-    static int n = 0;
     size_t x, y;
 
-    if (n++ > 0) {
+    if (first_table) {
+        first_table = false;
+    } else {
         ds_put_char(s, '\n');
     }
 
@@ -349,7 +353,7 @@ static void
 table_escape_html_text__(const char *content, size_t n, struct ds *s)
 {
     if (!strpbrk(content, "&<>\"")) {
-        ds_put_cstr(s, content);
+        ds_put_buffer(s, content, n);
     } else {
         size_t i;
 
@@ -469,10 +473,11 @@ static void
 table_print_csv__(const struct table *table, const struct table_style *style,
                   struct ds *s)
 {
-    static int n = 0;
     size_t x, y;
 
-    if (n++ > 0) {
+    if (first_table) {
+        first_table = false;
+    } else {
         ds_put_char(s, '\n');
     }
 
@@ -547,6 +552,7 @@ table_print_json__(const struct table *table, const struct table_style *style,
     json_object_put(json, "data", data);
 
     json_to_ds(json, style->json_flags, s);
+    ds_put_char(s, '\n');
     json_destroy(json);
 }
 
@@ -611,6 +617,12 @@ table_format(const struct table *table, const struct table_style *style,
         table_print_json__(table, style, s);
         break;
     }
+}
+
+void
+table_format_reset(void)
+{
+    first_table = true;
 }
 
 /* Outputs 'table' on stdout in the specified 'style'. */

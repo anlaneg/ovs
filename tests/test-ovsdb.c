@@ -94,9 +94,9 @@ parse_options(int argc, char *argv[], struct test_ovsdb_pvt_context *pvt)
         {NULL, 0, NULL, 0},
     };
     char *short_options = ovs_cmdl_long_options_to_short_options(long_options);
+    unsigned int timeout = 0;
 
     for (;;) {
-        unsigned long int timeout;
         int c;
 
         c = getopt_long(argc, argv, short_options, long_options, NULL);
@@ -106,12 +106,8 @@ parse_options(int argc, char *argv[], struct test_ovsdb_pvt_context *pvt)
 
         switch (c) {
         case 't':
-            timeout = strtoul(optarg, NULL, 10);
-            if (timeout <= 0) {
-                ovs_fatal(0, "value %s on -t or --timeout is not at least 1",
-                          optarg);
-            } else {
-                time_alarm(timeout);
+            if (!str_to_uint(optarg, 10, &timeout) || !timeout) {
+                ovs_fatal(0, "value %s on -t or --timeout is invalid", optarg);
             }
             break;
 
@@ -142,6 +138,8 @@ parse_options(int argc, char *argv[], struct test_ovsdb_pvt_context *pvt)
         }
     }
     free(short_options);
+
+    ctl_timeout_setup(timeout);
 }
 
 static void
@@ -2827,88 +2825,121 @@ test_idl_compound_index_single_column(struct ovsdb_idl *idl,
     struct ovsdb_idl_txn *txn;
     int step = 0;
 
-     /* Display records by string index. */
-     ++step;
-     IDLTEST_SIMPLE_FOR_EACH_BYINDEX (myRow, s_index) {
-         printf("%03d: s=%s i=%"PRId64" b=%s r=%f\n", step, myRow->s,
-                myRow->i, myRow->b?"True":"False", myRow->r);
-     }
-     /* Display records by integer index. */
-     ++step;
-     IDLTEST_SIMPLE_FOR_EACH_BYINDEX (myRow, i_index) {
-         printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
-                myRow->s, myRow->b?"True":"False", myRow->r);
-     }
-     /* Display records by string index -> s_index with filtering
-      * where s=\"List001\
-      */
-     ++step;
-     struct idltest_simple *equal = idltest_simple_index_init_row(s_index);
-     idltest_simple_index_set_s(equal, "List001");
-     ovs_assert(strcmp(equal->s, "List001") == 0);
-     IDLTEST_SIMPLE_FOR_EACH_EQUAL (myRow, equal, s_index) {
-         printf("%03d: s=%s i=%"PRId64" b=%s r=%f\n", step, myRow->s,
-                myRow->i, myRow->b?"True":"False", myRow->r);
-     }
-     /* Display records by integer index -> i_index with filtering where i=5 */
-     ++step;
-     idltest_simple_index_set_i(equal, 5);
-     ovs_assert(equal->i == 5);
-     IDLTEST_SIMPLE_FOR_EACH_EQUAL (myRow, equal, i_index) {
-         printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
-                myRow->s, myRow->b?"True":"False", myRow->r);
-     }
-     /* Display records by integer index -> i_index in range i=[3,7] */
-     ++step;
-     struct idltest_simple *from, *to;
-     from = idltest_simple_index_init_row(i_index);
-     idltest_simple_index_set_i(from, 3);
-     ovs_assert(from->i == 3);
-     to = idltest_simple_index_init_row(i_index);
-     idltest_simple_index_set_i(to, 7);
-     ovs_assert(to->i == 7);
-     IDLTEST_SIMPLE_FOR_EACH_RANGE (myRow, from, to, i_index) {
-         printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
-                myRow->s, myRow->b?"True":"False", myRow->r);
-     }
-     /* Delete record i=4 and insert i=54 by integer index -> i_index */
-     ++step;
-     struct idltest_simple *toDelete, *toInsert;
-     toDelete = idltest_simple_index_init_row(i_index);
-     idltest_simple_index_set_i(toDelete, 4);
-     ovs_assert(toDelete->i == 4);
-     myRow = idltest_simple_index_find(i_index, toDelete);
-     ovs_assert(myRow);
-     ovs_assert(myRow->i == 4);
-     txn = ovsdb_idl_txn_create(idl);
-     idltest_simple_delete(myRow);
-     toInsert = idltest_simple_insert(txn);
-     idltest_simple_set_i(toInsert, 54);
-     idltest_simple_set_s(toInsert, "Lista054");
-     ovsdb_idl_txn_commit_block(txn);
-     ovsdb_idl_txn_destroy(txn);
-     idltest_simple_index_set_i(to, 60);
-     printf("Expected 60, stored %"PRId64"\n", to->i);
-     ovs_assert(to->i == 60);
-     IDLTEST_SIMPLE_FOR_EACH_RANGE (myRow, from, to, i_index) {
-         printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
-                myRow->s, myRow->b?"True":"False", myRow->r);
-     }
+    /* Display records by string index. */
+    ++step;
+    IDLTEST_SIMPLE_FOR_EACH_BYINDEX (myRow, s_index) {
+        printf("%03d: s=%s i=%"PRId64" b=%s r=%f\n", step, myRow->s,
+               myRow->i, myRow->b?"True":"False", myRow->r);
+    }
+    /* Display records by integer index. */
+    ++step;
+    IDLTEST_SIMPLE_FOR_EACH_BYINDEX (myRow, i_index) {
+        printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
+               myRow->s, myRow->b?"True":"False", myRow->r);
+    }
+    /* Display records by string index -> s_index with filtering
+     * where s=\"List001\
+     */
+    ++step;
+    struct idltest_simple *equal = idltest_simple_index_init_row(s_index);
+    idltest_simple_index_set_s(equal, "List001");
+    ovs_assert(strcmp(equal->s, "List001") == 0);
+    IDLTEST_SIMPLE_FOR_EACH_EQUAL (myRow, equal, s_index) {
+        printf("%03d: s=%s i=%"PRId64" b=%s r=%f\n", step, myRow->s,
+               myRow->i, myRow->b?"True":"False", myRow->r);
+    }
+    /* Display records by integer index -> i_index with filtering where i=5 */
+    ++step;
+    idltest_simple_index_set_i(equal, 5);
+    ovs_assert(equal->i == 5);
+    IDLTEST_SIMPLE_FOR_EACH_EQUAL (myRow, equal, i_index) {
+        printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
+               myRow->s, myRow->b?"True":"False", myRow->r);
+    }
+    /* Display records by integer index -> i_index in range i=[3,7] */
+    ++step;
+    struct idltest_simple *from, *to;
+    from = idltest_simple_index_init_row(i_index);
+    idltest_simple_index_set_i(from, 3);
+    ovs_assert(from->i == 3);
+    to = idltest_simple_index_init_row(i_index);
+    idltest_simple_index_set_i(to, 7);
+    ovs_assert(to->i == 7);
+    IDLTEST_SIMPLE_FOR_EACH_RANGE (myRow, from, to, i_index) {
+        printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
+               myRow->s, myRow->b?"True":"False", myRow->r);
+    }
+    /* Delete record i=4 and insert i=54 by integer index -> i_index */
+    ++step;
+    struct idltest_simple *toDelete, *toInsert;
+    toDelete = idltest_simple_index_init_row(i_index);
+    idltest_simple_index_set_i(toDelete, 4);
+    ovs_assert(toDelete->i == 4);
+    myRow = idltest_simple_index_find(i_index, toDelete);
+    ovs_assert(myRow);
+    ovs_assert(myRow->i == 4);
+    txn = ovsdb_idl_txn_create(idl);
+    idltest_simple_delete(myRow);
+    myRow = idltest_simple_index_find(i_index, toDelete);
+    ovs_assert(!myRow);
+    myRow = idltest_simple_insert(txn);
+    idltest_simple_set_i(myRow, 54);
+    idltest_simple_set_s(myRow, "Lista054");
+    toInsert = idltest_simple_index_init_row(i_index);
+    idltest_simple_index_set_i(toInsert, 54);
+    myRow = idltest_simple_index_find(i_index, toInsert);
+    ovs_assert(myRow);
+    ovs_assert(myRow->i == 54);
+    ovs_assert(!strcmp(myRow->s, "Lista054"));
+    ovsdb_idl_txn_commit_block(txn);
+    ovsdb_idl_txn_destroy(txn);
+    idltest_simple_index_set_i(to, 60);
+    printf("Expected 60, stored %"PRId64"\n", to->i);
+    ovs_assert(to->i == 60);
+    IDLTEST_SIMPLE_FOR_EACH_RANGE (myRow, from, to, i_index) {
+        printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
+               myRow->s, myRow->b?"True":"False", myRow->r);
+    }
 
-     /* Test special-case range, "from" and "to" are both NULL,
-      * which is interpreted as the range from -infinity to +infinity. */
-     ++step;
-     IDLTEST_SIMPLE_FOR_EACH_RANGE (myRow, NULL, NULL, i_index) {
-         printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
-                myRow->s, myRow->b?"True":"False", myRow->r);
-     }
+    /* Update record i=10 to i=30, make sure index is updated accordingly */
+    ++step;
+    struct idltest_simple *toUpdate;
+    toUpdate = idltest_simple_index_init_row(i_index);
+    idltest_simple_index_set_i(toUpdate, 10);
+    ovs_assert(toUpdate->i == 10);
+    myRow = idltest_simple_index_find(i_index, toUpdate);
+    ovs_assert(myRow);
+    ovs_assert(myRow->i == 10);
+    txn = ovsdb_idl_txn_create(idl);
+    idltest_simple_set_i(myRow, 30);
+    myRow = idltest_simple_index_find(i_index, toUpdate);
+    ovs_assert(!myRow);
+    ovsdb_idl_txn_commit_block(txn);
+    ovsdb_idl_txn_destroy(txn);
+    idltest_simple_index_set_i(to, 60);
+    printf("Expected 60, stored %"PRId64"\n", to->i);
+    ovs_assert(to->i == 60);
+    IDLTEST_SIMPLE_FOR_EACH_RANGE (myRow, from, to, i_index) {
+        printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
+               myRow->s, myRow->b?"True":"False", myRow->r);
+    }
 
-     /* Free the temporal rows */
-     idltest_simple_index_destroy_row(from);
-     idltest_simple_index_destroy_row(to);
-     idltest_simple_index_destroy_row(equal);
-     idltest_simple_index_destroy_row(toDelete);
-     return step;
+    /* Test special-case range, "from" and "to" are both NULL,
+     * which is interpreted as the range from -infinity to +infinity. */
+    ++step;
+    IDLTEST_SIMPLE_FOR_EACH_RANGE (myRow, NULL, NULL, i_index) {
+        printf("%03d: i=%"PRId64" s=%s b=%s r=%f\n", step,  myRow->i,
+               myRow->s, myRow->b?"True":"False", myRow->r);
+    }
+
+    /* Free the temporal rows */
+    idltest_simple_index_destroy_row(from);
+    idltest_simple_index_destroy_row(to);
+    idltest_simple_index_destroy_row(equal);
+    idltest_simple_index_destroy_row(toDelete);
+    idltest_simple_index_destroy_row(toInsert);
+    idltest_simple_index_destroy_row(toUpdate);
+    return step;
 }
 
 static int

@@ -22,6 +22,7 @@
 #include <arpa/nameser.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unbound.h>
 #include "hash.h"
 #include "openvswitch/hmap.h"
@@ -81,17 +82,20 @@ dns_resolve_init(bool is_daemon)
         return;
     }
 
-    int retval;
 #ifdef __linux__
-    retval = ub_ctx_resolvconf(ub_ctx__, "/etc/resolv.conf");
-    if (retval != 0) {
-        VLOG_WARN_RL(&rl, "Failed to read /etc/resolv.conf: %s",
-                     ub_strerror(retval));
+    const char *filename = "/etc/resolv.conf";
+    struct stat s;
+    if (!stat(filename, &s) || errno != ENOENT) {
+        int retval = ub_ctx_resolvconf(ub_ctx__, filename);
+        if (retval != 0) {
+            VLOG_WARN_RL(&rl, "Failed to read %s: %s",
+                         filename, ub_strerror(retval));
+        }
     }
 #endif
 
     /* Handles '/etc/hosts' on Linux and 'WINDIR/etc/hosts' on Windows. */
-    retval = ub_ctx_hosts(ub_ctx__, NULL);
+    int retval = ub_ctx_hosts(ub_ctx__, NULL);
     if (retval != 0) {
         VLOG_WARN_RL(&rl, "Failed to read etc/hosts: %s",
                      ub_strerror(retval));
@@ -158,8 +162,8 @@ dns_resolve_destroy(void)
         ub_ctx_delete(ub_ctx__);
         ub_ctx__ = NULL;
 
-        struct resolve_request *req;
-        HMAP_FOR_EACH(req, hmap_node, &all_reqs__) {
+        struct resolve_request *req, *next;
+        HMAP_FOR_EACH_SAFE (req, next, hmap_node, &all_reqs__) {
             ub_resolve_free(req->ub_result);
             free(req->addr);
             free(req->name);

@@ -122,6 +122,16 @@
           start receiving packets from the datapath and re-setup the flows.
         </p>
         <p>
+          Additionally, <code>ovs-vswitchd</code> is prevented from connecting
+          to controllers when this value is set to <code>true</code>. This
+          prevents controllers from making changes to the flow table in the
+          middle of flow restoration, which could result in undesirable
+          intermediate states. Once this value has been set to
+          <code>false</code> and the desired flow state has been
+          restored, <code>ovs-vswitchd</code> will be able to reconnect to
+          controllers and process any new flow table modifications.
+        </p>
+        <p>
           Thus, with this option, the procedure for a hot-upgrade of
           <code>ovs-vswitchd</code> becomes roughly the following:
         </p>
@@ -201,16 +211,23 @@
       </column>
 
       <column name="other_config" key="tc-policy"
-              type='{"type": "string"}'>
+              type='{"type": "string",
+                     "enum": ["set", ["none", "skip_sw", "skip_hw"]]}'>
         <p>
-            Specified the policy used with HW offloading.
-            Options:
-                <code>none</code>    - Add software rule and offload rule to HW.
-                <code>skip_sw</code> - Offload rule to HW only.
-                <code>skip_hw</code> - Add software rule without offloading rule to HW.
+          Specified the policy used with HW offloading.
+          Options:
+          <dl>
+            <dt><code>none</code></dt>
+            <dd>Add software rule and offload rule to HW.</dd>
+            <dt><code>skip_sw</code></dt>
+            <dd>Offload rule to HW only.</dd>
+            <dt><code>skip_hw</code></dt>
+            <dd>Add software rule without offloading rule to HW.</dd>
+          </dl>
         </p>
         <p>
-            This is only relevant if HW offloading is enabled (hw-offload).
+          This is only relevant if
+          <ref column="other_config" key="hw-offload"/> is enabled.
         </p>
         <p>
           The default value is <code>none</code>.
@@ -218,11 +235,18 @@
       </column>
 
       <column name="other_config" key="dpdk-init"
-              type='{"type": "boolean"}'>
+              type='{"type": "string",
+                     "enum": ["set", ["false", "true", "try"]]}'>
         <p>
-          Set this value to <code>true</code> to enable runtime support for
-          DPDK ports. The vswitch must have compile-time support for DPDK as
-          well.
+          Set this value to <code>true</code> or <code>try</code> to enable
+          runtime support for DPDK ports. The vswitch must have compile-time
+          support for DPDK as well.
+        </p>
+        <p>
+          A value of <code>true</code> will cause the ovs-vswitchd process to
+          abort if DPDK cannot be initialized. A value of <code>try</code>
+          will allow the ovs-vswitchd process to continue running even if DPDK
+          cannot be initialized.
         </p>
         <p>
           The default value is <code>false</code>. Changing this value requires
@@ -405,6 +429,43 @@
         </p>
       </column>
 
+      <column name="other_config" key="smc-enable"
+              type='{"type": "boolean"}'>
+        <p>
+          Signature match cache or SMC is a cache between EMC and megaflow
+          cache. It does not store the full key of the flow, so it is more
+          memory efficient comparing to EMC cache. SMC is especially useful
+          when flow count is larger than EMC capacity.
+        </p>
+        <p>
+          Defaults to false but can be changed at any time.
+        </p>
+      </column>
+
+      <column name="other_config" key="pmd-rxq-assign"
+              type='{"type": "string",
+                     "enum": ["set", ["cycles", "roundrobin"]]}'>
+        <p>
+          Specifies how RX queues will be automatically assigned to CPU cores.
+          Options:
+          <dl>
+            <dt><code>cycles</code></dt>
+            <dd>Rxqs will be sorted by order of measured processing cycles
+            before being assigned to CPU cores.</dd>
+            <dt><code>roundrobin</code></dt>
+            <dd>Rxqs will be round-robined across CPU cores.</dd>
+          </dl>
+        </p>
+        <p>
+          The default value is <code>cycles</code>.
+        </p>
+        <p>
+          Changing this value will affect an automatic re-assignment of Rxqs to
+          CPUs. Note: Rxqs mapped to CPU cores with
+          <code>pmd-rxq-affinity</code> are unaffected.
+        </p>
+      </column>
+
       <column name="other_config" key="n-handler-threads"
               type='{"type": "integer", "minInteger": 1}'>
         <p>
@@ -466,11 +527,11 @@
           e.g. a packet with more 802.1q headers will match Ethernet type
           0x8100.
         </p>
+
         <p>
-          Value <code>0</code> means unlimited.  The actual number of supported
-          VLAN headers is the smallest of <code>vlan-limit</code>, the number
-          of VLANs supported by Open vSwitch userspace (currently 2), and the
-          number supported by the datapath.
+          Open vSwitch userspace currently supports at most 2 VLANs, and each
+          datapath has its own limit.  If <code>vlan-limit</code> is nonzero,
+          it acts as a further limit.
         </p>
 
         <p>
@@ -492,6 +553,27 @@
         </p>
     </column>
 
+      <column name="other_config" key="offload-rebalance"
+              type='{"type": "boolean"}'>
+        <p>
+            Configures HW offload rebalancing, that allows to dynamically
+            offload and un-offload flows while an offload-device is out of
+            resources (OOR). This policy allows flows to be selected for
+            offloading based on the packets-per-second (pps) rate of flows.
+        </p>
+        <p>
+          Set this value to <code>true</code> to enable this option.
+        </p>
+        <p>
+          The default value is <code>false</code>. Changing this value requires
+          restarting the daemon.
+        </p>
+        <p>
+            This is only relevant if HW offloading is enabled (hw-offload).
+            When this policy is enabled, it also requires 'tc-policy' to
+            be set to 'skip_sw'.
+        </p>
+      </column>
     </group>
 
     <group title="Status">

@@ -56,6 +56,7 @@ struct unixctl_conn {
 struct unixctl_server {
     struct pstream *listener;//监听unixctl-server
     struct ovs_list conns;//接入的所有远程连接（struct unixctl_conn）
+    char *path;
 };
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
@@ -225,39 +226,33 @@ unixctl_command_reply_error(struct unixctl_conn *conn, const char *error)
 int
 unixctl_server_create(const char *path, struct unixctl_server **serverp)
 {
-    struct unixctl_server *server;
-    struct pstream *listener;
-    char *punix_path;
-    int error;
-
     *serverp = NULL;
     if (path && !strcmp(path, "none")) {
         return 0;
     }
 
-    if (path) {
-        char *abs_path;
-#ifndef _WIN32
-        abs_path = abs_file_name(ovs_rundir(), path);
+#ifdef _WIN32
+    enum { WINDOWS = 1 };
 #else
-        abs_path = xstrdup(path);
+    enum { WINDOWS = 0 };
 #endif
-        punix_path = xasprintf("punix:%s", abs_path);//添加路径协议头
-        free(abs_path);
-    } else {
-    	//未指定path,自已构造path
-#ifndef _WIN32
-        punix_path = xasprintf("punix:%s/%s.%ld.ctl", ovs_rundir(),
-                               program_name, (long int) getpid());
-#else
-        punix_path = xasprintf("punix:%s/%s.ctl", ovs_rundir(), program_name);
-#endif
-    }
 
-    error = pstream_open(punix_path, &listener, 0);//创建对应的pstream
+    long int pid = getpid();
+    //未指定path,自已构造path
+    char *abs_path
+        = (path ? abs_file_name(ovs_rundir(), path)
+           : WINDOWS ? xasprintf("%s/%s.ctl", ovs_rundir(), program_name)
+           : xasprintf("%s/%s.%ld.ctl", ovs_rundir(), program_name, pid));
+
+    struct pstream *listener;
+    char *punix_path = xasprintf("punix:%s", abs_path);//添加路径协议头
+    int error = pstream_open(punix_path, &listener, 0);//创建对应的pstream
+    free(punix_path);
+
     if (error) {
-        ovs_error(error, "could not initialize control socket %s", punix_path);
-        goto exit;
+        ovs_error(error, "%s: could not initialize control socket", abs_path);
+        free(abs_path);
+        return error;
     }
 
     //注册列出所有command
@@ -267,14 +262,13 @@ unixctl_server_create(const char *path, struct unixctl_server **serverp)
     unixctl_command_register("version", "", 0, 0, unixctl_version, NULL);
 
     //创建unix-server
-    server = xmalloc(sizeof *server);
+    struct unixctl_server *server = xmalloc(sizeof *server);
     server->listener = listener;
+    server->path = abs_path;
     ovs_list_init(&server->conns);//初始化与客户端的连接
-    *serverp = server;
 
-exit:
-    free(punix_path);
-    return error;
+    *serverp = server;
+    return 0;
 }
 
 //处理unixctl命令
@@ -465,9 +459,16 @@ unixctl_server_destroy(struct unixctl_server *server)
             kill_connection(conn);
         }
 
+        free(server->path);
         pstream_close(server->listener);
         free(server);
     }
+}
+
+const char *
+unixctl_server_get_path(const struct unixctl_server *server)
+{
+    return server ? server->path : NULL;
 }
 
 /* On POSIX based systems, connects to a unixctl server socket.  'path' should
@@ -484,16 +485,11 @@ unixctl_server_destroy(struct unixctl_server *server)
 int
 unixctl_client_create(const char *path, struct jsonrpc **client)
 {
-    char *abs_path, *unix_path;
     struct stream *stream;
     int error;
 
-#ifdef _WIN32
-    abs_path = xstrdup(path);
-#else
-    abs_path = abs_file_name(ovs_rundir(), path);
-#endif
-    unix_path = xasprintf("unix:%s", abs_path);
+    char *abs_path = abs_file_name(ovs_rundir(), path);
+    char *unix_path = xasprintf("unix:%s", abs_path);
 
     *client = NULL;
 

@@ -661,12 +661,9 @@ ofproto_set_datapath_id(struct ofproto *p, uint64_t datapath_id)
 }
 
 void
-ofproto_set_controllers(struct ofproto *p,
-                        const struct ofproto_controller *controllers,
-                        size_t n_controllers, uint32_t allowed_versions)
+ofproto_set_controllers(struct ofproto *p, struct shash *controllers)
 {
-    connmgr_set_controllers(p->connmgr, controllers, n_controllers,
-                            allowed_versions);
+    connmgr_set_controllers(p->connmgr, controllers);
 }
 
 void
@@ -1618,7 +1615,9 @@ ofproto_destroy__(struct ofproto *ofproto)
 
     cmap_destroy(&ofproto->groups);
 
+    ovs_mutex_lock(&ofproto_mutex);
     hmap_remove(&all_ofprotos, &ofproto->hmap_node);
+    ovs_mutex_unlock(&ofproto_mutex);
 
     free(ofproto->name);
     free(ofproto->type);
@@ -2405,9 +2404,8 @@ ofport_open(struct ofproto *ofproto,
     return netdev;
 }
 
-/* Returns true if most fields of 'a' and 'b' are equal.  Differences in name,
- * port number, and 'config' bits other than OFPUTIL_PC_PORT_DOWN are
- * disregarded. */
+/* Returns true if most fields of 'a' and 'b' are equal.  Differences in name
+ * and port number are disregarded. */
 static bool
 ofport_equal(const struct ofputil_phy_port *a,
              const struct ofputil_phy_port *b)
@@ -2415,7 +2413,7 @@ ofport_equal(const struct ofputil_phy_port *a,
     return (eth_addr_equals(a->hw_addr, b->hw_addr)
             && eth_addr64_equals(a->hw_addr64, b->hw_addr64)
             && a->state == b->state
-            && !((a->config ^ b->config) & OFPUTIL_PC_PORT_DOWN)
+            && a->config == b->config
             && a->curr == b->curr
             && a->advertised == b->advertised
             && a->supported == b->supported
@@ -2448,6 +2446,7 @@ ofport_install(struct ofproto *p,
     ofport->pp = *pp;
     ofport->ofp_port = pp->port_no;
     ofport->created = time_msec();//port创建的时间
+    ofport->may_enable = false;
 
     /* Add port to 'p'. */
     hmap_insert(&p->ports, &ofport->hmap_node,
@@ -2462,7 +2461,7 @@ ofport_install(struct ofproto *p,
         goto error;
     }
     //告知controller,我们新加入了一个port
-    connmgr_send_port_status(p->connmgr, NULL, pp, OFPPR_ADD);
+    connmgr_send_port_status(p->connmgr, NULL, NULL, pp, OFPPR_ADD);
     return 0;
 
 error:
@@ -2483,7 +2482,7 @@ ofport_remove(struct ofport *ofport)
     struct ofproto *p = ofport->ofproto;
     bool is_mtu_overridden = ofport_is_mtu_overridden(p, ofport);
 
-    connmgr_send_port_status(ofport->ofproto->connmgr, NULL, &ofport->pp,
+    connmgr_send_port_status(ofport->ofproto->connmgr, NULL, NULL, &ofport->pp,
                              OFPPR_DELETE);
     ofport_destroy(ofport, true);
     if (!is_mtu_overridden) {
@@ -2502,34 +2501,38 @@ ofport_remove_with_name(struct ofproto *ofproto, const char *name)
     }
 }
 
-/* Updates 'port' with new 'pp' description.
- *
- * Does not handle a name or port number change.  The caller must implement
- * such a change as a delete followed by an add.  */
-static void
-ofport_modified(struct ofport *port, struct ofputil_phy_port *pp)
+static enum ofputil_port_state
+normalize_state(enum ofputil_port_config config,
+                enum ofputil_port_state state,
+                bool may_enable)
 {
-    port->pp.hw_addr = pp->hw_addr;
-    port->pp.hw_addr64 = pp->hw_addr64;
-    port->pp.config = ((port->pp.config & ~OFPUTIL_PC_PORT_DOWN)
-                        | (pp->config & OFPUTIL_PC_PORT_DOWN));
-    port->pp.state = ((port->pp.state & ~OFPUTIL_PS_LINK_DOWN)
-                      | (pp->state & OFPUTIL_PS_LINK_DOWN));
-    port->pp.curr = pp->curr;
-    port->pp.advertised = pp->advertised;
-    port->pp.supported = pp->supported;
-    port->pp.peer = pp->peer;
-    port->pp.curr_speed = pp->curr_speed;
-    port->pp.max_speed = pp->max_speed;
+    return (config & OFPUTIL_PC_PORT_DOWN
+            || state & OFPUTIL_PS_LINK_DOWN
+            || !may_enable
+            ? state & ~OFPUTIL_PS_LIVE
+            : state | OFPUTIL_PS_LIVE);
+}
+
+void
+ofproto_port_set_enable(struct ofport *port, bool enable)
+{
+    if (enable != port->may_enable) {
+        port->may_enable = enable;
+        ofproto_port_set_state(port, normalize_state(port->pp.config,
+                                                     port->pp.state,
+                                                     port->may_enable));
+    }
 }
 
 /* Update OpenFlow 'state' in 'port' and notify controller. */
 void
 ofproto_port_set_state(struct ofport *port, enum ofputil_port_state state)
 {
+    state = normalize_state(port->pp.config, state, port->may_enable);
     if (port->pp.state != state) {
+        struct ofputil_phy_port old_pp = port->pp;
         port->pp.state = state;
-        connmgr_send_port_status(port->ofproto->connmgr, NULL,
+        connmgr_send_port_status(port->ofproto->connmgr, NULL, &old_pp,
                                  &port->pp, OFPPR_MODIFY);
     }
 }
@@ -2678,10 +2681,18 @@ update_port(struct ofproto *ofproto, const char *name)
         if (port && !strcmp(netdev_get_name(port->netdev), name)) {
             struct netdev *old_netdev = port->netdev;
 
+            /* ofport_open() only sets OFPUTIL_PC_PORT_DOWN and
+             * OFPUTIL_PS_LINK_DOWN.  Keep the other config and state bits (but
+             * a port that is down cannot be live). */
+            pp.config |= port->pp.config & ~OFPUTIL_PC_PORT_DOWN;
+            pp.state |= port->pp.state & ~OFPUTIL_PS_LINK_DOWN;
+            pp.state = normalize_state(pp.config, pp.state, port->may_enable);
+
             /* 'name' hasn't changed location.  Any properties changed? */
-            bool port_changed = !ofport_equal(&port->pp, &pp);
-            if (port_changed) {
-                ofport_modified(port, &pp);
+            if (!ofport_equal(&port->pp, &pp)) {
+                connmgr_send_port_status(port->ofproto->connmgr, NULL,
+                                         &port->pp, &pp, OFPPR_MODIFY);
+                port->pp = pp;
             }
 
             update_mtu(ofproto, port);
@@ -2694,12 +2705,6 @@ update_port(struct ofproto *ofproto, const char *name)
 
             if (port->ofproto->ofproto_class->port_modified) {
                 port->ofproto->ofproto_class->port_modified(port);
-            }
-
-            /* Send status update, if any port property changed */
-            if (port_changed) {
-                connmgr_send_port_status(port->ofproto->connmgr, NULL,
-                                         &port->pp, OFPPR_MODIFY);
             }
 
             netdev_close(old_netdev);
@@ -3068,6 +3073,9 @@ remove_groups_rcu(struct ofgroup **groups)
 
 static bool ofproto_fix_meter_action(const struct ofproto *,
                                      struct ofpact_meter *);
+
+static bool ofproto_fix_controller_action(const struct ofproto *,
+                                          struct ofpact_controller *);
 
 /* Creates and returns a new 'struct rule_actions', whose actions are a copy
  * of from the 'ofpacts_len' bytes of 'ofpacts'. */
@@ -3482,6 +3490,17 @@ ofproto_check_ofpacts(struct ofproto *ofproto,
             return OFPERR_OFPMMFC_INVALID_METER;
         }
 
+        if (a->type == OFPACT_CONTROLLER) {
+            struct ofpact_controller *ca = ofpact_get_CONTROLLER(a);
+
+            if (!ofproto_fix_controller_action(ofproto, ca)) {
+                static struct vlog_rate_limit rl2 = VLOG_RATE_LIMIT_INIT(1, 5);
+                VLOG_INFO_RL(&rl2, "%s: controller action specified an "
+                             "unknown meter id: %d",
+                             ofproto->name, ca->meter_id);
+            }
+        }
+
         if (a->type == OFPACT_GROUP
             && !ofproto_group_exists(ofproto, ofpact_get_GROUP(a)->group_id)) {
             return OFPERR_OFPBAC_BAD_OUT_GROUP;
@@ -3546,10 +3565,14 @@ ofproto_packet_out_init(struct ofproto *ofproto,
      * check instructions (e.g., goto-table), which can't appear on the action
      * list of a packet-out. */
     match_wc_init(&match, opo->flow);
-    error = ofpacts_check_consistency(po->ofpacts, po->ofpacts_len, &match,
-                                      u16_to_ofp(ofproto->max_ports), 0,
-                                      ofproto->n_tables,
-                                      ofconn_get_protocol(ofconn));
+    struct ofpact_check_params cp = {
+        .match = &match,
+        .max_ports = u16_to_ofp(ofproto->max_ports),
+        .table_id = 0,
+        .n_tables = ofproto->n_tables
+    };
+    error = ofpacts_check_consistency(po->ofpacts, po->ofpacts_len,
+                                      ofconn_get_protocol(ofconn), &cp);
     if (error) {
         dp_packet_delete(opo->packet);
         free(opo->flow);
@@ -3687,11 +3710,15 @@ update_port_config(struct ofconn *ofconn, struct ofport *port,
     }
 
     if (toggle) {
-        enum ofputil_port_config old_config = port->pp.config;
+        struct ofputil_phy_port old_pp = port->pp;
+
         port->pp.config ^= toggle;
-        port->ofproto->ofproto_class->port_reconfigured(port, old_config);
-        connmgr_send_port_status(port->ofproto->connmgr, ofconn, &port->pp,
-                                 OFPPR_MODIFY);
+        port->pp.state = normalize_state(port->pp.config, port->pp.state,
+                                         port->may_enable);
+
+        port->ofproto->ofproto_class->port_reconfigured(port, old_pp.config);
+        connmgr_send_port_status(port->ofproto->connmgr, ofconn, &old_pp,
+                                 &port->pp, OFPPR_MODIFY);
     }
 }
 
@@ -6359,6 +6386,36 @@ ofproto_fix_meter_action(const struct ofproto *ofproto,
     return false;
 }
 
+/* This is used in instruction validation at flow set-up time, to map
+ * the OpenFlow meter ID in a controller action to the corresponding
+ * datapath provider meter ID.  If either does not exist, sets the
+ * provider meter id to a value to prevent the provider from using it
+ * and returns false.  Otherwise, updates the meter action and returns
+ * true. */
+static bool
+ofproto_fix_controller_action(const struct ofproto *ofproto,
+                              struct ofpact_controller *ca)
+{
+    if (ca->meter_id == NX_CTLR_NO_METER) {
+        ca->provider_meter_id = UINT32_MAX;
+        return true;
+    }
+
+    const struct meter *meter = ofproto_get_meter(ofproto, ca->meter_id);
+
+    if (meter && meter->provider_meter_id.uint32 != UINT32_MAX) {
+        /* Update the action with the provider's meter ID, so that we
+         * do not need any synchronization between ofproto_dpif_xlate
+         * and ofproto for meter table access. */
+        ca->provider_meter_id = meter->provider_meter_id.uint32;
+        return true;
+    }
+
+    /* Prevent the meter from being set by the ofproto provider. */
+    ca->provider_meter_id = UINT32_MAX;
+    return false;
+}
+
 /* Finds the meter invoked by 'rule''s actions and adds 'rule' to the meter's
  * list of rules. */
 //插入meter表
@@ -7417,6 +7474,8 @@ ofproto_group_mod_finish(struct ofproto *ofproto,
         rf.xid = req->request->xid;
         rf.reason = OFPRFR_GROUP_MOD;
         rf.group_mod = &ogm->gm;
+        rf.new_buckets = new_group ? &new_group->buckets : NULL;
+        rf.group_existed = group_collection_n(&ogm->old_groups) > 0;
         connmgr_send_requestforward(ofproto->connmgr, req->ofconn, &rf);
     }
 }

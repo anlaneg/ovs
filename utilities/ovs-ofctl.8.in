@@ -1,9 +1,5 @@
 .\" -*- nroff -*-
-.de IQ
-.  br
-.  ns
-.  IP "\\$1"
-..
+.so lib/ovs.tmac
 .TH ovs\-ofctl 8 "@VERSION@" "Open vSwitch" "Open vSwitch Manual"
 .ds PN ovs\-ofctl
 .
@@ -211,8 +207,8 @@ for matching for fragments with offset 0, and set to 0 in fragments
 with nonzero offset.  This mode is a Nicira extension.
 .RE
 .IP
-See the description of \fBip_frag\fR, below, for a way to match on
-whether a packet is a fragment and on its fragment offset.
+See the description of \fBip_frag\fR, in \fBovs\-fields\fR(7), for a way to
+match on whether a packet is a fragment and on its fragment offset.
 .
 .TP
 \fBdump\-flows \fIswitch \fR[\fIflows\fR]
@@ -859,6 +855,11 @@ switch in an \fBNXT_RESUME\fR message, which will restart the packet's
 traversal from the point where it was interrupted.  This permits an
 OpenFlow controller to interpose on a packet midway through processing
 in Open vSwitch.
+.IP "\fBmeter_id=\fIid\fR"
+Use meter \fIid\fR to rate-limit the OpenFlow packet-in messages that
+this action sends to the controller.  By default, packets sent to the
+controller are associated with the "controller" virtual meter, if one
+was configured.
 .
 .RE
 .IP
@@ -917,17 +918,11 @@ its TTL is copied from the IP TTL (64 if the packet is not IP).
 If the packet does already contain an MPLS label, pushes a new
 outermost label as a copy of the existing outermost label.
 .IP
-A limitation of the implementation is that processing of actions will stop
-if \fBpush_mpls\fR follows another \fBpush_mpls\fR unless there is a
-\fBpop_mpls\fR in between.
+OVS currently supports at most 3 MPLS labels.
 .
 .IP \fBpop_mpls\fR:\fIethertype\fR
-Strips the outermost MPLS label stack entry.
-Currently the implementation restricts \fIethertype\fR to a non-MPLS Ethertype
-and thus \fBpop_mpls\fR should only be applied to packets with
-an MPLS label stack depth of one. A further limitation is that processing of
-actions will stop if \fBpop_mpls\fR follows another \fBpop_mpls\fR unless
-there is a \fBpush_mpls\fR in between.
+Strips the outermost MPLS label stack entry and changes the packet's
+Ethertype to \fIethertype\fR.
 .
 .IP \fBmod_dl_src\fB:\fImac\fR
 Sets the source Ethernet address to \fImac\fR.
@@ -1416,6 +1411,8 @@ and IPv6, which hash to a constant zero.
 Like \fBsymmetric_l3l4+udp\fR, but UDP ports are included in the hash.
 This is a more effective hash when asymmetric UDP protocols such as
 VXLAN are not a consideration.
+.IP \fBsymmetric_l3\fR
+Hashes network source address and network destination address.
 .IP \fBnw_src\fR
 Hashes Network source address only.
 .IP \fBnw_dst\fR

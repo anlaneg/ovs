@@ -38,7 +38,11 @@ insert_mod_if_required () {
 set_hostname () {
     # 'hostname -f' needs network connectivity to work.  So we should
     # call this only after ovs-vswitchd is running.
-    ovs_vsctl set Open_vSwitch . external-ids:hostname="$(hostname -f)"
+    hn="$(hostname -f)"
+    if test X$FULL_HOSTNAME = Xno; then
+        hn="$(hostname)"
+    fi
+    ovs_vsctl set Open_vSwitch . external-ids:hostname="$hn"
 }
 
 set_system_ids () {
@@ -164,16 +168,14 @@ start_ovsdb() {
 }
 
 add_managers () {
-    # Now that ovs-vswitchd has started and completed its initial
-    # configuration, tell ovsdb-server to connect to the remote managers.  We
-    # used to do this at ovsdb-server startup time, but waiting for
-    # ovs-vswitchd to finish configuring means that remote managers see less
-    # churn in the database at startup or restart.  (For example, managers
-    # won't briefly see empty datapath-id or ofport columns for records that
-    # exist at startup.)
+    # Tell ovsdb-server to connect to the remote managers. If ovs-vswitchd
+    # is not finished configuring, it may mean that remote managers will
+    # see more churn in the database at startup or restart. (For example,
+    # managers may briefly see empty datapath-id or ofport columns for
+    # records that exist at startup.).  However, the alternative is a
+    # 'bricked' system, so we allow database connectivity regardless.
     if test X"$OVSDB_SERVER" = Xyes || test X"$OVS_VSWITCHD" = Xyes; then
-        if daemon_is_running ovsdb-server \
-                && daemon_is_running ovs-vswitchd; then
+        if daemon_is_running ovsdb-server; then
             action "Enabling remote OVSDB managers" \
                    ovs-appctl -t ovsdb-server ovsdb-server/add-remote \
                    db:Open_vSwitch,Open_vSwitch,manager_options
@@ -291,6 +293,8 @@ enable_protocol () {
 set_defaults () {
     SYSTEM_ID=
 
+    FULL_HOSTNAME=yes
+
     DELETE_BRIDGES=no
     DELETE_TRANSIENT_PORTS=no
 
@@ -376,6 +380,7 @@ Less important options for "start", "restart" and "force-reload-kmod":
   --no-mlockall                  do not lock all of ovs-vswitchd into memory
   --ovsdb-server-priority=NICE   set ovsdb-server's niceness (default: $OVSDB_SERVER_PRIORITY)
   --ovs-vswitchd-priority=NICE   set ovs-vswitchd's niceness (default: $OVS_VSWITCHD_PRIORITY)
+  --no-full-hostname             set short hostname instead of full hostname
 
 Debugging options for "start", "restart" and "force-reload-kmod":
   --ovsdb-server-wrapper=WRAPPER

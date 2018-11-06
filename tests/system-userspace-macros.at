@@ -63,7 +63,7 @@ m4_define([CONFIGURE_VETH_OFFLOADS],
 # Perform requirements checks for running conntrack tests.
 #
 m4_define([CHECK_CONNTRACK],
-    [AT_SKIP_IF([test $HAVE_PYTHON = no])]
+    [AT_SKIP_IF([test $HAVE_PYTHON2 = no])]
 )
 
 # CHECK_CONNTRACK_ALG()
@@ -116,6 +116,15 @@ m4_define([CHECK_CONNTRACK_FRAG_IPV6_MULT_EXTEN],
 #
 m4_define([CHECK_CONNTRACK_NAT])
 
+# CHECK_CT_DPIF_PER_ZONE_LIMIT()
+#
+# Perform requirements checks for running ovs-dpctl ct-[set|get|del]-limits per
+# zone. The userspace datapath does not support this feature yet.
+m4_define([CHECK_CT_DPIF_PER_ZONE_LIMIT],
+[
+    AT_SKIP_IF([:])
+])
+
 # CHECK_CT_DPIF_SET_GET_MAXCONNS()
 #
 # Perform requirements checks for running ovs-dpctl ct-set-maxconns or
@@ -127,3 +136,19 @@ m4_define([CHECK_CT_DPIF_SET_GET_MAXCONNS])
 # Perform requirements checks for running ovs-dpctl ct-get-nconns. The
 # userspace datapath does support this feature.
 m4_define([CHECK_CT_DPIF_GET_NCONNS])
+
+# OVS_CHECK_KERNEL([minversion], [maxversion], [minsublevel], [maxsublevel])
+#
+# The userspace skips all tests that check kernel version.
+m4_define([OVS_CHECK_KERNEL],
+[
+    AT_SKIP_IF([:])
+])
+
+# OVS_CHECK_KERNEL_EXCL([minversion], [maxversion], [minsublevel], [maxsublevel])
+#
+# The userspace skips all tests that check kernel version.
+m4_define([OVS_CHECK_KERNEL_EXCL],
+[
+    AT_SKIP_IF([:])
+])

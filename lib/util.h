@@ -137,6 +137,8 @@ const char *get_subprogram_name(void);
 unsigned int get_page_size(void);
 long long int get_boot_time(void);
 
+void ctl_timeout_setup(unsigned int secs);
+
 void ovs_print_version(uint8_t min_ofp, uint8_t max_ofp);
 
 OVS_NO_RETURN void out_of_memory(void);
@@ -232,6 +234,7 @@ char *dir_name(const char *file_name);
 char *base_name(const char *file_name);
 #endif
 char *abs_file_name(const char *dir, const char *file_name);
+bool is_file_name_absolute(const char *);
 
 char *follow_symlinks(const char *filename);
 

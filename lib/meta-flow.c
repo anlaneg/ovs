@@ -1136,7 +1136,7 @@ mf_set_value(const struct mf_field *mf,
         break;
 
     case MFF_DL_VLAN:
-        match_set_dl_vlan(match, value->be16);
+        match_set_dl_vlan(match, value->be16, 0);
         break;
     case MFF_VLAN_VID:
         match_set_vlan_vid(match, value->be16);
@@ -1144,7 +1144,7 @@ mf_set_value(const struct mf_field *mf,
 
     case MFF_DL_VLAN_PCP:
     case MFF_VLAN_PCP:
-        match_set_dl_vlan_pcp(match, value->u8);
+        match_set_dl_vlan_pcp(match, value->u8, 0);
         break;
 
     case MFF_MPLS_LABEL:
@@ -1538,7 +1538,7 @@ mf_set_flow_value(const struct mf_field *mf,
         break;
 
     case MFF_DL_VLAN:
-        flow_set_dl_vlan(flow, value->be16);
+        flow_set_dl_vlan(flow, value->be16, 0);
         flow_fix_vlan_tpid(flow);
         break;
 
@@ -1549,7 +1549,7 @@ mf_set_flow_value(const struct mf_field *mf,
 
     case MFF_DL_VLAN_PCP:
     case MFF_VLAN_PCP:
-        flow_set_vlan_pcp(flow, value->u8);
+        flow_set_vlan_pcp(flow, value->u8, 0);
         flow_fix_vlan_tpid(flow);
         break;
 
@@ -3520,7 +3520,9 @@ mf_vl_mff_mf_from_nxm_header(uint32_t header,
                              uint64_t *tlv_bitmap)
 {
     *field = mf_from_nxm_header(header, vl_mff_map);
-    if (mf_vl_mff_invalid(*field, vl_mff_map)) {
+    if (!*field) {
+        return OFPERR_OFPBAC_BAD_SET_TYPE;
+    } else if (mf_vl_mff_invalid(*field, vl_mff_map)) {
         return OFPERR_NXFMFC_INVALID_TLV_FIELD;
     }
 

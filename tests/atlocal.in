@@ -1,11 +1,16 @@
 # -*- shell-script -*-
 HAVE_OPENSSL='@HAVE_OPENSSL@'
 HAVE_PYTHON='@HAVE_PYTHON@'
+HAVE_PYTHON2='@HAVE_PYTHON2@'
 HAVE_PYTHON3='@HAVE_PYTHON3@'
 EGREP='@EGREP@'
 
 if test x"$PYTHON" = x; then
     PYTHON='@PYTHON@'
+fi
+
+if test x"$PYTHON2" = x; then
+    PYTHON2='@PYTHON2@'
 fi
 
 if test x"$PYTHON3" = x; then
@@ -207,3 +212,11 @@ unset NO_PROXY
 # Avoid OVN environment variables leaking in from external environment.
 unset OVN_NB_DB
 unset OVN_SB_DB
+
+# Prevent logging to syslog during tests.
+OVS_SYSLOG_METHOD=null
+export OVS_SYSLOG_METHOD
+
+# Set default timeout for control utils
+OVS_CTL_TIMEOUT=30
+export OVS_CTL_TIMEOUT

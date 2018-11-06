@@ -38,26 +38,6 @@ bfd_register_ovs_idl(struct ovsdb_idl *ovs_idl)
     ovsdb_idl_add_column(ovs_idl, &ovsrec_interface_col_bfd_status);//添加bfd_status列
 }
 
-
-//设置bfd列的取值
-static void
-interface_set_bfd(const struct ovsrec_interface *iface, bool bfd_setting)
-{
-    const char *new_setting = bfd_setting ? "true":"false";
-    const char *current_setting = smap_get(&iface->bfd, "enable");
-    if (current_setting && !strcmp(current_setting, new_setting)) {
-        /* If already set to the desired setting we skip setting it again
-         * to avoid flapping to bfd initialization state */
-    	//已设置，且无变化
-        return;
-    }
-    const struct smap bfd = SMAP_CONST1(&bfd, "enable", new_setting);//初始化enable的值为new_setting
-    ovsrec_interface_verify_bfd(iface);
-    ovsrec_interface_set_bfd(iface, &bfd);//设置列
-    VLOG_INFO("%s BFD on interface %s", bfd_setting ? "Enabled" : "Disabled",
-                                        iface->name);
-}
-
 //收集活跃的tunnel（即从自身出发可以到达那些chassis)
 void
 bfd_calculate_active_tunnels(const struct ovsrec_bridge *br_int,
@@ -274,6 +254,7 @@ bfd_run(struct ovsdb_idl_index *sbrec_chassis_by_name,
         const struct ovsrec_interface_table *interface_table,
         const struct ovsrec_bridge *br_int,
         const struct sbrec_chassis *chassis_rec,
+        const struct sbrec_sb_global_table *sb_global_table,
         const struct hmap *local_datapaths)
 {
 
@@ -299,15 +280,58 @@ bfd_run(struct ovsdb_idl_index *sbrec_chassis_by_name,
         }
     }
 
+    const struct sbrec_sb_global *sb
+        = sbrec_sb_global_table_first(sb_global_table);
+    struct smap bfd = SMAP_INITIALIZER(&bfd);
+    smap_add(&bfd, "enable", "true");
+
+    if (sb) {
+        const char *min_rx = smap_get(&sb->options, "bfd-min-rx");
+        const char *decay_min_rx = smap_get(&sb->options, "bfd-decay-min-rx");
+        const char *min_tx = smap_get(&sb->options, "bfd-min-tx");
+        const char *mult = smap_get(&sb->options, "bfd-mult");
+        if (min_rx) {
+            smap_add(&bfd, "min_rx", min_rx);
+        }
+        if (decay_min_rx) {
+            smap_add(&bfd, "decay_min_rx", decay_min_rx);
+        }
+        if (min_tx) {
+            smap_add(&bfd, "min_tx", min_tx);
+        }
+        if (mult) {
+            smap_add(&bfd, "mult", mult);
+        }
+    }
+
     /* Enable or disable bfd */
     const struct ovsrec_interface *iface;
     OVSREC_INTERFACE_TABLE_FOR_EACH (iface, interface_table) {
         if (sset_contains(&tunnels, iface->name)) {
-                interface_set_bfd(
-                        iface, sset_contains(&bfd_ifaces, iface->name));
+            if (sset_contains(&bfd_ifaces, iface->name)) {
+                /* We need to enable BFD for this interface. Configure the
+                 * BFD params if
+                 *  - If BFD was disabled earlier
+                 *  - Or if CMS has updated BFD config options.
+                 */
+                if (!smap_equal(&iface->bfd, &bfd)) {
+                    ovsrec_interface_verify_bfd(iface);
+                    ovsrec_interface_set_bfd(iface, &bfd);
+                    VLOG_INFO("Enabled BFD on interface %s", iface->name);
+                }
+            } else {
+                /* We need to disable BFD for this interface if it was enabled
+                 * earlier. */
+                if (smap_count(&iface->bfd)) {
+                    ovsrec_interface_verify_bfd(iface);
+                    ovsrec_interface_set_bfd(iface, NULL);
+                    VLOG_INFO("Disabled BFD on interface %s", iface->name);
+                }
+            }
          }
     }
 
+    smap_destroy(&bfd);
     sset_destroy(&tunnels);
     sset_destroy(&bfd_ifaces);
     sset_destroy(&bfd_chassis);
