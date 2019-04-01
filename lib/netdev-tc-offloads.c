@@ -52,7 +52,7 @@ struct netlink_field {
     int size;
 };
 
-static struct netlink_field set_flower_map[][3] = {
+static struct netlink_field set_flower_map[][4] = {
     [OVS_KEY_ATTR_IPV4] = {
         { offsetof(struct ovs_key_ipv4, ipv4_src),
           offsetof(struct tc_flower_key, ipv4.ipv4_src),
@@ -66,6 +66,10 @@ static struct netlink_field set_flower_map[][3] = {
           offsetof(struct tc_flower_key, ipv4.rewrite_ttl),
           MEMBER_SIZEOF(struct tc_flower_key, ipv4.rewrite_ttl)
         },
+        { offsetof(struct ovs_key_ipv4, ipv4_tos),
+          offsetof(struct tc_flower_key, ipv4.rewrite_tos),
+          MEMBER_SIZEOF(struct tc_flower_key, ipv4.rewrite_tos)
+        },
     },
     [OVS_KEY_ATTR_IPV6] = {
         { offsetof(struct ovs_key_ipv6, ipv6_src),
@@ -75,6 +79,14 @@ static struct netlink_field set_flower_map[][3] = {
         { offsetof(struct ovs_key_ipv6, ipv6_dst),
           offsetof(struct tc_flower_key, ipv6.ipv6_dst),
           MEMBER_SIZEOF(struct tc_flower_key, ipv6.ipv6_dst)
+        },
+        { offsetof(struct ovs_key_ipv6, ipv6_hlimit),
+          offsetof(struct tc_flower_key, ipv6.rewrite_hlimit),
+          MEMBER_SIZEOF(struct tc_flower_key, ipv6.rewrite_hlimit)
+        },
+        { offsetof(struct ovs_key_ipv6, ipv6_tclass),
+          offsetof(struct tc_flower_key, ipv6.rewrite_tclass),
+          MEMBER_SIZEOF(struct tc_flower_key, ipv6.rewrite_tclass)
         },
     },
     [OVS_KEY_ATTR_ETHERNET] = {
@@ -163,8 +175,20 @@ del_ufid_tc_mapping(const ovs_u128 *ufid)
     ovs_mutex_unlock(&ufid_lock);
 }
 
-/* Add ufid entry to ufid_tc hashmap.
- * If entry exists already it will be replaced. */
+/* Wrapper function to delete filter and ufid tc mapping */
+static int
+del_filter_and_ufid_mapping(int ifindex, int prio, int handle,
+                            uint32_t block_id, const ovs_u128 *ufid)
+{
+    int err;
+
+    err = tc_del_filter(ifindex, prio, handle, block_id);
+    del_ufid_tc_mapping(ufid);
+
+    return err;
+}
+
+/* Add ufid entry to ufid_tc hashmap. */
 static void
 add_ufid_tc_mapping(const ovs_u128 *ufid, int prio, int handle,
                     struct netdev *netdev, int ifindex)
@@ -172,8 +196,6 @@ add_ufid_tc_mapping(const ovs_u128 *ufid, int prio, int handle,
     size_t ufid_hash = hash_bytes(ufid, sizeof *ufid, 0);
     size_t tc_hash = hash_int(hash_int(prio, handle), ifindex);
     struct ufid_tc_data *new_data = xzalloc(sizeof *new_data);
-
-    del_ufid_tc_mapping(ufid);
 
     new_data->ufid = *ufid;
     new_data->prio = prio;
@@ -264,7 +286,7 @@ get_prio_for_tc_flower(struct tc_flower *flower)
 {
     static struct hmap prios = HMAP_INITIALIZER(&prios);
     static struct ovs_mutex prios_lock = OVS_MUTEX_INITIALIZER;
-    static uint16_t last_prio = 0;
+    static uint16_t last_prio = TC_RESERVED_PRIORITY_MAX;
     size_t key_len = sizeof(struct tc_flower_key);
     size_t hash = hash_int((OVS_FORCE uint32_t) flower->key.eth_type, 0);
     struct prio_map_data *data;
@@ -560,7 +582,9 @@ parse_tc_flower_to_match(struct tc_flower *flower,
     }
 
     if (flower->tunnel) {
-        match_set_tun_id(match, flower->key.tunnel.id);
+        if (flower->mask.tunnel.id) {
+            match_set_tun_id(match, flower->key.tunnel.id);
+        }
         if (flower->key.tunnel.ipv4.ipv4_dst) {
             match_set_tun_src(match, flower->key.tunnel.ipv4.ipv4_src);
             match_set_tun_dst(match, flower->key.tunnel.ipv4.ipv4_dst);
@@ -614,7 +638,9 @@ parse_tc_flower_to_match(struct tc_flower *flower,
                 size_t tunnel_offset =
                     nl_msg_start_nested(buf, OVS_KEY_ATTR_TUNNEL);
 
-                nl_msg_put_be64(buf, OVS_TUNNEL_KEY_ATTR_ID, action->encap.id);
+                if (action->encap.id_present) {
+                    nl_msg_put_be64(buf, OVS_TUNNEL_KEY_ATTR_ID, action->encap.id);
+                }
                 if (action->encap.ipv4.ipv4_src) {
                     nl_msg_put_be32(buf, OVS_TUNNEL_KEY_ATTR_IPV4_SRC,
                                     action->encap.ipv4.ipv4_src);
@@ -641,8 +667,10 @@ parse_tc_flower_to_match(struct tc_flower *flower,
                     nl_msg_put_u8(buf, OVS_TUNNEL_KEY_ATTR_TTL,
                                   action->encap.ttl);
                 }
-                nl_msg_put_be16(buf, OVS_TUNNEL_KEY_ATTR_TP_DST,
-                                action->encap.tp_dst);
+                if (action->encap.tp_dst) {
+                    nl_msg_put_be16(buf, OVS_TUNNEL_KEY_ATTR_TP_DST,
+                                    action->encap.tp_dst);
+                }
                 if (!action->encap.no_csum) {
                     nl_msg_put_u8(buf, OVS_TUNNEL_KEY_ATTR_CSUM,
                                   !action->encap.no_csum);
@@ -814,11 +842,13 @@ parse_put_flow_set_action(struct tc_flower *flower, struct tc_action *action,
     tunnel_len = nl_attr_get_size(set);
 
     action->type = TC_ACT_ENCAP;
+    action->encap.id_present = false;
     flower->action_count++;
     NL_ATTR_FOR_EACH_UNSAFE(tun_attr, tun_left, tunnel, tunnel_len) {
         switch (nl_attr_type(tun_attr)) {
         case OVS_TUNNEL_KEY_ATTR_ID: {
             action->encap.id = nl_attr_get_be64(tun_attr);
+            action->encap.id_present = true;
         }
         break;
         case OVS_TUNNEL_KEY_ATTR_IPV4_SRC: {
@@ -985,12 +1015,12 @@ test_key_and_mask(struct match *match)
                key->nw_proto == IPPROTO_ICMPV6) {
         if (mask->tp_src) {
             VLOG_DBG_RL(&rl,
-                        "offloading attribute icmp_type isn't supported");
+                        "offloading attribute icmpv6_type isn't supported");
             return EOPNOTSUPP;
         }
         if (mask->tp_dst) {
             VLOG_DBG_RL(&rl,
-                        "offloading attribute icmp_code isn't supported");
+                        "offloading attribute icmpv6_code isn't supported");
             return EOPNOTSUPP;
         }
     } else if (key->dl_type == htons(OFP_DL_TYPE_NOT_ETH_TYPE)) {
@@ -1083,6 +1113,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         flower.key.tunnel.tp_dst = tnl->tp_dst;
         flower.mask.tunnel.tos = tnl_mask->ip_tos;
         flower.mask.tunnel.ttl = tnl_mask->ip_ttl;
+        flower.mask.tunnel.id = (tnl->flags & FLOW_TNL_F_KEY) ? tnl_mask->tun_id : 0;
         flower_match_to_tun_opt(&flower, tnl, tnl_mask);
         flower.tunnel = true;
     }
@@ -1302,7 +1333,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     handle = get_ufid_tc_mapping(ufid, &prio, NULL);
     if (handle && prio) {
         VLOG_DBG_RL(&rl, "updating old handle: %d prio: %d", handle, prio);
-        tc_del_filter(ifindex, prio, handle, block_id);
+        del_filter_and_ufid_mapping(ifindex, prio, handle, block_id, ufid);
     }
 
     if (!prio) {
@@ -1356,9 +1387,9 @@ netdev_tc_flow_get(struct netdev *netdev OVS_UNUSED,
         return -ifindex;
     }
 
-    VLOG_DBG_RL(&rl, "flow get (dev %s prio %d handle %d)",
-                netdev_get_name(dev), prio, handle);
-    block_id = get_block_id_from_netdev(netdev);
+    block_id = get_block_id_from_netdev(dev);
+    VLOG_DBG_RL(&rl, "flow get (dev %s prio %d handle %d block_id %d)",
+                netdev_get_name(dev), prio, handle, block_id);
     err = tc_get_flower(ifindex, prio, handle, &flower, block_id);
     netdev_close(dev);
     if (err) {
@@ -1402,7 +1433,7 @@ netdev_tc_flow_del(struct netdev *netdev OVS_UNUSED,
         return -ifindex;
     }
 
-    block_id = get_block_id_from_netdev(netdev);
+    block_id = get_block_id_from_netdev(dev);
 
     if (stats) {
         memset(stats, 0, sizeof *stats);
@@ -1413,8 +1444,7 @@ netdev_tc_flow_del(struct netdev *netdev OVS_UNUSED,
         }
     }
 
-    error = tc_del_filter(ifindex, prio, handle, block_id);
-    del_ufid_tc_mapping(ufid);
+    error = del_filter_and_ufid_mapping(ifindex, prio, handle, block_id, ufid);
 
     netdev_close(dev);
 
@@ -1496,6 +1526,9 @@ netdev_tc_init_flow_api(struct netdev *netdev)
                     netdev_get_name(netdev), ovs_strerror(-ifindex));
         return -ifindex;
     }
+
+    /* make sure there is no ingress qdisc */
+    tc_add_del_ingress_qdisc(ifindex, false, 0);
 
     if (ovsthread_once_start(&block_once)) {
         probe_tc_block_support(ifindex);

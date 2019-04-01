@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2012, 2013, 2015 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2012, 2013, 2015, 2019 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -104,6 +104,9 @@ resize(struct hmap *hmap, size_t new_mask, const char *where)
             tmp.buckets[i] = NULL;//桶初始化为NULL
         }
     }
+    int n_big_buckets = 0;
+    int biggest_count = 0;
+    int n_biggest_buckets = 0;
     //把旧的hmap内容加入到tmp中
     for (i = 0; i <= hmap->mask; i++) {
         struct hmap_node *node, *next;
@@ -115,16 +118,32 @@ resize(struct hmap *hmap, size_t new_mask, const char *where)
         }
         //冲突链过长，打log说明
         if (count > 5) {
-            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
-            COVERAGE_INC(hmap_pathological);
-            VLOG_DBG_RL(&rl, "%s: %d nodes in bucket (%"PRIuSIZE" nodes, %"PRIuSIZE" buckets)",
-                        where, count, hmap->n, hmap->mask + 1);
+            n_big_buckets++;
+            if (count > biggest_count) {
+                biggest_count = count;
+                n_biggest_buckets = 1;
+            } else if (count == biggest_count) {
+                n_biggest_buckets++;
+            }
         }
     }
     //指针交换
     hmap_swap(hmap, &tmp);
     //旧hash表销毁
     hmap_destroy(&tmp);
+
+    if (n_big_buckets) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
+        COVERAGE_INC(hmap_pathological);
+        VLOG_DBG_RL(&rl, "%s: %d bucket%s with 6+ nodes, "
+                    "including %d bucket%s with %d nodes "
+                    "(%"PRIuSIZE" nodes total across %"PRIuSIZE" buckets)",
+                    where,
+                    n_big_buckets, n_big_buckets > 1 ? "s" : "",
+                    n_biggest_buckets, n_biggest_buckets > 1 ? "s" : "",
+                    biggest_count,
+                    hmap->n, hmap->mask + 1);
+    }
 }
 
 static size_t

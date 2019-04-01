@@ -22,6 +22,7 @@ ofctl_parse_flows__(struct ofputil_flow_mod *fms, size_t n_fms,
 
     if (!(usable_protocols & OFPUTIL_P_ANY)) {
         printf("no usable protocol\n");
+        goto free;
     }
     for (i = 0; i < sizeof(enum ofputil_protocol) * CHAR_BIT; i++) {
         protocol = 1u << i;
@@ -39,7 +40,11 @@ ofctl_parse_flows__(struct ofputil_flow_mod *fms, size_t n_fms,
 
         msg = ofputil_encode_flow_mod(fm, protocol);
         ofpbuf_delete(msg);
+    }
 
+free:
+    for (i = 0; i < n_fms; i++) {
+        struct ofputil_flow_mod *fm = &fms[i];
         free(CONST_CAST(struct ofpact *, fm->ofpacts));
         minimatch_destroy(&fm->match);
     }

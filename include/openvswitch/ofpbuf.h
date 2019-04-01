@@ -72,7 +72,7 @@ struct ofpbuf {
  *
  * Usage example:
  *
- *     uint64_t stub[1024 / 8]; // 1 kB stub properly aligned for 64-bit data.
+ *     uint64_t stub[1024 / 8];         <-- 1 kB stub aligned for 64-bit data.
  *     struct ofpbuf ofpbuf = OFPBUF_STUB_INITIALIZER(stub);
  */
 #define OFPBUF_STUB_INITIALIZER(STUB) {         \
@@ -162,6 +162,7 @@ char *ofpbuf_to_string(const struct ofpbuf *, size_t maxbytes);
 static inline struct ofpbuf *ofpbuf_from_list(const struct ovs_list *);
 void ofpbuf_list_delete(struct ovs_list *);
 static inline bool ofpbuf_equal(const struct ofpbuf *, const struct ofpbuf *);
+static inline bool ofpbuf_oversized(const struct ofpbuf *ofpacts);
 
 
 /* Frees memory that 'b' points to, as well as 'b' itself. */
@@ -248,6 +249,7 @@ static inline void ofpbuf_clear(struct ofpbuf *b)
 //ofpbuf前移size字节
 static inline void *ofpbuf_pull(struct ofpbuf *b, size_t size)
 {
+    ovs_assert(b->size >= size);
     void *data = b->data;
     b->data = (char*)b->data + size;
     b->size = b->size - size;
@@ -271,6 +273,11 @@ static inline bool ofpbuf_equal(const struct ofpbuf *a, const struct ofpbuf *b)
 {
     return a->size == b->size &&
            memcmp(a->data, b->data, a->size) == 0;
+}
+
+static inline bool ofpbuf_oversized(const struct ofpbuf *ofpacts)
+{
+    return (char *)ofpbuf_tail(ofpacts) - (char *)ofpacts->header > UINT16_MAX;
 }
 
 #ifdef  __cplusplus

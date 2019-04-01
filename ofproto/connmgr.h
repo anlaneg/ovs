@@ -37,28 +37,6 @@ struct rule;
 struct simap;
 struct sset;
 
-/* ofproto supports two kinds of OpenFlow connections:
- *
- *   - "Primary" connections to ordinary OpenFlow controllers.  ofproto
- *     maintains persistent connections to these controllers and by default
- *     sends them asynchronous messages such as packet-ins.
- *
- *   - "Service" connections, e.g. from ovs-ofctl.  When these connections
- *     drop, it is the other side's responsibility to reconnect them if
- *     necessary.  ofproto does not send them asynchronous messages by default.
- *
- * Currently, active (tcp, ssl, unix) connections are always "primary"
- * connections and passive (ptcp, pssl, punix) connections are always "service"
- * connections.  There is no inherent reason for this, but it reflects the
- * common case.
- */
-//上面的注释说明了，primary和service的区别
-enum ofconn_type {
-    OFCONN_PRIMARY,             /* An ordinary OpenFlow controller. */
-    OFCONN_SERVICE              /* A service connection, e.g. "ovs-ofctl". */
-};
-const char *ofconn_type_to_string(enum ofconn_type);
-
 /* An asynchronous message that might need to be queued between threads. */
 struct ofproto_async_msg {
     struct ovs_list list_node;  /* For queuing. */
@@ -81,7 +59,7 @@ void connmgr_destroy(struct connmgr *)
 
 void connmgr_run(struct connmgr *,
                  void (*handle_openflow)(struct ofconn *,
-                                         const struct ofpbuf *ofp_msg));
+                                         const struct ovs_list *msgs));
 void connmgr_wait(struct connmgr *);
 
 void connmgr_get_memory_usage(const struct connmgr *, struct simap *usage);

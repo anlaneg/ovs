@@ -212,6 +212,12 @@
         Global SSL configuration.
       </column>
     </group>
+    <group title="Security Configurations">
+      <column name="ipsec">
+        Tunnel encryption configuration. If this column is set to be true, all
+        OVN tunnels will be encrypted with IPsec.
+      </column>
+    </group>
   </table>
 
   <table name="Chassis" title="Physical Network Hypervisor and Gateway Information">
@@ -1812,11 +1818,6 @@
         </dd>
       </dl>
 
-      <p>
-        The following actions will likely be useful later, but they have not
-        been thought out carefully.
-      </p>
-
       <dl>
         <dt><code>icmp4 { <var>action</var>; </code>...<code> };</code></dt>
         <dd>
@@ -2176,6 +2177,12 @@ tcp.flags = RST;
         database's <ref table="Logical_Switch_Port" db="OVN_Northbound"/>
         table.  OVN does not prescribe a particular format for the
         logical port ID.
+      </column>
+
+      <column name="encap">
+        Points to supported encapsulation configurations to transmit
+        logical dataplane packets to this chassis.  Each entry is a <ref
+        table="Encap"/> record that describes the configuration.
       </column>
 
       <column name="chassis">

@@ -238,6 +238,10 @@ start_daemon () {
 stop_daemon () {
     if test -e "$rundir/$1.pid"; then
         if pid=`cat "$rundir/$1.pid"`; then
+            if pid_exists "$pid" >/dev/null 2>&1; then :; else
+                rm -f $rundir/$1.$pid.ctl $rundir/$1.$pid
+                return 0
+            fi
 
             graceful="EXIT .1 .25 .65 1"
             actions="TERM .1 .25 .65 1 1 1 1 \
@@ -390,15 +394,19 @@ move_ip_routes () {
     done
 }
 
-ovsdb_tool () {
+run_as_ovsuser() {
     if [ "$OVS_USER" != "" ]; then
         local uid=$(id -u "${OVS_USER%:*}")
         local gid=$(id -g "${OVS_USER%:*}")
         local groups=$(id -G "${OVS_USER%:*}" | tr ' ' ',')
-        setpriv --reuid "$uid" --regid "$gid" --groups "$groups" ovsdb-tool -vconsole:off "$@"
+        setpriv --reuid "$uid" --regid "$gid" --groups "$groups" "$@"
     else
-        ovsdb-tool -vconsole:off "$@"
+        "$@"
     fi
+}
+
+ovsdb_tool () {
+    run_as_ovsuser ovsdb-tool -vconsole:off "$@"
 }
 
 create_db () {

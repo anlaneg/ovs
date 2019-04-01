@@ -640,8 +640,7 @@ netdev_bsd_rxq_recv(struct netdev_rxq *rxq_, struct dp_packet_batch *batch,
     if (retval) {
         dp_packet_delete(packet);
     } else {
-        batch->packets[0] = packet;
-        batch->count = 1;
+        dp_packet_batch_init_packet(batch, packet);
     }
 
     if (qfill) {
@@ -690,8 +689,8 @@ netdev_bsd_send(struct netdev *netdev_, int qid OVS_UNUSED,
 {
     struct netdev_bsd *dev = netdev_bsd_cast(netdev_);
     const char *name = netdev_get_name(netdev_);
+    struct dp_packet *packet;
     int error;
-    int i;
 
     ovs_mutex_lock(&dev->mutex);
     if (dev->tap_fd < 0 && !dev->pcap) {
@@ -700,9 +699,9 @@ netdev_bsd_send(struct netdev *netdev_, int qid OVS_UNUSED,
         error = 0;
     }
 
-    for (i = 0; i < batch->count; i++) {
-        const void *data = dp_packet_data(batch->packets[i]);
-        size_t size = dp_packet_size(batch->packets[i]);
+    DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
+        const void *data = dp_packet_data(packet);
+        size_t size = dp_packet_size(packet);
 
         while (!error) {
             ssize_t retval;
@@ -997,7 +996,7 @@ netdev_bsd_get_stats(const struct netdev *netdev_, struct netdev_stats *stats)
     mib[3] = IFMIB_IFDATA;
     len = sizeof(ifmd);
     for (i = 1; i <= if_count; i++) {
-        mib[4] = i; //row
+        mib[4] = i; /* row */
         if (sysctl(mib, 6, &ifmd, &len, (void *)0, 0) == -1) {
             VLOG_DBG_RL(&rl, "%s: sysctl failed: %s",
                         netdev_get_name(netdev_), ovs_strerror(errno));

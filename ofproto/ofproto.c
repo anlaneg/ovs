@@ -85,7 +85,9 @@ const enum mf_field_id default_prefix_fields[2] =
 static void oftable_init(struct oftable *);
 static void oftable_destroy(struct oftable *);
 
-static void oftable_set_name(struct oftable *, const char *name);
+static void oftable_set_name(struct oftable *, const char *name, int level);
+static bool oftable_may_set_name(const struct oftable *,
+                                 const char *name, int level);
 
 static enum ofperr evict_rules_from_table(struct oftable *)
     OVS_REQUIRES(ofproto_mutex);
@@ -259,7 +261,7 @@ static void delete_flows__(struct rule_collection *,
 static void ofproto_group_delete_all__(struct ofproto *)
     OVS_REQUIRES(ofproto_mutex);
 static bool ofproto_group_exists(const struct ofproto *, uint32_t group_id);
-static void handle_openflow(struct ofconn *, const struct ofpbuf *);
+static void handle_openflow(struct ofconn *, const struct ovs_list *msgs);
 static enum ofperr ofproto_flow_mod_init(struct ofproto *,
                                          struct ofproto_flow_mod *,
                                          const struct ofputil_flow_mod *fm,
@@ -1498,7 +1500,7 @@ ofproto_configure_table(struct ofproto *ofproto, int table_id,
     ovs_assert(table_id >= 0 && table_id < ofproto->n_tables);
     table = &ofproto->tables[table_id];
 
-    oftable_set_name(table, s->name);
+    oftable_set_name(table, s->name, 2);
 
     if (table->flags & OFTABLE_READONLY) {
         return;
@@ -1926,6 +1928,12 @@ void
 ofproto_free_ofproto_controller_info(struct shash *info)
 {
     connmgr_free_controller_info(info);
+}
+
+const char *
+ofconn_type_to_string(enum ofconn_type type)
+{
+    return type == OFCONN_PRIMARY ? "primary" : "service";
 }
 
 /* Makes a deep copy of 'old' into 'port'. */
@@ -2358,18 +2366,20 @@ dealloc_ofp_port(struct ofproto *ofproto, ofp_port_t ofp_port)
     }
 }
 
-/* Opens and returns a netdev for 'ofproto_port' in 'ofproto', or a null
- * pointer if the netdev cannot be opened.  On success, also fills in
- * '*pp'.  */
-static struct netdev *
+/* Opens a netdev for 'ofproto_port' in 'ofproto' and set to p_netdev,
+ * or a null pointer if the netdev cannot be opened.  On success, also
+ * fills in '*pp'.  Returns 0 on success, or a positive error number. */
+static int
 ofport_open(struct ofproto *ofproto,
             struct ofproto_port *ofproto_port,
-            struct ofputil_phy_port *pp)
+            struct ofputil_phy_port *pp,
+            struct netdev **p_netdev)
 {
     enum netdev_flags flags;
     struct netdev *netdev;
     int error;
 
+    *p_netdev = NULL;
     error = netdev_open(ofproto_port->name, ofproto_port->type, &netdev);
     if (error) {
         VLOG_WARN_RL(&rl, "%s: ignoring port %s (%"PRIu32") because netdev %s "
@@ -2377,21 +2387,27 @@ ofport_open(struct ofproto *ofproto,
                      ofproto->name,
                      ofproto_port->name, ofproto_port->ofp_port,
                      ofproto_port->name, ovs_strerror(error));
-        return NULL;
+        return 0;
     }
 
     if (ofproto_port->ofp_port == OFPP_NONE) {
         if (!strcmp(ofproto->name, ofproto_port->name)) {//如果port名称与交换机名称一样，则定义为local接口
             ofproto_port->ofp_port = OFPP_LOCAL;
         } else {
-        	//分配一个编号
-            ofproto_port->ofp_port = alloc_ofp_port(ofproto,
-                                                    ofproto_port->name);
+            //分配一个编号
+            ofp_port_t ofp_port = alloc_ofp_port(ofproto,
+                                                 ofproto_port->name);
+            if (ofp_port == OFPP_NONE) {
+                VLOG_WARN_RL(&rl, "%s: failed to allocated ofp port number "
+                             "for %s.", ofproto->name, ofproto_port->name);
+                netdev_close(netdev);
+                return ENOSPC;
+            }
+            ofproto_port->ofp_port = ofp_port;
         }
     }
     pp->port_no = ofproto_port->ofp_port;
-    netdev_get_etheraddr(netdev, &pp->hw_addr);//设置其对应的mac地址 
-    pp->hw_addr64 = eth_addr64_zero;
+    netdev_get_etheraddr(netdev, &pp->hw_addr);
     ovs_strlcpy(pp->name, ofproto_port->name, sizeof pp->name);
     netdev_get_flags(netdev, &flags);
     pp->config = flags & NETDEV_UP ? 0 : OFPUTIL_PC_PORT_DOWN;
@@ -2401,7 +2417,8 @@ ofport_open(struct ofproto *ofproto,
     pp->curr_speed = netdev_features_to_bps(pp->curr, 0) / 1000;
     pp->max_speed = netdev_features_to_bps(pp->supported, 0) / 1000;
 
-    return netdev;
+    *p_netdev = netdev;
+    return 0;
 }
 
 /* Returns true if most fields of 'a' and 'b' are equal.  Differences in name
@@ -2411,7 +2428,6 @@ ofport_equal(const struct ofputil_phy_port *a,
              const struct ofputil_phy_port *b)
 {
     return (eth_addr_equals(a->hw_addr, b->hw_addr)
-            && eth_addr64_equals(a->hw_addr64, b->hw_addr64)
             && a->state == b->state
             && a->config == b->config
             && a->curr == b->curr
@@ -2564,6 +2580,7 @@ ofport_destroy__(struct ofport *port)
     struct ofproto *ofproto = port->ofproto;
     const char *name = netdev_get_name(port->netdev);
 
+    dealloc_ofp_port(port->ofproto, port->ofp_port);
     hmap_remove(&ofproto->ports, &port->hmap_node);
     shash_find_and_delete(&ofproto->port_by_name, name);
 
@@ -2575,7 +2592,6 @@ static void
 ofport_destroy(struct ofport *port, bool del)
 {
     if (port) {
-        dealloc_ofp_port(port->ofproto, port->ofp_port);
         port->ofproto->ofproto_class->port_destruct(port, del);
         ofport_destroy__(port);
      }
@@ -2660,6 +2676,17 @@ ofproto_port_get_stats(const struct ofport *port, struct netdev_stats *stats)
     return error;
 }
 
+int
+ofproto_vport_get_status(const struct ofproto *ofproto, ofp_port_t ofp_port,
+                         char **errp)
+{
+    struct ofport *ofport = ofproto_get_port(ofproto, ofp_port);
+
+    return (ofport && ofproto->ofproto_class->vport_get_status)
+           ? ofproto->ofproto_class->vport_get_status(ofport, errp)
+           : EOPNOTSUPP;
+}
+
 static int
 update_port(struct ofproto *ofproto, const char *name)
 {
@@ -2672,9 +2699,11 @@ update_port(struct ofproto *ofproto, const char *name)
     COVERAGE_INC(ofproto_update_port);
 
     /* Fetch 'name''s location and properties from the datapath. */
-    netdev = (!ofproto_port_query_by_name(ofproto, name, &ofproto_port)
-              ? ofport_open(ofproto, &ofproto_port, &pp)
-              : NULL);
+    if (ofproto_port_query_by_name(ofproto, name, &ofproto_port)) {
+        netdev = NULL;
+    } else {
+        error = ofport_open(ofproto, &ofproto_port, &pp, &netdev);
+    }
 
     if (netdev) {
         port = ofproto_get_port(ofproto, ofproto_port.ofp_port);
@@ -2755,7 +2784,7 @@ init_ports(struct ofproto *p)
             }
 
             //创建port对应的netdev
-            netdev = ofport_open(p, &ofproto_port, &pp);
+            ofport_open(p, &ofproto_port, &pp, &netdev);
             if (netdev) {
                 ofport_install(p, netdev, &pp);//创建对应port
                 if (ofp_to_u16(ofproto_port.ofp_port) < p->max_ports) {
@@ -3289,6 +3318,8 @@ query_tables(struct ofproto *ofproto,
         atomic_read_relaxed(&ofproto->tables[i].miss_config, &f->miss_config);
         f->max_entries = 1000000;
 
+        f->any_properties = true;
+
         bool more_tables = false;
         for (int j = i + 1; j < ofproto->n_tables; j++) {
             if (!(ofproto->tables[j].flags & OFTABLE_HIDDEN)) {
@@ -3458,8 +3489,7 @@ handle_set_config(struct ofconn *ofconn, const struct ofp_header *oh)
 static enum ofperr
 reject_slave_controller(struct ofconn *ofconn)
 {
-    if (ofconn_get_type(ofconn) == OFCONN_PRIMARY
-        && ofconn_get_role(ofconn) == OFPCR12_ROLE_SLAVE) {
+    if (ofconn_get_role(ofconn) == OFPCR12_ROLE_SLAVE) {
         return OFPERR_OFPBRC_IS_SLAVE;
     } else {
         return 0;
@@ -3732,8 +3762,7 @@ port_mod_start(struct ofconn *ofconn, struct ofputil_port_mod *pm,
     if (!*port) {
         return OFPERR_OFPPMFC_BAD_PORT;
     }
-    if (!eth_addr_equals((*port)->pp.hw_addr, pm->hw_addr) ||
-        !eth_addr64_equals((*port)->pp.hw_addr64, pm->hw_addr64)) {
+    if (!eth_addr_equals((*port)->pp.hw_addr, pm->hw_addr)) {
         return OFPERR_OFPPMFC_BAD_HW_ADDR;
     }
     return 0;
@@ -3831,33 +3860,237 @@ handle_table_stats_request(struct ofconn *ofconn,
     return 0;
 }
 
-static enum ofperr
-handle_table_features_request(struct ofconn *ofconn,
-                              const struct ofp_header *request)
+/* OpenFlow 1.5.1 section 7.3.5.18.1 "Table Features request and reply"
+ * says:
+ *
+ *    If a table feature included in the request has an empty list of
+ *    properties, the list of properties for that flow table is unchanged and
+ *    only the other features of that flow table are updated.
+ *
+ * This function copies the "list of properties" from '*src' to '*dst'. */
+static void
+copy_properties(struct ofputil_table_features *dst,
+                const struct ofputil_table_features *src)
+{
+    dst->any_properties = src->any_properties;
+    if (src->any_properties) {
+        dst->nonmiss = src->nonmiss;
+        dst->miss = src->miss;
+        dst->match = src->match;
+        dst->mask = src->mask;
+        dst->wildcard = src->wildcard;
+    }
+}
+
+/* Attempts to change the table features of the ofproto backing 'ofconn' to
+ * those specified in the table features request in 'msgs', given that the
+ * features are currently those in 'old'.
+ *
+ * Returns 0 if successful, an OpenFlow error if the caller should send an
+ * error message for the request as a whole, or -1 if the function already sent
+ * an error message for some message in 'msgs'. */
+static int
+handle_table_features_change(struct ofconn *ofconn,
+                             const struct ovs_list *msgs,
+                             const struct ofputil_table_features old[])
 {
     struct ofproto *ofproto = ofconn_get_ofproto(ofconn);
-    struct ofpbuf msg = ofpbuf_const_initializer(request,
-                                                 ntohs(request->length));
-    ofpraw_pull_assert(&msg);
-    if (msg.size || ofpmp_more(request)) {
+
+    enum ofp15_table_features_command command = OFPTFC15_REPLACE;
+    struct ofputil_table_features new[255];
+
+    unsigned long int seen[BITMAP_N_LONGS(255)];
+    memset(seen, 0, sizeof seen);
+
+    struct ofpbuf *msg;
+    int n = 0;
+    LIST_FOR_EACH (msg, list_node, msgs) {
+        for (;;) {
+            struct ofputil_table_features tf;
+            int retval = ofputil_decode_table_features(msg, &tf, NULL);
+            if (retval == EOF) {
+                break;
+            } else if (retval) {
+                ofconn_send_error(ofconn, msg->header, retval);
+                return -1;
+            }
+
+            /* Get command from first request. */
+            if (!n) {
+                command = tf.command;
+            }
+            n++;
+
+            /* Avoid duplicate tables. */
+            if (bitmap_is_set(seen, tf.table_id)) {
+                VLOG_INFO_RL(&rl, "duplicate table %"PRIu8, tf.table_id);
+                ofconn_send_error(ofconn, msg->header,
+                                  OFPERR_NXTFFC_DUP_TABLE);
+                return -1;
+            }
+            bitmap_set1(seen, tf.table_id);
+
+            /* Save table. */
+            new[tf.table_id] = tf;
+        }
+    }
+
+    if (!n) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < ofproto->n_tables; i++) {
+        if (ofproto->tables[i].flags & OFTABLE_HIDDEN) {
+            if (bitmap_is_set(seen, i)) {
+                VLOG_INFO_RL(&rl, "can't modify hidden table %"PRIuSIZE, i);
+                return OFPERR_OFPTFFC_EPERM;
+            }
+
+            new[i] = old[i];
+            bitmap_set1(seen, i);
+        }
+    }
+
+    switch (command) {
+    case OFPTFC15_REPLACE:
+        break;
+
+    case OFPTFC15_MODIFY:
+        for (size_t i = 0; i < ofproto->n_tables; i++) {
+            if (!bitmap_is_set(seen, i)) {
+                new[i] = old[i];
+                bitmap_set1(seen, i);
+            } else if (!new[i].any_properties) {
+                copy_properties(&new[i], &old[i]);
+            }
+        }
+        break;
+
+    case OFPTFC15_ENABLE:
+    case OFPTFC15_DISABLE:
+        /* It really isn't clear what these commands are supposed to do in an
+         * Open vSwitch context.  OVS doesn't have a concept of tables that
+         * exist but are not in the pipeline, and OVS table ids are always
+         * sequential from 0. */
         return OFPERR_OFPTFFC_EPERM;
     }
 
+    /* Make sure that the new number of tables is the same as the old number,
+     * because we don't support changing the number of tables or disabling
+     * tables. */
+    int n_tables = bitmap_scan(seen, 0, 0, 255);
+    bool skipped_tables = bitmap_scan(seen, 1, n_tables, 255) != 255;
+    if (n_tables != ofproto->n_tables || skipped_tables) {
+        if (skipped_tables) {
+            VLOG_INFO_RL(&rl, "can't disable table %d", n_tables);
+        } else {
+            VLOG_INFO_RL(&rl, "can't change number of tables from %d to %d",
+                         ofproto->n_tables, n_tables);
+        }
+        return (n_tables > ofproto->n_tables
+                ? OFPERR_OFPTFFC_TOO_MANY
+                : OFPERR_OFPTFFC_EPERM);
+    }
+
+    /* OpenFlow 1.5.1 section 7.3.5.18.1 "Table Features request and reply"
+     * says:
+     *
+     *     "All fields in ofp_table_features may be requested to be changed by
+     *     the controller with the exception of the max_entries field, this is
+     *     read only and returned by the switch."
+     *
+     * so forbid the controller from attempting to change it.
+     *
+     * (This seems like a particularly arbitrary prohibition since OVS could
+     * easily implement such a feature.  Whatever.) */
+    for (size_t i = 0; i < n_tables; i++) {
+        if (old[i].max_entries != new[i].max_entries) {
+            VLOG_INFO_RL(&rl, "can't change max_entries");
+            return OFPERR_OFPTFFC_EPERM;
+        }
+    }
+
+    /* Check that we can set table names. */
+    for (size_t i = 0; i < n_tables; i++) {
+        if (!oftable_may_set_name(&ofproto->tables[i], new[i].name, 1)) {
+            const char *name = ofproto->tables[i].name;
+            VLOG_INFO_RL(&rl, "can't change name of table %"PRIuSIZE" "
+                         "to %s because it is already set to %s via OVSDB",
+                         i, new[i].name, name ? name : "\"\"");
+            return OFPERR_OFPTFFC_EPERM;
+        }
+    }
+
+    /* Ask the provider to update its features.
+     *
+     * If the provider can't update features, just make sure that the
+     * controller isn't asking to enable new features.  OpenFlow says it's OK
+     * if a superset of the requested features are actually enabled. */
+    if (ofproto->ofproto_class->modify_tables) {
+        enum ofperr error = ofproto->ofproto_class->modify_tables(ofproto,
+                                                                  old, new);
+        if (error) {
+            VLOG_INFO_RL(&rl, "can't change table features");
+            return error;
+        }
+    } else {
+        for (size_t i = 0; i < n_tables; i++) {
+            if (!ofputil_table_features_are_superset(&old[i], &new[i])) {
+                VLOG_INFO_RL(&rl, "can't increase table features "
+                             "for table %"PRIuSIZE, i);
+                return OFPERR_OFPTFFC_EPERM;
+            }
+        }
+    }
+
+    /* Update table names. */
+    for (size_t i = 0; i < n_tables; i++) {
+        oftable_set_name(&ofproto->tables[i], new[i].name, 1);
+    }
+
+    return 0;
+}
+
+static void
+handle_table_features_request(struct ofconn *ofconn,
+                              const struct ovs_list *msgs)
+{
+    struct ofproto *ofproto = ofconn_get_ofproto(ofconn);
+
+    struct ofpbuf *msg = ofpbuf_from_list(ovs_list_back(msgs));
+    const struct ofp_header *request = msg->data;
+    ofpraw_pull_assert(msg);
+
+    /* Update the table features configuration, if requested. */
     struct ofputil_table_features *features;
     query_tables(ofproto, &features, NULL);
+    if (!ovs_list_is_singleton(msgs) || msg->size) {
+        int retval = handle_table_features_change(ofconn, msgs, features);
+        free(features);
+        if (retval) {
+            if (retval < 0) {
+                /* handle_table_features_change() already sent an error. */
+            } else {
+                ofconn_send_error(ofconn, request, retval);
+            }
+            return;
+        }
 
+        /* Features may have changed, re-query. */
+        query_tables(ofproto, &features, NULL);
+    }
+
+    /* Reply the controller with the table configuration. */
     struct ovs_list replies;
     ofpmp_init(&replies, request);
     for (size_t i = 0; i < ofproto->n_tables; i++) {
         if (!(ofproto->tables[i].flags & OFTABLE_HIDDEN)) {
-            ofputil_append_table_features_reply(&features[i], &replies);
+            ofputil_append_table_features(&features[i], NULL, &replies);
         }
     }
     ofconn_send_replies(ofconn, &replies);
 
     free(features);
-
-    return 0;
 }
 
 /* Returns the vacancy of 'oftable', a number that ranges from 0 (if the table
@@ -5496,9 +5729,7 @@ modify_flows_init_loose(struct ofproto *ofproto,
                              (fm->flags & OFPUTIL_FF_NO_READONLY) != 0);
     /* Must create a new flow in advance for the case that no matches are
      * found.  Also used for template for multiple modified flows. */
-    add_flow_init(ofproto, ofm, fm);
-
-    return 0;
+    return add_flow_init(ofproto, ofm, fm);
 }
 
 /* Implements OFPFC_MODIFY.  Returns 0 on success or an OpenFlow error code on
@@ -5581,9 +5812,7 @@ modify_flow_init_strict(struct ofproto *ofproto OVS_UNUSED,
                              (fm->flags & OFPUTIL_FF_NO_READONLY) != 0);
     /* Must create a new flow in advance for the case that no matches are
      * found.  Also used for template for multiple modified flows. */
-    add_flow_init(ofproto, ofm, fm);
-
-    return 0;
+    return add_flow_init(ofproto, ofm, fm);
 }
 
 /* Implements OFPFC_MODIFY_STRICT.  Returns 0 on success or an OpenFlow error
@@ -6209,49 +6438,60 @@ flow_monitor_delete(struct ofconn *ofconn, uint32_t id)
 }
 
 static enum ofperr
-handle_flow_monitor_request(struct ofconn *ofconn, const struct ofp_header *oh)
+handle_flow_monitor_request(struct ofconn *ofconn, const struct ovs_list *msgs)
     OVS_EXCLUDED(ofproto_mutex)
 {
     struct ofproto *ofproto = ofconn_get_ofproto(ofconn);
-
-    struct ofpbuf b = ofpbuf_const_initializer(oh, ntohs(oh->length));
 
     struct ofmonitor **monitors = NULL;
     size_t allocated_monitors = 0;
     size_t n_monitors = 0;
 
-    enum ofperr error;
-
     ovs_mutex_lock(&ofproto_mutex);
-    for (;;) {
-        struct ofputil_flow_monitor_request request;
-        struct ofmonitor *m;
-        int retval;
+    struct ofpbuf *b;
+    LIST_FOR_EACH (b, list_node, msgs) {
+        for (;;) {
+            enum ofperr error;
 
-        retval = ofputil_decode_flow_monitor_request(&request, &b);
-        if (retval == EOF) {
-            break;
-        } else if (retval) {
-            error = retval;
-            goto error;
-        }
+            struct ofputil_flow_monitor_request request;
+            int retval = ofputil_decode_flow_monitor_request(&request, b);
+            if (retval == EOF) {
+                break;
+            } else if (retval) {
+                error = retval;
+                goto error;
+            }
 
-        if (request.table_id != 0xff
-            && request.table_id >= ofproto->n_tables) {
-            error = OFPERR_OFPBRC_BAD_TABLE_ID;
-            goto error;
-        }
+            if (request.table_id != OFPTT_ALL
+                && request.table_id >= ofproto->n_tables) {
+                error = OFPERR_OFPBRC_BAD_TABLE_ID;
+                goto error;
+            }
 
-        error = ofmonitor_create(&request, ofconn, &m);
-        if (error) {
-            goto error;
-        }
+            struct ofmonitor *m;
+            error = ofmonitor_create(&request, ofconn, &m);
+            if (error) {
+                goto error;
+            }
 
-        if (n_monitors >= allocated_monitors) {
-            monitors = x2nrealloc(monitors, &allocated_monitors,
-                                  sizeof *monitors);
+            if (n_monitors >= allocated_monitors) {
+                monitors = x2nrealloc(monitors, &allocated_monitors,
+                                      sizeof *monitors);
+            }
+            monitors[n_monitors++] = m;
+            continue;
+
+        error:
+            ofconn_send_error(ofconn, b->data, error);
+
+            for (size_t i = 0; i < n_monitors; i++) {
+                ofmonitor_destroy(monitors[i]);
+            }
+            free(monitors);
+            ovs_mutex_unlock(&ofproto_mutex);
+
+            return error;
         }
-        monitors[n_monitors++] = m;
     }
 
     struct rule_collection rules;
@@ -6261,7 +6501,7 @@ handle_flow_monitor_request(struct ofconn *ofconn, const struct ofp_header *oh)
     }
 
     struct ovs_list replies;
-    ofpmp_init(&replies, oh);
+    ofpmp_init(&replies, ofpbuf_from_list(ovs_list_back(msgs))->header);
     ofmonitor_compose_refresh_updates(&rules, &replies);
     ovs_mutex_unlock(&ofproto_mutex);
 
@@ -6271,15 +6511,6 @@ handle_flow_monitor_request(struct ofconn *ofconn, const struct ofp_header *oh)
     free(monitors);
 
     return 0;
-
-error:
-    for (size_t i = 0; i < n_monitors; i++) {
-        ofmonitor_destroy(monitors[i]);
-    }
-    free(monitors);
-    ovs_mutex_unlock(&ofproto_mutex);
-
-    return error;
 }
 
 static enum ofperr
@@ -7275,6 +7506,8 @@ modify_group_start(struct ofproto *ofproto, struct ofproto_group_mod *ogm)
     *CONST_CAST(long long int *, &(new_group->created)) = old_group->created;
     *CONST_CAST(long long int *, &(new_group->modified)) = time_msec();
 
+    *CONST_CAST(uint32_t *, &(new_group->n_buckets)) =
+        ovs_list_size(&(new_group->buckets));
     group_collection_add(&ogm->old_groups, old_group);
 
     /* Mark the old group for deletion. */
@@ -8161,26 +8394,14 @@ handle_tlv_table_request(struct ofconn *ofconn, const struct ofp_header *oh)
     return 0;
 }
 
+/* Processes the single-part OpenFlow message 'oh' that was received on
+ * 'ofconn'.  Returns an ofperr that, if nonzero, the caller should send back
+ * to the controller. */
 static enum ofperr
-handle_openflow__(struct ofconn *ofconn, const struct ofpbuf *msg)
+handle_single_part_openflow(struct ofconn *ofconn, const struct ofp_header *oh,
+                            enum ofptype type)
     OVS_EXCLUDED(ofproto_mutex)
 {
-    const struct ofp_header *oh = msg->data;
-    enum ofptype type;
-    enum ofperr error;
-
-    error = ofptype_decode(&type, oh);
-    if (error) {
-        return error;
-    }
-    if (oh->version >= OFP13_VERSION && ofpmsg_is_stat_request(oh)
-        && ofpmp_more(oh)) {
-        /* We have no buffer implementation for multipart requests.
-         * Report overflow for requests which consists of multiple
-         * messages. */
-        return OFPERR_OFPBRC_MULTIPART_BUFFER_OVERFLOW;
-    }
-
     switch (type) {
         /* OpenFlow requests. */
     	//依据rfc规定，tcp协议的keep alive报文发送间隔，默认需要大于２小时
@@ -8276,9 +8497,6 @@ handle_openflow__(struct ofconn *ofconn, const struct ofpbuf *msg)
     case OFPTYPE_TABLE_STATS_REQUEST:
         return handle_table_stats_request(ofconn, oh);
 
-    case OFPTYPE_TABLE_FEATURES_STATS_REQUEST:
-        return handle_table_features_request(ofconn, oh);
-
     case OFPTYPE_TABLE_DESC_REQUEST:
         return handle_table_desc_request(ofconn, oh);
 
@@ -8291,8 +8509,10 @@ handle_openflow__(struct ofconn *ofconn, const struct ofpbuf *msg)
     case OFPTYPE_PORT_DESC_STATS_REQUEST:
         return handle_port_desc_stats_request(ofconn, oh);
 
+    case OFPTYPE_TABLE_FEATURES_STATS_REQUEST:
     case OFPTYPE_FLOW_MONITOR_STATS_REQUEST:
-        return handle_flow_monitor_request(ofconn, oh);
+        /* Handled as multipart requests in handle_openflow(). */
+        OVS_NOT_REACHED();
 
     case OFPTYPE_METER_STATS_REQUEST:
     case OFPTYPE_METER_CONFIG_STATS_REQUEST:
@@ -8379,15 +8599,28 @@ handle_openflow__(struct ofconn *ofconn, const struct ofpbuf *msg)
 }
 
 static void
-handle_openflow(struct ofconn *ofconn, const struct ofpbuf *ofp_msg)
+handle_openflow(struct ofconn *ofconn, const struct ovs_list *msgs)
     OVS_EXCLUDED(ofproto_mutex)
 {
-    enum ofperr error = handle_openflow__(ofconn, ofp_msg);
-
-    if (error) {
-        ofconn_send_error(ofconn, ofp_msg->data, error);
-    }
     COVERAGE_INC(ofproto_recv_openflow);
+
+    struct ofpbuf *msg = ofpbuf_from_list(ovs_list_front(msgs));
+    enum ofptype type;
+    enum ofperr error = ofptype_decode(&type, msg->data);
+    if (!error) {
+        if (type == OFPTYPE_TABLE_FEATURES_STATS_REQUEST) {
+            handle_table_features_request(ofconn, msgs);
+        } else if (type == OFPTYPE_FLOW_MONITOR_STATS_REQUEST) {
+            handle_flow_monitor_request(ofconn, msgs);
+        } else if (!ovs_list_is_short(msgs)) {
+            error = OFPERR_OFPBRC_BAD_STAT;
+        } else {
+            error = handle_single_part_openflow(ofconn, msg->data, type);
+        }
+    }
+    if (error) {
+        ofconn_send_error(ofconn, msg->data, error);
+    }
 }
 
 static uint64_t
@@ -8709,26 +8942,49 @@ oftable_destroy(struct oftable *table)//流表销毁
     free(table->name);
 }
 
-/* Changes the name of 'table' to 'name'.  If 'name' is NULL or the empty
- * string, then 'table' will use its default name.
+/* Changes the name of 'table' to 'name'.  Null or empty string 'name' unsets
+ * the name.
+ *
+ * 'level' should be 1 if the name is being set via OpenFlow, or 2 if the name
+ * is being set via OVSDB.  Higher levels get precedence.
  *
  * This only affects the name exposed for a table exposed through the OpenFlow
  * OFPST_TABLE (as printed by "ovs-ofctl dump-tables"). */
 //设置流表的名称
 static void
-oftable_set_name(struct oftable *table, const char *name)
+oftable_set_name(struct oftable *table, const char *name, int level)
 {
-    if (name && name[0]) {
-        int len = strnlen(name, OFP_MAX_TABLE_NAME_LEN);
-        if (!table->name || strncmp(name, table->name, len)) {
-        	//无名称或者和原名称不相同
+    int len = name ? strnlen(name, OFP_MAX_TABLE_NAME_LEN) : 0;
+    if (level >= table->name_level) {
+        if (name) {
+            if (name[0]) {
+                if (!table->name || strncmp(name, table->name, len)) {
+                    free(table->name);
+                    table->name = xmemdup0(name, len);
+                }
+            } else {
+                free(table->name);
+                table->name = NULL;
+            }
+            table->name_level = level;
+        } else if (table->name_level == level) {
             free(table->name);
-            table->name = xmemdup0(name, len);
+            table->name = NULL;
+            table->name_level = 0;
         }
-    } else {
-        free(table->name);
-        table->name = NULL;
     }
+}
+
+/* Returns true if oftable_set_name(table, name, level) would be effective,
+ * false otherwise.  */
+static bool
+oftable_may_set_name(const struct oftable *table, const char *name, int level)
+{
+    return (level >= table->name_level
+            || !name
+            || !table->name
+            || !strncmp(name, table->name,
+                        strnlen(name, OFP_MAX_TABLE_NAME_LEN)));
 }
 
 /* oftables support a choice of two policies when adding a rule would cause the

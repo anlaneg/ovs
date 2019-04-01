@@ -46,6 +46,7 @@
 #include "openvswitch/meta-flow.h"
 #include "openvswitch/ofp-print.h"
 #include "openvswitch/ofpbuf.h"
+#include "openvswitch/vconn.h"
 #include "openvswitch/vlog.h"
 #include "ovs-lldp.h"
 #include "ovs-numa.h"
@@ -2325,9 +2326,22 @@ static void
 iface_refresh_ofproto_status(struct iface *iface)
 {
     int current;
+    int error;
+    char *errp = NULL;
 
     if (iface_is_synthetic(iface)) {
         return;
+    }
+
+    error = ofproto_vport_get_status(iface->port->bridge->ofproto,
+                                     iface->ofp_port, &errp);
+    if (error && error != EOPNOTSUPP) {
+        /* Need to verify to avoid race with transaction from
+         * 'bridge_reconfigure' that clears errors explicitly. */
+        ovsrec_interface_verify_error(iface->cfg);
+        ovsrec_interface_set_error(iface->cfg,
+                                   errp ? errp : ovs_strerror(error));
+        free(errp);
     }
 
     current = ofproto_port_is_lacp_current(iface->port->bridge->ofproto,
@@ -2788,7 +2802,7 @@ ofp12_controller_role_to_str(enum ofp12_controller_role role)
         return "slave";
     case OFPCR12_ROLE_NOCHANGE:
     default:
-        return "*** INVALID ROLE ***";
+        return NULL;
     }
 }
 
@@ -3640,6 +3654,14 @@ equal_pathnames(const char *a, const char *b, size_t b_stoplen)
     }
 }
 
+static enum ofconn_type
+get_controller_ofconn_type(const char *target, const char *type)
+{
+    return (type
+            ? (!strcmp(type, "primary") ? OFCONN_PRIMARY : OFCONN_SERVICE)
+            : (!vconn_verify_name(target) ? OFCONN_PRIMARY : OFCONN_SERVICE));
+}
+
 //配置远程mangers
 static void
 bridge_configure_remotes(struct bridge *br,
@@ -3680,6 +3702,7 @@ bridge_configure_remotes(struct bridge *br,
     /* Add managment controller. */
     struct ofproto_controller *oc = xmalloc(sizeof *oc);
     *oc = (struct ofproto_controller) {
+        .type = OFCONN_SERVICE,
         .probe_interval = 60,
         .band = OFPROTO_OUT_OF_BAND,
         .enable_async_msgs = true,
@@ -3750,6 +3773,7 @@ bridge_configure_remotes(struct bridge *br,
 
         oc = xmalloc(sizeof *oc);
         *oc = (struct ofproto_controller) {
+            .type = get_controller_ofconn_type(c->target, c->type),
             .max_backoff = c->max_backoff ? *c->max_backoff / 1000 : 8,
             .probe_interval = (c->inactivity_probe
                                ? *c->inactivity_probe / 1000 : 5),

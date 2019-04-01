@@ -39,7 +39,6 @@
 #include "fatal-signal.h"
 #include "hash.h"
 #include "openvswitch/list.h"
-#include "netdev-dpdk.h"
 #include "netdev-provider.h"
 #include "netdev-vport.h"
 #include "odp-netlink.h"
@@ -844,10 +843,10 @@ netdev_pop_header(struct netdev *netdev, struct dp_packet_batch *batch)
     		//见netdev_vport_tunnel_register函数处理
         packet = netdev->netdev_class->pop_header(packet);//看netdev-vport.c
         if (packet) {
-            /* Reset the checksum offload flags if present, to avoid wrong
+            /* Reset the offload flags if present, to avoid wrong
              * interpretation in the further packet processing when
              * recirculated.*/
-            reset_dp_packet_checksum_ol_flags(packet);
+            dp_packet_reset_offload(packet);
             dp_packet_batch_refill(batch, packet, i);
         }
     }
@@ -2103,7 +2102,8 @@ retry:
                  * address addition which may cause one of the returned
                  * ifa_name values to be NULL. In such case, we know that we've
                  * got an inconsistent dump. Retry but beware of an endless
-                 * loop. */
+                 * loop. From glibc 2.28 and beyond, this workaround is not
+                 * needed and should be eventually removed. */
                 freeifaddrs(if_addr_list);
                 goto retry;
             } else {

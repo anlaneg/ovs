@@ -185,12 +185,15 @@ first_ptable(const struct ovnact_encode_params *ep,
             : ep->egress_ptable);
 }
 
+#define MAX_NESTED_ACTION_DEPTH 32
+
 /* Context maintained during ovnacts_parse(). */
 struct action_context {
     const struct ovnact_parse_params *pp; /* Parameters. */
     struct lexer *lexer;        /* Lexer for pulling more tokens. */
     struct ofpbuf *ovnacts;     /* Actions. */
     struct expr *prereqs;       /* Prerequisites to apply to match. */
+    int depth;                  /* Current nested action depth. */
 };
 
 static void parse_actions(struct action_context *, enum lex_type sentinel);
@@ -1102,6 +1105,11 @@ parse_nested_action(struct action_context *ctx, enum ovnact_type type,
         return;
     }
 
+    if (ctx->depth + 1 == MAX_NESTED_ACTION_DEPTH) {
+        lexer_error(ctx->lexer, "maximum depth of nested actions reached");
+        return;
+    }
+
     uint64_t stub[1024 / 8];
     struct ofpbuf nested = OFPBUF_STUB_INITIALIZER(stub);
 
@@ -1110,6 +1118,7 @@ parse_nested_action(struct action_context *ctx, enum ovnact_type type,
         .lexer = ctx->lexer,
         .ovnacts = &nested,
         .prereqs = NULL,
+        .depth = ctx->depth + 1,
     };
     parse_actions(&inner_ctx, LEX_T_RCURLY);
 
@@ -1955,12 +1964,6 @@ parse_put_nd_ra_opts(struct action_context *ctx, const struct expr_field *dst,
         return;
     }
 
-    if (addr_mode_stateful && prefix_set) {
-        lexer_error(ctx->lexer, "prefix option can't be"
-                    " set when address mode is dhcpv6_stateful.");
-        return;
-    }
-
     if (!addr_mode_stateful && !prefix_set) {
         lexer_error(ctx->lexer, "prefix option needs "
                     "to be set when address mode is slaac/dhcpv6_stateless.");
@@ -1979,18 +1982,21 @@ format_PUT_ND_RA_OPTS(const struct ovnact_put_opts *po,
 
 static void
 encode_put_nd_ra_option(const struct ovnact_gen_option *o,
-                        struct ofpbuf *ofpacts, struct ovs_ra_msg *ra)
+                        struct ofpbuf *ofpacts, ptrdiff_t ra_offset)
 {
     const union expr_constant *c = o->value.values;
 
     switch (o->option->code) {
     case ND_RA_FLAG_ADDR_MODE:
+    {
+        struct ovs_ra_msg *ra = ofpbuf_at(ofpacts, ra_offset, sizeof *ra);
         if (!strcmp(c->string, "dhcpv6_stateful")) {
             ra->mo_flags = IPV6_ND_RA_FLAG_MANAGED_ADDR_CONFIG;
         } else if (!strcmp(c->string, "dhcpv6_stateless")) {
             ra->mo_flags = IPV6_ND_RA_FLAG_OTHER_ADDR_CONFIG;
         }
         break;
+    }
 
     case ND_OPT_SOURCE_LINKADDR:
     {
@@ -2018,10 +2024,14 @@ encode_put_nd_ra_option(const struct ovnact_gen_option *o,
         struct ovs_nd_prefix_opt *prefix_opt =
             ofpbuf_put_uninit(ofpacts, sizeof *prefix_opt);
         uint8_t prefix_len = ipv6_count_cidr_bits(&c->mask.ipv6);
+        struct ovs_ra_msg *ra = ofpbuf_at(ofpacts, ra_offset, sizeof *ra);
         prefix_opt->type = ND_OPT_PREFIX_INFORMATION;
         prefix_opt->len = 4;
         prefix_opt->prefix_len = prefix_len;
-        prefix_opt->la_flags = IPV6_ND_RA_OPT_PREFIX_FLAGS;
+        prefix_opt->la_flags = IPV6_ND_RA_OPT_PREFIX_ON_LINK;
+        if (!(ra->mo_flags & IPV6_ND_RA_FLAG_MANAGED_ADDR_CONFIG)) {
+            prefix_opt->la_flags |= IPV6_ND_RA_OPT_PREFIX_AUTONOMOUS;
+        }
         put_16aligned_be32(&prefix_opt->valid_lifetime,
                            htonl(IPV6_ND_RA_OPT_PREFIX_VALID_LIFETIME));
         put_16aligned_be32(&prefix_opt->preferred_lifetime,
@@ -2052,6 +2062,7 @@ encode_PUT_ND_RA_OPTS(const struct ovnact_put_opts *po,
      * pinctrl module receives the ICMPv6 Router Solicitation packet
      * it can copy the userdata field AS IS and resume the packet.
      */
+    size_t ra_offset = ofpacts->size;
     struct ovs_ra_msg *ra = ofpbuf_put_zeros(ofpacts, sizeof *ra);
     ra->icmph.icmp6_type = ND_ROUTER_ADVERT;
     ra->cur_hop_limit = IPV6_ND_RA_CUR_HOP_LIMIT;
@@ -2060,7 +2071,7 @@ encode_PUT_ND_RA_OPTS(const struct ovnact_put_opts *po,
 
     for (const struct ovnact_gen_option *o = po->options;
          o < &po->options[po->n_options]; o++) {
-        encode_put_nd_ra_option(o, ofpacts, ra);
+        encode_put_nd_ra_option(o, ofpacts, ra_offset);
     }
 
     encode_finish_controller_op(oc_offset, ofpacts);

@@ -234,9 +234,8 @@ ofp_print_table_features_reply(struct ds *s, const struct ofp_header *oh)
     int first_ditto = -1, last_ditto = -1;
     for (int i = 0; ; i++) {
         struct ofputil_table_features tf;
-        int retval;
-
-        retval = ofputil_decode_table_features(&b, &tf, true);
+        struct ofpbuf raw_properties;
+        int retval = ofputil_decode_table_features(&b, &tf, &raw_properties);
         if (retval) {
             ofputil_table_features_format_finish(s, first_ditto, last_ditto);
             return retval != EOF ? retval : 0;
@@ -807,9 +806,6 @@ ofp_print_version(const struct ofp_header *oh,
         break;
     case OFP15_VERSION:
         ds_put_cstr(string, " (OF1.5)");
-        break;
-    case OFP16_VERSION:
-        ds_put_cstr(string, " (OF1.6)");
         break;
     default:
         ds_put_format(string, " (OF 0x%02"PRIx8")", oh->version);

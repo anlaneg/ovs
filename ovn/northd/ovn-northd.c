@@ -63,12 +63,12 @@ static const char *ovnnb_db;
 static const char *ovnsb_db;
 static const char *unixctl_path;
 
-#define MAC_ADDR_PREFIX 0x0A0000000000ULL
 #define MAC_ADDR_SPACE 0xffffff
 
 /* MAC address management (macam) table of "struct eth_addr"s, that holds the
  * MAC addresses allocated by the OVN ipam module. */
 static struct hmap macam = HMAP_INITIALIZER(&macam);//地址mac地址的表
+static struct eth_addr mac_prefix;
 
 #define MAX_OVN_TAGS 4096
 
@@ -423,6 +423,7 @@ struct ipam_info {
     unsigned long *allocated_ipv4s; /* A bitmap of allocated IPv4s */ //一个bitmap结构，用于进行ip地址申请释放
     bool ipv6_prefix_set;//是否设置了ipv6前缀
     struct in6_addr ipv6_prefix;//ipv6前缀信息
+    bool mac_only;
 };
 
 /* The 'key' comes from nbs->header_.uuid or nbr->header_.uuid or
@@ -573,6 +574,10 @@ init_ipam_info_for_datapath(struct ovn_datapath *od)
     }
 
     if (!subnet_str) {
+        if (!ipv6_prefix) {
+            od->ipam_info.mac_only = smap_get_bool(&od->nbs->other_config,
+                                                   "mac_only", false);
+        }
     	//无subnet配置不处理
         return;
     }
@@ -981,11 +986,13 @@ ipam_insert_mac(struct eth_addr *ea, bool check)
     }
 
     uint64_t mac64 = eth_addr_to_uint64(*ea);
+    uint64_t prefix = eth_addr_to_uint64(mac_prefix);
+
     /* If the new MAC was not assigned by this address management system or
      * check is true and the new MAC is a duplicate, do not insert it into the
      * macam hmap. */
-    if (((mac64 ^ MAC_ADDR_PREFIX) >> 24) //组播地址
-        || (check && ipam_is_duplicate_mac(ea, mac64, true))) { //地址已存在
+    if (((mac64 ^ prefix) >> 24)//组播地址
+        || (check && ipam_is_duplicate_mac(ea, mac64, true))) {//地址已存在
         return;
     }
 
@@ -1092,21 +1099,18 @@ ipam_add_port_addresses(struct ovn_datapath *od, struct ovn_port *op)
 }
 
 static uint64_t
-ipam_get_unused_mac(void)
+ipam_get_unused_mac(ovs_be32 ip)
 {
-    /* Stores the suffix of the most recently ipam-allocated MAC address. */
-    static uint32_t last_mac;
-
-    uint64_t mac64;
+    uint32_t mac_addr_suffix, i, base_addr = ntohl(ip) & MAC_ADDR_SPACE;
     struct eth_addr mac;
-    uint32_t mac_addr_suffix, i;
+    uint64_t mac64;
+
     for (i = 0; i < MAC_ADDR_SPACE - 1; i++) {
         /* The tentative MAC's suffix will be in the interval (1, 0xfffffe). */
-        mac_addr_suffix = ((last_mac + i) % (MAC_ADDR_SPACE - 1)) + 1;
-        mac64 = MAC_ADDR_PREFIX | mac_addr_suffix;
+        mac_addr_suffix = ((base_addr + i) % (MAC_ADDR_SPACE - 1)) + 1;
+        mac64 =  eth_addr_to_uint64(mac_prefix) | mac_addr_suffix;
         eth_addr_from_uint64(mac64, &mac);
-        if (!ipam_is_duplicate_mac(&mac, mac64, false)) {
-            last_mac = mac_addr_suffix;
+        if (!ipam_is_duplicate_mac(&mac, mac64, true)) {
             break;
         }
     }
@@ -1148,10 +1152,12 @@ enum dynamic_update_type {
 struct dynamic_address_update {
     struct ovs_list node;       /* In build_ipam()'s list of updates. */
 
+    struct ovn_datapath *od;
     struct ovn_port *op;
 
     struct lport_addresses current_addresses;
     struct eth_addr static_mac;
+    ovs_be32 static_ip;
     enum dynamic_update_type mac;
     enum dynamic_update_type ipv4;
     enum dynamic_update_type ipv6;
@@ -1174,7 +1180,9 @@ dynamic_mac_changed(const char *lsp_addresses,
    }
 
    uint64_t mac64 = eth_addr_to_uint64(update->current_addresses.ea);
-   if ((mac64 ^ MAC_ADDR_PREFIX) >> 24) {
+   uint64_t prefix = eth_addr_to_uint64(mac_prefix);
+
+   if ((mac64 ^ prefix) >> 24) {
        return DYNAMIC;
    } else {
        return NONE;
@@ -1182,7 +1190,8 @@ dynamic_mac_changed(const char *lsp_addresses,
 }
 
 static enum dynamic_update_type
-dynamic_ip4_changed(struct dynamic_address_update *update)
+dynamic_ip4_changed(const char *lsp_addrs,
+                    struct dynamic_address_update *update)
 {
     const struct ipam_info *ipam = &update->op->od->ipam_info;
     const struct lport_addresses *cur_addresses = &update->current_addresses;
@@ -1215,6 +1224,25 @@ dynamic_ip4_changed(struct dynamic_address_update *update)
          */
         return DYNAMIC;
     } else {
+        ovs_be32 new_ip;
+        int n = 0;
+
+        if (ovs_scan(lsp_addrs, "dynamic "IP_SCAN_FMT"%n",
+                     IP_SCAN_ARGS(&new_ip), &n)
+            && lsp_addrs[n] == '\0') {
+
+            index = ntohl(new_ip) - ipam->start_ipv4;
+            if (ntohl(new_ip) < ipam->start_ipv4 ||
+                index > ipam->total_ipv4s ||
+                bitmap_is_set(ipam->allocated_ipv4s, index)) {
+                /* new static ip is not valid */
+                return DYNAMIC;
+            } else if (cur_addresses->ipv4_addrs[0].addr != new_ip) {
+                update->ipv4 = STATIC;
+                update->static_ip = new_ip;
+                return STATIC;
+            }
+        }
         return NONE;
     }
 }
@@ -1267,7 +1295,7 @@ dynamic_addresses_check_for_updates(const char *lsp_addrs,
                                     struct dynamic_address_update *update)
 {
     update->mac = dynamic_mac_changed(lsp_addrs, update);
-    update->ipv4 = dynamic_ip4_changed(update);
+    update->ipv4 = dynamic_ip4_changed(lsp_addrs, update);
     update->ipv6 = dynamic_ip6_changed(update);
     if (update->mac == NONE &&
         update->ipv4 == NONE &&
@@ -1310,6 +1338,7 @@ set_dynamic_updates(const char *addrspec,
                     struct dynamic_address_update *update)
 {
     struct eth_addr mac;
+    ovs_be32 ip;
     int n = 0;
     if (ovs_scan(addrspec, ETH_ADDR_SCAN_FMT" dynamic%n",
                  ETH_ADDR_SCAN_ARGS(mac), &n)
@@ -1319,7 +1348,13 @@ set_dynamic_updates(const char *addrspec,
     } else {
         update->mac = DYNAMIC;
     }
-    if (update->op->od->ipam_info.allocated_ipv4s) {
+
+    if (ovs_scan(addrspec, "dynamic "IP_SCAN_FMT"%n",
+                 IP_SCAN_ARGS(&ip), &n)
+        && addrspec[n] == '\0') {
+        update->ipv4 = STATIC;
+        update->static_ip = ip;
+    } else if (update->op->od->ipam_info.allocated_ipv4s) {
         update->ipv4 = DYNAMIC;
     } else {
         update->ipv4 = NONE;
@@ -1332,9 +1367,24 @@ set_dynamic_updates(const char *addrspec,
 }
 
 static void
-update_dynamic_addresses(struct ovn_datapath *od,
-                         struct dynamic_address_update *update)
+update_dynamic_addresses(struct dynamic_address_update *update)
 {
+    ovs_be32 ip4 = 0;
+    switch (update->ipv4) {
+    case NONE:
+        if (update->current_addresses.n_ipv4_addrs) {
+            ip4 = update->current_addresses.ipv4_addrs[0].addr;
+        }
+        break;
+    case REMOVE:
+        break;
+    case STATIC:
+        ip4 = update->static_ip;
+        break;
+    case DYNAMIC:
+        ip4 = htonl(ipam_get_unused_ip(update->od));
+    }
+
     struct eth_addr mac;
     switch (update->mac) {
     case NONE:
@@ -1346,23 +1396,8 @@ update_dynamic_addresses(struct ovn_datapath *od,
         mac = update->static_mac;
         break;
     case DYNAMIC:
-        eth_addr_from_uint64(ipam_get_unused_mac(), &mac);
+        eth_addr_from_uint64(ipam_get_unused_mac(ip4), &mac);
         break;
-    }
-
-    ovs_be32 ip4 = 0;
-    switch (update->ipv4) {
-    case NONE:
-        if (update->current_addresses.n_ipv4_addrs) {
-            ip4 = update->current_addresses.ipv4_addrs[0].addr;
-        }
-        break;
-    case REMOVE:
-        break;
-    case STATIC:
-        OVS_NOT_REACHED();
-    case DYNAMIC:
-        ip4 = htonl(ipam_get_unused_ip(od));
     }
 
     struct in6_addr ip6 = in6addr_any;
@@ -1377,14 +1412,16 @@ update_dynamic_addresses(struct ovn_datapath *od,
     case STATIC:
         OVS_NOT_REACHED();
     case DYNAMIC:
-        in6_generate_eui64(mac, &od->ipam_info.ipv6_prefix, &ip6);
+        in6_generate_eui64(mac, &update->od->ipam_info.ipv6_prefix, &ip6);
         break;
     }
 
     struct ds new_addr = DS_EMPTY_INITIALIZER;
     ds_put_format(&new_addr, ETH_ADDR_FMT, ETH_ADDR_ARGS(mac));
+    ipam_insert_mac(&mac, true);
+
     if (ip4) {
-        ipam_insert_ip(od, ntohl(ip4));
+        ipam_insert_ip(update->od, ntohl(ip4));
         ds_put_format(&new_addr, " "IP_FMT, IP_ARGS(ip4));
     }
     if (!IN6_ARE_ADDR_EQUAL(&ip6, &in6addr_any)) {
@@ -1411,19 +1448,20 @@ build_ipam(struct hmap *datapaths, struct hmap *ports)
      * ports that have the "dynamic" keyword in their addresses column. */
 	//遍历所有datapath
     struct ovn_datapath *od;
+    struct ovs_list updates;
+
+    ovs_list_init(&updates);
     HMAP_FOR_EACH (od, key_node, datapaths) {
         if (!od->nbs) {
             continue;
         }
 
-        //遍历op的所有port
-        struct ovs_list updates;
-        ovs_list_init(&updates);
         for (size_t i = 0; i < od->nbs->n_ports; i++) {
             const struct nbrec_logical_switch_port *nbsp = od->nbs->ports[i];
 
             if (!od->ipam_info.allocated_ipv4s &&
-                !od->ipam_info.ipv6_prefix_set) {
+                !od->ipam_info.ipv6_prefix_set &&
+                !od->ipam_info.mac_only) {
                 if (nbsp->dynamic_addresses) {
                     nbrec_logical_switch_port_set_dynamic_addresses(nbsp,
                                                                     NULL);
@@ -1456,6 +1494,7 @@ build_ipam(struct hmap *datapaths, struct hmap *ports)
                 struct dynamic_address_update *update
                     = xzalloc(sizeof *update);
                 update->op = op;
+                update->od = od;
                 if (nbsp->dynamic_addresses) {
                     bool any_changed;
                     extract_lsp_addresses(nbsp->dynamic_addresses,
@@ -1478,20 +1517,21 @@ build_ipam(struct hmap *datapaths, struct hmap *ports)
             }
 
             //存取分配的地址
-            if (!nbsp->n_addresses && nbsp->dynamic_addresses) {
+            if (!num_dynamic_addresses && nbsp->dynamic_addresses) {
                 nbrec_logical_switch_port_set_dynamic_addresses(nbsp, NULL);
             }
         }
 
-        /* After retaining all unchanged dynamic addresses, now assign
-         * new ones.
-         */
-        struct dynamic_address_update *update;
-        LIST_FOR_EACH_POP (update, node, &updates) {
-            update_dynamic_addresses(od, update);
-            destroy_lport_addresses(&update->current_addresses);
-            free(update);
-        }
+    }
+
+    /* After retaining all unchanged dynamic addresses, now assign
+     * new ones.
+     */
+    struct dynamic_address_update *update;
+    LIST_FOR_EACH_POP (update, node, &updates) {
+        update_dynamic_addresses(update);
+        destroy_lport_addresses(&update->current_addresses);
+        free(update);
     }
 }
 
@@ -1711,8 +1751,7 @@ join_logical_ports(struct northd_context *ctx,
                 }
 
                 op->od = od;
-                ipam_add_port_addresses(od, op);
-                tag_alloc_add_existing_tags(tag_alloc_table, nbsp);//tag添加
+                tag_alloc_add_existing_tags(tag_alloc_table, nbsp);
             }
         } else {
         	//router处理，od是router
@@ -1757,7 +1796,6 @@ join_logical_ports(struct northd_context *ctx,
 
                 op->lrp_networks = lrp_networks;
                 op->od = od;
-                ipam_add_port_addresses(op->od, op);
 
                 const char *redirect_chassis = smap_get(&op->nbrp->options,
                                                         "redirect-chassis");
@@ -1871,6 +1909,13 @@ join_logical_ports(struct northd_context *ctx,
                 }
             }
         }
+    }
+
+    /* Wait until all ports have been connected to add to IPAM since
+     * it relies on proper peers to be set
+     */
+    HMAP_FOR_EACH (op, key_node, ports) {
+        ipam_add_port_addresses(op->od, op);
     }
 }
 
@@ -4636,16 +4681,35 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
                 ds_put_format(&match, "eth.dst == "ETH_ADDR_FMT,
                               ETH_ADDR_ARGS(mac));
                 if (op->peer->od->l3dgw_port
-                    && op->peer == op->peer->od->l3dgw_port
-                    && op->peer->od->l3redirect_port) {
+                    && op->peer->od->l3redirect_port
+                    && op->od->localnet_port) {
+                    bool add_chassis_resident_check = false;
+                    if (op->peer == op->peer->od->l3dgw_port) {
                 	//与之相连的路由器有l3dgw_port，且对端就是l3dgw_port，且对端已生成l3redirect_port
                 	//则仅在redirect-chassis上下发此规则
                 	//其它对外的l3dgw_port不能输出
-                    /* The destination lookup flow for the router's
-                     * distributed gateway port MAC address should only be
-                     * programmed on the "redirect-chassis". */
-                    ds_put_format(&match, " && is_chassis_resident(%s)",
-                                  op->peer->od->l3redirect_port->json_key);
+                        /* The peer of this port represents a distributed
+                         * gateway port. The destination lookup flow for the
+                         * router's distributed gateway port MAC address should
+                         * only be programmed on the "redirect-chassis". */
+                        add_chassis_resident_check = true;
+                    } else {
+                        /* Check if the option 'reside-on-redirect-chassis'
+                         * is set to true on the peer port. If set to true
+                         * and if the logical switch has a localnet port, it
+                         * means the router pipeline for the packets from
+                         * this logical switch should be run on the chassis
+                         * hosting the gateway port.
+                         */
+                        add_chassis_resident_check = smap_get_bool(
+                            &op->peer->nbrp->options,
+                            "reside-on-redirect-chassis", false);
+                    }
+
+                    if (add_chassis_resident_check) {
+                        ds_put_format(&match, " && is_chassis_resident(%s)",
+                                      op->peer->od->l3redirect_port->json_key);
+                    }
                 }
 
                 ds_clear(&actions);
@@ -5462,15 +5526,35 @@ build_lrouter_flows(struct hmap *datapaths, struct hmap *ports,
                           op->lrp_networks.ipv4_addrs[i].network_s,
                           op->lrp_networks.ipv4_addrs[i].plen,
                           op->lrp_networks.ipv4_addrs[i].addr_s);
-            if (op->od->l3dgw_port && op == op->od->l3dgw_port
-                && op->od->l3redirect_port) {
-                /* Traffic with eth.src = l3dgw_port->lrp_networks.ea_s
-                 * should only be sent from the "redirect-chassis", so that
-                 * upstream MAC learning points to the "redirect-chassis".
-                 * Also need to avoid generation of multiple ARP responses
-                 * from different chassis. */
-                ds_put_format(&match, " && is_chassis_resident(%s)",
-                              op->od->l3redirect_port->json_key);
+
+            if (op->od->l3dgw_port && op->od->l3redirect_port && op->peer
+                && op->peer->od->localnet_port) {
+                bool add_chassis_resident_check = false;
+                if (op == op->od->l3dgw_port) {
+                    /* Traffic with eth.src = l3dgw_port->lrp_networks.ea_s
+                     * should only be sent from the "redirect-chassis", so that
+                     * upstream MAC learning points to the "redirect-chassis".
+                     * Also need to avoid generation of multiple ARP responses
+                     * from different chassis. */
+                    add_chassis_resident_check = true;
+                } else {
+                    /* Check if the option 'reside-on-redirect-chassis'
+                     * is set to true on the router port. If set to true
+                     * and if peer's logical switch has a localnet port, it
+                     * means the router pipeline for the packets from
+                     * peer's logical switch is be run on the chassis
+                     * hosting the gateway port and it should reply to the
+                     * ARP requests for the router port IPs.
+                     */
+                    add_chassis_resident_check = smap_get_bool(
+                        &op->nbrp->options,
+                        "reside-on-redirect-chassis", false);
+                }
+
+                if (add_chassis_resident_check) {
+                    ds_put_format(&match, " && is_chassis_resident(%s)",
+                                  op->od->l3redirect_port->json_key);
+                }
             }
 
             //响应arp
@@ -6509,13 +6593,10 @@ build_lrouter_flows(struct hmap *datapaths, struct hmap *ports,
                 continue;
             }
 
-            /* Add the prefix option if the address mode is slaac or
-             * dhcpv6_stateless. */
-            if (strcmp(address_mode, "dhcpv6_stateful")) {
-                ds_put_format(&actions, ", prefix = %s/%u",
-                              op->lrp_networks.ipv6_addrs[i].network_s,
-                              op->lrp_networks.ipv6_addrs[i].plen);
-            }
+            ds_put_format(&actions, ", prefix = %s/%u",
+                          op->lrp_networks.ipv6_addrs[i].network_s,
+                          op->lrp_networks.ipv6_addrs[i].plen);
+
             add_rs_response_flow = true;
         }
 
@@ -6854,6 +6935,42 @@ build_lrouter_flows(struct hmap *datapaths, struct hmap *ports,
     HMAP_FOR_EACH (od, key_node, datapaths) {
         if (!od->nbr) {
             continue;
+        }
+
+        for (int i = 0; i < od->nbr->n_static_routes; i++) {
+            const struct nbrec_logical_router_static_route *route;
+
+            route = od->nbr->static_routes[i];
+            struct in6_addr gw_ip6;
+            unsigned int plen;
+            char *error = ipv6_parse_cidr(route->nexthop, &gw_ip6, &plen);
+            if (error || plen != 128) {
+                free(error);
+                continue;
+            }
+
+            ds_clear(&match);
+            ds_put_format(&match, "eth.dst == 00:00:00:00:00:00 && "
+                          "ip6 && xxreg0 == %s", route->nexthop);
+            struct in6_addr sn_addr;
+            struct eth_addr eth_dst;
+            in6_addr_solicited_node(&sn_addr, &gw_ip6);
+            ipv6_multicast_to_ethernet(&eth_dst, &sn_addr);
+
+            char sn_addr_s[INET6_ADDRSTRLEN + 1];
+            ipv6_string_mapped(sn_addr_s, &sn_addr);
+
+            ds_clear(&actions);
+            ds_put_format(&actions,
+                          "nd_ns { "
+                          "eth.dst = "ETH_ADDR_FMT"; "
+                          "ip6.dst = %s; "
+                          "nd.target = %s; "
+                          "output; "
+                          "};", ETH_ADDR_ARGS(eth_dst), sn_addr_s,
+                          route->nexthop);
+            ovn_lflow_add(lflows, od, S_ROUTER_IN_ARP_REQUEST, 200,
+                          ds_cstr(&match), ds_cstr(&actions));
         }
 
         //对目的mac地址为0的触发arp请求
@@ -7243,7 +7360,7 @@ bands_need_update(const struct nbrec_meter *nb_meter,
     for (size_t i = 0; i < nb_meter->n_bands; i++) {
         if (nb_bands[i].rate != sb_bands[i].rate
             || nb_bands[i].burst_size != sb_bands[i].burst_size
-            || strcmp(nb_bands[i].action, nb_bands[i].action)) {
+            || strcmp(nb_bands[i].action, sb_bands[i].action)) {
             need_update = true;
             goto done;
         }
@@ -7453,8 +7570,8 @@ ovnnb_db_run(struct northd_context *ctx,
     }
     hmap_destroy(&ports);
 
-    /* Copy nb_cfg from northbound to southbound database.
-     *
+    /* Sync ipsec configuration.
+     * Copy nb_cfg from northbound to southbound database.
      * Also set up to update sb_cfg once our southbound transaction commits. */
     //标记数据库两端同步情况
     const struct nbrec_nb_global *nb = nbrec_nb_global_first(ctx->ovnnb_idl);
@@ -7465,9 +7582,37 @@ ovnnb_db_run(struct northd_context *ctx,
     if (!sb) {
         sb = sbrec_sb_global_insert(ctx->ovnsb_txn);
     }
+    if (nb->ipsec != sb->ipsec) {
+        sbrec_sb_global_set_ipsec(sb, nb->ipsec);
+    }
     sbrec_sb_global_set_nb_cfg(sb, nb->nb_cfg);
     sbrec_sb_global_set_options(sb, &nb->options);
     sb_loop->next_cfg = nb->nb_cfg;
+
+    const char *mac_addr_prefix = smap_get(&nb->options, "mac_prefix");
+    if (mac_addr_prefix) {
+        struct eth_addr addr;
+
+        memset(&addr, 0, sizeof addr);
+        if (ovs_scan(mac_addr_prefix, "%"SCNx8":%"SCNx8":%"SCNx8,
+                     &addr.ea[0], &addr.ea[1], &addr.ea[2])) {
+            mac_prefix = addr;
+        }
+    } else {
+        struct smap options;
+
+        smap_clone(&options, &nb->options);
+        eth_addr_random(&mac_prefix);
+        memset(&mac_prefix.ea[3], 0, 3);
+
+        smap_add_format(&options, "mac_prefix",
+                        "%02"PRIx8":%02"PRIx8":%02"PRIx8,
+                        mac_prefix.ea[0], mac_prefix.ea[1], mac_prefix.ea[2]);
+        nbrec_nb_global_verify_options(nb);
+        nbrec_nb_global_set_options(nb, &options);
+
+        smap_destroy(&options);
+    }
 
     cleanup_macam(&macam);
 }
@@ -7552,6 +7697,9 @@ static struct gen_opts_map supported_dhcp_opts[] = {
     DHCP_OPT_T1,
     DHCP_OPT_T2,
     DHCP_OPT_WPAD,
+    DHCP_OPT_BOOTFILE,
+    DHCP_OPT_PATH_PREFIX,
+    DHCP_OPT_TFTP_SERVER_ADDRESS,
 };
 
 static struct gen_opts_map supported_dhcpv6_opts[] = {
@@ -7977,6 +8125,7 @@ main(int argc, char *argv[])
     ovsdb_idl_add_table(ovnsb_idl_loop.idl, &sbrec_table_sb_global);
     add_column_noalert(ovnsb_idl_loop.idl, &sbrec_sb_global_col_nb_cfg);
     add_column_noalert(ovnsb_idl_loop.idl, &sbrec_sb_global_col_options);
+    add_column_noalert(ovnsb_idl_loop.idl, &sbrec_sb_global_col_ipsec);
 
     ovsdb_idl_add_table(ovnsb_idl_loop.idl, &sbrec_table_logical_flow);
     add_column_noalert(ovnsb_idl_loop.idl,

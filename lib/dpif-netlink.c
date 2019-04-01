@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2017 Nicira, Inc.
+ * Copyright (c) 2008-2018 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -245,6 +245,42 @@ static int dpif_netlink_vport_from_ofpbuf(struct dpif_netlink_vport *,
 static int dpif_netlink_port_query__(const struct dpif_netlink *dpif,
                                      odp_port_t port_no, const char *port_name,
                                      struct dpif_port *dpif_port);
+
+static int
+create_nl_sock(struct dpif_netlink *dpif OVS_UNUSED, struct nl_sock **socksp)
+    OVS_REQ_WRLOCK(dpif->upcall_lock)
+{
+#ifndef _WIN32
+    return nl_sock_create(NETLINK_GENERIC, socksp);
+#else
+    /* Pick netlink sockets to use in a round-robin fashion from each
+     * handler's pool of sockets. */
+    struct dpif_handler *handler = &dpif->handlers[0];
+    struct dpif_windows_vport_sock *sock_pool = handler->vport_sock_pool;
+    size_t index = handler->last_used_pool_idx;
+
+    /* A pool of sockets is allocated when the handler is initialized. */
+    if (sock_pool == NULL) {
+        *socksp = NULL;
+        return EINVAL;
+    }
+
+    ovs_assert(index < VPORT_SOCK_POOL_SIZE);
+    *socksp = sock_pool[index].nl_sock;
+    ovs_assert(*socksp);
+    index = (index == VPORT_SOCK_POOL_SIZE - 1) ? 0 : index + 1;
+    handler->last_used_pool_idx = index;
+    return 0;
+#endif
+}
+
+static void
+close_nl_sock(struct nl_sock *socksp)
+{
+#ifndef _WIN32
+    nl_sock_destroy(socksp);
+#endif
+}
 
 static struct dpif_netlink *
 dpif_netlink_cast(const struct dpif *dpif)
@@ -716,7 +752,8 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name,
     int error = 0;
 
     if (dpif->handlers) {
-        if (nl_sock_create(NETLINK_GENERIC, &socksp)) {
+        error = create_nl_sock(dpif, &socksp);
+        if (error) {
             return error;
         }
     }
@@ -748,7 +785,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name,
                       dpif_name(&dpif->dpif), *port_nop);
         }
 
-        nl_sock_destroy(socksp);
+        close_nl_sock(socksp);
         goto exit;
     }
 
@@ -763,7 +800,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name,
         request.dp_ifindex = dpif->dp_ifindex;
         request.port_no = *port_nop;
         dpif_netlink_vport_transact(&request, NULL, NULL);
-        nl_sock_destroy(socksp);
+        close_nl_sock(socksp);
         goto exit;
     }
 
@@ -863,7 +900,7 @@ dpif_netlink_rtnl_port_create_and_add(struct dpif_netlink *dpif,
     name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
     error = dpif_netlink_port_add__(dpif, name, OVS_VPORT_TYPE_NETDEV, NULL,
                                     port_nop);
-    if (error && error != EEXIST) {
+    if (error) {
         dpif_netlink_rtnl_port_destroy(name, netdev_get_type(netdev));
     }
     return error;
@@ -880,7 +917,7 @@ dpif_netlink_port_add(struct dpif *dpif_, struct netdev *netdev,
     if (!ovs_tunnels_out_of_tree) {
         error = dpif_netlink_rtnl_port_create_and_add(dpif, netdev, port_nop);
     }
-    if (error && error != EEXIST) {
+    if (error) {
         error = dpif_netlink_port_add_compat(dpif, netdev, port_nop);
     }
     fat_rwlock_unlock(&dpif->upcall_lock);
@@ -2031,6 +2068,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
         VLOG_DBG("added flow");
     } else if (err != EEXIST) {
         struct netdev *oor_netdev = NULL;
+        enum vlog_level level;
         if (err == ENOSPC && netdev_is_offload_rebalance_policy_enabled()) {
             /*
              * We need to set OOR on the input netdev (i.e, 'dev') for the
@@ -2045,8 +2083,10 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
             }
             netdev_set_hw_info(oor_netdev, HW_INFO_TYPE_OOR, true);
         }
-        VLOG_ERR_RL(&rl, "failed to offload flow: %s: %s", ovs_strerror(err),
-                    (oor_netdev ? oor_netdev->name : dev->name));
+        level = (err == ENOSPC || err == EOPNOTSUPP) ? VLL_DBG : VLL_ERR;
+        VLOG_RL(&rl, level, "failed to offload flow: %s: %s",
+                ovs_strerror(err),
+                (oor_netdev ? oor_netdev->name : dev->name));
     }
 
 out:
@@ -2279,8 +2319,9 @@ dpif_netlink_refresh_channels(struct dpif_netlink *dpif, uint32_t n_handlers)
         if (port_no >= dpif->uc_array_size
             || !vport_get_pid(dpif, port_no, &upcall_pid)) {
             struct nl_sock *socksp;
+            error = create_nl_sock(dpif, &socksp);
 
-            if (nl_sock_create(NETLINK_GENERIC, &socksp)) {
+            if (error) {
                 goto error;
             }
 
@@ -2846,7 +2887,7 @@ dpif_netlink_ct_set_limits(struct dpif *dpif OVS_UNUSED,
     nl_msg_end_nested(request, opt_offset);
 
     int err = nl_transact(NETLINK_GENERIC, request, NULL);
-    ofpbuf_uninit(request);
+    ofpbuf_delete(request);
     return err;
 }
 
@@ -2946,8 +2987,8 @@ dpif_netlink_ct_get_limits(struct dpif *dpif OVS_UNUSED,
                                                zone_limits_reply);
 
 out:
-    ofpbuf_uninit(request);
-    ofpbuf_uninit(reply);
+    ofpbuf_delete(request);
+    ofpbuf_delete(reply);
     return err;
 }
 
@@ -2983,7 +3024,7 @@ dpif_netlink_ct_del_limits(struct dpif *dpif OVS_UNUSED,
 
     int err = nl_transact(NETLINK_GENERIC, request, NULL);
 
-    ofpbuf_uninit(request);
+    ofpbuf_delete(request);
     return err;
 }
 
@@ -3391,6 +3432,13 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_ct_set_limits,
     dpif_netlink_ct_get_limits,
     dpif_netlink_ct_del_limits,
+    NULL,                       /* ipf_set_enabled */
+    NULL,                       /* ipf_set_min_frag */
+    NULL,                       /* ipf_set_max_nfrags */
+    NULL,                       /* ipf_get_status */
+    NULL,                       /* ipf_dump_start */
+    NULL,                       /* ipf_dump_next */
+    NULL,                       /* ipf_dump_done */
     dpif_netlink_meter_get_features,
     dpif_netlink_meter_set,
     dpif_netlink_meter_get,
@@ -3887,7 +3935,7 @@ put_exclude_packet_type(struct ofpbuf *buf, uint16_t type,
             ovs_be16 pt = pt_ns_type_be(nl_attr_get_be32(packet_type));
             const struct nlattr *nla;
 
-            nla = nl_attr_find(buf, NLA_HDRLEN, OVS_KEY_ATTR_ETHERTYPE);
+            nla = nl_attr_find(buf, ofs + NLA_HDRLEN, OVS_KEY_ATTR_ETHERTYPE);
             if (nla) {
                 ovs_be16 *ethertype;
 

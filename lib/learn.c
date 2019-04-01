@@ -455,13 +455,18 @@ learn_parse__(char *orig, char *arg, const struct ofputil_port_map *port_map,
             learn = ofpacts->header;
         }
     }
+
+    if (ofpbuf_oversized(ofpacts)) {
+        return xasprintf("input too big");
+    }
+
     ofpact_finish_LEARN(ofpacts, &learn);
 
     return NULL;
 }
 
 /* Parses 'arg' as a set of arguments to the "learn" action and appends a
- * matching OFPACT_LEARN action to 'ofpacts'.  ovs-ofctl(8) describes the
+ * matching OFPACT_LEARN action to 'ofpacts'.  ovs-actions(7) describes the
  * format parsed.
  *
  * Returns NULL if successful, otherwise a malloc()'d string describing the
@@ -483,7 +488,7 @@ learn_parse(char *arg, const struct ofputil_port_map *port_map,
     return error;
 }
 
-/* Appends a description of 'learn' to 's', in the format that ovs-ofctl(8)
+/* Appends a description of 'learn' to 's', in the format that ovs-actions(7)
  * describes. */
 void
 learn_format(const struct ofpact_learn *learn,

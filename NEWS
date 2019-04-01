@@ -1,21 +1,75 @@
-Post-v2.10.0
+Post-v2.11.0
 ---------------------
-   - Linux datapath:
-     * Support for the kernel versions 4.16.x and 4.17.x.
-   - The environment variable OVS_SYSLOG_METHOD, if set, is now used
-     as the default syslog method.
-   - The environment variable OVS_CTL_TIMEOUT, if set, is now used
-     as the default timeout for control utilities.
-   - ovn:
-     * ovn-ctl: allow passing user:group ids to the OVN daemons.
    - DPDK:
+     * New option 'other_config:dpdk-socket-limit' to limit amount of
+       hugepage memory that can be used by DPDK.
+   - OpenFlow:
+     * Removed support for OpenFlow 1.6 (draft), which ONF abandoned.
+   - Userspace datapath:
+     * ICMPv6 ND enhancements: support for match and set ND options type
+       and reserved fields.
+     * Add v4/v6 fragmentation support for conntrack.
+     * New ovs-appctl "dpctl/ipf-set-enabled" and "dpctl/ipf-set-disabled"
+       commands for userspace datapath conntrack fragmentation support.
+     * New "ovs-appctl dpctl/ipf-set-min-frag" command for userspace
+       datapath conntrack fragmentation support.
+     * New "ovs-appctl dpctl/ipf-set-max-nfrags" command for userspace datapath
+       conntrack fragmentation support.
+     * New "ovs-appctl dpctl/ipf-get-status" command for userspace datapath
+       conntrack fragmentation support.
+   - OVSDB:
+     * OVSDB clients can now resynchronize with clustered servers much more
+       quickly after a brief disconnection, saving bandwidth and CPU time.
+       See section 4.1.15 of ovsdb-server(7) for details of related OVSDB
+       protocol extension.
+   - OVN:
+     * Select IPAM mac_prefix in a random manner if not provided by the user
+   - New QoS type "linux-netem" on Linux.
+
+v2.11.0 - 19 Feb 2019
+---------------------
+   - OpenFlow:
+     * OFPMP_TABLE_FEATURES_REQUEST can now modify table features.
+   - ovs-ofctl:
+     * "mod-table" command can now change OpenFlow table names.
+   - ovn:
+     * OVN-SB schema changed: duplicated IP with same Encapsulation type
+       is not allowed any more.  Please refer to
+       Documentation/intro/install/ovn-upgrades.rst for the instructions
+       in case there are problems encountered when upgrading from an earlier
+       version.
+     * New support for IPSEC encrypted tunnels between hypervisors.
+     * ovn-ctl: allow passing user:group ids to the OVN daemons.
+     * IPAM/MACAM:
+       - add the capability to dynamically assign just L2 addresses
+       - add the capability to specify a static ip address and get the L2 one
+         allocated dynamically using the following syntax:
+           ovn-nbctl lsp-set-addresses <port> "dynamic <IP>"
+   - DPDK:
+     * Add support for DPDK 18.11
+     * Add support for port representors.
+   - Userspace datapath:
      * Add option for simple round-robin based Rxq to PMD assignment.
        It can be set with pmd-rxq-assign.
+     * Add support for Auto load balancing of PMDs (experimental)
+     * Added new per-port configurable option to manage EMC:
+       'other_config:emc-enable'.
    - Add 'symmetric_l3' hash function.
    - OVS now honors 'updelay' and 'downdelay' for bonds with LACP configured.
    - ovs-vswitchd:
      * New configuration option "offload-rebalance", that enables dynamic
        rebalancing of offloaded flows.
+   - The environment variable OVS_SYSLOG_METHOD, if set, is now used
+     as the default syslog method.
+   - The environment variable OVS_CTL_TIMEOUT, if set, is now used
+     as the default timeout for control utilities.
+   - The environment variable OVS_RESOLV_CONF, if set, is now used
+     as the DNS server configuration file.
+   - RHEL packaging:
+     * OVN packages are split from OVS packages. A new spec
+       file - ovn-fedora.spec.in is added to generate OVN packages.
+   - Linux datapath:
+     * Support for the kernel versions 4.16.x, 4.17.x, and 4.18.x.
 
 v2.10.0 - 18 Aug 2018
 ---------------------

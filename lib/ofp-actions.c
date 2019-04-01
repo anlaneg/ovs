@@ -840,7 +840,7 @@ decode_NXAST_RAW_CONTROLLER2(const struct ext_action_header *eah,
         }
 
         case NXAC2PT_USERDATA:
-            out->size = start_ofs + OFPACT_CONTROLLER_SIZE;
+            out->size = start_ofs + sizeof(struct ofpact_controller);
             ofpbuf_put(out, payload.msg, ofpbuf_msgsize(&payload));
             oc = ofpbuf_at_assert(out, start_ofs, sizeof *oc);
             oc->userdata_len = ofpbuf_msgsize(&payload);
@@ -989,6 +989,11 @@ parse_CONTROLLER(char *arg, const struct ofpact_parse_params *pp)
             controller = pp->ofpacts->header;
             controller->userdata_len = userdata_len;
         }
+
+        if (ofpbuf_oversized(pp->ofpacts)) {
+            return xasprintf("input too big");
+        }
+
         ofpact_finish_CONTROLLER(pp->ofpacts, &controller);
     }
 
@@ -3569,10 +3574,10 @@ struct nx_action_cnt_ids {
     ovs_be16 n_controllers;     /* Number of controllers. */
     uint8_t zeros[4];           /* Must be zero. */
 
-    /* Followed by 1 or more controller ids.
+    /* Followed by 1 or more controller ids:
      *
-     * uint16_t cnt_ids[];        // Controller ids.
-     * uint8_t pad[];           // Must be 0 to 8-byte align cnt_ids[].
+     * uint16_t cnt_ids[];      -- Controller ids.
+     * uint8_t pad[];           -- Must be 0 to 8-byte align cnt_ids[].
      */
 };
 OFP_ASSERT(sizeof(struct nx_action_cnt_ids) == 16);
@@ -3690,6 +3695,11 @@ parse_DEC_TTL(char *arg, const struct ofpact_parse_params *pp)
             return xstrdup("dec_ttl_cnt_ids: expected at least one controller "
                            "id.");
         }
+
+        if (ofpbuf_oversized(pp->ofpacts)) {
+            return xasprintf("input too big");
+        }
+
         ofpact_finish_DEC_TTL(pp->ofpacts, &ids);
     }
     return NULL;
@@ -4443,6 +4453,11 @@ parse_ENCAP(char *arg, const struct ofpact_parse_params *pp)
     /* ofpbuf may have been re-allocated. */
     encap = pp->ofpacts->header;
     encap->n_props = n_props;
+
+    if (ofpbuf_oversized(pp->ofpacts)) {
+        return xasprintf("input too big");
+    }
+
     ofpact_finish_ENCAP(pp->ofpacts, &encap);
     return NULL;
 }
@@ -5772,6 +5787,11 @@ parse_NOTE(const char *arg, const struct ofpact_parse_params *pp)
     struct ofpact_note *note = ofpbuf_at_assert(pp->ofpacts, start_ofs,
                                                 sizeof *note);
     note->length = pp->ofpacts->size - (start_ofs + sizeof *note);
+
+    if (ofpbuf_oversized(pp->ofpacts)) {
+        return xasprintf("input too big");
+    }
+
     ofpact_finish_NOTE(pp->ofpacts, &note);
     return NULL;
 }
@@ -5928,6 +5948,10 @@ parse_CLONE(char *arg, const struct ofpact_parse_params *pp)
     /* header points to the action list */
     pp->ofpacts->header = ofpbuf_push_uninit(pp->ofpacts, sizeof *clone);
     clone = pp->ofpacts->header;
+
+    if (ofpbuf_oversized(pp->ofpacts)) {
+        return xasprintf("input too big");
+    }
 
     ofpact_finish_CLONE(pp->ofpacts, &clone);
     ofpbuf_push_uninit(pp->ofpacts, clone_offset);
@@ -6615,6 +6639,11 @@ parse_CT(char *arg, const struct ofpact_parse_params *pp)
     if (!error && oc->flags & NX_CT_F_FORCE && !(oc->flags & NX_CT_F_COMMIT)) {
         error = xasprintf("\"force\" flag requires \"commit\" flag.");
     }
+
+    if (ofpbuf_oversized(pp->ofpacts)) {
+        return xasprintf("input too big");
+    }
+
     ofpact_finish_CT(pp->ofpacts, &oc);
     ofpbuf_push_uninit(pp->ofpacts, ct_offset);
     return error;
@@ -8632,7 +8661,6 @@ get_ofpact_map(enum ofp_version version)
     case OFP13_VERSION:
     case OFP14_VERSION:
     case OFP15_VERSION:
-    case OFP16_VERSION:
     default:
         return of12;
     }
@@ -9063,11 +9091,16 @@ static char * OVS_WARN_UNUSED_RESULT
 ofpacts_parse(char *str, const struct ofpact_parse_params *pp,
               bool allow_instructions, enum ofpact_type outer_action)
 {
+    if (pp->depth >= MAX_OFPACT_PARSE_DEPTH) {
+        return xstrdup("Action nested too deeply");
+    }
+    CONST_CAST(struct ofpact_parse_params *, pp)->depth++;
     uint32_t orig_size = pp->ofpacts->size;
     char *error = ofpacts_parse__(str, pp, allow_instructions, outer_action);
     if (error) {
         pp->ofpacts->size = orig_size;
     }
+    CONST_CAST(struct ofpact_parse_params *, pp)->depth--;
     return error;
 }
 

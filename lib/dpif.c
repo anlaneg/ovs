@@ -617,13 +617,8 @@ dpif_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
             netdev_ports_insert(netdev, dpif->dpif_class, &dpif_port);
         }
     } else {
-        if (error != EEXIST) {
-            VLOG_WARN_RL(&error_rl, "%s: failed to add %s as port: %s",
-                         dpif_name(dpif), netdev_name, ovs_strerror(error));
-        } else {
-            /* It's fairly common for upper layers to try to add a duplicate
-             * port, and they know how to handle it properly. */
-        }
+        VLOG_WARN_RL(&error_rl, "%s: failed to add %s as port: %s",
+                     dpif_name(dpif), netdev_name, ovs_strerror(error));
         port_no = ODPP_NONE;
     }
     if (port_nop) {
@@ -1197,7 +1192,7 @@ dpif_execute_helper_cb(void *aux_, struct dp_packet_batch *packets_,
     int type = nl_attr_type(action);
     struct dp_packet *packet = packets_->packets[0];
 
-    ovs_assert(packets_->count == 1);
+    ovs_assert(dp_packet_batch_size(packets_) == 1);
 
     switch ((enum ovs_action_attr)type) {
     case OVS_ACTION_ATTR_METER:

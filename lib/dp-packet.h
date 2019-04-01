@@ -46,6 +46,14 @@ enum OVS_PACKED_ENUM dp_packet_source {
 
 #define DP_PACKET_CONTEXT_SIZE 64
 
+#ifndef DPDK_NETDEV
+/* Bit masks for the 'ol_flags' member of the 'dp_packet' structure. */
+enum dp_packet_offload_mask {
+    DP_PACKET_OL_RSS_HASH_MASK  = 0x1, /* Is the 'rss_hash' valid? */
+    DP_PACKET_OL_FLOW_MARK_MASK = 0x2, /* Is the 'flow_mark' valid? */
+};
+#endif
+
 /* Buffer for holding packet data.  A dp_packet is automatically reallocated
  * as necessary if it grows too large for the available memory.
  * By default the packet type is set to Ethernet (PT_ETH).
@@ -58,8 +66,9 @@ struct dp_packet {
     uint16_t allocated_;        /* Number of bytes allocated. */
     uint16_t data_ofs;          /* First byte actually in use. */ //数据首字节到base_的偏移量
     uint32_t size_;             /* Number of bytes in use. */
+    uint32_t ol_flags;          /* Offloading flags. */
     uint32_t rss_hash;          /* Packet hash. */
-    bool rss_hash_valid;        /* Is the 'rss_hash' valid? */
+    uint32_t flow_mark;         /* Packet flow mark. */
 #endif
     //指明packet buffer来源
     enum dp_packet_source source;  /* Source of memory allocated as 'base'. */
@@ -356,10 +365,23 @@ dp_packet_set_l4(struct dp_packet *b, void *l4)//设置l4层
     b->l4_ofs = l4 ? (char *) l4 - (char *) dp_packet_data(b) : UINT16_MAX;
 }
 
+/* Returns the size of the packet from the beginning of the L3 header to the
+ * end of the L3 payload.  Hence L2 padding is not included. */
+static inline size_t
+dp_packet_l3_size(const struct dp_packet *b)
+{
+    return OVS_LIKELY(b->l3_ofs != UINT16_MAX)
+        ? (const char *)dp_packet_tail(b) - (const char *)dp_packet_l3(b)
+        - dp_packet_l2_pad_size(b)
+        : 0;
+}
+
+/* Returns the size of the packet from the beginning of the L4 header to the
+ * end of the L4 payload.  Hence L2 padding is not included. */
 static inline size_t
 dp_packet_l4_size(const struct dp_packet *b)
 {
-    return b->l4_ofs != UINT16_MAX
+    return OVS_LIKELY(b->l4_ofs != UINT16_MAX)
         ? (const char *)dp_packet_tail(b) - (const char *)dp_packet_l4(b)
         - dp_packet_l2_pad_size(b)
         : 0;
@@ -411,6 +433,16 @@ dp_packet_get_nd_payload(const struct dp_packet *b)//返回nd负载
 
 #ifdef DPDK_NETDEV
 BUILD_ASSERT_DECL(offsetof(struct dp_packet, mbuf) == 0);
+
+static inline void
+dp_packet_init_specific(struct dp_packet *p)
+{
+    /* This initialization is needed for packets that do not come from DPDK
+     * interfaces, when vswitchd is built with --with-dpdk. */
+    p->mbuf.tx_offload = p->mbuf.packet_type = 0;
+    p->mbuf.nb_segs = 1;
+    p->mbuf.next = NULL;
+}
 
 //返回报文的buf起始地址
 static inline void *
@@ -479,7 +511,7 @@ dp_packet_set_allocated(struct dp_packet *b, uint16_t s)
 /* Returns the RSS hash of the packet 'p'.  Note that the returned value is
  * correct only if 'dp_packet_rss_valid(p)' returns true */
 static inline uint32_t
-dp_packet_get_rss_hash(struct dp_packet *p)
+dp_packet_get_rss_hash(const struct dp_packet *p)
 {
     return p->mbuf.hash.rss;
 }
@@ -492,69 +524,47 @@ dp_packet_set_rss_hash(struct dp_packet *p, uint32_t hash)
 }
 
 static inline bool
-dp_packet_rss_valid(struct dp_packet *p)
+dp_packet_rss_valid(const struct dp_packet *p)
 {
     return p->mbuf.ol_flags & PKT_RX_RSS_HASH;
 }
 
 static inline void
-dp_packet_rss_invalidate(struct dp_packet *p OVS_UNUSED)
+dp_packet_reset_offload(struct dp_packet *p)
 {
-}
-
-static inline void
-dp_packet_mbuf_rss_flag_reset(struct dp_packet *p)
-{
-    p->mbuf.ol_flags &= ~PKT_RX_RSS_HASH;
-}
-
-/* This initialization is needed for packets that do not come from DPDK
- * interfaces, when vswitchd is built with --with-dpdk. */
-static inline void
-dp_packet_mbuf_init(struct dp_packet *p)
-{
-    p->mbuf.ol_flags = p->mbuf.tx_offload = p->mbuf.packet_type = 0;
-    p->mbuf.nb_segs = 1;
-    p->mbuf.next = NULL;
+    p->mbuf.ol_flags = 0;
 }
 
 static inline bool
-dp_packet_ip_checksum_valid(struct dp_packet *p)
+dp_packet_ip_checksum_valid(const struct dp_packet *p)
 {
     return (p->mbuf.ol_flags & PKT_RX_IP_CKSUM_MASK) ==
             PKT_RX_IP_CKSUM_GOOD;
 }
 
 static inline bool
-dp_packet_ip_checksum_bad(struct dp_packet *p)
+dp_packet_ip_checksum_bad(const struct dp_packet *p)
 {
     return (p->mbuf.ol_flags & PKT_RX_IP_CKSUM_MASK) ==
             PKT_RX_IP_CKSUM_BAD;
 }
 
 static inline bool
-dp_packet_l4_checksum_valid(struct dp_packet *p)
+dp_packet_l4_checksum_valid(const struct dp_packet *p)
 {
     return (p->mbuf.ol_flags & PKT_RX_L4_CKSUM_MASK) ==
             PKT_RX_L4_CKSUM_GOOD;
 }
 
 static inline bool
-dp_packet_l4_checksum_bad(struct dp_packet *p)
+dp_packet_l4_checksum_bad(const struct dp_packet *p)
 {
     return (p->mbuf.ol_flags & PKT_RX_L4_CKSUM_MASK) ==
             PKT_RX_L4_CKSUM_BAD;
 }
 
-static inline void
-reset_dp_packet_checksum_ol_flags(struct dp_packet *p)
-{
-    p->mbuf.ol_flags &= ~(PKT_RX_L4_CKSUM_GOOD | PKT_RX_L4_CKSUM_BAD |
-                          PKT_RX_IP_CKSUM_GOOD | PKT_RX_IP_CKSUM_BAD);
-}
-
 static inline bool
-dp_packet_has_flow_mark(struct dp_packet *p, uint32_t *mark)
+dp_packet_has_flow_mark(const struct dp_packet *p, uint32_t *mark)
 {
     if (p->mbuf.ol_flags & PKT_RX_FDIR_ID) {
         *mark = p->mbuf.hash.fdir.hi;
@@ -564,7 +574,21 @@ dp_packet_has_flow_mark(struct dp_packet *p, uint32_t *mark)
     return false;
 }
 
+static inline void
+dp_packet_set_flow_mark(struct dp_packet *p, uint32_t mark)
+{
+    p->mbuf.hash.fdir.hi = mark;
+    p->mbuf.ol_flags |= PKT_RX_FDIR_ID;
+}
+
 #else /* DPDK_NETDEV */
+
+static inline void
+dp_packet_init_specific(struct dp_packet *p OVS_UNUSED)
+{
+    /* There are no implementation-specific fields for initialization. */
+}
+
 static inline void *
 dp_packet_base(const struct dp_packet *b)
 {
@@ -616,7 +640,7 @@ dp_packet_set_allocated(struct dp_packet *b, uint16_t s)
 /* Returns the RSS hash of the packet 'p'.  Note that the returned value is
  * correct only if 'dp_packet_rss_valid(p)' returns true */
 static inline uint32_t
-dp_packet_get_rss_hash(struct dp_packet *p)
+dp_packet_get_rss_hash(const struct dp_packet *p)
 {
     return p->rss_hash;
 }
@@ -625,66 +649,60 @@ static inline void
 dp_packet_set_rss_hash(struct dp_packet *p, uint32_t hash)
 {
     p->rss_hash = hash;
-    p->rss_hash_valid = true;
+    p->ol_flags |= DP_PACKET_OL_RSS_HASH_MASK;
 }
 
 static inline bool
-dp_packet_rss_valid(struct dp_packet *p)
+dp_packet_rss_valid(const struct dp_packet *p)
 {
-    return p->rss_hash_valid;
+    return p->ol_flags & DP_PACKET_OL_RSS_HASH_MASK;
 }
 
 static inline void
-//将rss置为无效
-dp_packet_rss_invalidate(struct dp_packet *p)
+dp_packet_reset_offload(struct dp_packet *p)
 {
-    p->rss_hash_valid = false;
+    p->ol_flags = 0;
+}
+
+static inline bool
+dp_packet_ip_checksum_valid(const struct dp_packet *p OVS_UNUSED)
+{
+    return false;
+}
+
+static inline bool
+dp_packet_ip_checksum_bad(const struct dp_packet *p OVS_UNUSED)
+{
+    return false;
+}
+
+static inline bool
+dp_packet_l4_checksum_valid(const struct dp_packet *p OVS_UNUSED)
+{
+    return false;
+}
+
+static inline bool
+dp_packet_l4_checksum_bad(const struct dp_packet *p OVS_UNUSED)
+{
+    return false;
+}
+
+static inline bool
+dp_packet_has_flow_mark(const struct dp_packet *p, uint32_t *mark)
+{
+    if (p->ol_flags & DP_PACKET_OL_FLOW_MARK_MASK) {
+        *mark = p->flow_mark;
+        return true;
+    }
+    return false;
 }
 
 static inline void
-dp_packet_mbuf_rss_flag_reset(struct dp_packet *p OVS_UNUSED)
+dp_packet_set_flow_mark(struct dp_packet *p, uint32_t mark)
 {
-}
-
-static inline void
-dp_packet_mbuf_init(struct dp_packet *p OVS_UNUSED)
-{
-}
-
-static inline bool
-dp_packet_ip_checksum_valid(struct dp_packet *p OVS_UNUSED)
-{
-    return false;
-}
-
-static inline bool
-dp_packet_ip_checksum_bad(struct dp_packet *p OVS_UNUSED)
-{
-    return false;
-}
-
-static inline bool
-dp_packet_l4_checksum_valid(struct dp_packet *p OVS_UNUSED)
-{
-    return false;
-}
-
-static inline bool
-dp_packet_l4_checksum_bad(struct dp_packet *p OVS_UNUSED)
-{
-    return false;
-}
-
-static inline void
-reset_dp_packet_checksum_ol_flags(struct dp_packet *p OVS_UNUSED)
-{
-}
-
-static inline bool
-dp_packet_has_flow_mark(struct dp_packet *p OVS_UNUSED,
-                        uint32_t *mark OVS_UNUSED)
-{
-    return false;
+    p->flow_mark = mark;
+    p->ol_flags |= DP_PACKET_OL_FLOW_MARK_MASK;
 }
 #endif /* DPDK_NETDEV */
 
@@ -752,6 +770,7 @@ enum { NETDEV_MAX_BURST = 32 }; /* Maximum number packets in a batch. */
 struct dp_packet_batch {
     size_t count;//指示packets中有多少个报文是有效的
     bool trunc; /* true if the batch needs truncate. */
+    bool do_not_steal; /* Indicate that the packets should not be stolen. */
     struct dp_packet *packets[NETDEV_MAX_BURST];
 };
 
@@ -761,6 +780,7 @@ dp_packet_batch_init(struct dp_packet_batch *batch)
 {
     batch->count = 0;
     batch->trunc = false;
+    batch->do_not_steal = false;
 }
 
 static inline void
@@ -815,6 +835,12 @@ static inline bool
 dp_packet_batch_is_empty(const struct dp_packet_batch *batch)
 {
     return !dp_packet_batch_size(batch);
+}
+
+static inline bool
+dp_packet_batch_is_full(const struct dp_packet_batch *batch)
+{
+    return dp_packet_batch_size(batch) == NETDEV_MAX_BURST;
 }
 
 #define DP_PACKET_BATCH_FOR_EACH(IDX, PACKET, BATCH)                \

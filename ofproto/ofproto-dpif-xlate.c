@@ -1497,8 +1497,10 @@ xlate_ofport_remove(struct ofport_dpif *ofport)
 
 //通过flow获知入接口，记录在xportp中，通过xport获知ofproto
 static struct ofproto_dpif *
-xlate_lookup_ofproto_(const struct dpif_backer *backer, const struct flow *flow,
-                      ofp_port_t *ofp_in_port, const struct xport **xportp)
+xlate_lookup_ofproto_(const struct dpif_backer *backer,
+                      const struct flow *flow,
+                      ofp_port_t *ofp_in_port, const struct xport **xportp,
+                      char **errorp)
 {
     struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     const struct xport *xport;
@@ -1510,6 +1512,10 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer, const struct flow *flow,
         recirc_id_node = recirc_id_node_find(flow->recirc_id);
 
         if (OVS_UNLIKELY(!recirc_id_node)) {
+            if (errorp) {
+                *errorp = xasprintf("no recirculation data for recirc_id "
+                                    "%"PRIu32, flow->recirc_id);
+            }
             return NULL;
         }
 
@@ -1530,10 +1536,19 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer, const struct flow *flow,
                          ? tnl_port_receive(flow)//tunnel收取到报文,则查询tunnel口
                          : odp_port_to_ofport(backer, flow->in_port.odp_port));
     if (OVS_UNLIKELY(!xport)) {
+        if (errorp) {
+            *errorp = (tnl_port_should_receive(flow)
+                       ? xstrdup("no OpenFlow tunnel port for this packet")
+                       : xasprintf("no OpenFlow tunnel port for datapath "
+                                   "port %"PRIu32, flow->in_port.odp_port));
+        }
         return NULL;
     }
 
 out:
+    if (errorp) {
+        *errorp = NULL;
+    }
     *xportp = xport;
     if (ofp_in_port) {
         *ofp_in_port = xport->ofp_port;
@@ -1545,11 +1560,11 @@ out:
  * returns the corresponding struct ofproto_dpif and OpenFlow port number. */
 struct ofproto_dpif *
 xlate_lookup_ofproto(const struct dpif_backer *backer, const struct flow *flow,
-                     ofp_port_t *ofp_in_port)
+                     ofp_port_t *ofp_in_port, char **errorp)
 {
     const struct xport *xport;
 
-    return xlate_lookup_ofproto_(backer, flow, ofp_in_port, &xport);
+    return xlate_lookup_ofproto_(backer, flow, ofp_in_port, &xport, errorp);
 }
 
 /* Given a datapath and flow metadata ('backer', and 'flow' respectively),
@@ -1571,7 +1586,7 @@ xlate_lookup(const struct dpif_backer *backer, const struct flow *flow,
     const struct xport *xport;
 
     //查找ofproto,隧道口是逻辑口，逻辑口是按照flow来进行配置的，而普通口按in_port匹配
-    ofproto = xlate_lookup_ofproto_(backer, flow, ofp_in_port, &xport);
+    ofproto = xlate_lookup_ofproto_(backer, flow, ofp_in_port, &xport, NULL);
 
     if (!ofproto) {
         return ENODEV;
@@ -1806,7 +1821,11 @@ rstp_process_packet(const struct xport *xport, const struct dp_packet *packet)
         dp_packet_set_size(&payload, ntohs(eth->eth_type) + ETH_HEADER_LEN);
     }
 
-    if (dp_packet_try_pull(&payload, ETH_HEADER_LEN + LLC_HEADER_LEN)) {
+    int len = ETH_HEADER_LEN + LLC_HEADER_LEN;
+    if (eth->eth_type == htons(ETH_TYPE_VLAN)) {
+        len += VLAN_HEADER_LEN;
+    }
+    if (dp_packet_try_pull(&payload, len)) {
         rstp_port_received_bpdu(xport->rstp_port, dp_packet_data(&payload),
                                 dp_packet_size(&payload));
     }
@@ -2082,21 +2101,10 @@ mirror_packet(struct xlate_ctx *ctx, struct xbundle *xbundle,
         return;
     }
 
-    if (ctx->xin->resubmit_stats) {
-        mirror_update_stats(xbridge->mbridge, mirrors,
-                            ctx->xin->resubmit_stats->n_packets,
-                            ctx->xin->resubmit_stats->n_bytes);
-    }
-    if (ctx->xin->xcache) {
-        struct xc_entry *entry;
-
-        entry = xlate_cache_add_entry(ctx->xin->xcache, XC_MIRROR);
-        entry->mirror.mbridge = mbridge_ref(xbridge->mbridge);
-        entry->mirror.mirrors = mirrors;
-    }
-
-    /* 'mirrors' is a bit-mask of candidates for mirroring.  Iterate as long as
-     * some candidates remain.  */
+    /* 'mirrors' is a bit-mask of candidates for mirroring.  Iterate through
+     * the candidates, adding the ones that really should be mirrored to
+     * 'used_mirrors', as long as some candidates remain.  */
+    mirror_mask_t used_mirrors = 0;
     while (mirrors) {
         const unsigned long *vlans;
         mirror_mask_t dup_mirrors;
@@ -2119,6 +2127,9 @@ mirror_packet(struct xlate_ctx *ctx, struct xbundle *xbundle,
             mirrors = zero_rightmost_1bit(mirrors);
             continue;
         }
+
+        /* We sent a packet to this mirror. */
+        used_mirrors |= rightmost_1bit(mirrors);
 
         /* Record the mirror, and the mirrors that output to the same
          * destination, so that we don't mirror to them again.  This must be
@@ -2152,6 +2163,21 @@ mirror_packet(struct xlate_ctx *ctx, struct xbundle *xbundle,
          * mirrors), so make sure that we don't send duplicates. */
         mirrors &= ~ctx->mirrors;
         ctx->mirror_snaplen = 0;
+    }
+
+    if (used_mirrors) {
+        if (ctx->xin->resubmit_stats) {
+            mirror_update_stats(xbridge->mbridge, used_mirrors,
+                                ctx->xin->resubmit_stats->n_packets,
+                                ctx->xin->resubmit_stats->n_bytes);
+        }
+        if (ctx->xin->xcache) {
+            struct xc_entry *entry;
+
+            entry = xlate_cache_add_entry(ctx->xin->xcache, XC_MIRROR);
+            entry->mirror.mbridge = mbridge_ref(xbridge->mbridge);
+            entry->mirror.mirrors = used_mirrors;
+        }
     }
 }
 
@@ -3719,13 +3745,6 @@ native_tunnel_output(struct xlate_ctx *ctx, const struct xport *xport,
             nl_msg_end_non_empty_nested(ctx->odp_actions, clone_ofs);
         } else {
             nl_msg_cancel_nested(ctx->odp_actions, clone_ofs);
-            /* XXX : There is no real use-case for a tunnel push without
-             * any post actions. However keeping it now
-             * as is to make the 'make check' happy. Should remove when all the
-             * make check tunnel test case does something meaningful on a
-             * tunnel encap packets.
-             */
-            odp_put_tnl_push_action(ctx->odp_actions, &tnl_push_data);
         }
 
         /* Restore context status. */
@@ -5246,7 +5265,7 @@ xlate_output_trunc_action(struct xlate_ctx *ctx,
 {
     bool support_trunc = ctx->xbridge->support.trunc;
     struct ovs_action_trunc *trunc;
-    char name[OFP10_MAX_PORT_NAME_LEN];
+    char name[OFP_MAX_PORT_NAME_LEN];
 
     switch (port) {
     case OFPP_TABLE:
@@ -7177,9 +7196,7 @@ xlate_wc_init(struct xlate_ctx *ctx)
     /* Some fields we consider to always be examined. */
     WC_MASK_FIELD(ctx->wc, packet_type);//标记in_port存在
     WC_MASK_FIELD(ctx->wc, in_port);//标记链路层类型
-    if (is_ethernet(&ctx->xin->flow, NULL)) {
-        WC_MASK_FIELD(ctx->wc, dl_type);
-    }
+    WC_MASK_FIELD(ctx->wc, dl_type);
     if (is_ip_any(&ctx->xin->flow)) {
         WC_MASK_FIELD_MASK(ctx->wc, nw_frag, FLOW_NW_FRAG_MASK);//设置分片处理标记
     }
@@ -7206,12 +7223,14 @@ xlate_wc_finish(struct xlate_ctx *ctx)
      * use non-header fields as part of the cache. */
     flow_wildcards_clear_non_packet_fields(ctx->wc);
 
-    /* Wildcard ethernet fields if the original packet type was not
-     * Ethernet. */
+    /* Wildcard Ethernet address fields if the original packet type was not
+     * Ethernet.
+     *
+     * (The Ethertype field is used even when the original packet type is not
+     * Ethernet.) */
     if (ctx->xin->upcall_flow->packet_type != htonl(PT_ETH)) {
         ctx->wc->masks.dl_dst = eth_addr_zero;
         ctx->wc->masks.dl_src = eth_addr_zero;
-        ctx->wc->masks.dl_type = 0;
     }
 
     /* ICMPv4 and ICMPv6 have 8-bit "type" and "code" fields.  struct flow

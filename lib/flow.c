@@ -413,13 +413,14 @@ parse_ethertype(const void **datap, size_t *sizep)
 }
 
 /* Returns 'true' if the packet is an ND packet. In that case the '*nd_target'
- * and 'arp_buf[]' are filled in.  If the packet is not an ND pacet, 'false' is
- * returned and no values are filled in on '*nd_target' or 'arp_buf[]'. */
+ * and 'arp_buf[]' are filled in.  If the packet is not an ND packet, 'false'
+ * is returned and no values are filled in on '*nd_target' or 'arp_buf[]'. */
 static inline bool
 parse_icmpv6(const void **datap, size_t *sizep, const struct icmp6_hdr *icmp,
-             const struct in6_addr **nd_target,
-             struct eth_addr arp_buf[2])
+             uint32_t *rso_flags, const struct in6_addr **nd_target,
+             struct eth_addr arp_buf[2], uint8_t *opt_type)
 {
+    const uint32_t *reserved;
     if (icmp->icmp6_code != 0 ||
         (icmp->icmp6_type != ND_NEIGHBOR_SOLICIT &&
          icmp->icmp6_type != ND_NEIGHBOR_ADVERT)) {
@@ -428,6 +429,15 @@ parse_icmpv6(const void **datap, size_t *sizep, const struct icmp6_hdr *icmp,
 
     arp_buf[0] = eth_addr_zero;
     arp_buf[1] = eth_addr_zero;
+    *opt_type = 0;
+
+    reserved = data_try_pull(datap, sizep, sizeof(uint32_t));
+    if (OVS_UNLIKELY(!reserved)) {
+        /* Invalid ND packet. */
+        return false;
+    }
+    *rso_flags = *reserved;
+
     *nd_target = data_try_pull(datap, sizep, sizeof **nd_target);
     if (OVS_UNLIKELY(!*nd_target)) {
         return true;
@@ -449,12 +459,20 @@ parse_icmpv6(const void **datap, size_t *sizep, const struct icmp6_hdr *icmp,
         if (lla_opt->type == ND_OPT_SOURCE_LINKADDR && opt_len == 8) {
             if (OVS_LIKELY(eth_addr_is_zero(arp_buf[0]))) {
                 arp_buf[0] = lla_opt->mac;
+                /* We use only first option type present in ND packet. */
+                if (*opt_type == 0) {
+                    *opt_type = lla_opt->type;
+                }
             } else {
                 goto invalid;
             }
         } else if (lla_opt->type == ND_OPT_TARGET_LINKADDR && opt_len == 8) {
             if (OVS_LIKELY(eth_addr_is_zero(arp_buf[1]))) {
                 arp_buf[1] = lla_opt->mac;
+                /* We use only first option type present in ND packet. */
+                if (*opt_type == 0) {
+                    *opt_type = lla_opt->type;
+                }
             } else {
                 goto invalid;
             }
@@ -475,8 +493,10 @@ invalid:
 
 static inline bool
 parse_ipv6_ext_hdrs__(const void **datap, size_t *sizep, uint8_t *nw_proto,
-                      uint8_t *nw_frag)
+                      uint8_t *nw_frag,
+                      const struct ovs_16aligned_ip6_frag **frag_hdr)
 {
+    *frag_hdr = NULL;
     while (1) {
         if (OVS_LIKELY((*nw_proto != IPPROTO_HOPOPTS)
                        && (*nw_proto != IPPROTO_ROUTING)
@@ -522,17 +542,17 @@ parse_ipv6_ext_hdrs__(const void **datap, size_t *sizep, uint8_t *nw_proto,
                 return false;
             }
         } else if (*nw_proto == IPPROTO_FRAGMENT) {
-            const struct ovs_16aligned_ip6_frag *frag_hdr = *datap;
+            *frag_hdr = *datap;
 
-            *nw_proto = frag_hdr->ip6f_nxt;
-            if (!data_try_pull(datap, sizep, sizeof *frag_hdr)) {
+            *nw_proto = (*frag_hdr)->ip6f_nxt;
+            if (!data_try_pull(datap, sizep, sizeof **frag_hdr)) {
                 return false;
             }
 
             /* We only process the first fragment. */
-            if (frag_hdr->ip6f_offlg != htons(0)) {
+            if ((*frag_hdr)->ip6f_offlg != htons(0)) {
                 *nw_frag = FLOW_NW_FRAG_ANY;
-                if ((frag_hdr->ip6f_offlg & IP6F_OFF_MASK) != htons(0)) {
+                if (((*frag_hdr)->ip6f_offlg & IP6F_OFF_MASK) != htons(0)) {
                     *nw_frag |= FLOW_NW_FRAG_LATER;
                     *nw_proto = IPPROTO_FRAGMENT;
                     return true;
@@ -542,11 +562,29 @@ parse_ipv6_ext_hdrs__(const void **datap, size_t *sizep, uint8_t *nw_proto,
     }
 }
 
+/* Parses IPv6 extension headers until a terminal header (or header we
+ * don't understand) is found.  'datap' points to the first extension
+ * header and advances as parsing occurs; 'sizep' is the remaining size
+ * and is decreased accordingly.  'nw_proto' starts as the first
+ * extension header to process and is updated as the extension headers
+ * are parsed.
+ *
+ * If a fragment header is found, '*frag_hdr' is set to the fragment
+ * header and otherwise set to NULL.  If it is the first fragment,
+ * extension header parsing otherwise continues as usual.  If it's not
+ * the first fragment, 'nw_proto' is set to IPPROTO_FRAGMENT and 'nw_frag'
+ * has FLOW_NW_FRAG_LATER set.  Both first and later fragments have
+ * FLOW_NW_FRAG_ANY set in 'nw_frag'.
+ *
+ * A return value of false indicates that there was a problem parsing
+ * the extension headers.*/
 bool
 parse_ipv6_ext_hdrs(const void **datap, size_t *sizep, uint8_t *nw_proto,
-                    uint8_t *nw_frag)
+                    uint8_t *nw_frag,
+                    const struct ovs_16aligned_ip6_frag **frag_hdr)
 {
-    return parse_ipv6_ext_hdrs__(datap, sizep, nw_proto, nw_frag);
+    return parse_ipv6_ext_hdrs__(datap, sizep, nw_proto, nw_frag,
+                                 frag_hdr);
 }
 
 bool
@@ -906,7 +944,9 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
         nw_ttl = nh->ip6_hlim;
         nw_proto = nh->ip6_nxt;
 
-        if (!parse_ipv6_ext_hdrs__(&data, &size, &nw_proto, &nw_frag)) {//解析ipv6扩展头
+        const struct ovs_16aligned_ip6_frag *frag_hdr;
+        if (!parse_ipv6_ext_hdrs__(&data, &size, &nw_proto, &nw_frag,
+                                   &frag_hdr)) {//解析ipv6扩展头
             goto out;
         }
 
@@ -1019,18 +1059,38 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
             if (OVS_LIKELY(size >= sizeof(struct icmp6_hdr))) {
                 const struct in6_addr *nd_target;
                 struct eth_addr arp_buf[2];
-                const struct icmp6_hdr *icmp = data_pull(&data, &size,
-                                                         sizeof *icmp);
-                if (parse_icmpv6(&data, &size, icmp, &nd_target, arp_buf)) {//解析icmpv6
+                /* This will populate whether we received Option 1
+                 * or Option 2. */
+                uint8_t opt_type;
+                /* This holds the ND Reserved field. */
+                uint32_t rso_flags;
+                const struct icmp6_hdr *icmp = data_pull(&data,
+                                               &size,ICMP6_HEADER_LEN);
+                if (parse_icmpv6(&data, &size, icmp,
+                                 &rso_flags, &nd_target, arp_buf, &opt_type)) {//解析icmpv6
                     if (nd_target) {
                         miniflow_push_words(mf, nd_target, nd_target,
                                             sizeof *nd_target / sizeof(uint64_t));
                     }
                     miniflow_push_macs(mf, arp_sha, arp_buf);//硬件地址
-                    miniflow_pad_to_64(mf, arp_tha);
+                    /* Populate options field and set the padding
+                     * accordingly. */
+                    if (opt_type != 0) {
+                        miniflow_push_be16(mf, tcp_flags, htons(opt_type));
+                        /* Pad to align with 64 bits.
+                         * This will zero out the pad3 field. */
+                        miniflow_pad_to_64(mf, tcp_flags);
+                    } else {
+                        /* Pad to align with 64 bits.
+                         * This will zero out the tcp_flags & pad3 field. */
+                        miniflow_pad_to_64(mf, arp_tha);
+                    }
                     miniflow_push_be16(mf, tp_src, htons(icmp->icmp6_type));
                     miniflow_push_be16(mf, tp_dst, htons(icmp->icmp6_code));
                     miniflow_pad_to_64(mf, tp_dst);
+                    /* Fill ND reserved field. */
+                    miniflow_push_be32(mf, igmp_group_ip4, htonl(rso_flags));
+                    miniflow_pad_to_64(mf, igmp_group_ip4);
                 } else {
                     /* ICMPv6 but not ND. */
                     miniflow_push_be16(mf, tp_src, htons(icmp->icmp6_type));
@@ -1109,7 +1169,9 @@ parse_tcp_flags(struct dp_packet *packet)
         plen = ntohs(nh->ip6_plen); /* Never pull padding. */
         dp_packet_set_l2_pad_size(packet, size - plen);
         size = plen;
-        if (!parse_ipv6_ext_hdrs__(&data, &size, &nw_proto, &nw_frag)) {
+        const struct ovs_16aligned_ip6_frag *frag_hdr;
+        if (!parse_ipv6_ext_hdrs__(&data, &size, &nw_proto, &nw_frag,
+            &frag_hdr)) {
             return 0;
         }
         nw_proto = nh->ip6_nxt;
@@ -1294,6 +1356,7 @@ parse_ct_state(const char *state_str, uint32_t default_state,
         if (!bit) {
             ds_put_format(ds, "%s: unknown connection tracking state flag",
                           cs);
+            free(state_s);
             return false;
         }
         state |= bit;
@@ -1970,6 +2033,8 @@ flow_wc_map(const struct flow *flow, struct flowmap *map)
             FLOWMAP_SET(map, nd_target);
             FLOWMAP_SET(map, arp_sha);
             FLOWMAP_SET(map, arp_tha);
+            FLOWMAP_SET(map, tcp_flags);
+            FLOWMAP_SET(map, igmp_group_ip4);
         } else {
             FLOWMAP_SET(map, ct_nw_proto);
             FLOWMAP_SET(map, ct_ipv6_src);
@@ -3019,6 +3084,8 @@ flow_compose_l4(struct dp_packet *p, const struct flow *flow,
             struct icmp6_hdr *icmp = dp_packet_put_zeros(p, sizeof *icmp);
             icmp->icmp6_type = ntohs(flow->tp_src);
             icmp->icmp6_code = ntohs(flow->tp_dst);
+            uint32_t *reserved = &icmp->icmp6_dataun.icmp6_un_data32[0];
+            *reserved = ntohl(flow->igmp_group_ip4);
 
             if (icmp->icmp6_code == 0 &&
                 (icmp->icmp6_type == ND_NEIGHBOR_SOLICIT ||
@@ -3074,6 +3141,9 @@ flow_compose_l4_csum(struct dp_packet *p, const struct flow *flow,
             udp->udp_csum = 0;
             udp->udp_csum = csum_finish(csum_continue(pseudo_hdr_csum,
                                                       udp, l4_len));
+            if (!udp->udp_csum) {
+                udp->udp_csum = htons(0xffff);
+            }
         } else if (flow->nw_proto == IPPROTO_ICMP) {
             struct icmp_header *icmp = dp_packet_l4(p);
 

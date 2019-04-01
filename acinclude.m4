@@ -151,10 +151,10 @@ AC_DEFUN([OVS_CHECK_LINUX], [
     AC_MSG_RESULT([$kversion])
 
     if test "$version" -ge 4; then
-       if test "$version" = 4 && test "$patchlevel" -le 17; then
+       if test "$version" = 4 && test "$patchlevel" -le 18; then
           : # Linux 4.x
        else
-          AC_ERROR([Linux kernel in $KBUILD is version $kversion, but version newer than 4.17.x is not supported (please refer to the FAQ for advice)])
+          AC_ERROR([Linux kernel in $KBUILD is version $kversion, but version newer than 4.18.x is not supported (please refer to the FAQ for advice)])
        fi
     elif test "$version" = 3 && test "$patchlevel" -ge 10; then
        : # Linux 3.x
@@ -223,9 +223,11 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     case "$with_dpdk" in
       yes)
         DPDK_AUTO_DISCOVER="true"
-        PKG_CHECK_MODULES([DPDK], [libdpdk],
-                          [DPDK_INCLUDE="$DPDK_CFLAGS"],
-                          [DPDK_INCLUDE="-I/usr/local/include/dpdk -I/usr/include/dpdk"])
+        PKG_CHECK_MODULES_STATIC([DPDK], [libdpdk], [
+            DPDK_INCLUDE="$DPDK_CFLAGS"
+            DPDK_LIB="$DPDK_LIBS"], [
+            DPDK_INCLUDE="-I/usr/local/include/dpdk -I/usr/include/dpdk"
+            DPDK_LIB="-ldpdk"])
         ;;
       *)
         DPDK_AUTO_DISCOVER="false"
@@ -238,11 +240,9 @@ AC_DEFUN([OVS_CHECK_DPDK], [
            DPDK_INCLUDE="-I$DPDK_INCLUDE_PATH/dpdk"
         fi
         DPDK_LIB_DIR="$with_dpdk/lib"
+        DPDK_LIB="-ldpdk"
         ;;
     esac
-
-    DPDK_LIB="-ldpdk"
-    DPDK_EXTRA_LIB=""
 
     ovs_save_CFLAGS="$CFLAGS"
     ovs_save_LDFLAGS="$LDFLAGS"
@@ -251,17 +251,20 @@ AC_DEFUN([OVS_CHECK_DPDK], [
       LDFLAGS="$LDFLAGS -L${DPDK_LIB_DIR}"
     fi
 
+    AC_CHECK_HEADERS([rte_config.h], [], [
+      AC_MSG_ERROR([unable to find rte_config.h in $with_dpdk])
+    ], [AC_INCLUDES_DEFAULT])
+
     AC_COMPILE_IFELSE([
       AC_LANG_PROGRAM(
         [
           #include <rte_config.h>
-#if RTE_LIBRTE_VHOST_NUMA
+#if defined(RTE_LIBRTE_VHOST_NUMA) || defined(RTE_EAL_NUMA_AWARE_HUGEPAGES)
 #error
 #endif
         ], [])
       ], [],
       [AC_SEARCH_LIBS([get_mempolicy],[numa],[],[AC_MSG_ERROR([unable to find libnuma, install the dependency package])])
-       DPDK_EXTRA_LIB="-lnuma"
        AC_DEFINE([VHOST_NUMA], [1], [NUMA Aware vHost support detected in DPDK.])])
 
     AC_COMPILE_IFELSE([
@@ -274,7 +277,6 @@ AC_DEFUN([OVS_CHECK_DPDK], [
         ], [])
       ], [],
       [AC_SEARCH_LIBS([pcap_dump],[pcap],[],[AC_MSG_ERROR([unable to find libpcap, install the dependency package])])
-       DPDK_EXTRA_LIB="-lpcap"
        AC_COMPILE_IFELSE([
          AC_LANG_PROGRAM(
            [
@@ -287,6 +289,53 @@ AC_DEFUN([OVS_CHECK_DPDK], [
        [AC_DEFINE([DPDK_PDUMP], [1], [DPDK pdump enabled in OVS.])])
      ])
 
+    AC_COMPILE_IFELSE([
+      AC_LANG_PROGRAM(
+        [
+          #include <rte_config.h>
+#if RTE_LIBRTE_MLX5_PMD
+#error
+#endif
+        ], [])
+      ], [],
+      [AC_SEARCH_LIBS([mnl_attr_put],[mnl],[],[AC_MSG_ERROR([unable to find libmnl, install the dependency package])])])
+
+    AC_COMPILE_IFELSE([
+      AC_LANG_PROGRAM(
+        [
+          #include <rte_config.h>
+#if defined(RTE_LIBRTE_MLX5_PMD) && !defined(RTE_LIBRTE_MLX5_DLOPEN_DEPS)
+#error
+#endif
+        ], [])
+      ], [],
+      [AC_SEARCH_LIBS([mlx5dv_create_wq],[mlx5],[],[AC_MSG_ERROR([unable to find libmlx5, install the dependency package])])])
+
+    AC_COMPILE_IFELSE([
+      AC_LANG_PROGRAM(
+        [
+          #include <rte_config.h>
+#if defined(RTE_LIBRTE_MLX4_PMD) && !defined(RTE_LIBRTE_MLX4_DLOPEN_DEPS)
+#error
+#endif
+        ], [])
+      ], [],
+      [AC_SEARCH_LIBS([mlx4dv_init_obj],[mlx4],[],[AC_MSG_ERROR([unable to find libmlx4, install the dependency package])])])
+
+    AC_COMPILE_IFELSE([
+      AC_LANG_PROGRAM(
+        [
+          #include <rte_config.h>
+#if defined(RTE_LIBRTE_MLX5_PMD) && !defined(RTE_LIBRTE_MLX5_DLOPEN_DEPS)
+#error
+#endif
+#if defined(RTE_LIBRTE_MLX4_PMD) && !defined(RTE_LIBRTE_MLX4_DLOPEN_DEPS)
+#error
+#endif
+        ], [])
+      ], [],
+      [AC_SEARCH_LIBS([verbs_init_cq],[ibverbs],[],[AC_MSG_ERROR([unable to find libibverbs, install the dependency package])])])
+
     # On some systems we have to add -ldl to link with dpdk
     #
     # This code, at first, tries to link without -ldl (""),
@@ -297,7 +346,7 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     DPDKLIB_FOUND=false
     save_LIBS=$LIBS
     for extras in "" "-ldl"; do
-        LIBS="$DPDK_LIB $extras $save_LIBS $DPDK_EXTRA_LIB"
+        LIBS="$DPDK_LIB $extras $save_LIBS"
         AC_LINK_IFELSE(
            [AC_LANG_PROGRAM([#include <rte_config.h>
                              #include <rte_eal.h>],
@@ -333,7 +382,14 @@ AC_DEFUN([OVS_CHECK_DPDK], [
     #
     # These options are specified inside a single -Wl directive to prevent
     # autotools from reordering them.
-    DPDK_vswitchd_LDFLAGS=-Wl,--whole-archive,$DPDK_LIB,--no-whole-archive
+    #
+    # OTOH newer versions of dpdk pkg-config (generated with Meson)
+    # will already have flagged just the right set of libs with
+    # --whole-archive - in those cases do not wrap it once more.
+    case "$DPDK_LIB" in
+      *whole-archive*) DPDK_vswitchd_LDFLAGS=$DPDK_LIB;;
+      *) DPDK_vswitchd_LDFLAGS=-Wl,--whole-archive,$DPDK_LIB,--no-whole-archive
+    esac
     AC_SUBST([DPDK_vswitchd_LDFLAGS])
     AC_DEFINE([DPDK_NETDEV], [1], [System uses the DPDK module.])
   fi
@@ -470,8 +526,10 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
   OVS_GREP_IFELSE([$KSRC/include/linux/err.h], [IS_ERR_OR_NULL])
   OVS_GREP_IFELSE([$KSRC/include/linux/err.h], [PTR_ERR_OR_ZERO])
 
-  OVS_GREP_IFELSE([$KSRC/include/linux/jump_label.h], [DEFINE_STATIC_KEY_FALSE],
+  OVS_GREP_IFELSE([$KSRC/include/linux/jump_label.h], [static_branch_unlikely(],
                   [OVS_DEFINE([HAVE_UPSTREAM_STATIC_KEY])])
+  OVS_GREP_IFELSE([$KSRC/include/linux/jump_label.h], [DEFINE_STATIC_KEY_FALSE],
+                  [OVS_DEFINE([HAVE_DEFINE_STATIC_KEY])])
 
   OVS_GREP_IFELSE([$KSRC/include/linux/etherdevice.h], [eth_hw_addr_random])
   OVS_GREP_IFELSE([$KSRC/include/linux/etherdevice.h], [ether_addr_copy])
@@ -619,8 +677,8 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
                   [nf_ct_is_untracked])
   OVS_GREP_IFELSE([$KSRC/include/net/netfilter/nf_conntrack_zones.h],
                   [nf_ct_zone_init])
-  OVS_FIND_FIELD_IFELSE([$KSRC/include/net/netfilter/nf_conntrack_l3proto.h],
-                        [net_ns_get])
+  OVS_GREP_IFELSE([$KSRC/include/net/netfilter/nf_conntrack_l3proto.h],
+                  [net_ns_get])
   OVS_GREP_IFELSE([$KSRC/include/net/netfilter/nf_conntrack_labels.h],
                   [nf_connlabels_get])
   OVS_FIND_PARAM_IFELSE([$KSRC/include/net/netfilter/nf_conntrack_labels.h],
@@ -897,6 +955,12 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
                   [OVS_DEFINE([HAVE_VOID_NDO_GET_STATS64])])
   OVS_GREP_IFELSE([$KSRC/include/linux/timer.h], [init_timer_deferrable],
                   [OVS_DEFINE([HAVE_INIT_TIMER_DEFERRABLE])])
+  OVS_FIND_PARAM_IFELSE([$KSRC/include/net/ip_tunnels.h],
+                        [ip_tunnel_info_opts_set], [flags],
+                        [OVS_DEFINE([HAVE_IP_TUNNEL_INFO_OPTS_SET_FLAGS])])
+  OVS_FIND_FIELD_IFELSE([$KSRC/include/net/inet_frag.h], [inet_frags],
+                        [rnd],
+                        [OVS_DEFINE([HAVE_INET_FRAGS_RND])])
 
   if cmp -s datapath/linux/kcompat.h.new \
             datapath/linux/kcompat.h >/dev/null 2>&1; then

@@ -3743,10 +3743,12 @@ port_add(struct ofproto *ofproto_, struct netdev *netdev)
     }
 
     dp_port_name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
-    odp_port_t port_no = ODPP_NONE;
-    //不存在，则创建并加和入
-    int error = dpif_port_add(ofproto->backer->dpif, netdev, &port_no);
-    if (error != EEXIST && error != EBUSY) {
+    if (!dpif_port_exists(ofproto->backer->dpif, dp_port_name)) {
+        odp_port_t port_no = ODPP_NONE;
+        int error;
+
+    	//不存在，则创建并加和入
+        error = dpif_port_add(ofproto->backer->dpif, netdev, &port_no);
         if (error) {
             return error;
         }
@@ -3846,6 +3848,26 @@ port_get_stats(const struct ofport *ofport_, struct netdev_stats *stats)
     }
 
     return error;
+}
+
+static int
+vport_get_status(const struct ofport *ofport_, char **errp)
+{
+    struct ofport_dpif *ofport = ofport_dpif_cast(ofport_);
+    char *peer_name;
+
+    if (!netdev_vport_is_patch(ofport->up.netdev) || ofport->peer) {
+        return 0;
+    }
+
+    peer_name = netdev_vport_patch_peer(ofport->up.netdev);
+    if (!peer_name) {
+        return 0;
+    }
+    *errp = xasprintf("No usable peer '%s' exists in '%s' datapath.",
+                      peer_name, ofport->up.ofproto->type);
+    free(peer_name);
+    return EINVAL;
 }
 
 static int
@@ -5317,7 +5339,7 @@ ofproto_unixctl_fdb_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
     ovs_rwlock_rdlock(&ofproto->ml->rwlock);
     LIST_FOR_EACH (e, lru_node, &ofproto->ml->lrus) {
         struct ofbundle *bundle = mac_entry_get_port(ofproto->ml, e);
-        char name[OFP10_MAX_PORT_NAME_LEN];
+        char name[OFP_MAX_PORT_NAME_LEN];
 
         ofputil_port_to_string(ofbundle_get_a_port(bundle)->up.ofp_port,
                                NULL, name, sizeof name);
@@ -5421,7 +5443,7 @@ ofproto_unixctl_mcast_snooping_show(struct unixctl_conn *conn,
     ovs_rwlock_rdlock(&ofproto->ms->rwlock);
     LIST_FOR_EACH (grp, group_node, &ofproto->ms->group_lru) {
         LIST_FOR_EACH(b, bundle_node, &grp->bundle_lru) {
-            char name[OFP10_MAX_PORT_NAME_LEN];
+            char name[OFP_MAX_PORT_NAME_LEN];
 
             bundle = b->port;
             ofputil_port_to_string(ofbundle_get_a_port(bundle)->up.ofp_port,
@@ -5435,7 +5457,7 @@ ofproto_unixctl_mcast_snooping_show(struct unixctl_conn *conn,
 
     /* ports connected to multicast routers */
     LIST_FOR_EACH(mrouter, mrouter_node, &ofproto->ms->mrouter_lru) {
-        char name[OFP10_MAX_PORT_NAME_LEN];
+        char name[OFP_MAX_PORT_NAME_LEN];
 
         bundle = mrouter->port;
         ofputil_port_to_string(ofbundle_get_a_port(bundle)->up.ofp_port,
@@ -5788,8 +5810,10 @@ ofproto_unixctl_dpif_dump_flows(struct unixctl_conn *conn,
     while (dpif_flow_dump_next(flow_dump_thread, &f, 1)) {
         struct flow flow;
 
-        if (odp_flow_key_to_flow(f.key, f.key_len, &flow) == ODP_FIT_ERROR
-            || xlate_lookup_ofproto(ofproto->backer, &flow, NULL) != ofproto) {
+        if ((odp_flow_key_to_flow(f.key, f.key_len, &flow, NULL)
+             == ODP_FIT_ERROR)
+            || (xlate_lookup_ofproto(ofproto->backer, &flow, NULL, NULL)
+                != ofproto)) {
             continue;
         }
 
@@ -6036,11 +6060,11 @@ meter_set(struct ofproto *ofproto_, ofproto_meter_id *meter_id,
     /* Provider ID unknown. Use backer to allocate a new DP meter */
     if (meter_id->uint32 == UINT32_MAX) {
         if (!ofproto->backer->meter_ids) {
-            return EFBIG; /* Datapath does not support meter.  */
+            return OFPERR_OFPMMFC_OUT_OF_METERS; /* Meters not supported. */
         }
 
         if(!id_pool_alloc_id(ofproto->backer->meter_ids, &meter_id->uint32)) {
-            return ENOMEM; /* Can't allocate a DP meter. */
+            return OFPERR_OFPMMFC_OUT_OF_METERS; /* Can't allocate meter. */
         }
     }
 
@@ -6133,6 +6157,7 @@ const struct ofproto_class ofproto_dpif_class = {
     type_get_memory_usage,
     flush,
     query_tables,
+    NULL,                       /* modify_tables */
     set_tables_version,
 	//申请一个port内存
     port_alloc,
@@ -6146,7 +6171,9 @@ const struct ofproto_class ofproto_dpif_class = {
     port_del,
     port_set_config,
     port_get_stats,
+    vport_get_status,
     port_dump_start,//对ofproto所有port进行遍历的起始函数
+    port_dump_next,//对ofproto所有port进行遍历的next函数
     port_dump_next,//对ofproto所有port进行遍历的next函数
     port_dump_done,//对ofproto所有port进行遍历的完成函数
     port_poll,

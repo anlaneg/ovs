@@ -38,6 +38,7 @@
 #include "openvswitch/vlog.h"
 #include "ovs-numa.h"
 #include "smap.h"
+#include "svec.h"
 #include "vswitch-idl.h"
 
 VLOG_DEFINE_THIS_MODULE(dpdk);
@@ -78,67 +79,24 @@ process_vhost_flags(char *flag, const char *default_val, int size,
     return changed;
 }
 
-static char **
-grow_argv(char ***argv, size_t cur_siz, size_t grow_by)
-{
-    return xrealloc(*argv, sizeof(char *) * (cur_siz + grow_by));
-}
-
-static void
-dpdk_option_extend(char ***argv, int argc, const char *option,
-                   const char *value)
-{
-    char **newargv = grow_argv(argv, argc, 2);
-    *argv = newargv;
-    newargv[argc] = xstrdup(option);
-    newargv[argc+1] = xstrdup(value);
-}
-
-static char **
-move_argv(char ***argv, size_t cur_size, char **src_argv, size_t src_argc)
-{
-    char **newargv = grow_argv(argv, cur_size, src_argc);
-    while (src_argc--) {
-        newargv[cur_size+src_argc] = src_argv[src_argc];
-        src_argv[src_argc] = NULL;
-    }
-    return newargv;
-}
-
-//从ovs_extra_config字符串中按空隔提取出token,并从argv[argc]这个位置开始存放
-static int
-extra_dpdk_args(const char *ovs_extra_config, char ***argv, int argc)
-{
-    int ret = argc;
-    char *release_tok = xstrdup(ovs_extra_config);
-    char *tok, *endptr = NULL;
-
-    for (tok = strtok_r(release_tok, " ", &endptr); tok != NULL;
-         tok = strtok_r(NULL, " ", &endptr)) {
-        char **newarg = grow_argv(argv, ret, 1);
-        *argv = newarg;
-        newarg[ret++] = xstrdup(tok);
-    }
-    free(release_tok);
-    return ret;
-}
-
 static bool
-argv_contains(char **argv_haystack, const size_t argc_haystack,
-              const char *needle)
+args_contains(const struct svec *args, const char *value)
 {
-    for (size_t i = 0; i < argc_haystack; ++i) {
-        if (!strcmp(argv_haystack[i], needle))
+    const char *arg;
+    size_t i;
+
+    /* We can't just use 'svec_contains' because args are not sorted. */
+    SVEC_FOR_EACH (i, arg, args) {
+        if (!strcmp(arg, value)) {
             return true;
+        }
     }
     return false;
 }
 
 //处理opts中的选项
-static int
-construct_dpdk_options(const struct smap *ovs_other_config,
-                       char ***argv, const int initial_size,
-                       char **extra_args, const size_t extra_argc)
+static void
+construct_dpdk_options(const struct smap *ovs_other_config, struct svec *args)
 {
     struct dpdk_options_map {
         const char *ovs_configuration;
@@ -146,69 +104,63 @@ construct_dpdk_options(const struct smap *ovs_other_config,
         bool default_enabled;
         const char *default_value;
     } opts[] = {
-        {"dpdk-lcore-mask", "-c", false, NULL},
-        {"dpdk-hugepage-dir", "--huge-dir", false, NULL},
+        {"dpdk-lcore-mask",   "-c",             false, NULL},
+        {"dpdk-hugepage-dir", "--huge-dir",     false, NULL},
+        {"dpdk-socket-limit", "--socket-limit", false, NULL},
     };
 
-    int i, ret = initial_size;
+    int i;
 
     /*First, construct from the flat-options (non-mutex)*/
     for (i = 0; i < ARRAY_SIZE(opts); ++i) {
-        const char *lookup = smap_get(ovs_other_config,
-                                      opts[i].ovs_configuration);
+        const char *value = smap_get(ovs_other_config,
+                                     opts[i].ovs_configuration);
         //如果没有提供此配置，但opt默认开启则使用默认值
-        if (!lookup && opts[i].default_enabled) {
-            lookup = opts[i].default_value;
+        if (!value && opts[i].default_enabled) {
+            value = opts[i].default_value;
         }
 
-        if (lookup) {
-        	//如果选项在extra_args中不存在，则加入
-            if (!argv_contains(extra_args, extra_argc, opts[i].dpdk_option)) {
-            	//lookup是其取值
-                dpdk_option_extend(argv, ret, opts[i].dpdk_option, lookup);
-                ret += 2;
+        if (value) {
+            if (!args_contains(args, opts[i].dpdk_option)) {
+                svec_add(args, opts[i].dpdk_option);
+                svec_add(args, value);
             } else {
             	//如果extra_args中已存在，则忽略掉other_config中的配置
                 VLOG_WARN("Ignoring database defined option '%s' due to "
-                          "dpdk_extras config", opts[i].dpdk_option);
+                          "dpdk-extra config", opts[i].dpdk_option);
             }
         }
     }
-
-    return ret;
 }
 
 static char *
 construct_dpdk_socket_mem(void)
 {
-    int numa;
     const char *def_value = "1024";
-    int numa_nodes = ovs_numa_get_n_numas();
+    int numa, numa_nodes = ovs_numa_get_n_numas();
+    struct ds dpdk_socket_mem = DS_EMPTY_INITIALIZER;
 
     if (numa_nodes == 0 || numa_nodes == OVS_NUMA_UNSPEC) {
         numa_nodes = 1;
     }
-    /* Allocate enough memory for digits, comma-sep and terminator. */
-    char *dpdk_socket_mem = xzalloc(numa_nodes * (strlen(def_value) + 1));
 
-    strcat(dpdk_socket_mem, def_value);
+    ds_put_cstr(&dpdk_socket_mem, def_value);
     for (numa = 1; numa < numa_nodes; ++numa) {
-        strcat(dpdk_socket_mem, ",");
-        strcat(dpdk_socket_mem, def_value);
+        ds_put_format(&dpdk_socket_mem, ",%s", def_value);
     }
 
-    return dpdk_socket_mem;
+    return ds_cstr(&dpdk_socket_mem);
 }
 
 #define MAX_DPDK_EXCL_OPTS 10
 
 //检查excl_opts选项
-static int
+static void
 construct_dpdk_mutex_options(const struct smap *ovs_other_config,
-                             char ***argv, const int initial_size,
-                             char **extra_args, const size_t extra_argc)
+                             struct svec *args)
 {
     char *default_dpdk_socket_mem = construct_dpdk_socket_mem();
+
     struct dpdk_exclusive_options_map {
         const char *category;
         const char *ovs_dpdk_options[MAX_DPDK_EXCL_OPTS];
@@ -223,7 +175,7 @@ construct_dpdk_mutex_options(const struct smap *ovs_other_config,
         },
     };
 
-    int i, ret = initial_size;
+    int i;
     for (i = 0; i < ARRAY_SIZE(excl_opts); ++i) {
         int found_opts = 0, scan, found_pos = -1;
         const char *found_value;
@@ -231,14 +183,14 @@ construct_dpdk_mutex_options(const struct smap *ovs_other_config,
 
         for (scan = 0; scan < MAX_DPDK_EXCL_OPTS
                  && popt->ovs_dpdk_options[scan]; ++scan) {
-        	//检查ovs_other_config中是否配置了例如{'dpdk-all-mem','dpdk-socket-mem'}
-            const char *lookup = smap_get(ovs_other_config,
-                                          popt->ovs_dpdk_options[scan]);
+            //检查ovs_other_config中是否配置了例如{'dpdk-all-mem','dpdk-socket-mem'}
+            const char *value = smap_get(ovs_other_config,
+                                         popt->ovs_dpdk_options[scan]);
             //如果出现多个，最后一个生效
-            if (lookup && strlen(lookup)) {
+            if (value && strlen(value)) {
                 found_opts++;
                 found_pos = scan;
-                found_value = lookup;
+                found_value = value;
             }
         }
 
@@ -260,63 +212,32 @@ construct_dpdk_mutex_options(const struct smap *ovs_other_config,
         }
 
         //如果未指定，则加入argv
-        if (!argv_contains(extra_args, extra_argc,
-                           popt->eal_dpdk_options[found_pos])) {
-            dpdk_option_extend(argv, ret, popt->eal_dpdk_options[found_pos],
-                               found_value);
-            ret += 2;
+        if (!args_contains(args, popt->eal_dpdk_options[found_pos])) {
+            svec_add(args, popt->eal_dpdk_options[found_pos]);
+            svec_add(args, found_value);
         } else {
         	//已指定，忽略数据库中的配置项
             VLOG_WARN("Ignoring database defined option '%s' due to "
-                      "dpdk_extras config", popt->eal_dpdk_options[found_pos]);
+                      "dpdk-extra config", popt->eal_dpdk_options[found_pos]);
         }
     }
 
     free(default_dpdk_socket_mem);
-
-    return ret;
-}
-
-static int
-get_dpdk_args(const struct smap *ovs_other_config, char ***argv,
-              int argc)
-{
-    const char *extra_configuration;
-    char **extra_args = NULL;
-    int i;
-    size_t extra_argc = 0;
-
-    //检查是否有'dpdk-extra'参数，例如dpdk-extra="-w 0000:81:00.1 -w 0000:06:00.0"
-    extra_configuration = smap_get(ovs_other_config, "dpdk-extra");
-    if (extra_configuration) {
-    	//将extra_cfg按token存入到extra_args指针数组中
-        extra_argc = extra_dpdk_args(extra_configuration, &extra_args, 0);
-    }
-
-    i = construct_dpdk_options(ovs_other_config, argv, argc, extra_args,
-                               extra_argc);
-    i = construct_dpdk_mutex_options(ovs_other_config, argv, i, extra_args,
-                                     extra_argc);
-
-    if (extra_configuration) {
-    	//将extra_args合入argv中
-        *argv = move_argv(argv, i, extra_args, extra_argc);
-    }
-
-    //返回参数总数
-    return i + extra_argc;
 }
 
 static void
-argv_release(char **dpdk_argv, char **dpdk_argv_release, size_t dpdk_argc)
+construct_dpdk_args(const struct smap *ovs_other_config, struct svec *args)
 {
-    int result;
-    for (result = 0; result < dpdk_argc; ++result) {
-        free(dpdk_argv_release[result]);
+    const char *extra_configuration = smap_get(ovs_other_config, "dpdk-extra");
+
+    //检查是否有'dpdk-extra'参数，例如dpdk-extra="-w 0000:81:00.1 -w 0000:06:00.0"
+    if (extra_configuration) {
+    	//将extra_cfg按token存入到extra_args指针数组中
+        svec_parse_words(args, extra_configuration);
     }
 
-    free(dpdk_argv_release);
-    free(dpdk_argv);
+    construct_dpdk_options(ovs_other_config, args);
+    construct_dpdk_mutex_options(ovs_other_config, args);
 }
 
 static ssize_t
@@ -361,13 +282,13 @@ static cookie_io_functions_t dpdk_log_func = {
 static bool
 dpdk_init__(const struct smap *ovs_other_config)
 {
-    char **argv = NULL, **argv_to_release = NULL;
+    char *sock_dir_subcomponent;
+    char **argv = NULL;
     int result;
-    int argc, argc_tmp;
     bool auto_determine = true;
     int err = 0;
     cpu_set_t cpuset;
-    char *sock_dir_subcomponent;
+    struct svec args = SVEC_EMPTY_INITIALIZER;
 
     log_stream = fopencookie(NULL, "w+", dpdk_log_func);
     if (log_stream == NULL) {
@@ -418,23 +339,30 @@ dpdk_init__(const struct smap *ovs_other_config)
               per_port_memory ? "enabled" : "disabled");
 
     //当前版本中的argv实际上全部来源于ovs_other_config
-    argv = grow_argv(&argv, 0, 1);
-    argc = 1;
-    argv[0] = xstrdup(ovs_get_program_name());//填充进程名
-
     //利用ovs_other_config中的参数构造argv,argc_tmp参数
     //在此函数里走一转，实际上没有意义。
-    argc_tmp = get_dpdk_args(ovs_other_config, &argv, argc);
+    svec_add(&args, ovs_get_program_name());
+    construct_dpdk_args(ovs_other_config, &args);
 
-    while (argc_tmp != argc) {
-    	//检查是否含有-c，-l参数
-        if (!strcmp("-c", argv[argc]) || !strcmp("-l", argv[argc])) {
-            auto_determine = false;
-            break;
+    if (!args_contains(&args, "--legacy-mem")
+        && !args_contains(&args, "--socket-limit")) {
+        const char *arg;
+        size_t i;
+
+        SVEC_FOR_EACH (i, arg, &args) {
+            if (!strcmp(arg, "--socket-mem")) {
+                break;
+            }
         }
-        argc++;
+        if (i < args.n - 1) {
+            svec_add(&args, "--socket-limit");
+            svec_add(&args, args.names[i + 1]);
+        }
     }
-    argc = argc_tmp;
+
+    if (args_contains(&args, "-c") || args_contains(&args, "-l")) {
+        auto_determine = false;
+    }
 
     /**
      * NOTE: This is an unsophisticated mechanism for determining the DPDK
@@ -442,63 +370,54 @@ dpdk_init__(const struct smap *ovs_other_config)
      */
     //未给出-c,-l参数，构造-c参数
     if (auto_determine) {
-        int i;
+        int cpu = 0;
+
         /* Get the main thread affinity */
         CPU_ZERO(&cpuset);
         err = pthread_getaffinity_np(pthread_self(), sizeof(cpu_set_t),
                                      &cpuset);
         if (!err) {
-            for (i = 0; i < CPU_SETSIZE; i++) {
+            for (cpu = 0; cpu < CPU_SETSIZE; cpu++) {
             	//取cpuset中的第一个cpu,并组装-c 参数
-                if (CPU_ISSET(i, &cpuset)) {
-                    argv = grow_argv(&argv, argc, 2);
-                    argv[argc++] = xstrdup("-c");
-                    argv[argc++] = xasprintf("0x%08llX", (1ULL<<i));
-                    i = CPU_SETSIZE;
+                if (CPU_ISSET(cpu, &cpuset)) {
+                    break;
                 }
             }
         } else {
         	//获取失败，则使用"-c 0x1"
-            VLOG_ERR("Thread getaffinity error %d. Using core 0x1", err);
             /* User did not set dpdk-lcore-mask and unable to get current
-             * thread affintity - default to core 0x1 */
-            argv = grow_argv(&argv, argc, 2);
-            argv[argc++] = xstrdup("-c");
-            argv[argc++] = xasprintf("0x%X", 1);
+             * thread affintity - default to core #0 */
+            VLOG_ERR("Thread getaffinity error %d. Using core #0", err);
         }
+        svec_add(&args, "-l");
+        svec_add_nocopy(&args, xasprintf("%d", cpu));
     }
 
-    argv = grow_argv(&argv, argc, 1);
-    argv[argc] = NULL;
+    svec_terminate(&args);
 
     optind = 1;
 
     //如果此模块开启了info,则显示构造好的字符串
     if (VLOG_IS_INFO_ENABLED()) {
-        struct ds eal_args;
-        int opt;
-        ds_init(&eal_args);
-        ds_put_cstr(&eal_args, "EAL ARGS:");
+        struct ds eal_args = DS_EMPTY_INITIALIZER;
+        char *joined_args = svec_join(&args, " ", ".");
+
         //将所有参数构造在字符中eal_args中
-        for (opt = 0; opt < argc; ++opt) {
-            ds_put_cstr(&eal_args, " ");
-            ds_put_cstr(&eal_args, argv[opt]);
-        }
+        ds_put_format(&eal_args, "EAL ARGS: %s", joined_args);
         VLOG_INFO("%s", ds_cstr_ro(&eal_args));
         ds_destroy(&eal_args);
+        free(joined_args);
     }
 
-    //构造argv_to_release，用于帮助释放，防止rte_eal_init把argv改了
-    argv_to_release = grow_argv(&argv_to_release, 0, argc);
-    for (argc_tmp = 0; argc_tmp < argc; ++argc_tmp) {
-        argv_to_release[argc_tmp] = argv[argc_tmp];
-    }
+    /* Copy because 'rte_eal_init' will change the argv, i.e. it will remove
+     * some arguments from it. '+1' to copy the terminating NULL.  */
+    argv = xmemdup(args.names, (args.n + 1) * sizeof args.names[0]);
 
     /* Make sure things are initialized ... */
-    //将参数构造并传入rte_eal_init
-    result = rte_eal_init(argc, argv);
-    //释放argv
-    argv_release(argv, argv_to_release, argc);
+    result = rte_eal_init(args.n, argv);
+
+    free(argv);
+    svec_destroy(&args);
 
     /* Set the main thread affinity back to pre rte_eal_init() value */
     if (auto_determine && !err) {
@@ -516,8 +435,23 @@ dpdk_init__(const struct smap *ovs_other_config)
         return false;
     }
 
-    //dump memzone
-    rte_memzone_dump(stdout);
+    if (VLOG_IS_DBG_ENABLED()) {
+        size_t size;
+        char *response = NULL;
+        FILE *stream = open_memstream(&response, &size);
+
+        if (stream) {
+            rte_memzone_dump(stream);
+            fclose(stream);
+            if (size) {
+                VLOG_DBG("rte_memzone_dump:\n%s", response);
+            }
+            free(response);
+        } else {
+            VLOG_DBG("Could not dump memzone. Unable to open memstream: %s.",
+                     ovs_strerror(errno));
+        }
+    }
 
     /* We are called from the main thread here */
     //设置此线程的core_id
@@ -558,8 +492,8 @@ dpdk_init(const struct smap *ovs_other_config)
     const char *dpdk_init_val = smap_get_def(ovs_other_config, "dpdk-init",
                                              "false");
 
-    bool try_only = !strcmp(dpdk_init_val, "try");
-    if (!strcmp(dpdk_init_val, "true") || try_only) {
+    bool try_only = !strcasecmp(dpdk_init_val, "try");
+    if (!strcasecmp(dpdk_init_val, "true") || try_only) {
         static struct ovsthread_once once_enable = OVSTHREAD_ONCE_INITIALIZER;
 
         //ovs_other_config中的改动需要重启ovs

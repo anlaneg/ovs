@@ -289,7 +289,7 @@ check_connection_completion(int fd)//等待可写，如果发生错误，错误�
     }
 #endif
     if (retval == 1) {//此fd有事件发生
-        if (pfd.revents & POLLERR) {//此fd发生了错误
+        if (pfd.revents & (POLLERR | POLLHUP)) {//此fd发生了错误
             ssize_t n = send(fd, "", 1, 0);//发送'\0'
             if (n < 0) {//写失败
                 return sock_errno();
@@ -1257,7 +1257,7 @@ sock_strerror(int error)
 #endif
 }
 
-#ifndef _WIN32 //Avoid using sendmsg on Windows entirely
+#ifndef _WIN32 /* Avoid using sendmsg on Windows entirely. */
 static int
 emulate_sendmmsg(int fd, struct mmsghdr *msgs, unsigned int n,
                  unsigned int flags)

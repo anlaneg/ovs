@@ -1269,3 +1269,9 @@ ofctrl_inject_pkt(const struct ovsrec_bridge *br_int, const char *flow_s,
 
     return NULL;
 }
+
+bool
+ofctrl_is_connected(void)
+{
+    return rconn_is_connected(swconn);
+}

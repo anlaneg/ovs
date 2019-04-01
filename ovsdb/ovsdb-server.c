@@ -225,6 +225,11 @@ main_loop(struct server_config *config,
         struct shash_node *next;
         SHASH_FOR_EACH_SAFE (node, next, all_dbs) {
             struct db *db = node->data;
+            ovsdb_txn_history_run(db->db);
+            ovsdb_storage_run(db->db->storage);
+            read_db(config, db);
+            /* Run triggers after storage_run and read_db to make sure new raft
+             * updates are utilized in current iteration. */
             //事务执行（增删改查操作）
             if (ovsdb_trigger_run(db->db, time_msec())) {
                 /* The message below is currently the only reason to disconnect
@@ -234,8 +239,6 @@ main_loop(struct server_config *config,
                     xasprintf("committed %s database schema conversion",
                               db->db->name));
             }
-            ovsdb_storage_run(db->db->storage);
-            read_db(config, db);
             if (ovsdb_storage_is_dead(db->db->storage)) {
                 VLOG_INFO("%s: removing database because storage disconnected "
                           "permanently", node->name);
@@ -588,6 +591,7 @@ parse_txn(struct server_config *config, struct db *db,
 
         error = ovsdb_file_txn_from_json(db->db, txn_json, false, &txn);
         if (!error) {
+            ovsdb_txn_set_txnid(txnid, txn);
             log_and_free_error(ovsdb_txn_replay_commit(txn));
         }
         if (!error && !uuid_is_zero(txnid)) {
@@ -678,6 +682,11 @@ open_db(struct server_config *config, const char *filename)
     db->db = ovsdb_create(schema, storage);
     ovsdb_jsonrpc_server_add_db(config->jsonrpc, db->db);
 
+    /* Enable txn history for clustered mode. It is not enabled for other mode
+     * for now, since txn id is available for clustered mode only. */
+    if (ovsdb_storage_is_clustered(storage)) {
+        ovsdb_txn_history_init(db->db);
+    }
     read_db(config, db);
 
     error = (db->db->name[0] == '_'
@@ -715,6 +724,8 @@ add_server_db(struct server_config *config)
     json_destroy(schema_json);
 
     struct db *db = xzalloc(sizeof *db);
+    /* We don't need txn_history for server_db. */
+
     db->filename = xstrdup("<internal>");
     db->db = ovsdb_create(schema, ovsdb_storage_create_unbacked());
     bool ok OVS_UNUSED = ovsdb_jsonrpc_server_add_db(config->jsonrpc, db->db);
@@ -1447,7 +1458,7 @@ ovsdb_server_disable_monitor_cond(struct unixctl_conn *conn,
 
     ovsdb_jsonrpc_disable_monitor_cond();
     ovsdb_jsonrpc_server_reconnect(
-        jsonrpc, true, xstrdup("user ran ovsdb-server/disable-monitor"));
+        jsonrpc, true, xstrdup("user ran ovsdb-server/disable-monitor-cond"));
     unixctl_command_reply(conn, NULL);
 }
 

@@ -3080,11 +3080,11 @@ dnl Check logs for OpenFlow trace
 OVS_WAIT_UNTIL([vconn_sub < ovs-vswitchd.log | test `grep -- "|vconn|DBG|unix: sent (Success): OFPST_FLOW reply" | wc -l` -ge 2])
 # AT_CHECK([sed -n "s/^.*\(|vconn|DBG|.*xid=.*:\).*$/\1/p" ovs-vswitchd.log], [0], [dnl
 AT_CHECK([print_vconn_debug | vconn_sub | ofctl_strip], [0], [dnl
-vconn|DBG|unix: sent (Success): OFPT_HELLO (OF1.6):
- version bitmap: 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07
+vconn|DBG|unix: sent (Success): OFPT_HELLO (OF1.5):
+ version bitmap: 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
 vconn|DBG|unix: received: OFPT_HELLO (OF1.4):
  version bitmap: 0x05
-vconn|DBG|unix: negotiated OpenFlow version 0x05 (we support version 0x07 and earlier, peer supports version 0x05)
+vconn|DBG|unix: negotiated OpenFlow version 0x05 (we support version 0x06 and earlier, peer supports version 0x05)
 vconn|DBG|unix: received: OFPT_BUNDLE_CONTROL (OF1.4):
  bundle_id=0 type=OPEN_REQUEST flags=atomic ordered
 vconn|DBG|unix: sent (Success): OFPT_BUNDLE_CONTROL (OF1.4):
@@ -3119,11 +3119,11 @@ vconn|DBG|unix: received: OFPT_BUNDLE_CONTROL (OF1.4):
  bundle_id=0 type=COMMIT_REQUEST flags=atomic ordered
 vconn|DBG|unix: sent (Success): OFPT_BUNDLE_CONTROL (OF1.4):
  bundle_id=0 type=COMMIT_REPLY flags=0
-vconn|DBG|unix: sent (Success): OFPT_HELLO (OF1.6):
- version bitmap: 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07
+vconn|DBG|unix: sent (Success): OFPT_HELLO (OF1.5):
+ version bitmap: 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
 vconn|DBG|unix: received: OFPT_HELLO (OF1.4):
  version bitmap: 0x05
-vconn|DBG|unix: negotiated OpenFlow version 0x05 (we support version 0x07 and earlier, peer supports version 0x05)
+vconn|DBG|unix: negotiated OpenFlow version 0x05 (we support version 0x06 and earlier, peer supports version 0x05)
 vconn|DBG|unix: received: OFPST_FLOW request (OF1.4):
 vconn|DBG|unix: sent (Success): OFPST_FLOW reply (OF1.4):
  table=1, importance=1, dl_vlan=1 actions=drop
@@ -3168,11 +3168,11 @@ vconn|DBG|unix: received: OFPT_BUNDLE_CONTROL (OF1.4):
  bundle_id=0 type=COMMIT_REQUEST flags=atomic ordered
 vconn|DBG|unix: sent (Success): OFPT_BUNDLE_CONTROL (OF1.4):
  bundle_id=0 type=COMMIT_REPLY flags=0
-vconn|DBG|unix: sent (Success): OFPT_HELLO (OF1.6):
- version bitmap: 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07
+vconn|DBG|unix: sent (Success): OFPT_HELLO (OF1.5):
+ version bitmap: 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
 vconn|DBG|unix: received: OFPT_HELLO (OF1.4):
  version bitmap: 0x05
-vconn|DBG|unix: negotiated OpenFlow version 0x05 (we support version 0x07 and earlier, peer supports version 0x05)
+vconn|DBG|unix: negotiated OpenFlow version 0x05 (we support version 0x06 and earlier, peer supports version 0x05)
 vconn|DBG|unix: received: OFPST_FLOW request (OF1.4):
 vconn|DBG|unix: sent (Success): OFPST_FLOW reply (OF1.4):
  table=1, importance=11, dl_vlan=1 actions=drop
@@ -3206,11 +3206,11 @@ AT_CHECK([ovs-vsctl -vsyslog:off set-controller br0 unix:testcontroller])
 
 dnl then start listening on the '.snoop' connection
 on_exit 'kill `cat ovs-ofctl-snoop.pid`'
-AT_CHECK([ovs-ofctl -vsyslog:off --detach --pidfile=ovs-ofctl-snoop.pid snoop br0 > snoopbr0.txt 2>&1])
+AT_CHECK([ovs-ofctl -vsyslog:off --detach --no-chdir --pidfile=ovs-ofctl-snoop.pid snoop br0 > snoopbr0.txt 2>&1])
 
 dnl finally start the controller
 on_exit 'kill `cat ovs-testcontroller.pid`'
-AT_CHECK([ovs-testcontroller -vsyslog:off --detach --pidfile punix:testcontroller], [0], [ignore])
+AT_CHECK([ovs-testcontroller -vsyslog:off --detach --no-chdir --pidfile punix:testcontroller], [0], [ignore])
 OVS_WAIT_UNTIL([test -e testcontroller])
 
 dnl check for some of the initial handshake messages
