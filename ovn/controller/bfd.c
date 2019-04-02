@@ -76,6 +76,7 @@ bfd_calculate_active_tunnels(const struct ovsrec_bridge *br_int,
                     if (status && !strcmp(status, "up")) {
                         const char *id = smap_get(&port_rec->external_ids,
                                                   "ovn-chassis-id");
+                       if (id) {
                             char *chassis_name;
                             char *save_ptr = NULL;
                             char *tokstr = xstrdup(id);
