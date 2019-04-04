@@ -36,11 +36,13 @@ struct ovs_cmdl_context {
 typedef void (*ovs_cmdl_handler)(struct ovs_cmdl_context *);
 
 struct ovs_cmdl_command {
-    const char *name;
-    const char *usage;
-    int min_args;
-    int max_args;
-    ovs_cmdl_handler handler;
+    const char *name;//命令字
+    const char *usage;//用法
+    //参数数目限制
+    int min_args;//最小参数数
+    int max_args;//最大参数数
+    ovs_cmdl_handler handler;//命令处理函数
+    //命令权限
     enum { OVS_RO, OVS_RW } mode;    /* Does this command modify things? */
 };
 

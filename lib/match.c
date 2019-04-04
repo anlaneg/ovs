@@ -409,6 +409,7 @@ match_set_ct_state(struct match *match, uint32_t ct_state)
     match_set_ct_state_masked(match, ct_state, UINT32_MAX);
 }
 
+//设置连接跟踪状态及其对应掩码
 void
 match_set_ct_state_masked(struct match *match, uint32_t ct_state, uint32_t mask)
 {
@@ -560,6 +561,7 @@ match_set_packet_type(struct match *match, ovs_be32 packet_type)
 void
 match_set_default_packet_type(struct match *match)
 {
+	//设置报文类型
     if (!match->wc.masks.packet_type) {
         match_set_packet_type(match, htonl(PT_ETH));
     }
@@ -888,6 +890,7 @@ match_set_tcp_flags_masked(struct match *match, ovs_be16 flags, ovs_be16 mask)
     match->wc.masks.tcp_flags = mask;
 }
 
+//设置网络层协议
 void
 match_set_nw_proto(struct match *match, uint8_t nw_proto)
 {

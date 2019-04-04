@@ -175,6 +175,7 @@ str_to_connhelper(const char *str, uint16_t *alg)
     return xasprintf("invalid conntrack helper \"%s\"", str);
 }
 
+//检查name是否protocol,出参指定对应的ofp_protocol
 bool
 ofp_parse_protocol(const char *name, const struct ofp_protocol **p_out)
 {
@@ -229,6 +230,7 @@ ofp_parse_field(const struct mf_field *mf, const char *s,
         s = "0/0";
     }
 
+    //解析字段对应的key,value
     error = mf_parse(mf, s, port_map, &value, &mask);
     if (!error) {
         *usable_protocols &= mf_set(mf, &value, &mask, match, &error);
@@ -240,6 +242,7 @@ ofp_parse_field(const struct mf_field *mf, const char *s,
 char *
 ofp_extract_actions(char *s)
 {
+	//查找action,并将其自s中分离，返回action的key
     s = strstr(s, "action");
     if (s) {
         *s = '\0';
@@ -250,6 +253,7 @@ ofp_extract_actions(char *s)
     }
 }
 
+//自s开始，查找非delimiters出现的位置
 static size_t
 parse_value(const char *s, const char *delimiters)
 {
@@ -261,6 +265,7 @@ parse_value(const char *s, const char *delimiters)
      * terminator at the end of 's'.  */
     while (!strchr(delimiters, s[n])) {
         if (s[n] == '(') {
+        	//特别处理，针对'('字符，找寻其对应的')'
             int level = 0;
             do {
                 switch (s[n]) {
@@ -292,24 +297,29 @@ parse_value(const char *s, const char *delimiters)
  *
  * If '*stringp' is just white space or commas, sets '*keyp' and '*valuep' to
  * NULL and returns false. */
+//自stringp中解析出一个key,value指针
+//（划分方式，如果以':=('形式划分，则认定为key,value形式，否则不认为是key,value形式）
 bool
 ofputil_parse_key_value(char **stringp, char **keyp, char **valuep)
 {
     /* Skip white space and delimiters.  If that brings us to the end of the
      * input string, we are done and there are no more key-value pairs. */
+	//跳过stringp开头的多个', \t\r\n'字符
     *stringp += strspn(*stringp, ", \t\r\n");
     if (**stringp == '\0') {
+    	//遇到空串，返回false
         *keyp = *valuep = NULL;
         return false;
     }
 
     /* Extract the key and the delimiter that ends the key-value pair or begins
      * the value.  Advance the input position past the key and delimiter. */
+    //自key起始位置起，检查有多少个字符不属于':=(, \t\r\n'
     char *key = *stringp;
-    size_t key_len = strcspn(key, ":=(, \t\r\n");
-    char key_delim = key[key_len];
+    size_t key_len = strcspn(key, ":=(, \t\r\n");//即key的有效长度
+    char key_delim = key[key_len];//取对应的分隔符
     key[key_len] = '\0';
-    *stringp += key_len + (key_delim != '\0');
+    *stringp += key_len + (key_delim != '\0');//跳过key及分隔符
 
     /* Figure out what delimiter ends the value:
      *
@@ -321,10 +331,13 @@ ofputil_parse_key_value(char **stringp, char **keyp, char **valuep)
      * If there is no value, we are done. */
     const char *value_delims;
     if (key_delim == ':' || key_delim == '=') {
+    	//key,value格式，准备解析value
         value_delims = ", \t\r\n";
     } else if (key_delim == '(') {
+    	//采用'('进行分隔，采用‘）’结束value
         value_delims = ")";
     } else {
+    	//采用空字符进行划分的，故value为空串,完成一个解析
         *keyp = key;
         *valuep = key + key_len; /* Empty string. */
         return true;

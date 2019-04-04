@@ -276,6 +276,7 @@ struct conntrack {
     struct hmap nat_conn_keys OVS_GUARDED;
     /* Hash table for alg expectations. Expectations are created
      * by control connections to help create data connections. */
+    //期待表
     struct hmap alg_expectations OVS_GUARDED;
     /* Used to lookup alg expectations from the control context. */
     struct hindex alg_expectation_refs OVS_GUARDED;

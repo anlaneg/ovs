@@ -113,7 +113,7 @@ struct flow {
     uint8_t ct_nw_proto;        /* CT orig tuple IP protocol. */
     uint16_t ct_zone;           /* Connection tracking zone. */
     uint32_t ct_mark;           /* Connection mark.*/
-    ovs_be32 packet_type;       /* OpenFlow packet type. */
+    ovs_be32 packet_type;       /* OpenFlow packet type. */ //设置报文类型
     ovs_u128 ct_label;          /* Connection label. */
     uint32_t conj_id;           /* Conjunction ID. */
     ofp_port_t actset_output;   /* Output port in action set. */
@@ -121,7 +121,7 @@ struct flow {
     /* L2, Order the same as in the Ethernet header! (64-bit aligned) */
     struct eth_addr dl_dst;     /* Ethernet destination address. */ //目的mac
     struct eth_addr dl_src;     /* Ethernet source address. */ //源mac
-    ovs_be16 dl_type;           /* Ethernet frame type. //帧格式
+    ovs_be16 dl_type;           /* Ethernet frame type. //链路层格式
                                    Note: This also holds the Ethertype for L3
                                    packets of type PACKET_TYPE(1, Ethertype) */
     uint8_t pad1[2];            /* Pad to 64 bits. */ //为minflow补齐为一个2个unit64_t
@@ -142,7 +142,7 @@ struct flow {
     uint8_t nw_frag;            /* FLOW_FRAG_* flags. */
     uint8_t nw_tos;             /* IP ToS (including DSCP and ECN). */
     uint8_t nw_ttl;             /* IP TTL/Hop Limit. */
-    uint8_t nw_proto;           /* IP protocol or low 8 bits of ARP opcode. */ //ip protocol
+    uint8_t nw_proto;           /* IP protocol or low 8 bits of ARP opcode. */ //网络层协议
     struct in6_addr nd_target;  /* IPv6 neighbor discovery (ND) target. */
     struct eth_addr arp_sha;    /* ARP/ND source hardware address. */
     struct eth_addr arp_tha;    /* ARP/ND target hardware address. */

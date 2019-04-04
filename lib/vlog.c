@@ -461,6 +461,7 @@ vlog_change_owner_unix(uid_t user, gid_t group)
     int error;
 
     ovs_mutex_lock(&log_file_mutex);
+    //更改log_file的owner
     error = log_file_name ? chown(log_file_name, user, group) : 0;
     if (error) {
         /* Build the error message. We can not call VLOG_FATAL directly

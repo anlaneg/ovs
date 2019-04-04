@@ -1521,6 +1521,7 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
         break;
 
     case OFPFC_ADD:
+    	//add要求的fields
         fields = F_ACTIONS | F_TIMEOUT | F_PRIORITY | F_FLAGS | F_IMPORTANCE;
         break;
 
@@ -1558,25 +1559,32 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
     }
 
     if (fields & F_ACTIONS) {
+    	//如果有action,则解析action
         act_str = ofp_extract_actions(string);
         if (!act_str) {
+        	//没有找到合法的action value,报错
             return xstrdup("must specify an action");
         }
     }
 
     struct match match = MATCH_CATCHALL_INITIALIZER;
+    //自string中解析一个key,value
     while (ofputil_parse_key_value(&string, &name, &value)) {
         const struct ofp_protocol *p;
         const struct mf_field *mf;
         char *error = NULL;
 
         if (ofp_parse_protocol(name, &p)) {
+        	//用户指定了协议,设置链路层协议
             match_set_dl_type(&match, htons(p->dl_type));
             if (p->nw_proto) {
+            	//设置网络层协议
                 match_set_nw_proto(&match, p->nw_proto);
             }
+            //设置报文类型
             match_set_default_packet_type(&match);
         } else if (!strcmp(name, "eth")) {
+        	//置报文类型为以太网帧
             match_set_packet_type(&match, htonl(PT_ETH));
         } else if (fields & F_FLAGS && !strcmp(name, "send_flow_rem")) {
             fm->flags |= OFPUTIL_FF_SEND_FLOW_REM;
@@ -1595,6 +1603,7 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
                    || !strcmp(name, "allow_hidden_fields")) {
              /* ignore these fields. */
         } else if ((mf = mf_from_name(name)) != NULL) {
+        	//已确定name为mf,解析它
             error = ofp_parse_field(mf, value, port_map,
                                     &match, usable_protocols);
         } else if (strchr(name, '[')) {
@@ -1721,6 +1730,8 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
             .ofpacts = &ofpacts,
             .usable_protocols = &action_usable_protocols
         };
+
+        //解析action对应的字符串
         error = ofpacts_parse_instructions(act_str, &pp);
         *usable_protocols &= action_usable_protocols;
         if (!error) {
@@ -1809,7 +1820,7 @@ char * OVS_WARN_UNUSED_RESULT
 parse_ofp_flow_mod_str(struct ofputil_flow_mod *fm, const char *string,
                        const struct ofputil_port_map *port_map,
                        const struct ofputil_table_map *table_map,
-                       int command,
+                       int command/*规则操作符*/,
                        enum ofputil_protocol *usable_protocols)
 {
     char *error = parse_ofp_str(fm, command, string, port_map, table_map,

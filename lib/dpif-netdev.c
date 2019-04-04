@@ -7338,7 +7338,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         break;
 
     case OVS_ACTION_ATTR_CT: {
-    		//连接跟踪动作
+    	//连接跟踪动作
         const struct nlattr *b;
         bool force = false;
         bool commit = false;
@@ -7359,15 +7359,15 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             //必要的几个参数设置，需要查下文档，看下面注释
             switch(sub_type) {
             case OVS_CT_ATTR_FORCE_COMMIT:
-            		//force为true,则表示此报文方向必须为请求方向，如果为应答方向，则将连接无效掉
+            	//force为true,则表示此报文方向必须为请求方向，如果为应答方向，则将连接无效掉
                 force = true;
                 /* fall through. */
             case OVS_CT_ATTR_COMMIT:
-            		//commit为true,则表示容许此报文在链接跟踪表里添加新表项
+            	//commit为true,则表示容许此报文在链接跟踪表里添加新表项
                 commit = true;
                 break;
             case OVS_CT_ATTR_ZONE:
-            		//看起来是为了隔离，为了多租户？
+            	//看起来是为了隔离，为了多租户？
                 zone = nl_attr_get_u16(b);
                 break;
             case OVS_CT_ATTR_HELPER:

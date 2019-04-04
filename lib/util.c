@@ -866,6 +866,7 @@ str_to_double(const char *s, double *d)
 }
 
 /* Returns the value of 'c' as a hexadecimal digit. */
+//这个函数构造表的方式很有意思
 int
 hexit_value(unsigned char c)
 {
@@ -878,9 +879,11 @@ hexit_value(unsigned char c)
 #define TBL0(x)  TBL(x),  TBL((x) + 1),   TBL((x) + 2),   TBL((x) + 3)
 #define TBL1(x) TBL0(x), TBL0((x) + 4),  TBL0((x) + 8),  TBL0((x) + 12)
 #define TBL2(x) TBL1(x), TBL1((x) + 16), TBL1((x) + 32), TBL1((x) + 48)
+    	//生成table表
         TBL2(0), TBL2(64), TBL2(128), TBL2(192)
     };
 
+    //给定字符，返回对应的value
     return tbl[c];
 }
 
@@ -888,6 +891,7 @@ hexit_value(unsigned char c)
  * UINTMAX_MAX if one of those "digits" is not really a hex digit.  Sets '*ok'
  * to true if the conversion succeeds or to false if a non-hex digit is
  * detected. */
+//将16进制字符串转换为数字
 uintmax_t
 hexits_value(const char *s, size_t n, bool *ok)
 {
@@ -896,8 +900,10 @@ hexits_value(const char *s, size_t n, bool *ok)
 
     value = 0;
     for (i = 0; i < n; i++) {
+    	//将字符s[i]转换为整数
         int hexit = hexit_value(s[i]);
         if (hexit < 0) {
+        	//非合法字符
             *ok = false;
             return UINTMAX_MAX;
         }
@@ -924,6 +930,7 @@ parse_int_string(const char *s, uint8_t *valuep, int field_width, char **tail)
     int i;
 
     if (!strncmp(s, "0x", 2) || !strncmp(s, "0X", 2)) {
+    	//如果s是16进制，则处理
         uint8_t *hexit_str;
         int len = 0;
         int val_idx;
@@ -936,6 +943,7 @@ parse_int_string(const char *s, uint8_t *valuep, int field_width, char **tail)
             uint8_t hexit;
             bool ok;
 
+            //跳过前导的空字符，并解析数字
             s += strspn(s, " \t\r\n");
             hexit = hexits_value(s, 1, &ok);
             if (!ok) {
@@ -949,12 +957,14 @@ parse_int_string(const char *s, uint8_t *valuep, int field_width, char **tail)
                     goto free;
                 }
 
+                //存储转换后的数字
                 hexit_str[len] = hexit;
                 len++;
             }
             s++;
         }
 
+        //组合成16进制形的数字
         val_idx = field_width;
         for (i = len - 1; i >= 0; i -= 2) {
             val_idx--;
@@ -971,6 +981,7 @@ free:
         return err;
     }
 
+    //转换为整数
     errno = 0;
     integer = strtoull(s, tail, 0);
     if (errno || s == *tail) {

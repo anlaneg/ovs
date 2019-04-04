@@ -169,13 +169,14 @@ main(int argc, char *argv[])
     service_start(&argc, &argv);
     parse_options(argc, argv);
     fatal_ignore_sigpipe();
-    ctx.argc = argc - optind;
+    ctx.argc = argc - optind;//命令可使用的参数数目
     ctx.argv = argv + optind;
 
     daemon_become_new_user(false);
     if (read_only) {
         ovs_cmdl_run_command_read_only(&ctx, get_all_commands());
     } else {
+    	//完成命令请求
         ovs_cmdl_run_command(&ctx, get_all_commands());
     }
     return 0;
@@ -830,6 +831,7 @@ set_switch_config(struct vconn *vconn,
 static void
 ofctl_show(struct ovs_cmdl_context *ctx)
 {
+	//要显示的桥名称
     const char *vconn_name = ctx->argv[1];
     enum ofp_version version;
     struct vconn *vconn;
@@ -1784,12 +1786,14 @@ static void
 ofctl_flow_mod(int argc, char *argv[], uint16_t command)
 {
     if (argc > 2 && !strcmp(argv[2], "-")) {
+    	//自文件中读取规则并添加
         ofctl_flow_mod_file(argc, argv, command);
     } else {
         struct ofputil_flow_mod fm;
         char *error;
         enum ofputil_protocol usable_protocols;
 
+        //非文件规则添加
         error = parse_ofp_flow_mod_str(&fm, argc > 2 ? argv[2] : "",
                                        ports_to_accept(argv[1]),
                                        tables_to_accept(argv[1]), command,
@@ -1801,6 +1805,7 @@ ofctl_flow_mod(int argc, char *argv[], uint16_t command)
     }
 }
 
+//执行ovs规则添加
 static void
 ofctl_add_flow(struct ovs_cmdl_context *ctx)
 {
@@ -4930,7 +4935,7 @@ static const struct ovs_cmdl_command all_commands[] = {
     { "dump-table-desc", "switch",
       1, 1, ofctl_dump_table_desc, OVS_RO },
     { "dump-flows", "switch",
-      1, 2, ofctl_dump_flows, OVS_RO },
+      1, 2, ofctl_dump_flows, OVS_RO },//显示所有flows
     { "dump-aggregate", "switch",
       1, 2, ofctl_dump_aggregate, OVS_RO },
     { "queue-stats", "switch [port [queue]]",
@@ -4938,13 +4943,13 @@ static const struct ovs_cmdl_command all_commands[] = {
     { "queue-get-config", "switch [port [queue]]",
       1, 3, ofctl_queue_get_config, OVS_RO },
     { "add-flow", "switch flow",
-      2, 2, ofctl_add_flow, OVS_RW },
+      2, 2, ofctl_add_flow, OVS_RW },//规则添加
     { "add-flows", "switch file",
       2, 2, ofctl_add_flows, OVS_RW },
     { "mod-flows", "switch flow",
       2, 2, ofctl_mod_flows, OVS_RW },
     { "del-flows", "switch [flow]",
-      1, 2, ofctl_del_flows, OVS_RW },
+      1, 2, ofctl_del_flows, OVS_RW },//规则删除
     { "replace-flows", "switch file",
       2, 2, ofctl_replace_flows, OVS_RW },
     { "diff-flows", "source1 source2",
@@ -5053,6 +5058,7 @@ static const struct ovs_cmdl_command all_commands[] = {
     { NULL, NULL, 0, 0, NULL, OVS_RO },
 };
 
+//返回ovs-ofctl支持的所有commands
 static const struct ovs_cmdl_command *get_all_commands(void)
 {
     return all_commands;

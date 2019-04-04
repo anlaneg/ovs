@@ -35,7 +35,7 @@ struct ct_endpoint {
     union {
         ovs_be16 port;
         struct {
-        		//icmp协议时
+        	//icmp协议时
             ovs_be16 icmp_id;//echo的报文标识
             uint8_t icmp_type;
             uint8_t icmp_code;
@@ -50,10 +50,10 @@ BUILD_ASSERT_DECL(sizeof(struct ct_endpoint) == sizeof(union ct_addr) + 4);
 /* Changes to this structure need to be reflected in conn_key_hash()
  * and conn_key_cmp(). */
 struct conn_key {
-    struct ct_endpoint src;
-    struct ct_endpoint dst;
+    struct ct_endpoint src;//源4元组
+    struct ct_endpoint dst;//目的4元组
 
-    ovs_be16 dl_type;
+    ovs_be16 dl_type;//链路层类型
     uint16_t zone;
     uint8_t nw_proto;//l4层协议，udp or tcp or ...
 };
@@ -106,7 +106,7 @@ struct conn {
     /* TCP sequence skew due to NATTing of FTP control messages. */
     uint8_t seq_skew_dir;
     /* True if alg data connection. */
-    uint8_t alg_related;
+    uint8_t alg_related;//期待相关的流
 };
 
 enum ct_update_res {
@@ -139,7 +139,7 @@ extern struct ct_l4_proto ct_proto_icmp6;
 
 extern long long ct_timeout_val[];
 
-//初始化过期链
+//初始化过期链(将链表添加至对应状态的链表上）
 static inline void
 conn_init_expiration(struct conntrack_bucket *ctb, struct conn *conn,
                         enum ct_timeout tm, long long now)

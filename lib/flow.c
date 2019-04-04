@@ -1315,6 +1315,7 @@ flow_get_metadata(const struct flow *flow, struct match *flow_metadata)
     }
 }
 
+//由连接跟踪状态获得连接跟踪状态名称
 const char *
 ct_state_to_string(uint32_t state)
 {
@@ -1589,6 +1590,7 @@ parse_flags(const char *s, const char *(*bit_to_string)(uint32_t),
             uint32_t bit;
             size_t len;
 
+            //如果有+号，则认为必须要有此状态，否则认为不得有此状态
             if (s[0] == '+') {
                 set = true;
             } else if (s[0] == '-') {
@@ -1604,7 +1606,9 @@ parse_flags(const char *s, const char *(*bit_to_string)(uint32_t),
             s++;
             n++;
 
+            //遍历所有bit
             for (bit = 1; bit; bit <<= 1) {
+            	//将状态转换成字符串
                 const char *fname = bit_to_string(bit);
 
                 if (!fname) {
@@ -1614,9 +1618,11 @@ parse_flags(const char *s, const char *(*bit_to_string)(uint32_t),
                 len = strlen(fname);
                 if (strncmp(s, fname, len) ||
                     (s[len] != '+' && s[len] != '-' && s[len] != end)) {
+                	//未匹配时，跳过
                     continue;
                 }
 
+                //防止重复设置（不应该发生啊？）
                 if (mask & bit) {
                     /* bit already set. */
                     if (res_string) {
@@ -1626,9 +1632,13 @@ parse_flags(const char *s, const char *(*bit_to_string)(uint32_t),
                     }
                     return -EINVAL;
                 }
+
+                //遇到非容许的bit
                 if (!(bit & allowed)) {
                     goto unknown;
                 }
+
+                //falgs置此标记，mask不置此标记
                 if (set) {
                    flags |= bit;
                 }

@@ -644,6 +644,7 @@ parse_truncate_subfield(const char *arg_,
     return NULL;
 }
 
+//解析output action
 static char * OVS_WARN_UNUSED_RESULT
 parse_OUTPUT(const char *arg, const struct ofpact_parse_params *pp)
 {
@@ -667,6 +668,7 @@ parse_OUTPUT(const char *arg, const struct ofpact_parse_params *pp)
     if (!error) {
         struct ofpact_output_reg *output_reg;
 
+        //添加并构造output_reg
         output_reg = ofpact_put_OUTPUT_REG(pp->ofpacts);
         output_reg->max_len = UINT16_MAX;
         output_reg->src = src;
@@ -8983,6 +8985,7 @@ ofpact_parse(enum ofpact_type type, char *value,
     }
 }
 
+//通过名称获取对应的type
 static bool
 ofpact_type_from_name(const char *name, enum ofpact_type *type)
 {
@@ -9015,6 +9018,7 @@ ofpacts_parse__(char *str, const struct ofpact_parse_params *pp,
     char *pos;
 
     pos = str;
+    //解析action中的key,value对
     while (ofputil_parse_key_value(&pos, &key, &value)) {
         enum ovs_instruction_type inst = OVSINST_OFPIT11_APPLY_ACTIONS;
         enum ofpact_type type;
@@ -9087,6 +9091,7 @@ ofpacts_parse__(char *str, const struct ofpact_parse_params *pp,
     return NULL;
 }
 
+//openvswitch action解析
 static char * OVS_WARN_UNUSED_RESULT
 ofpacts_parse(char *str, const struct ofpact_parse_params *pp,
               bool allow_instructions, enum ofpact_type outer_action)

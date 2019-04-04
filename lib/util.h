@@ -128,6 +128,7 @@ typedef uint32_t HANDLE;
 extern "C" {
 #endif
 
+//设置进程名称
 #define set_program_name(name) \
         ovs_set_program_name(name, OVS_PACKAGE_VERSION)
 

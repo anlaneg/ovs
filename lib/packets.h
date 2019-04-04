@@ -862,12 +862,12 @@ BUILD_ASSERT_DECL(TCP_HEADER_LEN == sizeof(struct tcp_header));
 #define CS_STATES                               \
     CS_STATE(NEW,         0, "new")             \
     CS_STATE(ESTABLISHED, 1, "est")             \
-    CS_STATE(RELATED,     2, "rel")  /*关联状态，例如icmp 错误报文*/           \
+    CS_STATE(RELATED,     2, "rel")  /*关联状态，例如icmp 错误报文,期待报文*/           \
     CS_STATE(REPLY_DIR,   3, "rpl")             \
-    CS_STATE(INVALID,     4, "inv")             \
-    CS_STATE(TRACKED,     5, "trk")  /*无效状态*/           \
-    CS_STATE(SRC_NAT,     6, "snat")            \
-    CS_STATE(DST_NAT,     7, "dnat")
+    CS_STATE(INVALID,     4, "inv")  /*无效状态*/           \
+    CS_STATE(TRACKED,     5, "trk")   /*跟踪标记*/          \
+    CS_STATE(SRC_NAT,     6, "snat") /*需要做snat*/           \
+    CS_STATE(DST_NAT,     7, "dnat") /*需要做dnat*/
 
 enum {
 #define CS_STATE(ENUM, INDEX, NAME) \

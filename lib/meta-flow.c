@@ -107,6 +107,7 @@ nxm_do_init(void)
 
         ovs_assert(mf->id == i); /* Fields must be in the enum order. */
 
+        //实现name与mf的映射
         shash_add_once(&mf_by_name, mf->name, mf);
         if (mf->extra_name) {
             shash_add_once(&mf_by_name, mf->extra_name, mf);
@@ -2287,6 +2288,7 @@ mf_set(const struct mf_field *mf,
         *err_str = NULL;
     }
 
+    //按id执行value及掩码设置
     switch (mf->id) {
     case MFF_CT_ZONE:
     case MFF_CT_NW_PROTO:
@@ -2401,6 +2403,7 @@ mf_set(const struct mf_field *mf,
         break;
 
     case MFF_CT_STATE:
+    	//ct状态及掩码设置
         match_set_ct_state_masked(match, ntohl(value->be32), ntohl(mask->be32));
         break;
 
@@ -2673,6 +2676,7 @@ mf_get(const struct mf_field *mf, const struct match *match,
     mf_get_mask(mf, &match->wc, mask);
 }
 
+//解析格式"abc/xx”及"ac"
 static char *
 mf_from_integer_string(const struct mf_field *mf, const char *s,
                        uint8_t *valuep, uint8_t *maskp)
@@ -2681,12 +2685,14 @@ mf_from_integer_string(const struct mf_field *mf, const char *s,
     const char *err_str = "";
     int err;
 
+    //解析value
     err = parse_int_string(s, valuep, mf->n_bytes, &tail);
     if (err || (*tail != '\0' && *tail != '/')) {
         err_str = "value";
         goto syntax_error;
     }
 
+    //解析掩码
     if (*tail == '/') {
         err = parse_int_string(tail + 1, maskp, mf->n_bytes, &tail);
         if (err || *tail != '\0') {
@@ -2694,6 +2700,7 @@ mf_from_integer_string(const struct mf_field *mf, const char *s,
             goto syntax_error;
         }
     } else {
+    	//默认掩码为全ff
         memset(maskp, 0xff, mf->n_bytes);
     }
 
@@ -2900,6 +2907,7 @@ mf_from_tun_flags_string(const char *s, ovs_be16 *flagsp, ovs_be16 *maskp)
                           htons(FLOW_TNL_PUB_F_MASK), maskp);
 }
 
+//连接跟踪的flags解析
 static char *
 mf_from_ct_state_string(const char *s, ovs_be32 *flagsp, ovs_be32 *maskp)
 {
@@ -2926,11 +2934,12 @@ mf_from_ct_state_string(const char *s, ovs_be32 *flagsp, ovs_be32 *maskp)
 char *
 mf_parse(const struct mf_field *mf, const char *s,
          const struct ofputil_port_map *port_map,
-         union mf_value *value, union mf_value *mask)
+         union mf_value *value/*出参，字段取值*/, union mf_value *mask/*出参，字段掩码*/)
 {
     char *error;
 
     if (!strcmp(s, "*")) {
+    	//此字段指明匹配所有
         memset(value, 0, mf->n_bytes);
         memset(mask, 0, mf->n_bytes);
         return NULL;
@@ -2939,6 +2948,7 @@ mf_parse(const struct mf_field *mf, const char *s,
     switch (mf->string) {
     case MFS_DECIMAL:
     case MFS_HEXADECIMAL:
+    	//数字类型及16进制类型解析
         error = mf_from_integer_string(mf, s,
                                        (uint8_t *) value, (uint8_t *) mask);
         break;

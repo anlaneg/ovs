@@ -1015,10 +1015,10 @@ eth_compose(struct dp_packet *b, const struct eth_addr eth_dst,
     return data;
 }
 
-//修改packet的ip地址，考虑ip地址变化引起的checksum计算
+//修改packet的ip地址，考虑ip地址变化引起的checksum计算，以及运输层checksum计算
 void
 packet_set_ipv4_addr(struct dp_packet *packet,
-                     ovs_16aligned_be32 *addr, ovs_be32 new_addr)
+                     ovs_16aligned_be32 *addr/*网络序*/, ovs_be32 new_addr)
 {
     struct ip_header *nh = dp_packet_l3(packet);
     ovs_be32 old_addr = get_16aligned_be32(addr);

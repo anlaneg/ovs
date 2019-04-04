@@ -45,8 +45,8 @@
 
 struct tcp_peer {
     enum ct_dpif_tcp_state state;//tcp状态
-    uint32_t               seqlo;          /* Max sequence number sent     */ //本端发送的最大seq
-    uint32_t               seqhi;          /* Max the other end ACKd + win */ //窗口的最大位置
+    uint32_t               seqlo;          /* Max sequence number sent     */ //本端发送的seq
+    uint32_t               seqhi;          /* Max the other end ACKd + win */ //对端需要ack的seq
     uint16_t               max_win;        /* largest window (pre scaling) */ //最大窗口大小
     uint8_t                wscale;         /* window scaling factor        */ //窗口放大因子
 };
@@ -82,12 +82,12 @@ conn_tcp_cast(const struct conn* conn)
 
 /* pf does this in in pf_normalize_tcp(), and it is called only if scrub
  * is enabled.  We're not scrubbing, but this check seems reasonable.  */
-//检查tcp标记位
+//检查tcp标记位是否无效
 static bool
 tcp_invalid_flags(uint16_t flags)
 {
 
-	//有syn标记时，不得有rst,fin标记
+	//有syn标记时，不得有rst或fin标记
     if (flags & TCP_SYN) {
         if (flags & TCP_RST || flags & TCP_FIN) {
             return true;
@@ -102,7 +102,7 @@ tcp_invalid_flags(uint16_t flags)
 
     if (!(flags & TCP_ACK)) {
         /* These flags are only valid if ACK is set */
-    		//ack标记不存在时，fin,push,urg标记设置则有误
+    		//ack标记不存在时，有fin,push,urg标记设置则有误
         if ((flags & TCP_FIN) || (flags & TCP_PSH) || (flags & TCP_URG)) {
             return true;
         }
@@ -430,13 +430,14 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
     return CT_UPDATE_VALID;//状态有效
 }
 
+//检查是否可以新建连接（容许syn,及其它有ack标记的报文建立session)
 static bool
 tcp_valid_new(struct dp_packet *pkt)
 {
     struct tcp_header *tcp = dp_packet_l4(pkt);
     uint16_t tcp_flags = TCP_FLAGS(tcp->tcp_ctl);
 
-    //检查tcp标记是否有效
+    //检查tcp标记是否无效
     if (tcp_invalid_flags(tcp_flags)) {
         return false;
     }
@@ -460,6 +461,8 @@ tcp_new_conn(struct conntrack_bucket *ctb, struct dp_packet *pkt,
     struct conn_tcp* newconn = NULL;
     struct tcp_header *tcp = dp_packet_l4(pkt);
     struct tcp_peer *src, *dst;
+
+    //取标记位
     uint16_t tcp_flags = TCP_FLAGS(tcp->tcp_ctl);
 
     newconn = xzalloc(sizeof *newconn);
@@ -492,7 +495,7 @@ tcp_new_conn(struct conntrack_bucket *ctb, struct dp_packet *pkt,
         src->seqhi++;//占用seq
     }
 
-    //由于之有一方的流，对方我们暂不清楚，故设置为default值
+    //由于只有一方的流，对方我们暂不清楚，故设置为default值
     //这些值可以认为没有意义
     dst->seqhi = 1;
     dst->max_win = 1;

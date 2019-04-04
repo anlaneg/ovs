@@ -1174,7 +1174,7 @@ struct ofpact_parse_params {
     const struct ofputil_table_map *table_map;
 
     /* Output. */
-    struct ofpbuf *ofpacts;
+    struct ofpbuf *ofpacts;//输出的actions
     enum ofputil_protocol *usable_protocols;
 
     /* Parse context. */

@@ -196,6 +196,7 @@ ovs_cmdl_print_options(const struct option options[])
     ds_destroy(&ds);
 }
 
+//执行对应的命令
 static void
 ovs_cmdl_run_command__(struct ovs_cmdl_context *ctx,
                        const struct ovs_cmdl_command commands[],
@@ -204,11 +205,14 @@ ovs_cmdl_run_command__(struct ovs_cmdl_context *ctx,
     const struct ovs_cmdl_command *p;
 
     if (ctx->argc < 1) {
+    	//argv[0]指出参数名称
         ovs_fatal(0, "missing command name; use --help for help");
     }
 
+    //遍历所有commands
     for (p = commands; p->name != NULL; p++) {
         if (!strcmp(p->name, ctx->argv[0])) {
+        	//命令匹配成功，校验参数数目限制
             int n_arg = ctx->argc - 1;
             if (n_arg < p->min_args) {
                 VLOG_FATAL( "'%s' command requires at least %d arguments",
@@ -217,10 +221,13 @@ ovs_cmdl_run_command__(struct ovs_cmdl_context *ctx,
                 VLOG_FATAL("'%s' command takes at most %d arguments",
                            p->name, p->max_args);
             } else {
+            	//参数数目校验通过
                 if (p->mode == OVS_RW && read_only) {
+                	//命令要求读写权限，当前只读
                     VLOG_FATAL("'%s' command does not work in read only mode",
                                p->name);
                 }
+                //执行命令处理
                 p->handler(ctx);
                 if (ferror(stdout)) {
                     VLOG_FATAL("write to stdout failed");
@@ -250,8 +257,9 @@ ovs_cmdl_run_command__(struct ovs_cmdl_context *ctx,
  * */
 void
 ovs_cmdl_run_command(struct ovs_cmdl_context *ctx,
-                     const struct ovs_cmdl_command commands[])
+                     const struct ovs_cmdl_command commands[]/*命令全集*/)
 {
+	//获取参数指定的command并执行（非只读模式）
     ovs_cmdl_run_command__(ctx, commands, false);
 }
 
@@ -259,6 +267,7 @@ void
 ovs_cmdl_run_command_read_only(struct ovs_cmdl_context *ctx,
                                const struct ovs_cmdl_command commands[])
 {
+	//获取参数指定的command并执行（只读模式）
     ovs_cmdl_run_command__(ctx, commands, true);
 }
 

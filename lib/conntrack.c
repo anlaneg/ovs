@@ -453,6 +453,7 @@ write_ct_md(struct dp_packet *pkt, uint16_t zone, const struct conn *conn,
     }
 }
 
+//返回4层协议号
 static uint8_t
 get_ip_proto(const struct dp_packet *pkt)
 {
@@ -476,7 +477,7 @@ is_ftp_ctl(const enum ct_alg_ctl_type ct_alg_ctl)
 }
 
 static enum ct_alg_ctl_type
-get_alg_ctl_type(const struct dp_packet *pkt, ovs_be16 tp_src, ovs_be16 tp_dst,
+get_alg_ctl_type(const struct dp_packet *pkt, ovs_be16 tp_src, ovs_be16 tp_dst/*传输层目的port*/,
                  const char *helper)
 {
     /* CT_IPPORT_FTP/TFTP is used because IPPORT_FTP/TFTP in not defined
@@ -503,6 +504,7 @@ get_alg_ctl_type(const struct dp_packet *pkt, ovs_be16 tp_src, ovs_be16 tp_dst,
         }
     }
 
+    //分辨运输层的负责是为tftp,ftp还是其它
     if (ip_proto == IPPROTO_UDP && uh->udp_dst == tftp_dst_port) {
         return CT_ALG_CTL_TFTP;
     } else if (ip_proto == IPPROTO_TCP &&
@@ -541,7 +543,7 @@ pat_packet(struct dp_packet *pkt, const struct conn *conn)
     if (conn->nat_info->nat_action & NAT_ACTION_SRC) {
         if (conn->key.nw_proto == IPPROTO_TCP) {
             struct tcp_header *th = dp_packet_l4(pkt);
-            //做tcp  src port转换
+            //做tcp  src port转换（使用反方向的目的port)
             packet_set_tcp_port(pkt, conn->rev_key.dst.port, th->tcp_dst);
         } else if (conn->key.nw_proto == IPPROTO_UDP) {
             struct udp_header *uh = dp_packet_l4(pkt);
@@ -561,11 +563,13 @@ pat_packet(struct dp_packet *pkt, const struct conn *conn)
 static void
 nat_packet(struct dp_packet *pkt, const struct conn *conn, bool related)
 {
+	//这个实现，为什么只有snat,dnat两种情况，不支持snat+dnat?
     if (conn->nat_info->nat_action & NAT_ACTION_SRC) {
-        pkt->md.ct_state |= CS_SRC_NAT;//标记做src nat
+    	//标记做src nat
+        pkt->md.ct_state |= CS_SRC_NAT;
         if (conn->key.dl_type == htons(ETH_TYPE_IP)) {
             struct ip_header *nh = dp_packet_l3(pkt);
-            //修改源ip
+            //修改源ip(snat,使用rev_key的目的ip)
             packet_set_ipv4_addr(pkt, &nh->ip_src,
                                  conn->rev_key.dst.addr.ipv4);
         } else {
@@ -575,6 +579,7 @@ nat_packet(struct dp_packet *pkt, const struct conn *conn, bool related)
                                  &conn->rev_key.dst.addr.ipv6, true);
         }
         if (!related) {
+        	//执行port转换
             pat_packet(pkt, conn);
         }
     } else if (conn->nat_info->nat_action & NAT_ACTION_DST) {
@@ -778,6 +783,7 @@ conn_lookup_def(const struct conn_key *key,
     struct conn *conn = NULL;
 
     HMAP_FOR_EACH_WITH_HASH (conn, node, hash, &ctb->connections) {
+    	//比对key是否与指定conn相匹配（要求普通连接）
         if (!conn_key_cmp(&conn->key, key)
             && conn->conn_type == CT_CONN_TYPE_DEFAULT) {
             break;
@@ -904,6 +910,7 @@ ct_verify_helper(const char *helper, enum ct_alg_ctl_type ct_alg_ctl)
     if (ct_alg_ctl == CT_ALG_CTL_NONE) {
         return true;
     } else if (helper) {
+    	//校验helper与alg类型是否合格
         if ((ct_alg_ctl == CT_ALG_CTL_FTP) &&
              !strncmp(helper, "ftp", strlen("ftp"))) {
             return true;
@@ -911,6 +918,7 @@ ct_verify_helper(const char *helper, enum ct_alg_ctl_type ct_alg_ctl)
                    !strncmp(helper, "tftp", strlen("tftp"))) {
             return true;
         } else {
+        	//暂不支持其它alg
             return false;
         }
     } else {
@@ -921,11 +929,11 @@ ct_verify_helper(const char *helper, enum ct_alg_ctl_type ct_alg_ctl)
 /* This function is called with the bucket lock held. */
 static struct conn *
 conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
-               struct conn_lookup_ctx *ctx, bool commit, long long now,
-               const struct nat_action_info_t *nat_action_info,
+               struct conn_lookup_ctx *ctx, bool commit/*未给定commit时，不创建连接*/, long long now,
+               const struct nat_action_info_t *nat_action_info/*nat信息*/,
                struct conn *conn_for_un_nat_copy,
                const char *helper,
-               const struct alg_exp_node *alg_exp,
+               const struct alg_exp_node *alg_exp/*期待信息*/,
                enum ct_alg_ctl_type ct_alg_ctl)
 {
     struct conn *nc = NULL;
@@ -933,6 +941,7 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
 
     //校验此报文是否可以新建连接跟踪
     if (!valid_new(pkt, &ctx->key)) {
+    	//不能建立新连接，返回NULL
         pkt->md.ct_state = CS_INVALID;
         return nc;
     }
@@ -941,6 +950,7 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
     pkt->md.ct_state = CS_NEW;//连接进行new状态
 
 
+    //有期待信息，连接关联
     if (alg_exp) {
         pkt->md.ct_state |= CS_RELATED;
     }
@@ -956,19 +966,26 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
             return nc;
         }
 
+        //取对应的桶编号
         unsigned bucket = hash_to_bucket(ctx->hash);
+
         //在bucket桶位置创建一条新连接（正向连接）
         nc = &connl;
-        memset(nc, 0, sizeof *nc);
+        memset(nc, 0, sizeof *nc);//清零
+
+        //设置正向key
         memcpy(&nc->key, &ctx->key, sizeof nc->key);
-        //设置rev_key(反向key)
+
+        //设置rev_key(反向key),先给定正向key的值，再使其反转
         memcpy(&nc->rev_key, &nc->key, sizeof nc->rev_key);
         conn_key_reverse(&nc->rev_key);
 
+        //填充alg
         if (ct_verify_helper(helper, ct_alg_ctl)) {
             nc->alg = nullable_xstrdup(helper);
         }
 
+        //有期待
         if (alg_exp) {
             nc->alg_related = true;
             nc->mark = alg_exp->master_mark;
@@ -978,10 +995,11 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
 
         //有nat信息
         if (nat_action_info) {
-        	    //copy nat_action_info到nc->nat_info
+        	//copy nat_action_info到nc->nat_info
             nc->nat_info = xmemdup(nat_action_info, sizeof *nc->nat_info);
 
             if (alg_exp) {
+            	//有期待情况处理
                 if (alg_exp->nat_rpl_dst) {
                     nc->rev_key.dst.addr = alg_exp->alg_nat_repl_addr;
                     nc->nat_info->nat_action = NAT_ACTION_SRC;
@@ -1005,24 +1023,29 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
             } else {
                 memcpy(conn_for_un_nat_copy, nc, sizeof *conn_for_un_nat_copy);
                 ct_rwlock_wrlock(&ct->resources_lock);
+                //尝试分配nat资源并建立连接
                 bool nat_res = nat_select_range_tuple(ct, nc,
                                                       conn_for_un_nat_copy);
                 ct_rwlock_unlock(&ct->resources_lock);
 
                 if (!nat_res) {
+                	//分配nat资源失败
                     goto nat_res_exhaustion;
                 }
 
                 /* Update nc with nat adjustments made to
                  * conn_for_un_nat_copy by nat_select_range_tuple(). */
-                memcpy(nc, conn_for_un_nat_copy, sizeof *nc);
+                memcpy(nc, conn_for_un_nat_copy, sizeof *nc);//nat已分配，更新回nc
             }
             conn_for_un_nat_copy->conn_type = CT_CONN_TYPE_UN_NAT;
-            conn_for_un_nat_copy->nat_info = NULL;//这里没有memory leak吗？
+            conn_for_un_nat_copy->nat_info = NULL;//这里没有memory leak吗？(没有，它只是nc的副本）
             conn_for_un_nat_copy->alg = NULL;
-            //应用nat,修改报文
+
+            //应用nat,修改报文(snat/dnat只能执行一个）
             nat_packet(pkt, nc, ctx->icmp_related);
         }
+
+        //新建连接
         struct conn *nconn = new_conn(&ct->buckets[bucket], pkt, &ctx->key,
                                       now);
         memcpy(&nconn->key, &nc->key, sizeof nconn->key);
@@ -1075,8 +1098,8 @@ conn_update_state(struct conntrack *ct, struct dp_packet *pkt,
         if ((*conn)->alg_related) {
             pkt->md.ct_state |= CS_RELATED;
         }
-    	    //更新连接状态（可以从旧的连接检测出需要新建连接,例如旧的连接状态机还未过期，但收到syn报文）
 
+    	//更新连接状态（可以从旧的连接检测出需要新建连接,例如旧的连接状态机还未过期，但收到syn报文）
         enum ct_update_res res = conn_update(*conn, &ct->buckets[bucket],
                                              pkt, ctx->reply, now);
 
@@ -1114,11 +1137,12 @@ create_un_nat_conn(struct conntrack *ct, struct conn *conn_for_un_nat_copy,
     struct conn *nc = xmemdup(conn_for_un_nat_copy, sizeof *nc);
     //生成反向连接
     memcpy(&nc->key, &conn_for_un_nat_copy->rev_key, sizeof nc->key);
-    memcpy(&nc->rev_key, &conn_for_un_nat_copy->key, sizeof nc->rev_key);
+    memcpy(&nc->rev_key, &conn_for_un_nat_copy->key, sizeof nc->rev_key);//暂时初始化为key
+
     uint32_t un_nat_hash = conn_key_hash(&nc->key, ct->hash_basis);
     unsigned un_nat_conn_bucket = hash_to_bucket(un_nat_hash);
     ct_lock_lock(&ct->buckets[un_nat_conn_bucket].lock);
-    struct conn *rev_conn = conn_lookup(ct, &nc->key, now);
+    struct conn *rev_conn = conn_lookup(ct, &nc->key, now);//查询反方向的conn
 
     if (alg_un_nat) {
         if (!rev_conn) {
@@ -1254,6 +1278,7 @@ check_orig_tuple(struct conntrack *ct, struct dp_packet *pkt,
     return *conn ? true : false;
 }
 
+//检查连接是否为nat资源
 static bool
 is_un_nat_conn_valid(const struct conn *un_nat_conn)
 {
@@ -1301,7 +1326,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     struct conn *conn;
     unsigned bucket = hash_to_bucket(ctx->hash);//找到此流对应的桶
     ct_lock_lock(&ct->buckets[bucket].lock);//桶加锁
-    conn_key_lookup(&ct->buckets[bucket], ctx, now);//找到连接
+    conn_key_lookup(&ct->buckets[bucket], ctx, now);//查找此流对应的连接
     conn = ctx->conn;
 
     /* Delete found entry if in wrong direction. 'force' implies commit. */
@@ -1316,7 +1341,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     }
 
     if (OVS_LIKELY(conn)) {
-    	    //连接已存在，检查链接是否为nat链接
+    	//连接已存在，检查链接是否为nat链接
         if (conn->conn_type == CT_CONN_TYPE_UN_NAT) {
         		//做nat的连接跟踪，实际上会有4个flow
         		//如下示：
@@ -1357,6 +1382,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     struct conn conn_for_un_nat_copy;
     conn_for_un_nat_copy.conn_type = CT_CONN_TYPE_DEFAULT;
 
+    //alg识别
     enum ct_alg_ctl_type ct_alg_ctl = get_alg_ctl_type(pkt, tp_src, tp_dst,
                                                        helper);
 
@@ -1403,6 +1429,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
         }
         ct_rwlock_unlock(&ct->resources_lock);
 
+        //创建连接
         conn = conn_not_found(ct, pkt, ctx, commit, now, nat_action_info,
                               &conn_for_un_nat_copy, helper, alg_exp,
                               ct_alg_ctl);
@@ -1412,7 +1439,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     write_ct_md(pkt, zone, conn, &ctx->key, alg_exp);
 
     if (conn && setmark) {
-    	    //将设置的mark置入conn
+    	//将设置的mark置入conn
         set_mark(pkt, conn, setmark[0], setmark[1]);
     }
 
@@ -1433,6 +1460,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
         create_un_nat_conn(ct, &conn_for_un_nat_copy, now, !!alg_exp);
     }
 
+    //alg处理
     handle_alg_ctl(ct, ctx, pkt, ct_alg_ctl, conn, now, !!nat_action_info,
                    &conn_for_expectation);
 }
@@ -1657,15 +1685,14 @@ clean_thread_main(void *f_)
  * the size of the packet beyond the data pointer. */
 static inline bool
 extract_l3_ipv4(struct conn_key *key, const void *data, size_t size,
-                const char **new_data, bool validate_checksum)
+                const char **new_data/*出参，返回传输层首地址*/, bool validate_checksum)
 {
     if (OVS_UNLIKELY(size < IP_HEADER_LEN)) {
         return false;
     }
 
     const struct ip_header *ip = data;
-    //ip长度
-    size_t ip_len = IP_IHL(ip->ip_ihl_ver) * 4;
+    size_t ip_len = IP_IHL(ip->ip_ihl_ver) * 4;//ip长度
 
 
     //检查长度
@@ -2131,7 +2158,7 @@ conn_key_extract(struct conntrack *ct, struct dp_packet *pkt, ovs_be16 dl_type,
         } else {
             bool hwol_good_l3_csum = dp_packet_ip_checksum_valid(pkt);
             /* Validate the checksum only when hwol is not supported. */
-            //不能处理分片
+            //分片报文返回false
             ok = extract_l3_ipv4(&ctx->key, l3, dp_packet_l3_size(pkt), NULL,
                                  !hwol_good_l3_csum);
         }
@@ -2291,7 +2318,7 @@ nat_range_hash(const struct conn *conn, uint32_t basis)
 //分配nat资源（这个算法必须得改，这个分配太慢了，nat资源应有自已的表，而不是依附于conn表来做查询)
 static bool
 nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
-                       struct conn *nat_conn)
+                       struct conn *nat_conn/*出参，做nat后的连接*/)
 {
     enum { MIN_NAT_EPHEMERAL_PORT = 1024,
            MAX_NAT_EPHEMERAL_PORT = 65535 };
@@ -2315,7 +2342,7 @@ nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
     } else {
         uint16_t deltap = conn->nat_info->max_port - conn->nat_info->min_port;
         uint32_t port_index = hash % (deltap + 1);
-        first_port = conn->nat_info->min_port + port_index;
+        first_port = conn->nat_info->min_port + port_index;//任取一个port
         min_port = conn->nat_info->min_port;
         max_port = conn->nat_info->max_port;
     }
@@ -2332,10 +2359,11 @@ nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
     	//ipv4报文，deltaa表示min_addr与max_addr间的差距
         deltaa = ntohl(conn->nat_info->max_addr.ipv4) -
                  ntohl(conn->nat_info->min_addr.ipv4);
-        address_index = hash % (deltaa + 1);
+        address_index = hash % (deltaa + 1);//任选一个address
         ct_addr.ipv4 = htonl(
             ntohl(conn->nat_info->min_addr.ipv4) + address_index);
     } else {
+    	//ipv6处理
         deltaa = nat_ipv6_addrs_delta(&conn->nat_info->min_addr.ipv6,
                                       &conn->nat_info->max_addr.ipv6);
         /* deltaa must be within 32 bits for full hash coverage. A 64 or
@@ -2362,35 +2390,40 @@ nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
 
     while (true) {
         if (conn->nat_info->nat_action & NAT_ACTION_SRC) {
-        	//要做snat转换，则反向包的dst.addr即为转换后地址
+        	//要做snat，则反向包的dst.addr即为转换后地址
             nat_conn->rev_key.dst.addr = ct_addr;
             nat_conn->rev_key.dst.port = htons(port);
         } else {
+        	//要做dnat,则反方向的src.addr即为转换后地址
             nat_conn->rev_key.src.addr = ct_addr;
             nat_conn->rev_key.src.port = htons(port);
         }
 
+        //执行rev_key的查询
         bool new_insert = nat_conn_keys_insert(&ct->nat_conn_keys, nat_conn,
                                                ct->hash_basis);
         if (new_insert) {
+        	//此资源可成功分配出去
             return true;
         } else if (pat_enabled && !all_ports_tried) {
             if (min_port == max_port) {
-                all_ports_tried = true;
+                all_ports_tried = true;//只有一个,故已完全尝试完
             } else if (port == max_port) {
-                port = min_port;
+                port = min_port;//到达结尾，更新为min_port
             } else {
-                port++;
+                port++;//更换port
             }
             if (port == first_port) {
             	//所有port已尝试了一遍
                 all_ports_tried = true;
             }
         } else {
+        	//插入失败，且所有port均已尝试，更换ip地址再试
         	//检查是否到达max_ct_addr
             if (memcmp(&ct_addr, &max_ct_addr, sizeof ct_addr)) {
                 if (conn->key.dl_type == htons(ETH_TYPE_IP)) {
-                    ct_addr.ipv4 = htonl(ntohl(ct_addr.ipv4) + 1);//ip地址加1
+                	//未到达max_ct_addr,ip地址加1
+                    ct_addr.ipv4 = htonl(ntohl(ct_addr.ipv4) + 1);
                 } else {
                     nat_ipv6_addr_increment(&ct_addr.ipv6, 1);
                 }
@@ -2428,6 +2461,7 @@ nat_conn_keys_lookup(struct hmap *nat_conn_keys,
 {
     struct nat_conn_key_node *nat_conn_key_node;
 
+    //执行key查询
     HMAP_FOR_EACH_WITH_HASH (nat_conn_key_node, node,
                              conn_key_hash(key, basis), nat_conn_keys) {
         if (!conn_key_cmp(&nat_conn_key_node->key, key)) {
@@ -2438,6 +2472,7 @@ nat_conn_keys_lookup(struct hmap *nat_conn_keys,
 }
 
 /* This function must be called with the ct->resources lock taken. */
+//如果给出的nat_conn对应的资源未分配，则将其分配了出去
 static bool
 nat_conn_keys_insert(struct hmap *nat_conn_keys, const struct conn *nat_conn,
                      uint32_t basis)
@@ -2445,12 +2480,15 @@ nat_conn_keys_insert(struct hmap *nat_conn_keys, const struct conn *nat_conn,
     struct nat_conn_key_node *nat_conn_key_node =
         nat_conn_keys_lookup(nat_conn_keys, &nat_conn->rev_key, basis);
 
+    //连接表中不存在此rev_key,则将nat_conn加入
     if (!nat_conn_key_node) {
         struct nat_conn_key_node *nat_conn_key = xzalloc(sizeof *nat_conn_key);
         memcpy(&nat_conn_key->key, &nat_conn->rev_key,
-               sizeof nat_conn_key->key);
+               sizeof nat_conn_key->key);//采用nat_conn->rev_key做key,nat_conn->key做value
         memcpy(&nat_conn_key->value, &nat_conn->key,
                sizeof nat_conn_key->value);
+
+        //将此nat_key加入
         hmap_insert(nat_conn_keys, &nat_conn_key->node,
                     conn_key_hash(&nat_conn_key->key, basis));
         return true;
@@ -2478,7 +2516,7 @@ nat_conn_keys_remove(struct hmap *nat_conn_keys,
 
 //连接跟踪表查询（会进行正向比对，反向比对）
 static void
-conn_key_lookup(struct conntrack_bucket *ctb, struct conn_lookup_ctx *ctx,
+conn_key_lookup(struct conntrack_bucket *ctb/*连接对应的桶*/, struct conn_lookup_ctx *ctx,
                 long long now)
     OVS_REQUIRES(ctb->lock)
 {
@@ -2487,6 +2525,7 @@ conn_key_lookup(struct conntrack_bucket *ctb, struct conn_lookup_ctx *ctx,
 
     ctx->conn = NULL;
 
+    //遍历与hash相同的conn，再执行比对
     HMAP_FOR_EACH_WITH_HASH (conn, node, hash, &ctb->connections) {
         if (!conn_key_cmp(&conn->key, &ctx->key)
                 && !conn_expired(conn, now)) {
@@ -2494,7 +2533,8 @@ conn_key_lookup(struct conntrack_bucket *ctb, struct conn_lookup_ctx *ctx,
             ctx->reply = false;
             break;
         }
-        //反向比
+
+        //比对反向，检查是否匹配
         if (!conn_key_cmp(&conn->rev_key, &ctx->key)
                 && !conn_expired(conn, now)) {
             ctx->conn = conn;
@@ -2512,10 +2552,12 @@ conn_update(struct conn *conn, struct conntrack_bucket *ctb,
                                                       reply, now);
 }
 
+//检查连接是否已过期
 static bool
 conn_expired(struct conn *conn, long long now)
 {
     if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
+    	//default情况下，有过期时间处理
         return now >= conn->expiration;
     }
     return false;
@@ -3087,6 +3129,7 @@ detect_ftp_ctl_type(const struct conn_lookup_ctx *ctx,
     return CT_FTP_CTL_INTEREST;
 }
 
+//ftp alg信息分析
 static enum ftp_ctl_pkt
 process_ftp_ctl_v4(struct conntrack *ct,
                    struct dp_packet *pkt,
