@@ -488,6 +488,7 @@ ofpbuf_steal_data(struct ofpbuf *b)
 {
     void *p;
 
+    //如果源是malloc的，则直接使用其对应的指针，否则copy一份
     if (b->source == OFPBUF_MALLOC && b->data == b->base) {
         p = b->data;
     } else {

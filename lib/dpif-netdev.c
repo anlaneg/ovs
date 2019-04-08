@@ -7268,7 +7268,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         break;
 
     case OVS_ACTION_ATTR_USERSPACE:
-    		//送userspace层面处理，执行upcall
+    	//送userspace层面处理，执行upcall
         if (!fat_rwlock_tryrdlock(&dp->upcall_rwlock)) {
             struct dp_packet_batch *orig_packets_ = packets_;
             const struct nlattr *userdata;
@@ -7338,7 +7338,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         break;
 
     case OVS_ACTION_ATTR_CT: {
-    	//连接跟踪动作
+    	//连接跟踪动作执行，完成连接创建，分配nat资源
         const struct nlattr *b;
         bool force = false;
         bool commit = false;
@@ -7351,7 +7351,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         struct nat_action_info_t *nat_action_info_ref = NULL;
         bool nat_config = false;//是否配置了nat
 
-        //遍历CT action中的小动作
+        //遍历CT action中的小动作，填充配置的参数
         NL_ATTR_FOR_EACH_UNSAFE (b, left, nl_attr_get(a),
                                  nl_attr_get_size(a)) {
             enum ovs_ct_attr sub_type = nl_attr_type(b);
@@ -7367,11 +7367,11 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 commit = true;
                 break;
             case OVS_CT_ATTR_ZONE:
-            	//看起来是为了隔离，为了多租户？
+            	//指出zone编号
                 zone = nl_attr_get_u16(b);
                 break;
             case OVS_CT_ATTR_HELPER:
-            		//用于alg的应用识别
+            	//用于alg的应用识别
                 helper = nl_attr_get_string(b);
                 break;
             case OVS_CT_ATTR_MARK:
@@ -7395,7 +7395,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 memset(&nat_action_info, 0, sizeof nat_action_info);
                 nat_action_info_ref = &nat_action_info;
 
-                //遍历OVS_CT_ATTR_NAT动作下的子动作
+                //遍历ct的配置信息，填充nat_action_info结构体
                 NL_NESTED_FOR_EACH_UNSAFE (b_nest, left_nest, b) {
                     enum ovs_nat_attr sub_type_nest = nl_attr_type(b_nest);
 
@@ -7440,11 +7440,11 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                 }
 
                 if (ip_min_specified && !ip_max_specified) {
-                		//仅设置下限，未设置上限，则仅有一个ip
+                	//仅设置下限，未设置上限，则仅有一个ip
                     nat_action_info.max_addr = nat_action_info.min_addr;
                 }
                 if (proto_num_min_specified && !proto_num_max_specified) {
-                		//如果仅设置下限，未设置上限，则仅有一个port
+                	//如果仅设置下限，未设置上限，则仅有一个port
                     nat_action_info.max_port = nat_action_info.min_port;
                 }
 
@@ -7467,7 +7467,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         /* We won't be able to function properly in this case, hence
          * complain loudly. */
         if (nat_config && !commit) {
-        		//如果配置了nat，但未commit，则告警
+        	//如果配置了nat，但未commit，则告警
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
             VLOG_WARN_RL(&rl, "NAT specified without commit.");
         }

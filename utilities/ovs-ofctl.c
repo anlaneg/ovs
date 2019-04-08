@@ -796,6 +796,7 @@ transact_noreply(struct vconn *vconn, struct ofpbuf *request)
     struct ovs_list requests;
 
     ovs_list_init(&requests);
+    //构造单个node的请求链
     ovs_list_push_back(&requests, &request->list_node);
     transact_multiple_noreply(vconn, &requests);
 }

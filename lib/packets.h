@@ -701,6 +701,7 @@ IP_ECN_is_ce(uint8_t dsfield)
 #define IP_DONT_FRAGMENT  0x4000 /* Don't fragment. */
 #define IP_MORE_FRAGMENTS 0x2000 /* More fragments. */
 #define IP_FRAG_OFF_MASK  0x1fff /* Fragment offset. */
+//检查所给frag_off是否指出报文为分片
 #define IP_IS_FRAGMENT(ip_frag_off) \
         ((ip_frag_off) & htons(IP_MORE_FRAGMENTS | IP_FRAG_OFF_MASK))
 

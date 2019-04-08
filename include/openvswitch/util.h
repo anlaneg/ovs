@@ -101,6 +101,7 @@ OVS_NO_RETURN void ovs_assert_failure(const char *, const char *, const char *);
  * problems in practice.
  */
 #ifdef __GNUC__
+//member在对象object中的偏移量
 #define OBJECT_OFFSETOF(OBJECT, MEMBER) offsetof(typeof(*(OBJECT)), MEMBER)
 #else
 #define OBJECT_OFFSETOF(OBJECT, MEMBER) \
@@ -128,6 +129,7 @@ OVS_NO_RETURN void ovs_assert_failure(const char *, const char *, const char *);
  *
  * This is the same as CONTAINER_OF except that it infers the structure type
  * from the type of '*OBJECT'. */
+//指针pointer是对象object中的member成员，求object指针
 #define OBJECT_CONTAINING(POINTER, OBJECT, MEMBER)                      \
     ((OVS_TYPEOF(OBJECT)) (void *)                                      \
      ((char *) (POINTER) - OBJECT_OFFSETOF(OBJECT, MEMBER)))
@@ -137,6 +139,7 @@ OVS_NO_RETURN void ovs_assert_failure(const char *, const char *, const char *);
  * OBJECT, which must be an lvalue.
  *
  * Evaluates to (void) 0 as the result is not to be used. */
+//指针pointer是对象object中的member成员，求object指针
 #define ASSIGN_CONTAINER(OBJECT, POINTER, MEMBER) \
     ((OBJECT) = OBJECT_CONTAINING(POINTER, OBJECT, MEMBER), (void) 0)
 
@@ -144,6 +147,7 @@ OVS_NO_RETURN void ovs_assert_failure(const char *, const char *, const char *);
  * like MSVC will complain about un-initialized variables if OBJECT
  * hasn't already been initialized. To prevent such warnings, INIT_CONTAINER()
  * can be used as a wrapper around ASSIGN_CONTAINER. */
+//指针pointer是对象object中的member成员，求object指针
 #define INIT_CONTAINER(OBJECT, POINTER, MEMBER) \
     ((OBJECT) = NULL, ASSIGN_CONTAINER(OBJECT, POINTER, MEMBER))
 

@@ -1191,11 +1191,11 @@ handle_nat(struct dp_packet *pkt, struct conn *conn,
             pkt->md.ct_state &= ~(CS_SRC_NAT | CS_DST_NAT);
         }
         if (reply) {
-        		//响应方向实际上是nat移除
+        	//响应方向实际上是nat移除
             un_nat_packet(pkt, conn, related);
         } else {
-        		//正向，nat设置
-        	    //报文修改，当related为True时，不修改port
+        	//正向，nat设置
+        	//报文修改，当related为True时，不修改port
             nat_packet(pkt, conn, related);
         }
     }

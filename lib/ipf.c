@@ -91,8 +91,8 @@ union ipf_addr {
 /* Represents a single fragment; part of a list of fragments. */
 struct ipf_frag {
     struct dp_packet *pkt;
-    uint16_t start_data_byte;
-    uint16_t end_data_byte;
+    uint16_t start_data_byte;//分片起始offset
+    uint16_t end_data_byte;//分片终止offset
     bool dnsteal; /* 'do not steal': if true, ipf should not free packet. */
 };
 
@@ -101,13 +101,13 @@ struct ipf_frag {
 struct ipf_list_key {
     /* ipf_list_key_hash() requires 'src_addr' and 'dst_addr' to be the first
      * two members. */
-    union ipf_addr src_addr;
-    union ipf_addr dst_addr;
+    union ipf_addr src_addr;//源地址
+    union ipf_addr dst_addr;//目的地址
     uint32_t recirc_id;
-    ovs_be32 ip_id;   /* V6 is 32 bits. */
-    ovs_be16 dl_type;
+    ovs_be32 ip_id;   /* V6 is 32 bits. */ //ip的id号
+    ovs_be16 dl_type;//链路层类型
     uint16_t zone;
-    uint8_t nw_proto;
+    uint8_t nw_proto;//协议号
 };
 
 /* A collection of fragments potentially making up an unfragmented packet. */
@@ -316,6 +316,7 @@ ipf_list_key_hash(const struct ipf_list_key *key, uint32_t basis)
                       hash);
 }
 
+//所给报文是否为ipv4首片
 static bool
 ipf_is_first_v4_frag(const struct dp_packet *pkt)
 {
@@ -327,6 +328,7 @@ ipf_is_first_v4_frag(const struct dp_packet *pkt)
     return false;
 }
 
+//所给报文是否为尾片
 static bool
 ipf_is_last_v4_frag(const struct dp_packet *pkt)
 {
@@ -503,6 +505,7 @@ ipf_reassemble_v6_frags(struct ipf_list *ipf_list)
 
 /* Called when a frag list state transitions to another state. This is
  * triggered by new fragment for the list being received.*/
+//更新分片重组状态
 static void
 ipf_list_state_transition(struct ipf *ipf, struct ipf_list *ipf_list,
                           bool ff, bool lf, bool v6)
@@ -588,28 +591,35 @@ ipf_is_valid_v4_frag(struct ipf *ipf, struct dp_packet *pkt)
         goto invalid_pkt;
     }
 
+    //如果非分片报文，则返回false
     if (!IP_IS_FRAGMENT(l3->ip_frag_off)) {
         return false;
     }
 
+    //报文大小与报文实际大小不符
     uint16_t ip_tot_len = ntohs(l3->ip_tot_len);
     if (OVS_UNLIKELY(ip_tot_len != l3_size)) {
         goto invalid_pkt;
     }
 
+    //ip头过小
     size_t ip_hdr_len = IP_IHL(l3->ip_ihl_ver) * 4;
     if (OVS_UNLIKELY(ip_hdr_len < IP_HEADER_LEN)) {
         goto invalid_pkt;
     }
+
+    //不完整的ip头
     if (OVS_UNLIKELY(l3_size < ip_hdr_len)) {
         goto invalid_pkt;
     }
 
+    //错误的ip层checksum
     if (OVS_UNLIKELY(!dp_packet_ip_checksum_valid(pkt)
                      && csum(l3, ip_hdr_len) != 0)) {
         goto invalid_pkt;
     }
 
+    //报文过小
     uint32_t min_v4_frag_size_;
     atomic_read_relaxed(&ipf->min_v4_frag_size, &min_v4_frag_size_);
     bool lf = ipf_is_last_v4_frag(pkt);
@@ -620,22 +630,26 @@ ipf_is_valid_v4_frag(struct ipf *ipf, struct dp_packet *pkt)
     return true;
 
 invalid_pkt:
-    pkt->md.ct_state = CS_INVALID;
+    pkt->md.ct_state = CS_INVALID;//直接置为invalid状态
     return false;
 }
 
 static bool
 ipf_v4_key_extract(struct dp_packet *pkt, ovs_be16 dl_type, uint16_t zone,
-                   struct ipf_list_key *key, uint16_t *start_data_byte,
-                   uint16_t *end_data_byte, bool *ff, bool *lf)
+                   struct ipf_list_key *key, uint16_t *start_data_byte/*出参，起始offset*/,
+                   uint16_t *end_data_byte/*出参，结束offset*/, bool *ff/*出参，是否首片*/, bool *lf/*出参，是否尾片*/)
 {
     const struct ip_header *l3 = dp_packet_l3(pkt);
     uint16_t ip_tot_len = ntohs(l3->ip_tot_len);
-    size_t ip_hdr_len = IP_IHL(l3->ip_ihl_ver) * 4;
+    size_t ip_hdr_len = IP_IHL(l3->ip_ihl_ver) * 4;//ip头部长度
 
+    //分片起始位置
     *start_data_byte = ntohs(l3->ip_frag_off & htons(IP_FRAG_OFF_MASK)) * 8;
+    //分片结束位置
     *end_data_byte = *start_data_byte + ip_tot_len - ip_hdr_len - 1;
+    //是否为首片
     *ff = ipf_is_first_v4_frag(pkt);
+    //是否为尾片
     *lf = ipf_is_last_v4_frag(pkt);
     memset(key, 0, sizeof *key);
     key->ip_id = be16_to_be32(l3->ip_id);
@@ -775,6 +789,7 @@ ipf_is_frag_duped(const struct ipf_frag *frag_list, int last_inuse_idx,
     /* OVS_REQUIRES(ipf_lock) */
 {
     for (int i = 0; i <= last_inuse_idx; i++) {
+    	/*如果与现有数据有重叠，则直接返回true*/
         if ((start_data_byte >= frag_list[i].start_data_byte &&
             start_data_byte <= frag_list[i].end_data_byte) ||
             (end_data_byte >= frag_list[i].start_data_byte &&
@@ -801,6 +816,7 @@ ipf_process_frag(struct ipf *ipf, struct ipf_list *ipf_list,
     int last_inuse_idx = ipf_list->last_inuse_idx;
 
     if (!duped_frag) {
+    	//本片与其它片无重叠
         if (last_inuse_idx < ipf_list->size - 1) {
             /* In the case of dpdk, it would be unfortunate if we had
              * to create a clone fragment outside the dpdk mp due to the
@@ -820,6 +836,7 @@ ipf_process_frag(struct ipf *ipf, struct ipf_list *ipf_list,
             OVS_NOT_REACHED();
         }
     } else {
+    	//有重叠，置为invalid状态
         ipf_count(ipf, v6, IPF_NFRAGS_OVERLAP);
         pkt->md.ct_state = CS_INVALID;
         return false;
@@ -864,6 +881,7 @@ ipf_handle_frag(struct ipf *ipf, struct dp_packet *pkt, ovs_be16 dl_type,
         ipf_v6_key_extract(pkt, dl_type, zone, &key, &start_data_byte,
                            &end_data_byte, &ff, &lf);
     } else if (!v6 && ipf_get_v4_enabled(ipf)) {
+    	//解出v4的分片信息
         ipf_v4_key_extract(pkt, dl_type, zone, &key, &start_data_byte,
                            &end_data_byte, &ff, &lf);
     } else {
@@ -873,6 +891,7 @@ ipf_handle_frag(struct ipf *ipf, struct dp_packet *pkt, ovs_be16 dl_type,
     unsigned int nfrag_max;
     atomic_read_relaxed(&ipf->nfrag_max, &nfrag_max);
     if (atomic_count_get(&ipf->nfrag) >= nfrag_max) {
+    	//分片超限，返回false
         return false;
     }
 
@@ -894,6 +913,7 @@ ipf_handle_frag(struct ipf *ipf, struct dp_packet *pkt, ovs_be16 dl_type,
     }
 
     if (!ipf_list) {
+    	//没有此条流的信息，新建分片
         ipf_list = xmalloc(sizeof *ipf_list);
         ipf_list_init(ipf_list, &key,
                       MIN(max_frag_list_size, IPF_FRAG_LIST_MIN_INCREMENT));
@@ -916,6 +936,7 @@ ipf_handle_frag(struct ipf *ipf, struct dp_packet *pkt, ovs_be16 dl_type,
         }
     }
 
+    //分片重组
     return ipf_process_frag(ipf, ipf_list, pkt, start_data_byte,
                             end_data_byte, ff, lf, v6, dnsteal);
 }
@@ -930,6 +951,7 @@ ipf_extract_frags_from_batch(struct ipf *ipf, struct dp_packet_batch *pb,
     int pb_idx; /* Index in a packet batch. */
     struct dp_packet *pkt;
 
+    //遍历这一批次的所有报文
     DP_PACKET_BATCH_REFILL_FOR_EACH (pb_idx, pb_cnt, pkt, pb) {
         if (OVS_UNLIKELY((dl_type == htons(ETH_TYPE_IP) &&
                           ipf_is_valid_v4_frag(ipf, pkt))
@@ -938,6 +960,7 @@ ipf_extract_frags_from_batch(struct ipf *ipf, struct dp_packet_batch *pb,
                           ipf_is_valid_v6_frag(ipf, pkt)))) {
 
             ovs_mutex_lock(&ipf->ipf_lock);
+            //分片处理，重组
             if (!ipf_handle_frag(ipf, pkt, dl_type, zone, now, hash_basis,
                                  pb->do_not_steal)) {
                 dp_packet_batch_refill(pb, pkt, pb_idx);

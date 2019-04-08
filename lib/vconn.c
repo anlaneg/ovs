@@ -679,6 +679,7 @@ do_recv(struct vconn *vconn, struct ofpbuf **msgp)
 int
 vconn_send(struct vconn *vconn, struct ofpbuf *msg)
 {
+	//连接并发送请求
     int retval = vconn_connect(vconn);
     if (!retval) {
         retval = do_send(vconn, msg);
@@ -696,6 +697,7 @@ do_send(struct vconn *vconn, struct ofpbuf *msg)
     ofpmsg_update_length(msg);
     if (!VLOG_IS_DBG_ENABLED()) {
         COVERAGE_INC(vconn_sent);
+        //实现消息发送
         retval = (vconn->vclass->send)(vconn, msg);
     } else {
         char *s = ofp_to_string(msg->data, msg->size, NULL, NULL, 1);
@@ -945,9 +947,11 @@ vconn_transact_multiple_noreply(struct vconn *vconn, struct ovs_list *requests,
 {
     struct ofpbuf *request;
 
+    //遍历request
     LIST_FOR_EACH_POP (request, list_node, requests) {
         int error;
 
+        //发送请求
         error = vconn_transact_noreply(vconn, request, replyp);
         if (error || *replyp) {
             ofpbuf_list_delete(requests);

@@ -102,7 +102,9 @@ static inline bool ovs_list_is_short(const struct ovs_list *);
           : 0);                                                    \
          (ITER) = (NEXT))
 #define LIST_FOR_EACH_POP(ITER, MEMBER, LIST)                      \
+	/*链表为空*/\
     while (!ovs_list_is_empty(LIST)                                    \
+    		/*设置iter为list中的下一个成员*/\
            && (INIT_CONTAINER(ITER, ovs_list_pop_front(LIST), MEMBER), 1))
 
 /* Inline implementations. */
@@ -282,6 +284,7 @@ ovs_list_size(const struct ovs_list *list)
 static inline bool
 ovs_list_is_empty(const struct ovs_list *list)
 {
+	//检测此列表是否为空
     return list->next == list;
 }
 

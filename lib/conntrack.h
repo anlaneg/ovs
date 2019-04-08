@@ -81,7 +81,9 @@ struct nat_action_info_t {
     union ct_addr max_addr;//nat资源池最大地址
     uint16_t min_port;//最小port
     uint16_t max_port;//最大port
-    uint16_t nat_action;//nat转换方式(snat or dnat ? snat是否转换port?dnat是否转换port?)
+    //nat转换方式(snat or dnat ? snat是否转换port?dnat是否转换port?)
+    //snat/dnat仅一种生效
+    uint16_t nat_action;
 };
 
 void conntrack_init(struct conntrack *);
