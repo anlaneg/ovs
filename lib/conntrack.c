@@ -1483,6 +1483,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
                   const struct nat_action_info_t *nat_action_info,
                   long long now)
 {
+	//分片重组
     ipf_preprocess_conntrack(ct->ipf, pkt_batch, now, dl_type, zone,
                              ct->hash_basis);
 
