@@ -1065,6 +1065,7 @@ flower_match_to_tun_opt(struct tc_flower *flower, const struct flow_tnl *tnl,
     flower->mask.tunnel.metadata.present.len = tnl->metadata.present.len;
 }
 
+//通过tc offload flow
 int
 netdev_tc_flow_put(struct netdev *netdev, struct match *match,
                    struct nlattr *actions, size_t actions_len,

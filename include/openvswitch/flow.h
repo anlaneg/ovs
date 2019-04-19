@@ -153,7 +153,7 @@ struct flow {
     struct ovs_key_nsh nsh;     /* Network Service Header keys */
 
     /* L4 (64-bit aligned) */
-    ovs_be16 tp_src;            /* TCP/UDP/SCTP source port/ICMP type. */
+    ovs_be16 tp_src;            /* TCP/UDP/SCTP source port/ICMP type. */ //传输层源端口
     ovs_be16 tp_dst;            /* TCP/UDP/SCTP destination port/ICMP code. */ //运输层目的地址
     ovs_be16 ct_tp_src;         /* CT original tuple source port/ICMP type. */ //连接跟踪时转换后的port
     ovs_be16 ct_tp_dst;         /* CT original tuple dst port/ICMP code. */

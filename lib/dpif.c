@@ -1063,6 +1063,7 @@ dpif_flow_put(struct dpif *dpif, enum dpif_flow_put_flags flags,
     op.flow_put.stats = stats;
 
     opp = &op;
+    //执行flow下发动作，offload动作类型auto
     dpif_operate(dpif, &opp, 1, DPIF_OFFLOAD_AUTO);
 
     return op.error;
@@ -1362,6 +1363,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
              enum dpif_offload_type offload_type)
 {
     if (offload_type == DPIF_OFFLOAD_ALWAYS && !netdev_is_flow_api_enabled()) {
+    	//offload_type为always且flow_api未开启，则直接失败
         size_t i;
         for (i = 0; i < n_ops; i++) {
             struct dpif_op *op = ops[i];
@@ -1613,8 +1615,10 @@ dpif_recv(struct dpif *dpif, uint32_t handler_id, struct dpif_upcall *upcall,
     int error = EAGAIN;
 
     if (dpif->dpif_class->recv) {
+    	//有recv回调，调用回调，完成报文收取记录在upcall中
         error = dpif->dpif_class->recv(dpif, handler_id, upcall, buf);
         if (!error) {
+        	//debug显示收到的报文
             dpif_print_packet(dpif, upcall);
         } else if (error != EAGAIN) {
             log_operation(dpif, "recv", error);

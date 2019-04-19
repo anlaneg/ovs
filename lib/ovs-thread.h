@@ -267,20 +267,20 @@ void xpthread_join(pthread_t, void **);
 #define DEFINE_EXTERN_PER_THREAD_DATA(NAME, ...)         \
     thread_local NAME##_type NAME##_var = __VA_ARGS__;
 #else  /* no C implementation support for thread-local storage  */
-//定义xx_key的per线程数据
-//定义xx_get_unsafe()来获取per线程数据
-//定义xx_once_init() 来初始化per线程数据
-//定义xx_get() 来获取per线程（如果线程未设置此key,会设置此key,如果未初始化会进行初始化，容许初始化时设置初值)
+
 #define DEFINE_STATIC_PER_THREAD_DATA(TYPE, NAME, ...)                  \
     typedef TYPE NAME##_type;                                           \
+    /*定义xx_key的per线程数据*/\
     static pthread_key_t NAME##_key;                                    \
                                                                         \
+    /*定义xx_get_unsafe()来获取per线程数据*/\
     static NAME##_type *                                                \
     NAME##_get_unsafe(void)                                             \
     {                                                                   \
         return pthread_getspecific(NAME##_key);                         \
     }                                                                   \
                                                                         \
+    /*定义xx_once_init() 来初始化per线程数据*/\
     static void                                                         \
     NAME##_once_init(void)                                              \
     {                                                                   \
@@ -289,6 +289,7 @@ void xpthread_join(pthread_t, void **);
         }                                                               \
     }                                                                   \
                                                                         \
+ /*定义xx_get() 来获取per线程（如果线程未设置此key,会设置此key,如果未初始化会进行初始化，容许初始化时设置初值)*/\
     static NAME##_type *                                                \
     NAME##_get(void)                                                    \
     {                                                                   \

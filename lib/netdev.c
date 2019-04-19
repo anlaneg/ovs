@@ -2234,14 +2234,16 @@ netdev_flow_dump_next(struct netdev_flow_dump *dump, struct match *match,
             : false);
 }
 
+//向硬件下发需要执行的flow
 int
-netdev_flow_put(struct netdev *netdev, struct match *match,
-                struct nlattr *actions, size_t act_len,
+netdev_flow_put(struct netdev *netdev, struct match *match/*下发的match字段*/,
+                struct nlattr *actions/*下发的actions字段*/, size_t act_len/*action大小*/,
                 const ovs_u128 *ufid, struct offload_info *info,
                 struct dpif_flow_stats *stats)
 {
     const struct netdev_class *class = netdev->netdev_class;
 
+    //交给各netdev去实现
     return (class->flow_put
             ? class->flow_put(netdev, match, actions, act_len, ufid,
                               info, stats)

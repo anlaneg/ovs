@@ -643,12 +643,16 @@ enum dpif_offload_type {
 struct dpif_flow_put {
     /* Input. */
     enum dpif_flow_put_flags flags; /* DPIF_FP_*. */
+    //流的key
     const struct nlattr *key;       /* Flow to put. */
     size_t key_len;                 /* Length of 'key' in bytes. */
+    //流的mask
     const struct nlattr *mask;      /* Mask to put. */
     size_t mask_len;                /* Length of 'mask' in bytes. */
+
     const struct nlattr *actions;   /* Actions to perform on flow. */
     size_t actions_len;             /* Length of 'actions' in bytes. */
+
     const ovs_u128 *ufid;           /* Optional unique flow identifier. */
     unsigned pmd_id;                /* Datapath poll mode driver id. */
 
@@ -760,7 +764,7 @@ struct dpif_op {
     enum dpif_op_type type;//指明操作类型，对应相应的u值
     int error;
     union {
-        struct dpif_flow_put flow_put;
+        struct dpif_flow_put flow_put;//要添加的流
         struct dpif_flow_del flow_del;
         struct dpif_execute execute;
         struct dpif_flow_get flow_get;

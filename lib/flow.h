@@ -394,14 +394,14 @@ flowmap_are_set(const struct flowmap *fm, size_t idx, unsigned int n_bits)
  * 'n_bits' can be at most MAP_T_BITS. */
 //在idx位置开始用1来填充fm中的bit位,填充的位数为n_bits
 static inline void
-flowmap_set(struct flowmap *fm, size_t idx, unsigned int n_bits)
+flowmap_set(struct flowmap *fm, size_t idx/*bit位起始索引*/, unsigned int n_bits/*bit数填充数目*/)
 {
-    map_t n_bits_mask = (MAP_1 << n_bits) - 1;//生成n_bits个1
+    map_t n_bits_mask = (MAP_1 << n_bits) - 1;//生成n_bits个’1‘位于低位
     size_t unit = idx / MAP_T_BITS;//idx对应到第unit个map_t
 
     idx %= MAP_T_BITS;//对应到第unit的map_t的中idx个位
 
-    fm->bits[unit] |= n_bits_mask << idx;//填充idx个位到unit
+    fm->bits[unit] |= n_bits_mask << idx;//填充自idx开始的n_bits个位到unit
     /* The seemingly unnecessary bounds check on 'unit' is a workaround for a
      * false-positive array out of bounds error by GCC 4.9. */
     //如果n_bits过大比如超过MAP_T_BITS,或者idx+n_bits 跨多个MAP_T，则需要向上填充
@@ -715,7 +715,7 @@ miniflow_get__(const struct miniflow *mf, size_t idx)
     //实现时value实际被移动了
     while (idx >= MAP_T_BITS) {
         idx -= MAP_T_BITS;
-        values += count_1bits(*map++);
+        values += count_1bits(*map++);//有多少个'1'即使values跳过多少个uint64_t
     }
     //返回对应的值
     return miniflow_values_get__(values, *map, idx);
@@ -737,7 +737,9 @@ miniflow_get__(const struct miniflow *mf, size_t idx)
  * for FIELD.  (This is useful for deliberately reading adjacent fields in one
  * go.)  */
 #define MINIFLOW_GET_TYPE__(MF, TYPE, FIELD)                            \
+	/*如果FIELD未设置，则返回0*/\
     (MINIFLOW_IN_MAP(MF, FLOW_U64_OFFSET(FIELD))                        \
+    		/*通过get函数，返回对应的values,然后检查field的offset,并取其对应的值*/\
      ? ((OVS_FORCE const TYPE *)miniflow_get__(MF, FLOW_U64_OFFSET(FIELD))) \
      [FLOW_U64_OFFREM(FIELD) / sizeof(TYPE)]                            \
      : 0)
@@ -905,6 +907,7 @@ minimask_get_vid_mask(const struct minimask *mask, size_t n)
 static inline uint16_t
 miniflow_get_tcp_flags(const struct miniflow *flow)
 {
+	//自miniflow中取tcp_flags
     return ntohs(MINIFLOW_GET_BE16(flow, tcp_flags));
 }
 

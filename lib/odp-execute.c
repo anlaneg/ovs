@@ -750,7 +750,8 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         int type = nl_attr_type(a);//属性类型
         bool last_action = (left <= NLA_ALIGN(a->nla_len));//是否最后一个action
 
-        if (requires_datapath_assistance(a)) {//是否需要datapath协助,立即执行
+        if (requires_datapath_assistance(a)) {
+        	//是否需要datapath协助,立即执行
             if (dp_execute_action) {
                 /* Allow 'dp_execute_action' to steal the packet data if we do
                  * not need it any more. */

@@ -1229,9 +1229,7 @@ void *ofpact_finish(struct ofpbuf *, struct ofpact *);
  *     Initializes the parts of 'ofpact' that identify it as having type
  *     OFPACT_<ENUM> and length OFPACT_<ENUM>_SIZE and zeros the rest.
  */
-//定义ofpact_get_XX 将ofpact强转为struct类型
-//定义ofpact_get_XX_nullable 将ofpact强转为struct (可为NULL)
-//定义ofpact_put_XX 将ofpact 申请一段空间，并存入类型及数据长度（无数据），返回数据类型位置
+
 //定义ofpact_put_XX 将ofpact 不申请空间，存放类型及数据长度（无数据）填充为0,无返回
 #define OFPACT(ENUM, STRUCT, MEMBER, NAME)                              \
     BUILD_ASSERT_DECL(offsetof(struct STRUCT, ofpact) == 0);            \
@@ -1250,6 +1248,7 @@ void *ofpact_finish(struct ofpbuf *, struct ofpact *);
                       || (offsetof(struct STRUCT, MEMBER)               \
                           == sizeof(struct STRUCT)));                   \
                                                                         \
+	/*定义ofpact_get_XX 将ofpact强转为struct类型*/\
     static inline struct STRUCT *                                       \
     ofpact_get_##ENUM(const struct ofpact *ofpact)                      \
     {                                                                   \
@@ -1257,6 +1256,7 @@ void *ofpact_finish(struct ofpbuf *, struct ofpact *);
         return ALIGNED_CAST(struct STRUCT *, ofpact);                   \
     }                                                                   \
                                                                         \
+	/*定义ofpact_get_XX_nullable 将ofpact强转为struct (可为NULL)*/\
     static inline struct STRUCT *                                       \
     ofpact_get_##ENUM##_nullable(const struct ofpact *ofpact)           \
     {                                                                   \
@@ -1264,6 +1264,7 @@ void *ofpact_finish(struct ofpbuf *, struct ofpact *);
         return ALIGNED_CAST(struct STRUCT *, ofpact);                   \
     }                                                                   \
                                                                         \
+	/*定义ofpact_put_XX 将ofpact 申请一段空间，并存入类型及数据长度（无数据），返回数据类型位置*/\
     static inline struct STRUCT *                                       \
     ofpact_put_##ENUM(struct ofpbuf *ofpacts)                           \
     {                                                                   \

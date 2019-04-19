@@ -566,6 +566,7 @@ udpif_start_threads(struct udpif *udpif, size_t n_handlers_,
 
             handler->udpif = udpif;
             handler->handler_id = i;
+            //负责创建线程，处理upcall的报文
             handler->thread = ovs_thread_create(
                 "handler", udpif_upcall_handler, handler);
         }
@@ -769,6 +770,7 @@ udpif_upcall_handler(void *arg)
     return NULL;
 }
 
+//接收upcall报文
 static size_t
 recv_upcalls(struct handler *handler)
 {
@@ -789,13 +791,17 @@ recv_upcalls(struct handler *handler)
         unsigned int mru;
         int error;
 
+        //为recv_buf准备内存，初始化
         ofpbuf_use_stub(recv_buf, recv_stubs[n_upcalls],
                         sizeof recv_stubs[n_upcalls]);
+
+        //完成upcall报文收取
         if (dpif_recv(udpif->dpif, handler->handler_id, dupcall, recv_buf)) {
             ofpbuf_uninit(recv_buf);
             break;
         }
 
+        //完成flow_key解码
         upcall->fitness = odp_flow_key_to_flow(dupcall->key, dupcall->key_len,
                                                flow, NULL);
         if (upcall->fitness == ODP_FIT_ERROR) {
@@ -808,6 +814,7 @@ recv_upcalls(struct handler *handler)
             mru = 0;
         }
 
+        //upcall 初始化
         error = upcall_receive(upcall, udpif->backer, &dupcall->packet,
                                dupcall->type, dupcall->userdata, flow, mru,
                                &dupcall->ufid, PMD_ID_NULL);
@@ -836,6 +843,7 @@ recv_upcalls(struct handler *handler)
         pkt_metadata_from_flow(&dupcall->packet.md, flow);
         flow_extract(&dupcall->packet, flow);
 
+        //处理upcall
         error = process_upcall(udpif, upcall,
                                &upcall->odp_actions, &upcall->wc);
         if (error) {
@@ -850,7 +858,7 @@ cleanup:
 free_dupcall:
         dp_packet_uninit(&dupcall->packet);
         ofpbuf_uninit(recv_buf);
-    }
+    }//while
 
     if (n_upcalls) {
         handle_upcalls(handler->udpif, upcalls, n_upcalls);
@@ -1016,7 +1024,7 @@ classify_upcall(enum dpif_upcall_type type, const struct nlattr *userdata,
     case DPIF_UC_ACTION:
         break;
 
-    case DPIF_UC_MISS://l1,l2流表未查到时，走此条
+    case DPIF_UC_MISS://kernel送上来的失配报文，l1,l2流表未查到时，走此条
         return MISS_UPCALL;//流缺失
 
     case DPIF_N_UC_TYPES:
@@ -1231,6 +1239,7 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
     if (upcall->fitness == ODP_FIT_TOO_LITTLE) {
         upcall->xout.slow |= SLOW_MATCH;
     }
+
     //非0情况下，用odp_actions->data填充upcall->put_actions
     if (!upcall->xout.slow) {
         ofpbuf_use_const(&upcall->put_actions,
@@ -1421,7 +1430,7 @@ process_upcall(struct udpif *udpif, struct upcall *upcall,
     size_t actions_len = 0;
 
     switch (upcall->type) {
-    case MISS_UPCALL://未命中流表
+    case MISS_UPCALL://流表miss
     case SLOW_PATH_UPCALL:
         upcall_xlate(udpif, upcall, odp_actions, wc);//DPIF_UC_MISS会走此函数
         return 0;
@@ -1589,10 +1598,12 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
         struct ukey_op *op;
 
         if (should_install_flow(udpif, upcall)) {
+        	//需要安装flow
             struct udpif_key *ukey = upcall->ukey;
 
             if (ukey_install(udpif, ukey)) {
                 upcall->ukey_persists = true;
+                //初始化put_flow规则
                 put_op_init(&ops[n_ops++], ukey, DPIF_FP_CREATE);
             }
         }
@@ -1618,6 +1629,8 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
     for (i = 0; i < n_ops; i++) {
         opsp[n_opsp++] = &ops[i].dop;
     }
+
+    //在此处向kernel中的openvswitch下发flow
     dpif_operate(udpif->dpif, opsp, n_opsp, DPIF_OFFLOAD_AUTO);
     for (i = 0; i < n_ops; i++) {
         struct udpif_key *ukey = ops[i].ukey;

@@ -349,6 +349,8 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
                 dst->state = CT_DPIF_TCPS_FIN_WAIT_2;
             }
         }
+
+        //收到了rst，置为time_wait状态
         if (tcp_flags & TCP_RST) {
             src->state = dst->state = CT_DPIF_TCPS_TIME_WAIT;
         }
@@ -420,6 +422,7 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
             src->state = CT_DPIF_TCPS_CLOSING;
         }
 
+        //收到rst，置为time_wait状态
         if (tcp_flags & TCP_RST) {
             src->state = dst->state = CT_DPIF_TCPS_TIME_WAIT;
         }

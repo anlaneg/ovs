@@ -707,7 +707,7 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, int *nsid, bool wait)
             }
         }
 #else
-        //读取fd
+        //读取fd，收取netlink消息
         retval = recvmsg(sock->fd, &msg, wait ? 0 : MSG_DONTWAIT);
 #endif
         error = (retval < 0 ? errno
@@ -1082,6 +1082,7 @@ nl_sock_transact_multiple(struct nl_sock *sock,
             bytes += transactions[count]->request->size;
         }
 
+        //发送消息给sock对端
         error = nl_sock_transact_multiple__(sock, transactions, count, &done);
         transactions += done;
         n -= done;
@@ -1711,6 +1712,8 @@ struct nl_pool {
 static struct ovs_mutex pool_mutex = OVS_MUTEX_INITIALIZER;
 static struct nl_pool pools[MAX_LINKS] OVS_GUARDED_BY(pool_mutex);
 
+//按protocol取一个pool，这个pool里保存着多个socket,
+//返回并使用其中的某一个socket(netlink类型socket)
 static int
 nl_pool_alloc(int protocol, struct nl_sock **sockp)
 {
@@ -1727,9 +1730,11 @@ nl_pool_alloc(int protocol, struct nl_sock **sockp)
     ovs_mutex_unlock(&pool_mutex);
 
     if (sock) {
+    	//如果sock已存在，则直接设置
         *sockp = sock;
         return 0;
     } else {
+    	//创建相应的socket
         return nl_sock_create(protocol, sockp);
     }
 }
@@ -1742,6 +1747,7 @@ nl_pool_release(struct nl_sock *sock)
 
         ovs_mutex_lock(&pool_mutex);
         if (pool->n < ARRAY_SIZE(pool->socks)) {
+        	//缓存此socket
             pool->socks[pool->n++] = sock;
             sock = NULL;
         }
@@ -1840,6 +1846,7 @@ nl_transact_multiple(int protocol,
     struct nl_sock *sock;
     int error;
 
+    //创建或获取一个protocol的netlink socket,并完成消息发送
     error = nl_pool_alloc(protocol, &sock);
     if (!error) {
         nl_sock_transact_multiple(sock, transactions, n);

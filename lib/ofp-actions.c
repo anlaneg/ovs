@@ -8970,6 +8970,7 @@ ofpact_finish(struct ofpbuf *ofpacts, struct ofpact *ofpact)
     return ofpacts->header;
 }
 
+//通过不同的action类型，解析flow rule
 static char * OVS_WARN_UNUSED_RESULT
 ofpact_parse(enum ofpact_type type, char *value,
              const struct ofpact_parse_params *pp)

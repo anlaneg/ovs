@@ -99,8 +99,9 @@ ASSERT_SEQUENTIAL_SAME_WORD(tp_src, tp_dst);
 /* Removes 'size' bytes from the head end of '*datap', of size '*sizep', which
  * must contain at least 'size' bytes of data.  Returns the first byte of data
  * removed. */
+//data后移size字节，sizep大小减少size字节（读写头向前移动）
 static inline const void *
-data_pull(const void **datap, size_t *sizep, size_t size)//data后移size字节，sizep大小减少size字节（读写头向前移动）
+data_pull(const void **datap, size_t *sizep, size_t size)
 {
     const char *data = *datap;
     *datap = data + size;
@@ -199,9 +200,11 @@ BUILD_MESSAGE("FLOW_WC_SEQ changed: miniflow_extract() will have runtime "
     MINIFLOW_ASSERT(MF.data < MF.end);          \
                                                 \
     if ((OFS) % 8 == 0) {                       \
+    	/*偏移量以8对齐，则置此ofs/8的bit位为1*/\
         miniflow_set_map(MF, OFS / 8);          \
         *(uint16_t *)MF.data = VALUE;           \
     } else if ((OFS) % 8 == 2) {                \
+    	/*非对齐的bit均应已打上了*/\
         miniflow_assert_in_map(MF, OFS / 8);    \
         *((uint16_t *)MF.data + 1) = VALUE;     \
     } else if ((OFS) % 8 == 4) {                \
@@ -265,6 +268,7 @@ BUILD_MESSAGE("FLOW_WC_SEQ changed: miniflow_extract() will have runtime "
                                                                 \
     MINIFLOW_ASSERT(n_words && MF.data + n_words <= MF.end);    \
     ASSERT_FLOWMAP_NOT_SET(&MF.map, ofs);                       \
+    /*自ofs位置开始填充n_words个bit位到MF.map*/\
     flowmap_set(&MF.map, ofs, n_words);                         \
 }
 
@@ -293,8 +297,11 @@ BUILD_MESSAGE("FLOW_WC_SEQ changed: miniflow_extract() will have runtime "
 /* MACs start 64-aligned, and must be followed by other data or padding. */
 #define miniflow_push_macs_(MF, OFS, VALUEP)                    \
 {                                                               \
+	/*为什么需要除以8?换算成此字段位于第几个uint64_t结构处*/\
     miniflow_set_maps(MF, (OFS) / 8, 2);                        \
+    /*在MF.data中存入2个以太风地址*/\
     memcpy(MF.data, (VALUEP), 2 * ETH_ADDR_LEN);                \
+    /*仅使前8个字节有效*/\
     MF.data += 1;                   /* First word only. */      \
 }
 
@@ -360,17 +367,19 @@ parse_vlan(const void **datap, size_t *sizep, union flow_vlan_hdr *vlan_hdrs)
     const ovs_be16 *eth_type;
 
     memset(vlan_hdrs, 0, sizeof(union flow_vlan_hdr) * FLOW_MAX_VLAN_HEADERS);
-    data_pull(datap, sizep, ETH_ADDR_LEN * 2);
+    data_pull(datap, sizep, ETH_ADDR_LEN * 2);//跳过目的mac,源mac
 
-    eth_type = *datap;//跳过dst,src mac后到达eth_type
+    //跳过dst,src mac后到达eth_type
+    eth_type = *datap;
 
     size_t n;
     for (n = 0; eth_type_vlan(*eth_type) && n < flow_vlan_limit; n++) {
         if (OVS_UNLIKELY(*sizep < sizeof(ovs_be32) + sizeof(ovs_be16))) {
-        	//报文长度不符，跳出
+        	//报文长度不符，跳出（2字节的0x8100,2字节的vlan id,2字节的以太类型)
             break;
         }
 
+        //设置32bit的vlan头部
         const ovs_16aligned_be32 *qp = data_pull(datap, sizep, sizeof *qp);
         vlan_hdrs[n].qtag = get_16aligned_be32(qp);
         vlan_hdrs[n].tci |= htons(VLAN_CFI);//无论报文上VLAN_CFI如何，这里总将其赋为1(1为非规范格式)
@@ -389,6 +398,7 @@ parse_ethertype(const void **datap, size_t *sizep)
     if (OVS_LIKELY(ntohs(proto) >= ETH_TYPE_MIN)) {
         return proto;
     }
+
     //遇到llc报文头
     if (OVS_UNLIKELY(*sizep < sizeof *llc)) {
         return htons(FLOW_DL_TYPE_NONE);
@@ -762,6 +772,7 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
     const void *data = dp_packet_data(packet);
     size_t size = dp_packet_size(packet);
     ovs_be32 packet_type = packet->packet_type;
+    //取dst对应的flow values
     uint64_t *values = miniflow_values(dst);
     struct mf_ctx mf = { FLOWMAP_EMPTY_INITIALIZER, values,
                          values + FLOW_U64S };
@@ -836,19 +847,23 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
     if (packet_type == htonl(PT_ETH)) {
         /* Must have full Ethernet header to proceed. */
         if (OVS_UNLIKELY(size < sizeof(struct eth_header))) {
-	        //数据大小没有一个eth头长，不玩了，出去
+	        //数据大小没有一个eth header头长，不玩了，出去
             goto out;
         } else {
+        	//解析目的mac,vlan,eth-type
             /* Link layer. */
             ASSERT_SEQUENTIAL(dl_dst, dl_src);
-            miniflow_push_macs(mf, dl_dst, data);//标记目的mac,填充目的mac
+            //标记目的mac,填充目的mac
+            miniflow_push_macs(mf, dl_dst, data);
 
             /* VLAN */
             union flow_vlan_hdr vlans[FLOW_MAX_VLAN_HEADERS];
             size_t num_vlans = parse_vlan(&data, &size, vlans);//vlan头已跳过（如果有的话）
 
-            dl_type = parse_ethertype(&data, &size);//返回以太网类型
-            miniflow_push_be16(mf, dl_type, dl_type);//标记dl_type,填充dl_type,//填充802.1q头后的16位
+            //返回以太网类型
+            dl_type = parse_ethertype(&data, &size);
+            //标记dl_type,填充dl_type,//填充802.1q头后的16位
+            miniflow_push_be16(mf, dl_type, dl_type);
             miniflow_pad_to_64(mf, dl_type);
             if (num_vlans > 0) {
             	//有vlan头，放读取到的vlan
@@ -866,7 +881,8 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
     }
 
     /* Parse mpls. */
-    if (OVS_UNLIKELY(eth_type_mpls(dl_type))) {//如果是mpls报文
+    if (OVS_UNLIKELY(eth_type_mpls(dl_type))) {
+    	//如果是mpls报文,解析mpls_lse
         int count;
         const void *mpls = data;
 
@@ -876,6 +892,7 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
     }
 
     /* Network layer. */
+    //解析网络层
     packet->l3_ofs = (char *)data - frame;//记录l3的offset
 
     nw_frag = 0;
@@ -891,7 +908,8 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
         size = tot_len;   /* Never pull padding. */
 
         /* Push both source and destination address at once. */
-        miniflow_push_words(mf, nw_src, &nh->ip_src, 1);//标记srcip，dstip存在，且填充
+        //标记srcip，dstip存在，且填充
+        miniflow_push_words(mf, nw_src, &nh->ip_src, 1);
         if (ct_nw_proto_p && !md->ct_orig_tuple_ipv6) {
             *ct_nw_proto_p = md->ct_orig_tuple.ipv4.ipv4_proto;
             if (*ct_nw_proto_p) {
@@ -987,6 +1005,7 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
                 miniflow_pad_to_64(mf, arp_tha);
             }
         } else if (dl_type == htons(ETH_TYPE_NSH)) {
+        	//解析nsh报文
             struct ovs_key_nsh nsh;
 
             if (OVS_LIKELY(parse_nsh(&data, &size, &nsh))) {

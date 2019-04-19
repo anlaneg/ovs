@@ -125,12 +125,16 @@ struct dpif_netlink_flow {
      *
      * If 'actions' is nonnull then OVS_FLOW_ATTR_ACTIONS will be included in
      * the Netlink version of the command, even if actions_len is zero. */
+    //key
     const struct nlattr *key;           /* OVS_FLOW_ATTR_KEY. */
     size_t key_len;
+    //mask
     const struct nlattr *mask;          /* OVS_FLOW_ATTR_MASK. */
     size_t mask_len;
+    //actions
     const struct nlattr *actions;       /* OVS_FLOW_ATTR_ACTIONS. */
     size_t actions_len;
+
     ovs_u128 ufid;                      /* OVS_FLOW_ATTR_FLOW_ID. */
     bool ufid_present;                  /* Is there a UFID? */
     bool ufid_terse;                    /* Skip serializing key/mask/acts? */
@@ -176,7 +180,9 @@ struct dpif_windows_vport_sock {
 struct dpif_handler {
     struct epoll_event *epoll_events;
     int epoll_fd;                 /* epoll fd that includes channel socks. */
+    //记录事件数目
     int n_events;                 /* Num events returned by epoll_wait(). */
+    //当前已处理的event位置
     int event_offset;             /* Offset into 'epoll_events'. */
 
 #ifdef _WIN32
@@ -190,7 +196,7 @@ struct dpif_handler {
 /* Datapath interface for the openvswitch Linux kernel module. */
 struct dpif_netlink {
     struct dpif dpif;
-    int dp_ifindex;
+    int dp_ifindex;//datapath对应的ifindex
 
     /* Upcall messages. */
     struct fat_rwlock upcall_lock;
@@ -738,6 +744,7 @@ netdev_to_ovs_vport_type(const char *type)
     }
 }
 
+//向kernel下发vport创建命令
 static int
 dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name,
                         enum ovs_vport_type type,
@@ -761,8 +768,8 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name,
     dpif_netlink_vport_init(&request);
     request.cmd = OVS_VPORT_CMD_NEW;
     request.dp_ifindex = dpif->dp_ifindex;
-    request.type = type;
-    request.name = name;
+    request.type = type;//接口类型
+    request.name = name;//接口名称
 
     request.port_no = *port_nop;
     if (socksp) {
@@ -1308,6 +1315,7 @@ dpif_netlink_flow_get(const struct dpif_netlink *dpif,
                                    false, reply, bufp);
 }
 
+//初始化要送给kernel的flow（netlink格式）
 static void
 dpif_netlink_init_flow_put(struct dpif_netlink *dpif,
                            const struct dpif_flow_put *put,
@@ -1316,6 +1324,8 @@ dpif_netlink_init_flow_put(struct dpif_netlink *dpif,
     static const struct nlattr dummy_action;
 
     dpif_netlink_flow_init(request);
+
+    //如果有新建标记，则下发new
     request->cmd = (put->flags & DPIF_FP_CREATE
                     ? OVS_FLOW_CMD_NEW : OVS_FLOW_CMD_SET);
     request->dp_ifindex = dpif->dp_ifindex;
@@ -1796,6 +1806,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
     struct nl_transaction *txnsp[OPERATE_MAX_OPS];
     size_t i;
 
+    //遍历每个ops,并按照type转换为相应的request消息
     n_ops = MIN(n_ops, OPERATE_MAX_OPS);
     for (i = 0; i < n_ops; i++) {
         struct op_auxdata *aux = &auxes[i];
@@ -1814,12 +1825,14 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
 
         switch (op->type) {
         case DPIF_OP_FLOW_PUT:
+        	//处理flow的下发
             put = &op->flow_put;
             dpif_netlink_init_flow_put(dpif, put, &flow);
             if (put->stats) {
                 flow.nlmsg_flags |= NLM_F_ECHO;
                 aux->txn.reply = &aux->reply;
             }
+            //将flow存入	aux->request中
             dpif_netlink_flow_to_ofpbuf(&flow, &aux->request);
             break;
 
@@ -1869,6 +1882,8 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
     for (i = 0; i < n_ops; i++) {
         txnsp[i] = &auxes[i].txn;
     }
+
+    //通过netlink下发给kernel
     nl_transact_multiple(NETLINK_GENERIC, txnsp, n_ops);
 
     for (i = 0; i < n_ops; i++) {
@@ -2042,6 +2057,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
     info.dpif_class = dpif_class;
     info.tp_dst_port = dst_port;
     info.tunnel_csum_on = csum_on;
+    //向硬件下发flow
     err = netdev_flow_put(dev, &match,
                           CONST_CAST(struct nlattr *, put->actions),
                           put->actions_len,
@@ -2062,6 +2078,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
             op.flow_del.terse = false;
 
             opp = &op;
+            //知会kernel删除对应的flow
             dpif_netlink_operate__(dpif, &opp, 1);
         }
 
@@ -2164,6 +2181,7 @@ static void
 dpif_netlink_operate_chunks(struct dpif_netlink *dpif, struct dpif_op **ops,
                             size_t n_ops)
 {
+	//ops执行
     while (n_ops > 0) {
         size_t chunk = dpif_netlink_operate__(dpif, ops, n_ops);
 
@@ -2182,18 +2200,21 @@ dpif_netlink_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops,
     int i = 0;
     int err = 0;
 
+    //指出always offload,但flow api没有开启，故直接返回
     if (offload_type == DPIF_OFFLOAD_ALWAYS && !netdev_is_flow_api_enabled()) {
         VLOG_DBG("Invalid offload_type: %d", offload_type);
         return;
     }
 
     if (offload_type != DPIF_OFFLOAD_NEVER && netdev_is_flow_api_enabled()) {
+    	//flow_api开启了，且offload_type为auto或者always，则尝试执行offload
         while (n_ops > 0) {
             count = 0;
 
             while (n_ops > 0 && count < OPERATE_MAX_OPS) {
                 struct dpif_op *op = ops[i++];
 
+                //尝试执行op
                 err = try_send_to_netdev(dpif, op);
                 if (err && err != EEXIST) {
                     if (offload_type == DPIF_OFFLOAD_ALWAYS) {
@@ -2213,6 +2234,7 @@ dpif_netlink_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops,
                         }
                         return;
                     }
+                    //记录执行失败的flow
                     new_ops[count++] = op;
                 } else {
                     op->error = err;
@@ -2221,6 +2243,7 @@ dpif_netlink_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops,
                 n_ops--;
             }
 
+            //下发执行失败的flow
             dpif_netlink_operate_chunks(dpif, new_ops, count);
         }
     } else if (offload_type != DPIF_OFFLOAD_ALWAYS) {
@@ -2479,7 +2502,7 @@ parse_odp_packet(const struct dpif_netlink *dpif, struct ofpbuf *buf,
         return EINVAL;
     }
 
-    int type = (genl->cmd == OVS_PACKET_CMD_MISS ? DPIF_UC_MISS
+    int type = (genl->cmd == OVS_PACKET_CMD_MISS ? DPIF_UC_MISS/*底层失配*/
                 : genl->cmd == OVS_PACKET_CMD_ACTION ? DPIF_UC_ACTION
                 : -1);
     if (type < 0) {
@@ -2597,7 +2620,7 @@ dpif_netlink_recv_windows(struct dpif_netlink *dpif, uint32_t handler_id,
 }
 #else
 static int
-dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id,
+dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id/*使用哪个handler*/,
                     struct dpif_upcall *upcall, struct ofpbuf *buf)
     OVS_REQ_RDLOCK(dpif->upcall_lock)
 {
@@ -2608,13 +2631,16 @@ dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id,
         return EAGAIN;
     }
 
+    //取指定的handler
     handler = &dpif->handlers[handler_id];
     if (handler->event_offset >= handler->n_events) {
+    	//所有上次epoll获得的event均已处理完成，本次重新等待
         int retval;
 
         handler->event_offset = handler->n_events = 0;
 
         do {
+        	//等待事件
             retval = epoll_wait(handler->epoll_fd, handler->epoll_events,
                                 dpif->uc_array_size, 0);
         } while (retval < 0 && errno == EINTR);
@@ -2623,13 +2649,15 @@ dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id,
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
             VLOG_WARN_RL(&rl, "epoll_wait failed (%s)", ovs_strerror(errno));
         } else if (retval > 0) {
+        	//记录发生的事件数目
             handler->n_events = retval;
         }
     }
 
+    //事件处理
     while (handler->event_offset < handler->n_events) {
         int idx = handler->epoll_events[handler->event_offset].data.u32;
-        struct dpif_channel *ch = &dpif->channels[idx];
+        struct dpif_channel *ch = &dpif->channels[idx];/*读取idx对应的channel*/
 
         handler->event_offset++;
 
@@ -2641,6 +2669,7 @@ dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id,
                 return EAGAIN;
             }
 
+            //自ch设备读取内容
             error = nl_sock_recv(ch->sock, buf, NULL, false);
             if (error == ENOBUFS) {
                 /* ENOBUFS typically means that we've received so many
@@ -2659,6 +2688,7 @@ dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id,
                 return error;
             }
 
+            //解析读到的报文
             error = parse_odp_packet(dpif, buf, upcall, &dp_ifindex);
             if (!error && dp_ifindex == dpif->dp_ifindex) {
                 return 0;
@@ -3414,7 +3444,7 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_handlers_set,
     NULL,                       /* set_config */
     dpif_netlink_queue_to_priority,
-    dpif_netlink_recv,
+    dpif_netlink_recv,/*收取kernel发送过来的netlink消息*/
     dpif_netlink_recv_wait,
     dpif_netlink_recv_purge,
     NULL,                       /* register_dp_purge_cb */
@@ -3802,6 +3832,7 @@ dpif_netlink_dp_transact(const struct dpif_netlink_dp *request,
     ofpbuf_delete(request_buf);
 
     if (reply) {
+    	//将结构体清0
         dpif_netlink_dp_init(reply);
         if (!error) {
             error = dpif_netlink_dp_from_ofpbuf(reply, *bufp);

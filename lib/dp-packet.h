@@ -65,7 +65,7 @@ struct dp_packet {
     void *base_;                /* First byte of allocated space. */
     uint16_t allocated_;        /* Number of bytes allocated. */
     uint16_t data_ofs;          /* First byte actually in use. */ //数据首字节到base_的偏移量
-    uint32_t size_;             /* Number of bytes in use. */
+    uint32_t size_;             /* Number of bytes in use. *///报文总大小
     uint32_t ol_flags;          /* Offloading flags. */
     uint32_t rss_hash;          /* Packet hash. */
     uint32_t flow_mark;         /* Packet flow mark. */
@@ -740,6 +740,7 @@ dp_packet_get_send_len(const struct dp_packet *b)
     return dp_packet_size(b) - dp_packet_get_cutlen(b);
 }
 
+//返回报文待分析起始位置
 static inline void *
 dp_packet_data(const struct dp_packet *b)
 {
@@ -859,6 +860,7 @@ dp_packet_batch_is_full(const struct dp_packet_batch *batch)
  * the 'const' modifier since it should not be modified by
  * the iterator.  */
 #define DP_PACKET_BATCH_REFILL_FOR_EACH(IDX, SIZE, PACKET, BATCH)       \
+	/*将BATCH清空，*/\
     for (dp_packet_batch_refill_init(BATCH), IDX=0; IDX < SIZE; IDX++)  \
          if (PACKET = BATCH->packets[IDX], true)
 

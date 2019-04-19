@@ -420,6 +420,7 @@ static inline bool eth_type_mpls(ovs_be16 eth_type)
         eth_type == htons(ETH_TYPE_MPLS_MCAST);
 }
 
+//是否为vlan头
 static inline bool eth_type_vlan(ovs_be16 eth_type)
 {
     return eth_type == htons(ETH_TYPE_VLAN_8021Q) ||
