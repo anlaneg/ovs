@@ -19,7 +19,7 @@ function compile_dpdk_ovs()
 function compile_ovs()
 {
     #apt-get install automake libtool libnuma-dev libpcap-dev
-    (echo 'compile ovs';cd $OVS_DIR;./boot.sh;./configure --with-debug  CFLAGS='-g' ; make );
+    (echo 'compile ovs';cd $OVS_DIR;./boot.sh;./configure --with-debug --prefix='/' CFLAGS='-g' ; make );
 }
 
 
