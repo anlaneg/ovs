@@ -160,6 +160,7 @@ static void dpif_netlink_flow_to_dpif_flow(struct dpif *, struct dpif_flow *,
 
 /* One of the dpif channels between the kernel and userspace. */
 struct dpif_channel {
+	//记录netlink的socket fd相关
     struct nl_sock *sock;       /* Netlink socket. */
     long long int last_poll;    /* Last time this channel was polled. */
 };
@@ -179,6 +180,7 @@ struct dpif_windows_vport_sock {
 
 struct dpif_handler {
     struct epoll_event *epoll_events;
+    //epoll事件句柄
     int epoll_fd;                 /* epoll fd that includes channel socks. */
     //记录事件数目
     int n_events;                 /* Num events returned by epoll_wait(). */
@@ -199,9 +201,11 @@ struct dpif_netlink {
     int dp_ifindex;//datapath对应的ifindex
 
     /* Upcall messages. */
-    struct fat_rwlock upcall_lock;
+    struct fat_rwlock upcall_lock;//用于upcall互斥，配置加写锁，转发加读锁
     struct dpif_handler *handlers;
+    //指出handlers数组的size
     uint32_t n_handlers;           /* Num of upcall handlers. */
+    //每个vport对应一个channel
     struct dpif_channel *channels; /* Array of channels for each port. */
     int uc_array_size;             /* Size of 'handler->channels' and */
                                    /* 'handler->epoll_events'. */
@@ -451,7 +455,7 @@ vport_get_pid(struct dpif_netlink *dpif, uint32_t port_idx,
 
     return true;
 }
-
+//增加新的channel
 static int
 vport_add_channel(struct dpif_netlink *dpif, odp_port_t port_no,
                   struct nl_sock *socksp)
@@ -502,6 +506,7 @@ vport_add_channel(struct dpif_netlink *dpif, odp_port_t port_no,
         struct dpif_handler *handler = &dpif->handlers[i];
 
 #ifndef _WIN32
+        //使port_idx与socksp->fd相互对应
         if (epoll_ctl(handler->epoll_fd, EPOLL_CTL_ADD, nl_sock_fd(socksp),
                       &event) < 0) {
             error = errno;
@@ -759,6 +764,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name,
     int error = 0;
 
     if (dpif->handlers) {
+    	//创建netlink socket
         error = create_nl_sock(dpif, &socksp);
         if (error) {
             return error;
@@ -775,6 +781,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name,
     if (socksp) {
         upcall_pids = nl_sock_pid(socksp);
     }
+    //指明接受upcall的进程pid
     request.n_upcall_pids = 1;
     request.upcall_pids = &upcall_pids;
 
@@ -796,6 +803,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name,
         goto exit;
     }
 
+    //增加channel（指针一个vport)
     error = vport_add_channel(dpif, *port_nop, socksp);
     if (error) {
         VLOG_INFO("%s: could not add channel for port %s",
@@ -2547,6 +2555,7 @@ parse_odp_packet(const struct dpif_netlink *dpif, struct ofpbuf *buf,
         dp_packet_set_l3(&upcall->packet, dp_packet_data(&upcall->packet));
     }
 
+    /*报文所属的datapath*/
     *dp_ifindex = ovs_header->dp_ifindex;
 
     return 0;
@@ -2654,7 +2663,7 @@ dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id/*使用哪个
         }
     }
 
-    //事件处理
+    //事件处理（当前待处理位置为handler->event_offset)
     while (handler->event_offset < handler->n_events) {
         int idx = handler->epoll_events[handler->event_offset].data.u32;
         struct dpif_channel *ch = &dpif->channels[idx];/*读取idx对应的channel*/
@@ -2702,6 +2711,7 @@ dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id/*使用哪个
 }
 #endif
 
+//netlink类型的消息收取接口
 static int
 dpif_netlink_recv(struct dpif *dpif_, uint32_t handler_id,
                   struct dpif_upcall *upcall, struct ofpbuf *buf)
@@ -2709,6 +2719,7 @@ dpif_netlink_recv(struct dpif *dpif_, uint32_t handler_id,
     struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
     int error;
 
+    //加读锁
     fat_rwlock_rdlock(&dpif->upcall_lock);
 #ifdef _WIN32
     error = dpif_netlink_recv_windows(dpif, handler_id, upcall, buf);

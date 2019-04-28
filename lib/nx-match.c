@@ -187,6 +187,7 @@ nxm_make_wild_header(uint64_t header)
 struct nxm_field {
     uint64_t header;
     enum ofp_version version;
+    //字段名称
     const char *name;           /* e.g. "NXM_OF_IN_PORT". */
 
     enum mf_field_id id;
@@ -2011,6 +2012,7 @@ mf_format_subfield(const struct mf_subfield *sf, struct ds *s)
     }
 }
 
+//通过name,name_len查找name对应的字段信息
 static const struct nxm_field *
 mf_parse_subfield_name(const char *name, int name_len, bool *wild)
 {
@@ -2044,9 +2046,10 @@ mf_parse_subfield__(struct mf_subfield *sf, const char **sp)
     bool wild;
 
     s = *sp;
-    name = s;
+    name = s;//用户配置的字段名称
     name_len = strcspn(s, "[-");
 
+    //通过name找到field,通过field id找到field metadata
     f = mf_parse_subfield_name(name, name_len, &wild);
     field = f ? mf_from_id(f->id) : mf_from_name_len(name, name_len);
     if (!field) {
@@ -2059,10 +2062,13 @@ mf_parse_subfield__(struct mf_subfield *sf, const char **sp)
     end = field->n_bits - 1;
     if (*s == '[') {
         if (!strncmp(s, "[]", 2)) {
+        	//此格式指使用全字段
             /* Nothing to do. */
         } else if (ovs_scan(s, "[%d..%d]", &start, &end)) {
+        	//此格式指使用start,end之间的位
             /* Nothing to do. */
         } else if (ovs_scan(s, "[%d]", &start)) {
+        	//此格式指使用start之后的位
             end = start;
         } else {
             return xasprintf("%s: syntax error expecting [] or [<bit>] or "
@@ -2215,8 +2221,8 @@ struct nxm_field_index {
 
 #include "nx-match.inc"
 
-static struct hmap nxm_header_map;
-static struct hmap nxm_name_map;
+static struct hmap nxm_header_map;//字段header与字段的映射表
+static struct hmap nxm_name_map;//字段名称与字段的映射表
 static struct ovs_list nxm_mf_map[MFF_N_IDS];
 
 static void
@@ -2233,6 +2239,7 @@ nxm_init(void)
              nfi < &all_nxm_fields[ARRAY_SIZE(all_nxm_fields)]; nfi++) {
             hmap_insert(&nxm_header_map, &nfi->header_node,
                         hash_uint64(nxm_no_len(nfi->nf.header)));
+            //字段名称与字段的映射表
             hmap_insert(&nxm_name_map, &nfi->name_node,
                         hash_string(nfi->nf.name, 0));
             ovs_list_push_back(&nxm_mf_map[nfi->nf.id], &nfi->mf_node);
@@ -2274,6 +2281,7 @@ nxm_field_by_header(uint64_t header, bool is_action, enum ofperr *h_error)
     return NULL;
 }
 
+//通过字段名称获得field
 static const struct nxm_field *
 nxm_field_by_name(const char *name, size_t len)
 {
@@ -2289,6 +2297,7 @@ nxm_field_by_name(const char *name, size_t len)
     return NULL;
 }
 
+//通过版本及version查找到对应的field
 static const struct nxm_field *
 nxm_field_by_mf_id(enum mf_field_id id, enum ofp_version version)
 {

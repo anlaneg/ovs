@@ -426,6 +426,7 @@ mirror_get(struct mbridge *mbridge, int index, const unsigned long **vlans,
         return false;
     }
 
+    //取mirror配置
     mirror = mbridge->mirrors[index];
     if (!mirror) {
         return false;

@@ -2140,6 +2140,7 @@ mirror_packet(struct xlate_ctx *ctx, struct xbundle *xbundle,
 
         /* Send the packet to the mirror. */
         if (out) {
+        	//自mirror对应的口发出
             struct xbundle *out_xbundle = xbundle_lookup(ctx->xcfg, out);
             if (out_xbundle) {
                 output_normal(ctx, out_xbundle, &xvlan);
@@ -4640,6 +4641,7 @@ pick_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
         return NULL;
     }
 
+    //按照指定的select算法，选择bucket
     switch (group->selection_method) {
     case SEL_METHOD_DEFAULT:
         return pick_default_select_group(ctx, group);
@@ -4673,6 +4675,7 @@ xlate_group_action__(struct xlate_ctx *ctx, struct group_dpif *group,
     } else {
         struct ofputil_bucket *bucket;
         if (group->up.type == OFPGT11_SELECT) {
+        	//select型的group,选择一个bucket
             bucket = pick_select_group(ctx, group);
         } else if (group->up.type == OFPGT11_FF) {
             bucket = pick_ff_group(ctx, group);
@@ -4702,6 +4705,7 @@ xlate_group_action(struct xlate_ctx *ctx, uint32_t group_id,
         struct group_dpif *group;
 
         /* Take ref only if xcache exists. */
+        //通过group_id查找group
         group = group_dpif_lookup(ctx->xbridge->ofproto, group_id,
                                   ctx->xin->tables_version, ctx->xin->xcache);
         if (!group) {
@@ -5567,6 +5571,7 @@ xlate_sample_action(struct xlate_ctx *ctx,
      * this sample action is a input port action. */
     if (os->sampling_port != OFPP_NONE &&
         os->sampling_port != ctx->xin->flow.in_port.ofp_port) {
+    	//配置了sampling_port但与in_port不同，则查找sampling_port
         output_odp_port = ofp_port_to_odp_port(ctx->xbridge,
                                                os->sampling_port);
         if (output_odp_port == ODPP_NONE) {
@@ -6615,7 +6620,8 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
                                 false, group_bucket_action);
             break;
 
-        case OFPACT_GROUP://处理一组转换
+        case OFPACT_GROUP:
+        	//处理一组转换
             if (xlate_group_action(ctx, ofpact_get_GROUP(a)->group_id, last)) {
                 /* Group could not be found. */
 
@@ -6713,14 +6719,16 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             }
             break;
 
-        case OFPACT_SET_IPV4_DST://设置目的ip
+        case OFPACT_SET_IPV4_DST:
+        	//设置目的ip
             if (flow->dl_type == htons(ETH_TYPE_IP)) {
                 memset(&wc->masks.nw_dst, 0xff, sizeof wc->masks.nw_dst);
                 flow->nw_dst = ofpact_get_SET_IPV4_DST(a)->ipv4;
             }
             break;
 
-        case OFPACT_SET_IP_DSCP://tos中的dscp字段
+        case OFPACT_SET_IP_DSCP:
+        	//tos中的dscp字段
             if (is_ip_any(flow)) {
                 wc->masks.nw_tos |= IP_DSCP_MASK;
                 //设置flow的dscp值
@@ -6746,7 +6754,8 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             }
             break;
 
-        case OFPACT_SET_L4_SRC_PORT://设置源port
+        case OFPACT_SET_L4_SRC_PORT:
+        	//设置源port
             if (is_ip_any(flow) && !(flow->nw_frag & FLOW_NW_FRAG_LATER)) {
             	//如果是ipv4或ipv6报文，并且非首片报文，则设置传输层src port,同时设置mask
                 memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);
@@ -6755,7 +6764,8 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             }
             break;
 
-        case OFPACT_SET_L4_DST_PORT://设置目的port
+        case OFPACT_SET_L4_DST_PORT:
+        	//设置目的port
             if (is_ip_any(flow) && !(flow->nw_frag & FLOW_NW_FRAG_LATER)) {
                 memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);
                 memset(&wc->masks.tp_dst, 0xff, sizeof wc->masks.tp_dst);
@@ -6895,6 +6905,7 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             break;
 
         case OFPACT_LEARN:
+        	//learn action process
             xlate_learn_action(ctx, ofpact_get_LEARN(a));
             break;
 
@@ -7357,7 +7368,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
     xin->trace = xlate_report(&ctx, OFT_BRIDGE, "bridge(\"%s\")",
                               xbridge->name);
-    if (xin->frozen_state) {//重入后，当recirc_id不为0时，此变量有值
+    if (xin->frozen_state) {
+    	//重入后，当recirc_id不为0时，此变量有值
         const struct frozen_state *state = xin->frozen_state;
 
         struct ovs_list *old_trace = xin->trace;
@@ -7431,7 +7443,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         }
 
         xin->trace = old_trace;
-    } else if (OVS_UNLIKELY(flow->recirc_id)) {//有recirc_id，但没有frozen_state,故出错
+    } else if (OVS_UNLIKELY(flow->recirc_id)) {
+    	//有recirc_id，但没有frozen_state,故出错
         xlate_report_error(&ctx,
                            "Recirculation context not found for ID %"PRIx32,
                            flow->recirc_id);
@@ -7505,7 +7518,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     }
 
     /* Tunnel stats only for not-thawed packets. */
-    if (!xin->frozen_state && in_port && in_port->is_tunnel) {//如果有入接口，入接口还是tunnel
+    if (!xin->frozen_state && in_port && in_port->is_tunnel) {
+    	//如果有入接口，入接口还是tunnel
         if (ctx.xin->resubmit_stats) {
             netdev_vport_inc_rx(in_port->netdev, ctx.xin->resubmit_stats);
             if (in_port->bfd) {//bdf功能，不关注
@@ -7526,6 +7540,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
          *
          * We do not perform special processing on thawed packets, since that
          * was done before they were frozen and should not be redone. */
+    	//特殊协议的mirror处理
         mirror_ingress_packet(&ctx);
     } else if (in_port && in_port->xbundle
                && xbundle_mirror_out(xbridge, in_port->xbundle)) {

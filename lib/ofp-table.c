@@ -151,17 +151,20 @@ ofputil_table_map_destroy(struct ofputil_table_map *map)
  * because this function usually does not.  (This gives the caller an
  * opportunity to look up the table name another way, e.g. by contacting the
  * switch and listing the names of all its tables). */
+//通过名称或者数字得到表号
 bool
 ofputil_table_from_string(const char *s,
-                          const struct ofputil_table_map *table_map,
-                          uint8_t *tablep)
+                          const struct ofputil_table_map *table_map/*表名称与表号映射*/,
+                          uint8_t *tablep/*出参，指出表号*/)
 {
     *tablep = 0;
     if (*s == '-') {
+    	//表号不能为负数
         VLOG_WARN("Negative value %s is not a valid table number.", s);
         return false;
     }
 
+    //转换表号
     unsigned int table;
     if (str_to_uint(s, 10, &table)) {
         if (table > 255) {
@@ -172,9 +175,12 @@ ofputil_table_from_string(const char *s,
         *tablep = table;
         return true;
     } else {
+    	//非数字形式
         if (s[0] != '"') {
+        	//按表名称方式查找表号
             table = ofputil_table_map_get_number(table_map, s);
         } else {
+        	//移除开始，结尾的引号后再查找表号
             size_t length = strlen(s);
             char *name = NULL;
             if (length > 1
@@ -185,6 +191,7 @@ ofputil_table_from_string(const char *s,
             free(name);
         }
         if (table != UINT8_MAX) {
+        	//按名称查找表号成功
             *tablep = table;
             return true;
         }

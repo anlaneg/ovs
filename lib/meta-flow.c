@@ -3242,6 +3242,7 @@ mf_mask_subfield(const struct mf_field *field,
 
 /* Initializes 'x' to the value of 'sf' within 'flow'.  'sf' must be valid for
  * reading 'flow', e.g. as checked by mf_check_src(). */
+//将flow中的指定字段取值赋给sf->field
 void
 mf_read_subfield(const struct mf_subfield *sf, const struct flow *flow,
                  union mf_subvalue *x)

@@ -137,6 +137,7 @@ struct group_dpif {
     uint64_t packet_count OVS_GUARDED;  /* Number of packets received. */
     uint64_t byte_count OVS_GUARDED;    /* Number of bytes received. */
 
+    //group对应的选择方法
     enum group_selection_method selection_method;
     enum ovs_hash_alg hash_alg;         /* dp_hash algorithm to be applied. */
     uint32_t hash_basis;                /* Basis for dp_hash. */

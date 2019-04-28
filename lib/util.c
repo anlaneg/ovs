@@ -794,6 +794,7 @@ str_to_llong_with_tail(const char *s, char **tail, int base, long long *x)
     }
 }
 
+//将字符串按base转换为u
 bool
 str_to_uint(const char *s, int base, unsigned int *u)
 {

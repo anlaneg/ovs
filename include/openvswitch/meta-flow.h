@@ -2085,6 +2085,7 @@ enum OVS_PACKED_ENUM mf_string {
 
 struct mf_field {
     /* Identification. */
+	//字段id
     enum mf_field_id id;        /* MFF_*. */
     const char *name;           /* Name of this field, e.g. "eth_type". */
     //别名
@@ -2102,15 +2103,15 @@ struct mf_field {
      *     - "mpls_tc"    is 1 byte but only 3 bits.
      *     - "mpls_bos"   is 1 byte but only 1 bit.
      */
-    unsigned int n_bytes;       /* Width of the field in bytes. */ //需要匹配多少字节
-    unsigned int n_bits;        /* Number of significant bits in field. */ //需要匹配多少位数
-    bool variable_len;          /* Length is variable, if so width is max. */
+    unsigned int n_bytes;       /* Width of the field in bytes. */ //字段字节数
+    unsigned int n_bits;        /* Number of significant bits in field. */ //字段位宽
+    bool variable_len;          /* Length is variable, if so width is max. */ //是否可变长度
 
     /* Properties. */
-    enum mf_maskable maskable;
-    enum mf_string string;
+    enum mf_maskable maskable;//能否与掩码配合使用
+    enum mf_string string;//字段格式
     enum mf_prereqs prereqs;
-    bool writable;              /* May be written by actions? */
+    bool writable;              /* May be written by actions? */ //是否可写
     bool mapped;                /* Variable length mf_field is mapped. */
 
     /* Usable protocols.
@@ -2151,7 +2152,9 @@ extern const union mf_value exact_match_mask;
 /* Part of a field. */
 struct mf_subfield {
     const struct mf_field *field;
+    //使用此field的起始bit偏移量
     unsigned int ofs;           /* Bit offset. */
+    //使用此field的bit位总数
     unsigned int n_bits;        /* Number of bits. */
 };
 

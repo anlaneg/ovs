@@ -764,6 +764,7 @@ udpif_upcall_handler(void *arg)
             dpif_recv_wait(udpif->dpif, handler->handler_id);
             latch_wait(&udpif->exit_latch);
         }
+        //等待事件触发
         poll_block();
     }
 
@@ -1208,12 +1209,14 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
 
     upcall->reval_seq = seq_read(udpif->reval_seq);//取序列
 
-    xerr = xlate_actions(&xin, &upcall->xout);//实现action转换
+    //实现action转换
+    xerr = xlate_actions(&xin, &upcall->xout);
 
     /* Translate again and log the ofproto trace for
      * these two error types. */
     if (xerr == XLATE_RECURSION_TOO_DEEP ||
         xerr == XLATE_TOO_MANY_RESUBMITS) {
+    	//递归层数过多，重查次数过多
         static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(1, 1);
 
         /* This is a huge log, so be conservative. */

@@ -135,7 +135,7 @@ struct ofproto {//openflow 交换机
     int min_mtu;                    /* Current MTU of non-internal ports. */
 
     /* Groups. */
-    //保存所有组，保存ofgroup结构体（按组id索引）
+    //保存所有group，保存ofgroup结构体（按组id索引）
     struct cmap groups;               /* Contains "struct ofgroup"s. */
     uint32_t n_groups[4] OVS_GUARDED; /* # of existing groups of each type. */
     struct ofputil_group_features ogf;
@@ -589,13 +589,15 @@ struct ofgroup {
      * modified after construction. */
     struct ofproto * const ofproto;  /* The ofproto that contains this group. */
     const uint32_t group_id;
+    //group类型
     const enum ofp11_group_type type; /* One of OFPGT_*. */
     bool being_deleted;               /* Group removal has begun. */
 
     const long long int created;      /* Creation time. */
     const long long int modified;     /* Time of last modification. */
 
-    //为什么需要分多个buckets
+    //(为什么需要分多个buckets?)group有一种类型为select，可以从多个中选择出一种，可用于支持ecmp等
+    //这里的每个bucket可以理解为ecmp的下一跳
     const struct ovs_list buckets;    /* Contains "struct ofputil_bucket"s. */ //组内的一系列动作
     const uint32_t n_buckets;//桶数目
 

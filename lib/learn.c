@@ -135,6 +135,7 @@ learn_execute(const struct ofpact_learn *learn, const struct flow *flow,
         union mf_subvalue value;
 
         if (spec->src_type == NX_LEARN_SRC_FIELD) {
+        	//使用flow中的值，填充 spec->src
             mf_read_subfield(&spec->src, flow, &value);
         } else {
             mf_subvalue_from_value(&spec->dst, &value,
@@ -246,6 +247,7 @@ learn_parse_spec(const char *orig, char *name, char *value,
     /* Parse destination and check prerequisites. */
     struct mf_subfield dst;
 
+    //通过name找到此字段的信息
     char *error = mf_parse_subfield(&dst, name);
     bool parse_error = error != NULL;
     free(error);
@@ -262,6 +264,7 @@ learn_parse_spec(const char *orig, char *name, char *value,
         /* Parse source and check prerequisites. */
         if (value[0] != '\0') {
             struct mf_subfield src;
+            //解析value
             error = mf_parse_subfield(&src, value);
             if (error) {
                 union mf_value imm;
@@ -329,15 +332,18 @@ learn_parse_spec(const char *orig, char *name, char *value,
 
         spec->src_type = NX_LEARN_SRC_FIELD;
     } else if (!strcmp(name, "load")) {
+    	//load关键字
         union mf_subvalue imm;
         char *tail;
         char *dst_value = strstr(value, "->");
 
         if (dst_value == value) {
+        	//未指定源的情况
             return xasprintf("%s: missing source before `->' in `%s'", name,
                              value);
         }
         if (!dst_value) {
+        	//未指定目的的情况
             return xasprintf("%s: missing `->' in `%s'", name, value);
         }
 
@@ -368,6 +374,7 @@ learn_parse_spec(const char *orig, char *name, char *value,
             spec->dst = move.dst;
         }
     } else if (!strcmp(name, "output")) {
+    	//output关键字
         error = mf_parse_subfield(&spec->src, value);
         if (error) {
             return error;
@@ -398,11 +405,12 @@ learn_parse__(char *orig, char *arg, const struct ofputil_port_map *port_map,
     learn->idle_timeout = OFP_FLOW_PERMANENT;
     learn->hard_timeout = OFP_FLOW_PERMANENT;
     learn->priority = OFP_DEFAULT_PRIORITY;
-    learn->table_id = 1;
+    learn->table_id = 1;//默认插入到表1
 
     match_init_catchall(&match);
     while (ofputil_parse_key_value(&arg, &name, &value)) {
         if (!strcmp(name, "table")) {
+        	//table=10 形式，获取表号
             if (!ofputil_table_from_string(value, table_map,
                                            &learn->table_id)) {
                 return xasprintf("unknown table \"%s\"", value);
@@ -443,6 +451,7 @@ learn_parse__(char *orig, char *arg, const struct ofputil_port_map *port_map,
                                  "single bit");
             }
         } else {
+        	//形如NXM_OF_VLAN_TCI[0..11],NXM_OF_ETH_DST[]=...形式
             struct ofpact_learn_spec *spec;
             char *error;
 

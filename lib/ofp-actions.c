@@ -5480,6 +5480,7 @@ encode_LEARN(const struct ofpact_learn *learn,
     pad_ofpat(out, start_ofs);
 }
 
+//解析learn action
 static char * OVS_WARN_UNUSED_RESULT
 parse_LEARN(char *arg, const struct ofpact_parse_params *pp)
 {
@@ -6139,6 +6140,7 @@ encode_SAMPLE(const struct ofpact_sample *sample,
  *
  * Returns NULL if successful, otherwise a malloc()'d string describing the
  * error.  The caller is responsible for freeing the returned string. */
+//sample action解析
 static char * OVS_WARN_UNUSED_RESULT
 parse_SAMPLE(char *arg, const struct ofpact_parse_params *pp)
 {
@@ -6162,11 +6164,13 @@ parse_SAMPLE(char *arg, const struct ofpact_parse_params *pp)
         } else if (!strcmp(key, "obs_point_id")) {
             error = str_to_u32(value, &os->obs_point_id);
         } else if (!strcmp(key, "sampling_port")) {
+        	//待采样的port
             if (!ofputil_port_from_string(value, pp->port_map,
                                           &os->sampling_port)) {
                 error = xasprintf("%s: unknown port", value);
             }
         } else if (!strcmp(key, "ingress")) {
+        	//采入方向
             os->direction = NX_ACTION_SAMPLE_INGRESS;
         } else if (!strcmp(key, "egress")) {
             os->direction = NX_ACTION_SAMPLE_EGRESS;

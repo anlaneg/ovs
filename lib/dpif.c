@@ -1618,7 +1618,7 @@ dpif_recv(struct dpif *dpif, uint32_t handler_id, struct dpif_upcall *upcall,
     	//有recv回调，调用回调，完成报文收取记录在upcall中
         error = dpif->dpif_class->recv(dpif, handler_id, upcall, buf);
         if (!error) {
-        	//debug显示收到的报文
+        	//收包成功，debug显示收到的报文
             dpif_print_packet(dpif, upcall);
         } else if (error != EAGAIN) {
             log_operation(dpif, "recv", error);
