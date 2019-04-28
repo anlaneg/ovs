@@ -132,6 +132,7 @@ odp_action_len(uint16_t type)
     case OVS_ACTION_ATTR_CLONE: return ATTR_LEN_VARIABLE;
     case OVS_ACTION_ATTR_PUSH_NSH: return ATTR_LEN_VARIABLE;
     case OVS_ACTION_ATTR_POP_NSH: return 0;
+    case OVS_ACTION_ATTR_CHECK_PKT_LEN: return ATTR_LEN_VARIABLE;
 
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -1049,6 +1050,42 @@ format_odp_set_nsh(struct ds *ds, const struct nlattr *attr)
     ds_put_cstr(ds, "))");
 }
 
+static void
+format_odp_check_pkt_len_action(struct ds *ds, const struct nlattr *attr,
+                                const struct hmap *portno_names OVS_UNUSED)
+{
+    static const struct nl_policy ovs_cpl_policy[] = {
+        [OVS_CHECK_PKT_LEN_ATTR_PKT_LEN] = { .type = NL_A_U16 },
+        [OVS_CHECK_PKT_LEN_ATTR_ACTIONS_IF_GREATER] = { .type = NL_A_NESTED },
+        [OVS_CHECK_PKT_LEN_ATTR_ACTIONS_IF_LESS_EQUAL]
+            = { .type = NL_A_NESTED },
+    };
+    struct nlattr *a[ARRAY_SIZE(ovs_cpl_policy)];
+    ds_put_cstr(ds, "check_pkt_len");
+    if (!nl_parse_nested(attr, ovs_cpl_policy, a, ARRAY_SIZE(a))) {
+        ds_put_cstr(ds, "(error)");
+        return;
+    }
+
+    if (!a[OVS_CHECK_PKT_LEN_ATTR_ACTIONS_IF_GREATER] ||
+        !a[OVS_CHECK_PKT_LEN_ATTR_ACTIONS_IF_LESS_EQUAL]) {
+        ds_put_cstr(ds, "(error)");
+        return;
+    }
+
+    uint16_t pkt_len = nl_attr_get_u16(a[OVS_CHECK_PKT_LEN_ATTR_PKT_LEN]);
+    ds_put_format(ds, "(size=%u,gt(", pkt_len);
+    const struct nlattr *acts;
+    acts = a[OVS_CHECK_PKT_LEN_ATTR_ACTIONS_IF_GREATER];
+    format_odp_actions(ds, nl_attr_get(acts), nl_attr_get_size(acts),
+                       portno_names);
+
+    ds_put_cstr(ds, "),le(");
+    acts = a[OVS_CHECK_PKT_LEN_ATTR_ACTIONS_IF_LESS_EQUAL];
+    format_odp_actions(ds, nl_attr_get(acts), nl_attr_get_size(acts),
+                           portno_names);
+    ds_put_cstr(ds, "))");
+}
 
 //格式化输出各action
 static void
@@ -1188,6 +1225,9 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
     }
     case OVS_ACTION_ATTR_POP_NSH:
         ds_put_cstr(ds, "pop_nsh()");
+        break;
+    case OVS_ACTION_ATTR_CHECK_PKT_LEN:
+        format_odp_check_pkt_len_action(ds, a, portno_names);
         break;
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -2402,6 +2442,52 @@ parse_odp_action(const char *s, const struct simap *port_names,
         if (!strncmp(s, "ct_clear", 8)) {
             nl_msg_put_flag(actions, OVS_ACTION_ATTR_CT_CLEAR);
             return 8;
+        }
+    }
+
+    {
+        uint16_t pkt_len;
+        int n = -1;
+        if (ovs_scan(s, "check_pkt_len(size=%"SCNi16",gt(%n", &pkt_len, &n)) {
+            size_t cpl_ofs, actions_ofs;
+            cpl_ofs = nl_msg_start_nested(actions,
+                                          OVS_ACTION_ATTR_CHECK_PKT_LEN);
+            nl_msg_put_u16(actions, OVS_CHECK_PKT_LEN_ATTR_PKT_LEN, pkt_len);
+            actions_ofs = nl_msg_start_nested(
+                actions, OVS_CHECK_PKT_LEN_ATTR_ACTIONS_IF_GREATER);
+
+            int retval;
+            if (!strncasecmp(s + n, "drop", 4)) {
+                n += 4;
+            } else {
+                retval = parse_action_list(s + n, port_names, actions);
+                if (retval < 0) {
+                    return retval;
+                }
+
+                n += retval;
+            }
+            nl_msg_end_nested(actions, actions_ofs);
+            retval = -1;
+            if (!ovs_scan(s + n, "),le(%n", &retval)) {
+                return -EINVAL;
+            }
+            n += retval;
+
+            actions_ofs = nl_msg_start_nested(
+                actions, OVS_CHECK_PKT_LEN_ATTR_ACTIONS_IF_LESS_EQUAL);
+            if (!strncasecmp(s + n, "drop", 4)) {
+                n += 4;
+            } else {
+                retval = parse_action_list(s + n, port_names, actions);
+                if (retval < 0) {
+                    return retval;
+                }
+                n += retval;
+            }
+            nl_msg_end_nested(actions, actions_ofs);
+            nl_msg_end_nested(actions, cpl_ofs);
+            return s[n + 1] == ')' ? n + 2 : -EINVAL;
         }
     }
 
@@ -5830,6 +5916,11 @@ static void
 odp_flow_key_from_flow__(const struct odp_flow_key_parms *parms,
                          bool export_mask, struct ofpbuf *buf)
 {
+    /* New "struct flow" fields that are visible to the datapath (including all
+     * data fields) should be translated into equivalent datapath flow fields
+     * here (you will have to add a OVS_KEY_ATTR_* for them). */
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
+
     struct ovs_key_ethernet *eth_key;
     size_t encap[FLOW_MAX_VLAN_HEADERS] = {0};
     size_t max_vlans;
@@ -6926,6 +7017,11 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
                        struct flow *flow, const struct flow *src_flow,
                        char **errorp)
 {
+    /* New "struct flow" fields that are visible to the datapath (including all
+     * data fields) should be translated from equivalent datapath flow fields
+     * here (you will have to add a OVS_KEY_ATTR_* for them).  */
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
+
     enum odp_key_fitness fitness = ODP_FIT_ERROR;
     if (errorp) {
         *errorp = NULL;
@@ -8276,8 +8372,14 @@ commit_encap_decap_action(const struct flow *flow,
  * in addition to this function if needed.  Sets fields in 'wc' that are
  * used as part of the action.
  *
- * Returns a reason to force processing the flow's packets into the userspace
- * slow path, if there is one, otherwise 0. */
+ * In the common case, this function returns 0.  If the flow key modification
+ * requires the flow's packets to be forced into the userspace slow path, this
+ * function returns SLOW_ACTION.  This only happens when there is no ODP action
+ * to modify some field that was actually modified.  For example, there is no
+ * ODP action to modify any ARP field, so such a modification triggers
+ * SLOW_ACTION.  (When this happens, packets that need such modification get
+ * flushed to userspace and handled there, which works OK but much more slowly
+ * than if the datapath handled it directly.) */
 //如果base与flow之间有不同，则加入到odp_actions中
 //用于生成规则，且为base上加path,使其变更为flow，方向goto语义继续执行
 enum slow_path_reason
@@ -8286,6 +8388,11 @@ commit_odp_actions(const struct flow *flow, struct flow *base,
                    bool use_masked, bool pending_encap, bool pending_decap,
                    struct ofpbuf *encap_data)
 {
+    /* If you add a field that OpenFlow actions can change, and that is visible
+     * to the datapath (including all data fields), then you should also add
+     * code here to commit changes to the field. */
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
+
     enum slow_path_reason slow1, slow2;
     bool mpls_done = false;
 

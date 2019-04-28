@@ -23,7 +23,7 @@
 #include "dirs.h"
 #include "dp-packet.h"
 #include "flow.h"
-#include "gchassis.h"
+#include "ha-chassis.h"
 #include "lport.h"
 #include "nx-match.h"
 #include "ovn-controller.h"
@@ -43,9 +43,9 @@
 #include "ovn/actions.h"
 #include "ovn/lex.h"
 #include "ovn/lib/acl-log.h"
-#include "ovn/lib/logical-fields.h"
 #include "ovn/lib/ovn-l7.h"
 #include "ovn/lib/ovn-util.h"
+#include "ovn/logical-fields.h"
 #include "openvswitch/poll-loop.h"
 #include "openvswitch/rconn.h"
 #include "socket-util.h"
@@ -173,7 +173,6 @@ static void init_send_garps(void);
 static void destroy_send_garps(void);
 static void send_garp_wait(long long int send_garp_time);
 static void send_garp_prepare(
-    struct ovsdb_idl_index *sbrec_chassis_by_name,
     struct ovsdb_idl_index *sbrec_port_binding_by_datapath,
     struct ovsdb_idl_index *sbrec_port_binding_by_name,
     const struct ovsrec_bridge *,
@@ -200,6 +199,12 @@ static void pinctrl_handle_nd_ns(struct rconn *swconn,
                                  struct dp_packet *pkt_in,
                                  const struct match *md,
                                  struct ofpbuf *userdata);
+static void pinctrl_handle_put_icmp4_frag_mtu(struct rconn *swconn,
+                                              const struct flow *in_flow,
+                                              struct dp_packet *pkt_in,
+                                              struct ofputil_packet_in *pin,
+                                              struct ofpbuf *userdata,
+                                              struct ofpbuf *continuation);
 static void init_ipv6_ras(void);
 static void destroy_ipv6_ras(void);
 static void ipv6_ra_wait(long long int send_ipv6_ra_time);
@@ -525,7 +530,8 @@ pinctrl_handle_arp(struct rconn *swconn, const struct flow *ip_flow,
 static void
 pinctrl_handle_icmp(struct rconn *swconn, const struct flow *ip_flow,
                     struct dp_packet *pkt_in,
-                    const struct match *md, struct ofpbuf *userdata)
+                    const struct match *md, struct ofpbuf *userdata,
+                    bool include_orig_ip_datagram)
 {
     /* This action only works for IP packets, and the switch should only send
      * us IP packets this way, but check here just to be sure. */
@@ -550,6 +556,16 @@ pinctrl_handle_icmp(struct rconn *swconn, const struct flow *ip_flow,
     eh->eth_src = ip_flow->dl_src;
 
     if (get_dl_type(ip_flow) == htons(ETH_TYPE_IP)) {
+        struct ip_header *in_ip = dp_packet_l3(pkt_in);
+        uint16_t in_ip_len = ntohs(in_ip->ip_tot_len);
+        if (in_ip_len < IP_HEADER_LEN) {
+            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+            VLOG_WARN_RL(&rl,
+                        "ICMP action on IP packet with invalid length (%u)",
+                        in_ip_len);
+            return;
+        }
+
         struct ip_header *nh = dp_packet_put_zeros(&packet, sizeof *nh);
 
         eh->eth_type = htons(ETH_TYPE_IP);
@@ -565,6 +581,33 @@ pinctrl_handle_icmp(struct rconn *swconn, const struct flow *ip_flow,
         struct icmp_header *ih = dp_packet_put_zeros(&packet, sizeof *ih);
         dp_packet_set_l4(&packet, ih);
         packet_set_icmp(&packet, ICMP4_DST_UNREACH, 1);
+
+        if (include_orig_ip_datagram) {
+            /* RFC 1122: 3.2.2	MUST send at least the IP header and 8 bytes
+             * of header. MAY send more.
+             * RFC says return as much as we can without exceeding 576
+             * bytes.
+             * So, lets return as much as we can. */
+
+            /* Calculate available room to include the original IP + data. */
+            nh = dp_packet_l3(&packet);
+            uint16_t room = 576 - (sizeof *eh + ntohs(nh->ip_tot_len));
+            if (in_ip_len > room) {
+                in_ip_len = room;
+            }
+            dp_packet_put(&packet, in_ip, in_ip_len);
+
+            /* dp_packet_put may reallocate the buffer. Get the l3 and l4
+             * header pointers again. */
+            nh = dp_packet_l3(&packet);
+            ih = dp_packet_l4(&packet);
+            uint16_t ip_total_len = ntohs(nh->ip_tot_len) + in_ip_len;
+            nh->ip_tot_len = htons(ip_total_len);
+            ih->icmp_csum = 0;
+            ih->icmp_csum = csum(ih, sizeof *ih + in_ip_len);
+            nh->ip_csum = 0;
+            nh->ip_csum = csum(nh, sizeof *nh);
+        }
     } else {
         struct ip6_hdr *nh = dp_packet_put_zeros(&packet, sizeof *nh);
         struct icmp6_error_header *ih;
@@ -1668,12 +1711,22 @@ process_packet_in(struct rconn *swconn, const struct ofp_header *msg)
 
     case ACTION_OPCODE_ICMP:
         pinctrl_handle_icmp(swconn, &headers, &packet, &pin.flow_metadata,
-                            &userdata);
+                            &userdata, false);
+        break;
+
+    case ACTION_OPCODE_ICMP4_ERROR:
+        pinctrl_handle_icmp(swconn, &headers, &packet, &pin.flow_metadata,
+                            &userdata, true);
         break;
 
     case ACTION_OPCODE_TCP_RESET:
         pinctrl_handle_tcp_reset(swconn, &headers, &packet, &pin.flow_metadata,
                                  &userdata);
+        break;
+
+    case ACTION_OPCODE_PUT_ICMP4_FRAG_MTU:
+        pinctrl_handle_put_icmp4_frag_mtu(swconn, &headers, &packet,
+                                          &pin, &userdata, &continuation);
         break;
 
     default:
@@ -1819,7 +1872,6 @@ pinctrl_handler(void *arg_)
 /* Called by ovn-controller. */
 void
 pinctrl_run(struct ovsdb_idl_txn *ovnsb_idl_txn,
-            struct ovsdb_idl_index *sbrec_chassis_by_name,
             struct ovsdb_idl_index *sbrec_datapath_binding_by_key,
             struct ovsdb_idl_index *sbrec_port_binding_by_datapath,
             struct ovsdb_idl_index *sbrec_port_binding_by_key,
@@ -1846,7 +1898,7 @@ pinctrl_run(struct ovsdb_idl_txn *ovnsb_idl_txn,
                          sbrec_port_binding_by_key,
                          sbrec_mac_binding_by_lport_ip);
     //为接口与nat考虑arp发送
-    send_garp_prepare(sbrec_chassis_by_name, sbrec_port_binding_by_datapath,
+    send_garp_prepare(sbrec_port_binding_by_datapath,
                       sbrec_port_binding_by_name, br_int, chassis,
                       local_datapaths, active_tunnels);
     prepare_ipv6_ras(sbrec_port_binding_by_datapath,
@@ -2717,8 +2769,7 @@ get_localnet_vifs_l3gwports(
 }
 
 static bool
-pinctrl_is_chassis_resident(struct ovsdb_idl_index *sbrec_chassis_by_name,
-                            struct ovsdb_idl_index *sbrec_port_binding_by_name,
+pinctrl_is_chassis_resident(struct ovsdb_idl_index *sbrec_port_binding_by_name,
                             const struct sbrec_chassis *chassis,
                             const struct sset *active_tunnels,
                             const char *port_name)
@@ -2731,13 +2782,8 @@ pinctrl_is_chassis_resident(struct ovsdb_idl_index *sbrec_chassis_by_name,
     if (strcmp(pb->type, "chassisredirect")) {
         return pb->chassis == chassis;
     } else {
-        struct ovs_list *gateway_chassis =
-            gateway_chassis_get_ordered(sbrec_chassis_by_name, pb);
-        bool active = gateway_chassis_is_active(gateway_chassis,
-                                                chassis,
-                                                active_tunnels);
-        gateway_chassis_destroy(gateway_chassis);
-        return active;
+        return ha_chassis_group_is_active(pb->ha_chassis_group,
+                                          active_tunnels, chassis);
     }
 }
 
@@ -2811,8 +2857,7 @@ extract_addresses_with_port(const char *addresses,
 }
 
 static void
-consider_nat_address(struct ovsdb_idl_index *sbrec_chassis_by_name,
-                     struct ovsdb_idl_index *sbrec_port_binding_by_name,
+consider_nat_address(struct ovsdb_idl_index *sbrec_port_binding_by_name,
                      const char *nat_address,
                      const struct sbrec_port_binding *pb,
                      struct sset *nat_address_keys,
@@ -2825,7 +2870,7 @@ consider_nat_address(struct ovsdb_idl_index *sbrec_chassis_by_name,
     if (!extract_addresses_with_port(nat_address, laddrs, &lport)
         || (!lport && !strcmp(pb->type, "patch"))
         || (lport && !pinctrl_is_chassis_resident(
-                sbrec_chassis_by_name, sbrec_port_binding_by_name, chassis,
+                sbrec_port_binding_by_name, chassis,
                 active_tunnels, lport))) {
         destroy_lport_addresses(laddrs);
         free(laddrs);
@@ -2845,8 +2890,7 @@ consider_nat_address(struct ovsdb_idl_index *sbrec_chassis_by_name,
 }
 
 static void
-get_nat_addresses_and_keys(struct ovsdb_idl_index *sbrec_chassis_by_name,
-                           struct ovsdb_idl_index *sbrec_port_binding_by_name,
+get_nat_addresses_and_keys(struct ovsdb_idl_index *sbrec_port_binding_by_name,
                            struct sset *nat_address_keys,
                            struct sset *local_l3gw_ports,
                            const struct sbrec_chassis *chassis,
@@ -2864,8 +2908,7 @@ get_nat_addresses_and_keys(struct ovsdb_idl_index *sbrec_chassis_by_name,
 
         if (pb->n_nat_addresses) {
             for (int i = 0; i < pb->n_nat_addresses; i++) {
-                consider_nat_address(sbrec_chassis_by_name,
-                                     sbrec_port_binding_by_name,
+                consider_nat_address(sbrec_port_binding_by_name,
                                      pb->nat_addresses[i], pb,
                                      nat_address_keys, chassis,
                                      active_tunnels,
@@ -2877,8 +2920,7 @@ get_nat_addresses_and_keys(struct ovsdb_idl_index *sbrec_chassis_by_name,
             const char *nat_addresses_options = smap_get(&pb->options,
                                                          "nat-addresses");
             if (nat_addresses_options) {
-                consider_nat_address(sbrec_chassis_by_name,
-                                     sbrec_port_binding_by_name,
+                consider_nat_address(sbrec_port_binding_by_name,
                                      nat_addresses_options, pb,
                                      nat_address_keys, chassis,
                                      active_tunnels,
@@ -2923,8 +2965,7 @@ send_garp_run(struct rconn *swconn, long long int *send_garp_time)
 /* Called by pinctrl_run(). Runs with in the main ovn-controller
  * thread context. */
 static void
-send_garp_prepare(struct ovsdb_idl_index *sbrec_chassis_by_name,
-                  struct ovsdb_idl_index *sbrec_port_binding_by_datapath,
+send_garp_prepare(struct ovsdb_idl_index *sbrec_port_binding_by_datapath,
                   struct ovsdb_idl_index *sbrec_port_binding_by_name,
                   const struct ovsrec_bridge *br_int,
                   const struct sbrec_chassis *chassis,
@@ -2944,8 +2985,7 @@ send_garp_prepare(struct ovsdb_idl_index *sbrec_chassis_by_name,
                                 br_int, chassis, local_datapaths,
                                 &localnet_vifs, &local_l3gw_ports);
 
-    get_nat_addresses_and_keys(sbrec_chassis_by_name,
-                               sbrec_port_binding_by_name,
+    get_nat_addresses_and_keys(sbrec_port_binding_by_name,
                                &nat_ip_keys, &local_l3gw_ports,
                                chassis, active_tunnels,
                                &nat_addresses);
@@ -3188,4 +3228,53 @@ exit:
     }
     queue_msg(swconn, ofputil_encode_resume(pin, continuation, proto));
     dp_packet_uninit(pkt_out_ptr);
+}
+
+/* Called with in the pinctrl_handler thread context. */
+static void
+pinctrl_handle_put_icmp4_frag_mtu(struct rconn *swconn,
+                                  const struct flow *in_flow,
+                                  struct dp_packet *pkt_in,
+                                  struct ofputil_packet_in *pin,
+                                  struct ofpbuf *userdata,
+                                  struct ofpbuf *continuation)
+{
+    enum ofp_version version = rconn_get_version(swconn);
+    enum ofputil_protocol proto = ofputil_protocol_from_ofp_version(version);
+    struct dp_packet *pkt_out = NULL;
+
+    /* This action only works for ICMPv4 packets. */
+    if (!is_icmpv4(in_flow, NULL)) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+        VLOG_WARN_RL(&rl, "put_icmp4_frag_mtu action on non-ICMPv4 packet");
+        goto exit;
+    }
+
+    ovs_be16 *mtu = ofpbuf_try_pull(userdata, sizeof *mtu);
+    if (!mtu) {
+        goto exit;
+    }
+
+    pkt_out = dp_packet_clone(pkt_in);
+    pkt_out->l2_5_ofs = pkt_in->l2_5_ofs;
+    pkt_out->l2_pad_size = pkt_in->l2_pad_size;
+    pkt_out->l3_ofs = pkt_in->l3_ofs;
+    pkt_out->l4_ofs = pkt_in->l4_ofs;
+
+    struct ip_header *nh = dp_packet_l3(pkt_out);
+    struct icmp_header *ih = dp_packet_l4(pkt_out);
+    ovs_be16 old_frag_mtu = ih->icmp_fields.frag.mtu;
+    ih->icmp_fields.frag.mtu = *mtu;
+    ih->icmp_csum = recalc_csum16(ih->icmp_csum, old_frag_mtu, *mtu);
+    nh->ip_csum = 0;
+    nh->ip_csum = csum(nh, sizeof *nh);
+
+    pin->packet = dp_packet_data(pkt_out);
+    pin->packet_len = dp_packet_size(pkt_out);
+
+exit:
+    queue_msg(swconn, ofputil_encode_resume(pin, continuation, proto));
+    if (pkt_out) {
+        dp_packet_delete(pkt_out);
+    }
 }

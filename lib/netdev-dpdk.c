@@ -376,105 +376,105 @@ NETDEV_RX_HW_SCATTER = 1 << 2
 */
 
 struct netdev_dpdk {
-PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline0,
-dpdk_port_t port_id;
+    PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline0,
+        dpdk_port_t port_id;
 
-/* If true, device was attached by rte_eth_dev_attach(). */
-bool attached;
-/* If true, rte_eth_dev_start() was successfully called */
-bool started;
-struct eth_addr hwaddr;
-int mtu;
-int socket_id;
-int buf_size;
-int max_packet_len;
-enum dpdk_dev_type type;
-enum netdev_flags flags;
-int link_reset_cnt;
-char *devargs;  /* Device arguments for dpdk ports */
-struct dpdk_tx_queue *tx_q;
-struct rte_eth_link link;
-);
+        /* If true, device was attached by rte_eth_dev_attach(). */
+        bool attached;
+        /* If true, rte_eth_dev_start() was successfully called */
+        bool started;
+        struct eth_addr hwaddr;
+        int mtu;
+        int socket_id;
+        int buf_size;
+        int max_packet_len;
+        enum dpdk_dev_type type;
+        enum netdev_flags flags;
+        int link_reset_cnt;
+        union {
+            /* Device arguments for dpdk ports. */
+            char *devargs;
+            /* Identifier used to distinguish vhost devices from each other. */
+            char *vhost_id;
+        };
+        struct dpdk_tx_queue *tx_q;
+        struct rte_eth_link link;
+    );
 
-PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
-struct ovs_mutex mutex OVS_ACQ_AFTER(dpdk_mutex);
-struct dpdk_mp *dpdk_mp;
+    PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
+        struct ovs_mutex mutex OVS_ACQ_AFTER(dpdk_mutex);
+        struct dpdk_mp *dpdk_mp;
 
-/* virtio identifier for vhost devices */
-ovsrcu_index vid;
+        /* virtio identifier for vhost devices */
+        ovsrcu_index vid;
 
-/* True if vHost device is 'up' and has been reconfigured at least once */
-bool vhost_reconfigured;
-/* 3 pad bytes here. */
-);
+        /* True if vHost device is 'up' and has been reconfigured at least once */
+        bool vhost_reconfigured;
+        /* 3 pad bytes here. */
+    );
 
-PADDED_MEMBERS(CACHE_LINE_SIZE,
-/* Identifier used to distinguish vhost devices from each other. */
-char vhost_id[PATH_MAX];//vhost 设备的path(如hostuser中的path)
-);
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        struct netdev up;
+        /* In dpdk_list. */
+        struct ovs_list list_node OVS_GUARDED_BY(dpdk_mutex);
 
-PADDED_MEMBERS(CACHE_LINE_SIZE,
-struct netdev up;
-/* In dpdk_list. */
-struct ovs_list list_node OVS_GUARDED_BY(dpdk_mutex);
+        /* QoS configuration and lock for the device */
+        OVSRCU_TYPE(struct qos_conf *) qos_conf;
 
-/* QoS configuration and lock for the device */
-OVSRCU_TYPE(struct qos_conf *) qos_conf;
+        /* Ingress Policer */
+        OVSRCU_TYPE(struct ingress_policer *) ingress_policer;
+        uint32_t policer_rate;
+        uint32_t policer_burst;
+    );
 
-/* Ingress Policer */
-OVSRCU_TYPE(struct ingress_policer *) ingress_policer;
-uint32_t policer_rate;
-uint32_t policer_burst;
-);
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        struct netdev_stats stats;
+        /* Protects stats */
+        rte_spinlock_t stats_lock;
+        /* 44 pad bytes here. */
+    );
 
-PADDED_MEMBERS(CACHE_LINE_SIZE,
-struct netdev_stats stats;
-/* Protects stats */
-rte_spinlock_t stats_lock;
-/* 44 pad bytes here. */
-);
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        /* The following properties cannot be changed when a device is running,
+         * so we remember the request and update them next time
+         * netdev_dpdk*_reconfigure() is called */
+        int requested_mtu;
+        int requested_n_txq;
+        int requested_n_rxq;
+        int requested_rxq_size;
+        int requested_txq_size;
 
-PADDED_MEMBERS(CACHE_LINE_SIZE,
-/* The following properties cannot be changed when a device is running,
- * so we remember the request and update them next time
- * netdev_dpdk*_reconfigure() is called */
-int requested_mtu;
-int requested_n_txq;
-int requested_n_rxq;
-int requested_rxq_size;
-int requested_txq_size;
+        /* Number of rx/tx descriptors for physical devices */
+        int rxq_size;
+        int txq_size;
 
-/* Number of rx/tx descriptors for physical devices */
-int rxq_size;
-int txq_size;
+        /* Socket ID detected when vHost device is brought up */
+        int requested_socket_id;
 
-/* Socket ID detected when vHost device is brought up */
-int requested_socket_id;
+        /* Denotes whether vHost port is client/server mode */
+        uint64_t vhost_driver_flags;
 
-/* Denotes whether vHost port is client/server mode */
-uint64_t vhost_driver_flags;
+        /* DPDK-ETH Flow control */
+        struct rte_eth_fc_conf fc_conf;
 
-/* DPDK-ETH Flow control */
-struct rte_eth_fc_conf fc_conf;
+        /* DPDK-ETH hardware offload features,
+         * from the enum set 'dpdk_hw_ol_features' */
+        uint32_t hw_ol_features;
 
-/* DPDK-ETH hardware offload features,
- * from the enum set 'dpdk_hw_ol_features' */
-uint32_t hw_ol_features;
+        /* Properties for link state change detection mode.
+         * If lsc_interrupt_mode is set to false, poll mode is used,
+         * otherwise interrupt mode is used. */
+        bool requested_lsc_interrupt_mode;
+        bool lsc_interrupt_mode;
+    );
 
-/* Properties for link state change detection mode.
- * If lsc_interrupt_mode is set to false, poll mode is used,
- * otherwise interrupt mode is used. */
-bool requested_lsc_interrupt_mode;
-bool lsc_interrupt_mode;
-);
-
-PADDED_MEMBERS(CACHE_LINE_SIZE,
-/* Names of all XSTATS counters */
-struct rte_eth_xstat_name *rte_xstats_names;
-int rte_xstats_names_size;
-int rte_xstats_ids_size;
-uint64_t *rte_xstats_ids;
-);
+    PADDED_MEMBERS(CACHE_LINE_SIZE,
+        /* Names of all XSTATS counters */
+        struct rte_eth_xstat_name *rte_xstats_names;
+        int rte_xstats_names_size;
+        int rte_xstats_ids_size;
+        uint64_t *rte_xstats_ids;
+    );
 };
 
 struct netdev_rxq_dpdk {
@@ -1264,20 +1264,26 @@ return common_construct(netdev, DPDK_ETH_PORT_ID_INVALID,
 static int
 netdev_dpdk_vhost_construct(struct netdev *netdev)
 {
-struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-const char *name = netdev->name;
-int err;
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    const char *name = netdev->name;
+    int err;
 
-/* 'name' is appended to 'vhost_sock_dir' and used to create a socket in
-* the file system. '/' or '\' would traverse directories, so they're not
-* acceptable in 'name'. */
-//无效名称检查
-if (strchr(name, '/') || strchr(name, '\\')) {
-VLOG_ERR("\"%s\" is not a valid name for a vhost-user port. "
-	 "A valid name must not include '/' or '\\'",
-	 name);
-return EINVAL;
-}
+    /* 'name' is appended to 'vhost_sock_dir' and used to create a socket in
+     * the file system. '/' or '\' would traverse directories, so they're not
+     * acceptable in 'name'. */
+    //无效名称检查
+    if (strchr(name, '/') || strchr(name, '\\')) {
+        VLOG_ERR("\"%s\" is not a valid name for a vhost-user port. "
+                 "A valid name must not include '/' or '\\'",
+                 name);
+        return EINVAL;
+    }
+
+    ovs_mutex_lock(&dpdk_mutex);
+    /* Take the name of the vhost-user port and append it to the location where
+     * the socket is to be created, then register the socket.
+     */
+    dev->vhost_id = xasprintf("%s/%s", dpdk_get_vhost_sock_dir(), name);
 
 ovs_mutex_lock(&dpdk_mutex);
 /* Take the name of the vhost-user port and append it to the location where
@@ -1334,10 +1340,15 @@ VLOG_ERR("vhost_common_construct failed for vhost user "
 }
 
 out:
-ovs_mutex_unlock(&dpdk_mutex);
-VLOG_WARN_ONCE("dpdkvhostuser ports are considered deprecated;  "
-	   "please migrate to dpdkvhostuserclient ports.");
-return err;
+    if (err) {
+        free(dev->vhost_id);
+        dev->vhost_id = NULL;
+    }
+
+    ovs_mutex_unlock(&dpdk_mutex);
+    VLOG_WARN_ONCE("dpdkvhostuser ports are considered deprecated;  "
+                   "please migrate to dpdkvhostuserclient ports.");
+    return err;
 }
 
 //客户端初始化
@@ -1465,13 +1476,16 @@ VLOG_ERR("To restore connectivity after re-adding of port, VM on "
 
 vhost_id = xstrdup(dev->vhost_id);
 
-common_destruct(dev);
+    vhost_id = dev->vhost_id;
+    dev->vhost_id = NULL;
 
 ovs_mutex_unlock(&dpdk_mutex);
 
-if (!vhost_id[0]) {
-goto out;
-}
+    ovs_mutex_unlock(&dpdk_mutex);
+
+    if (!vhost_id) {
+        goto out;
+    }
 
 if (dpdk_vhost_driver_unregister(dev, vhost_id)) {
 VLOG_ERR("%s: Unable to unregister vhost driver for socket '%s'.\n",
@@ -1917,19 +1931,23 @@ netdev_dpdk_vhost_client_set_config(struct netdev *netdev,
 			    const struct smap *args,
 			    char **errp OVS_UNUSED)
 {
-struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-const char *path;
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    const char *path;
 
-ovs_mutex_lock(&dev->mutex);
-if (!(dev->vhost_driver_flags & RTE_VHOST_USER_CLIENT)) {
-path = smap_get(args, "vhost-server-path");
-if (path && strcmp(path, dev->vhost_id)) {
-    strcpy(dev->vhost_id, path);//容许修改vhost的path
-    /* check zero copy configuration */
-    if (smap_get_bool(args, "dq-zero-copy", false)) {
-	dev->vhost_driver_flags |= RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
-    } else {
-	dev->vhost_driver_flags &= ~RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
+    ovs_mutex_lock(&dev->mutex);
+    if (!(dev->vhost_driver_flags & RTE_VHOST_USER_CLIENT)) {
+        path = smap_get(args, "vhost-server-path");
+        if (!nullable_string_is_equal(path, dev->vhost_id)) {
+            free(dev->vhost_id);
+            dev->vhost_id = nullable_xstrdup(path);
+            /* check zero copy configuration */
+            if (smap_get_bool(args, "dq-zero-copy", false)) {
+                dev->vhost_driver_flags |= RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
+            } else {
+                dev->vhost_driver_flags &= ~RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
+            }
+            netdev_request_reconfigure(netdev);
+        }
     }
     netdev_request_reconfigure(netdev);
 }
@@ -3520,9 +3538,8 @@ new_device(int vid)
     /* Add device to the vhost port with the same name as that passed down. */
     LIST_FOR_EACH(dev, list_node, &dpdk_list) {
         ovs_mutex_lock(&dev->mutex);
-        if (strncmp(ifname, dev->vhost_id, IF_NAME_SZ) == 0) {
-            //找到名称为ifname的virio设备
-            uint32_t qp_num = rte_vhost_get_vring_num(vid)/VIRTIO_QNUM;
+        if (nullable_string_is_equal(ifname, dev->vhost_id)) {
+            uint32_t qp_num = rte_vhost_get_vring_num(vid) / VIRTIO_QNUM;
 
             /* Get NUMA information */
             newnode = rte_vhost_get_numa_node(vid);
@@ -3651,7 +3668,7 @@ vring_state_changed(int vid, uint16_t queue_id, int enable)
     ovs_mutex_lock(&dpdk_mutex);
     LIST_FOR_EACH (dev, list_node, &dpdk_list) {
         ovs_mutex_lock(&dev->mutex);
-        if (strncmp(ifname, dev->vhost_id, IF_NAME_SZ) == 0) {
+        if (nullable_string_is_equal(ifname, dev->vhost_id)) {
             if (enable) {
                 dev->tx_q[qid].map = qid;
             } else {
@@ -4186,8 +4203,7 @@ netdev_dpdk_vhost_client_reconfigure(struct netdev *netdev)
      *  1. Device hasn't been registered yet.
      *  2. A path has been specified.
      */
-    if (!(dev->vhost_driver_flags & RTE_VHOST_USER_CLIENT)
-            && strlen(dev->vhost_id)) {
+    if (!(dev->vhost_driver_flags & RTE_VHOST_USER_CLIENT) && dev->vhost_id) {
         /* Register client-mode device. */
         vhost_flags |= RTE_VHOST_USER_CLIENT;
 

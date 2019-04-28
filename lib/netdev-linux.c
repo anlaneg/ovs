@@ -747,10 +747,10 @@ netdev_linux_update_lag(struct rtnetlink_change *change)
                 lag->node = shash_add(&lag_shash, change->ifname, lag);
 
                 /* delete ingress block in case it exists */
-                tc_add_del_ingress_qdisc(change->if_index, false, 0);
+                tc_add_del_qdisc(change->if_index, false, 0, TC_INGRESS);
                 /* LAG master is linux netdev so add slave to same block. */
-                error = tc_add_del_ingress_qdisc(change->if_index, true,
-                                                 block_id);
+                error = tc_add_del_qdisc(change->if_index, true, block_id,
+                                         TC_INGRESS);
                 if (error) {
                     VLOG_WARN("failed to bind LAG slave %s to master's block",
                               change->ifname);
@@ -766,8 +766,8 @@ netdev_linux_update_lag(struct rtnetlink_change *change)
         lag = shash_find_data(&lag_shash, change->ifname);
 
         if (lag) {
-            tc_add_del_ingress_qdisc(change->if_index, false,
-                                     lag->block_id);
+            tc_add_del_qdisc(change->if_index, false, lag->block_id,
+                             TC_INGRESS);
             shash_delete(&lag_shash, lag->node);
             free(lag);
         }
@@ -2432,7 +2432,8 @@ tc_del_matchall_policer(struct netdev *netdev)
         return err;
     }
 
-    err = tc_del_filter(ifindex, TC_RESERVED_PRIORITY_POLICE, 1, block_id);
+    err = tc_del_filter(ifindex, TC_RESERVED_PRIORITY_POLICE, 1, block_id,
+                        TC_INGRESS);
     if (err) {
         return err;
     }
@@ -2471,10 +2472,7 @@ netdev_linux_set_policing(struct netdev *netdev_,
         netdev->cache_valid &= ~VALID_POLICING;
     }
 
-    error = get_ifindex(netdev_, &ifindex);
-    if (error) {
-        goto out;
-    }
+    COVERAGE_INC(netdev_set_policing);
 
     /* Use matchall for policing when offloadling ovs with tc-flower. */
     if (netdev_is_flow_api_enabled()) {
@@ -2486,9 +2484,13 @@ netdev_linux_set_policing(struct netdev *netdev_,
         return error;
     }
 
-    COVERAGE_INC(netdev_set_policing);
+    error = get_ifindex(netdev_, &ifindex);
+    if (error) {
+        goto out;
+    }
+
     /* Remove any existing ingress qdisc. */
-    error = tc_add_del_ingress_qdisc(ifindex, false, 0);
+    error = tc_add_del_qdisc(ifindex, false, 0, TC_INGRESS);
     if (error) {
         VLOG_WARN_RL(&rl, "%s: removing policing failed: %s",
                      netdev_name, ovs_strerror(error));
@@ -2496,7 +2498,7 @@ netdev_linux_set_policing(struct netdev *netdev_,
     }
 
     if (kbits_rate) {
-        error = tc_add_del_ingress_qdisc(ifindex, true, 0);
+        error = tc_add_del_qdisc(ifindex, true, 0, TC_INGRESS);
         if (error) {
             VLOG_WARN_RL(&rl, "%s: adding policing qdisc failed: %s",
                          netdev_name, ovs_strerror(error));
@@ -3341,6 +3343,7 @@ const struct netdev_class netdev_tap_class = {
 
 const struct netdev_class netdev_internal_class = {
     NETDEV_LINUX_CLASS_COMMON,
+    LINUX_FLOW_OFFLOAD_API,
     .type = "internal",
     .construct = netdev_linux_construct,
     .get_stats = netdev_internal_get_stats,
@@ -6047,8 +6050,8 @@ netdev_linux_update_via_netlink(struct netdev_linux *netdev)
 
     ofpbuf_init(&request, 0);
     nl_msg_put_nlmsghdr(&request,
-                        sizeof(struct ifinfomsg) + NL_ATTR_SIZE(IFNAMSIZ),
-                        RTM_GETLINK, NLM_F_REQUEST);
+                        sizeof(struct ifinfomsg) + NL_ATTR_SIZE(IFNAMSIZ) +
+                        NL_A_U32_SIZE, RTM_GETLINK, NLM_F_REQUEST);
     ofpbuf_put_zeros(&request, sizeof(struct ifinfomsg));
 
     /* The correct identifiers for a Linux device are netnsid and ifindex,
@@ -6056,7 +6059,7 @@ netdev_linux_update_via_netlink(struct netdev_linux *netdev)
      * and the interface name statically stored in ovsdb. */
     nl_msg_put_string(&request, IFLA_IFNAME, netdev_get_name(&netdev->up));
     if (netdev_linux_netnsid_is_remote(netdev)) {
-        nl_msg_push_u32(&request, IFLA_IF_NETNSID, netdev->netnsid);
+        nl_msg_put_u32(&request, IFLA_IF_NETNSID, netdev->netnsid);
     }
     error = nl_transact(NETLINK_ROUTE, &request, &reply);
     ofpbuf_uninit(&request);
