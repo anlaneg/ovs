@@ -215,7 +215,7 @@ struct xlate_ctx {
     struct ofpbuf stack;
 
     /* The rule that we are currently translating, or NULL. */
-    struct rule_dpif *rule;
+    struct rule_dpif *rule;//流当前命中的规则
 
     /* Flow translation populates this with wildcards relevant in translation.
      * When 'xin->wc' is nonnull, this is the same pointer.  When 'xin->wc' is
@@ -250,6 +250,7 @@ struct xlate_ctx {
      * MAX_RESUBMITS (which is much larger than MAX_DEPTH).
      */
     int depth;                  /* Current resubmit nesting depth. */
+    //转换期resubmits执行次数
     int resubmits;              /* Total number of resubmits. */
     bool in_action_set;         /* Currently translating action_set, if true. */
     bool in_packet_out;         /* Currently translating a packet_out msg, if
@@ -261,7 +262,9 @@ struct xlate_ctx {
     struct ofpbuf *encap_data;  /* May contain a pointer to an ofpbuf with
                                  * context for the datapath encap action.*/
 
+    //当前转换中对应的表号（需要查询的表号）
     uint8_t table_id;           /* OpenFlow table ID where flow was found. */
+    /*当前在转换的rule对应的cookie*/
     ovs_be64 rule_cookie;       /* Cookie of the rule being translated. */
     uint32_t orig_skb_priority; /* Priority when packet arrived. */ //skb上原始的优先级
     uint32_t sflow_n_outputs;   /* Number of output ports. */
@@ -516,7 +519,7 @@ struct skb_priority_to_dscp {
 };
 
 //像下面的注释所言，通过rcu保证了数据的事务性，xlate_cfg是一个类似于快照的东西，它
-//在配置变化过程中，提供了一个稳定形式给转发层面。随时会有配置发生变化，但type_run是
+//在配置变化过程中，提供了一个配置快照给转发层面。随时会有配置发生变化，但type_run是
 //运行在配置线程中，它总在合适的时机生成新的xlate_cfg,这样ofproto变化的间隙就会影响xlate_cfg
 /* Xlate config contains hash maps of all bridges, bundles and ports.
  * Xcfgp contains the pointer to the current xlate configuration.
@@ -529,7 +532,9 @@ struct xlate_cfg {
     struct hmap xports;//记录xport类型（所有的port)
     struct hmap xports_uuid;
 };
-static OVSRCU_TYPE(struct xlate_cfg *) xcfgp = OVSRCU_INITIALIZER(NULL);//全局变量指向xlate_cfg
+
+//全局变量指向xlate_cfg
+static OVSRCU_TYPE(struct xlate_cfg *) xcfgp = OVSRCU_INITIALIZER(NULL);
 //临时xcfg,用于创建一块临时内存，保证改变的事务性（xcfgp是生效的xcfg)
 static struct xlate_cfg *new_xcfg = NULL;
 
@@ -1496,13 +1501,15 @@ xlate_ofport_remove(struct ofport_dpif *ofport)
     xlate_xport_remove(new_xcfg, xport);
 }
 
-//通过flow获知入接口，记录在xportp中，通过xport获知ofproto
+//通过flow获知入接口，记录在xportp中，通过xport获知ofproto（此流所属的交换机）
 static struct ofproto_dpif *
 xlate_lookup_ofproto_(const struct dpif_backer *backer,
                       const struct flow *flow,
-                      ofp_port_t *ofp_in_port, const struct xport **xportp,
+                      ofp_port_t *ofp_in_port/*出参，此流入接口对应的port_id*/,
+					  const struct xport **xportp/*出参，此流入接口对应的xport结构体*/,
                       char **errorp)
 {
+	//取当前系统配置
     struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     const struct xport *xport;
 
@@ -1533,10 +1540,11 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer,
     }
 
     //查找xport（此流对的入接口）
-    xport = xport_lookup(xcfg, tnl_port_should_receive(flow)//是否tunnel　接口收到报文
+    xport = xport_lookup(xcfg, tnl_port_should_receive(flow)/*是否tunnel接口收到报文*/
                          ? tnl_port_receive(flow)//tunnel收取到报文,则查询tunnel口
                          : odp_port_to_ofport(backer, flow->in_port.odp_port));
     if (OVS_UNLIKELY(!xport)) {
+    	//未找到对应的in_port,丢包
         if (errorp) {
             *errorp = (tnl_port_should_receive(flow)
                        ? xstrdup("no OpenFlow tunnel port for this packet")
@@ -1579,9 +1587,9 @@ xlate_lookup_ofproto(const struct dpif_backer *backer, const struct flow *flow,
  */
 int
 xlate_lookup(const struct dpif_backer *backer, const struct flow *flow,
-             struct ofproto_dpif **ofprotop, struct dpif_ipfix **ipfix,
+             struct ofproto_dpif **ofprotop/*出参，此流对应的datapath*/, struct dpif_ipfix **ipfix,
              struct dpif_sflow **sflow, struct netflow **netflow,
-             ofp_port_t *ofp_in_port)
+             ofp_port_t *ofp_in_port/*出参，此流对应的入接口*/)
 {
     struct ofproto_dpif *ofproto;
     const struct xport *xport;
@@ -1590,6 +1598,7 @@ xlate_lookup(const struct dpif_backer *backer, const struct flow *flow,
     ofproto = xlate_lookup_ofproto_(backer, flow, ofp_in_port, &xport, NULL);
 
     if (!ofproto) {
+    	//未找到对应的ofproto,出错
         return ENODEV;
     }
 
@@ -3354,7 +3363,7 @@ fix_sflow_action(struct xlate_ctx *ctx, unsigned int user_cookie_offset)
     }
 }
 
-//检查是否为特殊协议
+//检查是否为特殊协议（主要是二层协议）
 static bool
 process_special(struct xlate_ctx *ctx, const struct xport *xport)
 {
@@ -3779,7 +3788,7 @@ xlate_commit_actions(struct xlate_ctx *ctx)
 {
     bool use_masked = ctx->xbridge->support.masked_set_action;
 
-    ctx->xout->slow |= commit_odp_actions(&ctx->xin->flow, &ctx->base_flow,
+    ctx->xout->slow |= commit_odp_actions(&ctx->xin->flow/*当前转换后flow*/, &ctx->base_flow/*基线flow*/,
                                           ctx->odp_actions, ctx->wc,
                                           use_masked, ctx->pending_encap,
                                           ctx->pending_decap, ctx->encap_data);
@@ -4092,8 +4101,10 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
                         const struct xlate_bond_recirc *xr, bool check_stp,
                         bool is_last_action OVS_UNUSED, bool truncate)
 {
+	//取ofp_port口对应配置
     const struct xport *xport = get_ofp_port(ctx->xbridge, ofp_port);
     struct flow_wildcards *wc = ctx->wc;
+    //对应的flow
     struct flow *flow = &ctx->xin->flow;
     struct flow_tnl flow_tnl;
     union flow_vlan_hdr flow_vlans[FLOW_MAX_VLAN_HEADERS];
@@ -4101,6 +4112,8 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     odp_port_t out_port, odp_port, odp_tnl_port;
     bool is_native_tunnel = false;
     uint8_t dscp;
+
+    //flow对应的srcmac,dstmac
     struct eth_addr flow_dl_dst = flow->dl_dst;
     struct eth_addr flow_dl_src = flow->dl_src;
     ovs_be32 flow_packet_type = flow->packet_type;
@@ -4123,7 +4136,8 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         }
     }
 
-    if (xport->peer) {//此接口有对端
+    if (xport->peer) {
+    	//此接口有对端，需要将报文指给对端接口，并继续查表转换action
        if (truncate) {
            xlate_report_error(ctx, "Cannot truncate output to patch port");
        }
@@ -4135,7 +4149,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     memcpy(flow_vlans, flow->vlans, sizeof flow_vlans);
     flow_nw_tos = flow->nw_tos;
 
-    //qos处理，我需要将流程串起来，以便理解此段代码的意义
+    //获取此接口对应的tos
     if (count_skb_priorities(xport)) {
         memset(&wc->masks.skb_priority, 0xff, sizeof wc->masks.skb_priority);
         if (dscp_from_skb_priority(xport, flow->skb_priority, &dscp)) {
@@ -4145,7 +4159,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         }
     }
 
-    //此接口为tunnel接口
+    //此接口为tunnel接口,需要生成相应的隧道封装动作
     if (xport->is_tunnel) {
         struct in6_addr dst;
          /* Save tunnel metadata so that changes made due to
@@ -4276,7 +4290,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
 
 //生成output动作
 static void
-compose_output_action(struct xlate_ctx *ctx, ofp_port_t ofp_port,
+compose_output_action(struct xlate_ctx *ctx, ofp_port_t ofp_port/*出接口*/,
                       const struct xlate_bond_recirc *xr,
                       bool is_last_action, bool truncate)
 {
@@ -4302,7 +4316,9 @@ xlate_recursively(struct xlate_ctx *ctx, struct rule_dpif *rule,
     ctx->depth += deepens;
     ctx->rule = rule;
     ctx->rule_cookie = rule->up.flow_cookie;
+    //取规则对应的action
     actions = rule_get_actions(&rule->up);
+    //调用回调，执行action
     actions_xlator(actions->ofpacts, actions->ofpacts_len, ctx,
                    is_last_action, false);
     ctx->rule_cookie = old_cookie;
@@ -4314,6 +4330,7 @@ static bool
 xlate_resubmit_resource_check(struct xlate_ctx *ctx)
 {
     if (ctx->depth >= MAX_DEPTH) {
+    	//堆栈过深
         xlate_report_error(ctx, "over max translation depth %d", MAX_DEPTH);
         ctx->error = XLATE_RECURSION_TOO_DEEP;
     } else if (ctx->resubmits >= MAX_RESUBMITS) {
@@ -4387,8 +4404,9 @@ xlate_table_action(struct xlate_ctx *ctx, ofp_port_t in_port, uint8_t table_id,
         ctx_trigger_freeze(ctx);
         return;
     }
-    if (xlate_resubmit_resource_check(ctx)) {//层次不深，可以做
-        uint8_t old_table_id = ctx->table_id;
+    if (xlate_resubmit_resource_check(ctx)) {
+    	//层次不深，可以做
+        uint8_t old_table_id = ctx->table_id;/*记录上次查询的表*/
         struct rule_dpif *rule;
 
         ctx->table_id = table_id;
@@ -4405,6 +4423,8 @@ xlate_table_action(struct xlate_ctx *ctx, ofp_port_t in_port, uint8_t table_id,
             }
             tuple_swap(&ctx->xin->flow, ctx->wc);
         }
+
+        //查询规则
         rule = rule_dpif_lookup_from_table(ctx->xbridge->ofproto,
                                            ctx->xin->tables_version,
                                            &ctx->xin->flow, ctx->wc,
@@ -4425,6 +4445,7 @@ xlate_table_action(struct xlate_ctx *ctx, ofp_port_t in_port, uint8_t table_id,
             if (ctx->xin->xcache) {
                 struct xc_entry *entry;
 
+                //记录查询到的规则
                 entry = xlate_cache_add_entry(ctx->xin->xcache, XC_RULE);
                 entry->rule = rule;
                 ofproto_rule_ref(&rule->up);
@@ -4742,7 +4763,7 @@ xlate_ofpact_resubmit(struct xlate_ctx *ctx,
 
     in_port = resubmit->in_port;
     if (in_port == OFPP_IN_PORT) {
-    	//如果resubimit指定的是IN_PORT,则设置
+    	//如果resubimit没有强制改变in_port,则使用上下文中的inport
         in_port = ctx->xin->flow.in_port.ofp_port;
     }
 
@@ -4751,8 +4772,8 @@ xlate_ofpact_resubmit(struct xlate_ctx *ctx,
         table_id = ctx->table_id;
     }
 
-    //重查，重执行
-    xlate_table_action(ctx, in_port, table_id, may_packet_in,
+    //跳转到表table_id查询并执行
+    xlate_table_action(ctx, in_port/*报文入接口*/, table_id/*自表table_id开始查询*/, may_packet_in,
                        honor_table_miss, resubmit->with_ct_orig,
                        is_last_action, do_xlate_actions);
 }
@@ -5177,7 +5198,7 @@ compose_dec_mpls_ttl_action(struct xlate_ctx *ctx)
  * 'truncate' should be true if the packet to be output is being truncated,
  * which suppresses certain optimizations. */
 static void
-xlate_output_action(struct xlate_ctx *ctx, ofp_port_t port,
+xlate_output_action(struct xlate_ctx *ctx, ofp_port_t port/*报文出接口*/,
                     uint16_t controller_len, bool may_packet_in,
                     bool is_last_action, bool truncate,
                     bool group_bucket_action)
@@ -5187,12 +5208,14 @@ xlate_output_action(struct xlate_ctx *ctx, ofp_port_t port,
     ctx->nf_output_iface = NF_OUT_DROP;
 
     switch (port) {
-    case OFPP_IN_PORT://从入口扔出去
+    case OFPP_IN_PORT:
+    	//从入口扔出去
         //对于单个输出，直接走生成output动作
         compose_output_action(ctx, ctx->xin->flow.in_port.ofp_port, NULL,
                               is_last_action, truncate);
         break;
-    case OFPP_TABLE://执行流表中的action，从表0开始做
+    case OFPP_TABLE:
+    	//执行流表中的action，从表0开始做
         xlate_table_action(ctx, ctx->xin->flow.in_port.ofp_port,
                            0, may_packet_in, true, false, false,
                            do_xlate_actions);
@@ -5220,7 +5243,7 @@ xlate_output_action(struct xlate_ctx *ctx, ofp_port_t port,
     case OFPP_LOCAL://本地的openflow端口
     default:
         if (port != ctx->xin->flow.in_port.ofp_port) {
-            //恰好不是入接口，我们直接生成规则，但需要跳过stp不容易的口
+            //指定的出接口，恰好不是入接口，我们直接生成规则，但需要跳过stp不容易的口
             compose_output_action(ctx, port, NULL, is_last_action, truncate);
         } else {
             xlate_report_info(ctx, "skipping output to input port");
@@ -6676,11 +6699,12 @@ xlate_ofpact_unroll_xlate(struct xlate_ctx *ctx,
 
 //处理动作转换
 static void
-do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
-                 struct xlate_ctx *ctx, bool is_last_action,
+do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpacts_len/*待处理的action长度*/,
+                 struct xlate_ctx *ctx/*转换上下文*/, bool is_last_action,
                  bool group_bucket_action)
 {
     struct flow_wildcards *wc = ctx->wc;
+    //需要执行action的flow
     struct flow *flow = &ctx->xin->flow;
     const struct ofpact *a;
 
@@ -6717,7 +6741,7 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
         }
 
         //除去ofpact_output其它基本是对ctx中的flow进行变更，等到执行到ofpact_output
-        //时比较base与flow的差异，讲其合并起来即可。但对于goto_table,需要前往指定表继续查询
+        //时比较base与flow的差异，将其合并起来即可。但对于goto_table,需要前往指定表继续查询
         //等它再输出时，再合并即可。
         if (OVS_UNLIKELY(ctx->xin->trace)) {
             struct ds s = DS_EMPTY_INITIALIZER;
@@ -6727,6 +6751,7 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             ds_destroy(&s);
         }
 
+        //按action类型，直接对flow进行变更
         switch (a->type) {
         case OFPACT_OUTPUT:
         	//output操作（output时再做action,其它操作不需要保存）
@@ -6899,7 +6924,7 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
              */
             //修改inport,table_id后重查，重做
             xlate_ofpact_resubmit(ctx, ofpact_get_RESUBMIT(a), last);
-            continue;//跳过后面的检查
+            continue;//继续resubmit后面的动作
 
         case OFPACT_SET_TUNNEL:
         	//设置tun_id(无mask关联，只是不是0，就说明设置了）
@@ -6917,7 +6942,8 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             memset(&wc->masks.skb_priority, 0xff,
                    sizeof wc->masks.skb_priority);
             if (flow->skb_priority != ctx->orig_skb_priority) {
-                flow->skb_priority = ctx->orig_skb_priority;//还原为原始的skb优先级（执行action之前，我们保存了此优先级）
+            	//还原为原始的skb优先级（执行action之前，我们保存了此优先级）
+                flow->skb_priority = ctx->orig_skb_priority;
                 xlate_report(ctx, OFT_DETAIL, "queue = %#"PRIx32,
                              flow->skb_priority);
             }
@@ -7025,7 +7051,8 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             xlate_learn_action(ctx, ofpact_get_LEARN(a));
             break;
 
-        case OFPACT_CONJUNCTION://不执行
+        case OFPACT_CONJUNCTION:
+        	//不执行
             /* A flow with a "conjunction" action represents part of a special
              * kind of "set membership match".  Such a flow should not actually
              * get executed, but it could via, say, a "packet-out", even though
@@ -7037,7 +7064,8 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             ctx->exit = true;
             break;
 
-        case OFPACT_UNROLL_XLATE://回退转化到table_id,run_cookie
+        case OFPACT_UNROLL_XLATE:
+        	//回退转化到table_id,run_cookie
             xlate_ofpact_unroll_xlate(ctx, ofpact_get_UNROLL_XLATE(a));
             break;
 
@@ -7153,10 +7181,10 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
 }
 
 void
-xlate_in_init(struct xlate_in *xin, struct ofproto_dpif *ofproto,
-              ovs_version_t version, const struct flow *flow,
-              ofp_port_t in_port, struct rule_dpif *rule, uint16_t tcp_flags,
-              const struct dp_packet *packet, struct flow_wildcards *wc,
+xlate_in_init(struct xlate_in *xin, struct ofproto_dpif *ofproto/*upcall报文所属交换机*/,
+              ovs_version_t version, const struct flow *flow/*upcall报文对应的flow*/,
+              ofp_port_t in_port/*upcall报文入接口*/, struct rule_dpif *rule, uint16_t tcp_flags,
+              const struct dp_packet *packet/*upcall报文*/, struct flow_wildcards *wc,
               struct ofpbuf *odp_actions)
 {
     xin->ofproto = ofproto;
@@ -7416,6 +7444,7 @@ xlate_wc_finish(struct xlate_ctx *ctx)
  * empty set of actions will be returned in 'xin->odp_actions' (if non-NULL),
  * so that most callers may ignore the return value and transparently install a
  * drop flow when the translation fails. */
+//流转换，输入xin,输出xout
 enum xlate_error
 xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 {
@@ -7425,7 +7454,9 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         .recircs = RECIRC_REFS_EMPTY_INITIALIZER,
     };
 
+    //取当前配置
     struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
+    //当前转文对应的bridge
     struct xbridge *xbridge = xbridge_lookup(xcfg, xin->ofproto);
     if (!xbridge) {
         return XLATE_BRIDGE_NOT_FOUND;
@@ -7438,6 +7469,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     uint64_t frozen_actions_stub[1024 / 8];
     uint64_t actions_stub[256 / 8];
     struct ofpbuf scratch_actions = OFPBUF_STUB_INITIALIZER(actions_stub);
+    //转换期上下文
     struct xlate_ctx ctx = {
         .xin = xin,
         .xout = xout,
@@ -7629,14 +7661,17 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         ctx.pending_encap = true;
     }
 
-    if (!xin->ofpacts && !ctx.rule) {//需要查规则
+    if (!xin->ofpacts && !ctx.rule) {
+    	//还未有action,也没有命中的规则，需要查规则
         ctx.rule = rule_dpif_lookup_from_table(
             ctx.xbridge->ofproto, ctx.xin->tables_version, flow, ctx.wc,
             ctx.xin->resubmit_stats, &ctx.table_id,
-            flow->in_port.ofp_port, true, true, ctx.xin->xcache);//实现规则查询
+            flow->in_port.ofp_port, true, true, ctx.xin->xcache);
         if (ctx.xin->resubmit_stats) {
             rule_dpif_credit_stats(ctx.rule, ctx.xin->resubmit_stats);
         }
+
+        //记录查询到的规则
         if (ctx.xin->xcache) {
             struct xc_entry *entry;
 
@@ -7650,7 +7685,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
     /* Tunnel stats only for not-thawed packets. */
     if (!xin->frozen_state && in_port && in_port->is_tunnel) {
-    	//如果有入接口，入接口还是tunnel
+    	//如果有入接口，入接口是tunnel
         if (ctx.xin->resubmit_stats) {
             netdev_vport_inc_rx(in_port->netdev, ctx.xin->resubmit_stats);
             if (in_port->bfd) {//bdf功能，不关注
@@ -7666,7 +7701,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         }
     }
 
-    if (!xin->frozen_state && process_special(&ctx, in_port)) {//是否处理了特殊协议
+    if (!xin->frozen_state && process_special(&ctx, in_port)) {
+    	//是否处理了特殊协议
         /* process_special() did all the processing for this packet.
          *
          * We do not perform special processing on thawed packets, since that
@@ -7688,16 +7724,19 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         size_t sample_actions_len = ctx.odp_actions->size;
 
         if (tnl_process_ecn(flow)//名称和意义不同，如果返回false,报文需要被丢掉
-            && (!in_port || may_receive(in_port, &ctx))) {//可以收取报文
-            const struct ofpact *ofpacts;
-            size_t ofpacts_len;
+            && (!in_port || may_receive(in_port, &ctx)/*检查接口是否可以收取报文*/)) {
+            const struct ofpact *ofpacts;/*当前待执行的action*/
+            size_t ofpacts_len;/*当前待执行的action长度*/
 
-            if (xin->ofpacts) {//如果xin中已有action
+            if (xin->ofpacts) {
+            	//如果xin中已有action
                 ofpacts = xin->ofpacts;
                 ofpacts_len = xin->ofpacts_len;
-            } else if (ctx.rule) {//否则，如果命中了规则
+            } else if (ctx.rule) {
+            	//未指定action,但已经命中了规则
+            	//取出对应actions
                 const struct rule_actions *actions
-                    = rule_get_actions(&ctx.rule->up);//取出对应actions
+                    = rule_get_actions(&ctx.rule->up);
                 ofpacts = actions->ofpacts;
                 ofpacts_len = actions->ofpacts_len;
                 ctx.rule_cookie = ctx.rule->up.flow_cookie;
@@ -7706,6 +7745,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
             }
 
             mirror_ingress_packet(&ctx);//mirror处理
+
             //执行action转换（完成在ctx中的动作合并）
             do_xlate_actions(ofpacts, ofpacts_len, &ctx, true, false);
             if (ctx.error) {//转换有错误

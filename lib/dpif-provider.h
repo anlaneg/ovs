@@ -279,7 +279,7 @@ struct dpif_class {
 
     /* Deletes all flows from 'dpif' and clears all of its queues of received
      * packets. */
-    int (*flow_flush)(struct dpif *dpif);
+    int (*flow_flush)(struct dpif *dpif);//删除所有的流
 
     /* Flow dumping interface.
      *

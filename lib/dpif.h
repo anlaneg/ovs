@@ -795,18 +795,23 @@ const char *dpif_upcall_type_to_string(enum dpif_upcall_type);
  */
 struct dpif_upcall {
     /* All types. */
+	//收到的报文
     struct dp_packet packet;    /* Packet data,'dp_packet' should be the first
                                    member to avoid a hole. This is because
                                    'rte_mbuf' in dp_packet is aligned atleast
                                    on a 64-byte boundary */
+    //upcall消息类型
     enum dpif_upcall_type type;
+    //kerrnel解析的key
     struct nlattr *key;         /* Flow key. */
     size_t key_len;             /* Length of 'key' in bytes. */
+    //通过key hash计算而来
     ovs_u128 ufid;              /* Unique flow identifier for 'key'. */
     struct nlattr *mru;         /* Maximum receive unit. */
     struct nlattr *cutlen;      /* Number of bytes shrink from the end. */
 
     /* DPIF_UC_ACTION only. */
+    //kernel上传上来的userrdata,action等
     struct nlattr *userdata;    /* Argument to OVS_ACTION_ATTR_USERSPACE. */
     struct nlattr *out_tun_key;    /* Output tunnel key. */
     struct nlattr *actions;    /* Argument to OVS_ACTION_ATTR_USERSPACE. */

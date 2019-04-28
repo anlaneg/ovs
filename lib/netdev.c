@@ -2243,7 +2243,7 @@ netdev_flow_put(struct netdev *netdev, struct match *match/*下发的match字段
 {
     const struct netdev_class *class = netdev->netdev_class;
 
-    //交给各netdev去实现
+    //交给各netdev去实现(例如netdev_linux_class通过tc执行flow下发）
     return (class->flow_put
             ? class->flow_put(netdev, match, actions, act_len, ufid,
                               info, stats)

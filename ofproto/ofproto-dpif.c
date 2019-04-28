@@ -4225,10 +4225,11 @@ ofproto_dpif_get_tables_version(struct ofproto_dpif *ofproto)//获取ofproto的�
  * Any changes are restored before returning. */
 static struct rule_dpif *
 rule_dpif_lookup_in_table(struct ofproto_dpif *ofproto, ovs_version_t version,
-                          uint8_t table_id, struct flow *flow,
+                          uint8_t table_id/*待查规则的表号*/, struct flow *flow/*待查询规则的flow*/,
                           struct flow_wildcards *wc)
 {
-    struct classifier *cls = &ofproto->up.tables[table_id].cls;//取出此表对应的分类器
+	//取出此表对应的分类器
+    struct classifier *cls = &ofproto->up.tables[table_id].cls;
     return rule_dpif_cast(rule_from_cls_rule(classifier_lookup(cls, version,
                                                                flow, wc)));
 }
@@ -4273,13 +4274,13 @@ ofproto_dpif_credit_table_stats(struct ofproto_dpif *ofproto, uint8_t table_id,
  *
  * 'flow' is non-const to allow for temporary modifications during the lookup.
  * Any changes are restored before returning. */
-//从table_id开始查flow表项
+//从table_id开始查flow表项，获得rule
 struct rule_dpif *
-rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
-                            ovs_version_t version, struct flow *flow,
+rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto/*所属datapath*/,
+                            ovs_version_t version, struct flow *flow/*待查询的flow*/,
                             struct flow_wildcards *wc,
                             const struct dpif_flow_stats *stats,
-                            uint8_t *table_id, ofp_port_t in_port,
+                            uint8_t *table_id/*自哪个表开始查询*/, ofp_port_t in_port/*流的入接口*/,
                             bool may_packet_in, bool honor_table_miss,
                             struct xlate_cache *xcache)
 {
@@ -4295,7 +4296,8 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
         && ofproto->up.frag_handling != OFPUTIL_FRAG_NX_MATCH) {//不匹配分片位
         if (ofproto->up.frag_handling == OFPUTIL_FRAG_NORMAL) {//对分片没有明确说明需要处理
             /* We must pretend that transport ports are unavailable. */
-            flow->tp_src = htons(0);//由于有分片，故ip向上不能认为是有效的
+        	//由于有分片，故ip向上不能认为是有效的
+            flow->tp_src = htons(0);
             flow->tp_dst = htons(0);
         } else {
         	//还不支持分片重组，所以就一定是丢包了
@@ -4331,13 +4333,14 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
 
     miss_config = OFPUTIL_TABLE_MISS_CONTINUE;
 
-    //遍历表进行查询
+    //自table_id开始，遍历表进行查询
     for (next_id = *table_id;
          next_id < ofproto->up.n_tables;
          next_id++, next_id += (next_id == TBL_INTERNAL))
     {
         *table_id = next_id;
-        rule = rule_dpif_lookup_in_table(ofproto, version, next_id, flow, wc);//在next_id表中查询
+        //在next_id表中查询规则
+        rule = rule_dpif_lookup_in_table(ofproto, version, next_id, flow, wc);
         if (stats) {
             struct oftable *tbl = &ofproto->up.tables[next_id];
             unsigned long orig;
@@ -4353,7 +4356,8 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
             entry->table.id = next_id;
             entry->table.match = (rule != NULL);
         }
-        if (rule) {//查找规则了
+        if (rule) {
+        	//查找规则了
             goto out;   /* Match. */
         }
         if (honor_table_miss) {//检查是否需要继续匹配
@@ -4386,7 +4390,7 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto,
     }
 out:
     /* Restore port numbers, as they may have been modified above. */
-    //还原可以在前面因为分片或处理方便，而修改掉的字段。
+    //还原在前面因为分片或处理方便，而修改掉的字段。
     flow->tp_src = old_tp_src;
     flow->tp_dst = old_tp_dst;
     /* Restore the old in port. */
@@ -5987,6 +5991,8 @@ odp_port_to_ofport(const struct dpif_backer *backer, odp_port_t odp_port)
     struct ofport_dpif *port;
 
     ovs_rwlock_rdlock(&backer->odp_to_ofport_lock);
+    //backer是datapath的后端，backer->odp_to_ofport_map用于实现port_id与port结构体的映射
+    //通过此hash，我们可以查找到odp_port对应的结构
     HMAP_FOR_EACH_IN_BUCKET (port, odp_port_node, hash_odp_port(odp_port),
                              &backer->odp_to_ofport_map) {
         if (port->odp_port == odp_port) {

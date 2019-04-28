@@ -210,11 +210,15 @@ struct upcall {
     /* The flow and packet are only required to be constant when using
      * dpif-netdev.  If a modification is absolutely necessary, a const cast
      * may be used with other datapaths. */
+    //upcall报文对应的flow
     const struct flow *flow;       /* Parsed representation of the packet. */
     enum odp_key_fitness fitness;  /* Fitness of 'flow' relative to ODP key. */
+    //upcall对应的ufid(由key生成）
     const ovs_u128 *ufid;          /* Unique identifier for 'flow'. */
     unsigned pmd_id;               /* Datapath poll mode driver id. */
+    //upcall报文
     const struct dp_packet *packet;   /* Packet associated with this upcall. */
+    //upcall报文入接口
     ofp_port_t ofp_in_port;        /* OpenFlow in port, or OFPP_NONE. */
     uint16_t mru;                  /* If !0, Maximum receive unit of
                                       fragmented IP packet */
@@ -223,7 +227,9 @@ struct upcall {
     const struct nlattr *actions;  /* Flow actions in DPIF_UC_ACTION Upcalls. */
 
     bool xout_initialized;         /* True if 'xout' must be uninitialized. */
+    //转换后结构体（与xlate_in对应）
     struct xlate_out xout;         /* Result of xlate_actions(). */
+    //保存转换后的action
     struct ofpbuf odp_actions;     /* Datapath actions from xlate_actions(). */
     struct flow_wildcards wc;      /* Dependencies that megaflow must match. */
     struct ofpbuf put_actions;     /* Actions 'put' in the fastpath. */
@@ -235,9 +241,11 @@ struct upcall {
     bool ukey_persists;            /* Set true to keep 'ukey' beyond the
                                       lifetime of this upcall. */
 
+    //事务期编号
     uint64_t reval_seq;            /* udpif->reval_seq at translation time. */
 
     /* Not used by the upcall callback interface. */
+    //kernel upcall时上传的key
     const struct nlattr *key;      /* Datapath flow key. */
     size_t key_len;                /* Datapath flow key length. */
     const struct nlattr *out_tun_key;  /* Datapath output tunnel key. */
@@ -784,6 +792,7 @@ recv_upcalls(struct handler *handler)
     size_t n_upcalls, i;
 
     n_upcalls = 0;
+    //完成一个batch的报文收取
     while (n_upcalls < UPCALL_MAX_BATCH) {
         struct ofpbuf *recv_buf = &recv_bufs[n_upcalls];
         struct dpif_upcall *dupcall = &dupcalls[n_upcalls];
@@ -802,10 +811,11 @@ recv_upcalls(struct handler *handler)
             break;
         }
 
-        //完成flow_key解码
+        //完成flow_key解码到flow
         upcall->fitness = odp_flow_key_to_flow(dupcall->key, dupcall->key_len,
                                                flow, NULL);
         if (upcall->fitness == ODP_FIT_ERROR) {
+        	//解码失败，丢包
             goto free_dupcall;
         }
 
@@ -815,9 +825,9 @@ recv_upcalls(struct handler *handler)
             mru = 0;
         }
 
-        //upcall 初始化
-        error = upcall_receive(upcall, udpif->backer, &dupcall->packet,
-                               dupcall->type, dupcall->userdata, flow, mru,
+        //upcall 初始化（依据flow确定对应的datapath,in_port)，指明pmd为NULL
+        error = upcall_receive(upcall, udpif->backer, &dupcall->packet/*upcall的报文*/,
+                               dupcall->type, dupcall->userdata, flow/*依据upcall报文填充好的flow*/, mru,
                                &dupcall->ufid, PMD_ID_NULL);
         if (error) {
             if (error == ENODEV) {
@@ -836,12 +846,14 @@ recv_upcalls(struct handler *handler)
 
         upcall->key = dupcall->key;
         upcall->key_len = dupcall->key_len;
-        upcall->ufid = &dupcall->ufid;
+        upcall->ufid = &dupcall->ufid;//这句是多余的
 
         upcall->out_tun_key = dupcall->out_tun_key;
         upcall->actions = dupcall->actions;
 
+        //通过flow设置源数据
         pkt_metadata_from_flow(&dupcall->packet.md, flow);
+        //报文解析，填充flow
         flow_extract(&dupcall->packet, flow);
 
         //处理upcall
@@ -861,6 +873,7 @@ free_dupcall:
         ofpbuf_uninit(recv_buf);
     }//while
 
+    //流转换完成，处理upcall结果
     if (n_upcalls) {
         handle_upcalls(handler->udpif, upcalls, n_upcalls);
         for (i = 0; i < n_upcalls; i++) {
@@ -1023,9 +1036,11 @@ classify_upcall(enum dpif_upcall_type type, const struct nlattr *userdata,
     /* First look at the upcall type. */
     switch (type) {
     case DPIF_UC_ACTION:
+    	//kernel执行action后主动送给用户态
         break;
 
-    case DPIF_UC_MISS://kernel送上来的失配报文，l1,l2流表未查到时，走此条
+    case DPIF_UC_MISS:
+    	//kernel送上来的失配报文，l1,l2流表未查到时，走此条
         return MISS_UPCALL;//流缺失
 
     case DPIF_N_UC_TYPES:
@@ -1123,7 +1138,8 @@ upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
     if (upcall->type == BAD_UPCALL) {
         return EAGAIN;
     } else if (upcall->type == MISS_UPCALL) {
-        //填充upcall中的信息
+        //flow查询miss,执行userspace查询
+    	//通过flow的in_port成员，确定packet所属的datapath,及port编号
         error = xlate_lookup(backer, flow, &upcall->ofproto, &upcall->ipfix,
                              &upcall->sflow, NULL, &upcall->ofp_in_port);
         if (error) {
@@ -1182,10 +1198,11 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
     stats.used = time_msec();
     stats.tcp_flags = ntohs(upcall->flow->tcp_flags);
 
+    //初始化xlate in
     xlate_in_init(&xin, upcall->ofproto,
                   ofproto_dpif_get_tables_version(upcall->ofproto),
                   upcall->flow, upcall->ofp_in_port, NULL,
-                  stats.tcp_flags, upcall->packet, wc, odp_actions);
+                  stats.tcp_flags, upcall->packet/*upcall报文*/, wc, odp_actions);
 
     if (upcall->type == MISS_UPCALL) {
         xin.resubmit_stats = &stats;
@@ -1297,12 +1314,14 @@ should_install_flow(struct udpif *udpif, struct upcall *upcall)
     unsigned int flow_limit;
 
     if (upcall->type != MISS_UPCALL) {
+    	//非miss upcall不容许install flow
         return false;
     } else if (upcall->recirc && !upcall->have_recirc_ref) {
         VLOG_DBG_RL(&rl, "upcall: no reference for recirc flow");
         return false;
     }
 
+    //获取flow的limit值
     atomic_read_relaxed(&udpif->flow_limit, &flow_limit);
     if (udpif_get_n_flows(udpif) >= flow_limit) {
         VLOG_WARN_RL(&rl, "upcall: datapath flow limit reached");
@@ -1435,7 +1454,7 @@ process_upcall(struct udpif *udpif, struct upcall *upcall,
     switch (upcall->type) {
     case MISS_UPCALL://流表miss
     case SLOW_PATH_UPCALL:
-        upcall_xlate(udpif, upcall, odp_actions, wc);//DPIF_UC_MISS会走此函数
+        upcall_xlate(udpif, upcall, odp_actions, wc);
         return 0;
 
     case SFLOW_UPCALL:
@@ -1595,13 +1614,14 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
      * The loop fills 'ops' with an array of operations to execute in the
      * datapath. */
     n_ops = 0;
+    //遍历已成功转换的每个upcall
     for (i = 0; i < n_upcalls; i++) {
         struct upcall *upcall = &upcalls[i];
         const struct dp_packet *packet = upcall->packet;
         struct ukey_op *op;
 
         if (should_install_flow(udpif, upcall)) {
-        	//需要安装flow
+        	//检查是否可安装flow
             struct udpif_key *ukey = upcall->ukey;
 
             if (ukey_install(udpif, ukey)) {
@@ -1612,6 +1632,7 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
         }
 
         if (upcall->odp_actions.size) {
+        	//初始化execute_action规则
             op = &ops[n_ops++];
             op->ukey = NULL;
             op->dop.type = DPIF_OP_EXECUTE;
@@ -1619,6 +1640,7 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
             op->dop.execute.flow = upcall->flow;
             odp_key_to_dp_packet(upcall->key, upcall->key_len,
                                  op->dop.execute.packet);
+            //设置要增加的action,actions_len
             op->dop.execute.actions = upcall->odp_actions.data;
             op->dop.execute.actions_len = upcall->odp_actions.size;
             op->dop.execute.needs_help = (upcall->xout.slow & SLOW_ACTION) != 0;
@@ -1633,7 +1655,7 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
         opsp[n_opsp++] = &ops[i].dop;
     }
 
-    //在此处向kernel中的openvswitch下发flow
+    //在此处向kernel中的openvswitch下发flow，下发报文及action
     dpif_operate(udpif->dpif, opsp, n_opsp, DPIF_OFFLOAD_AUTO);
     for (i = 0; i < n_ops; i++) {
         struct udpif_key *ukey = ops[i].ukey;

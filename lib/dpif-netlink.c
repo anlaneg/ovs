@@ -1780,10 +1780,12 @@ dpif_netlink_encode_execute(int dp_ifindex, const struct dpif_execute *d_exec,
                       dp_packet_data(d_exec->packet),
                       dp_packet_size(d_exec->packet));
 
+    //存入要下发的报文
     key_ofs = nl_msg_start_nested(buf, OVS_PACKET_ATTR_KEY);
     odp_key_from_dp_packet(buf, d_exec->packet);
     nl_msg_end_nested(buf, key_ofs);
 
+    //存入需要执行的action
     nl_msg_put_unspec(buf, OVS_PACKET_ATTR_ACTIONS,
                       d_exec->actions, d_exec->actions_len);
     if (d_exec->probe) {
@@ -1855,6 +1857,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
             break;
 
         case DPIF_OP_EXECUTE:
+        	//下发报文及action到kernel
             /* Can't execute a packet that won't fit in a Netlink attribute. */
             if (OVS_UNLIKELY(nl_attr_oversized(
                                  dp_packet_size(op->execute.packet)))) {
@@ -2178,6 +2181,7 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
         break;
     }
     case DPIF_OP_EXECUTE:
+    	//使execute的动作直接失败
     default:
         break;
     }
@@ -2222,7 +2226,8 @@ dpif_netlink_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops,
             while (n_ops > 0 && count < OPERATE_MAX_OPS) {
                 struct dpif_op *op = ops[i++];
 
-                //尝试执行op
+                //尝试向网络设备(硬件）直接下发flow执行op
+                //（就不向kernel下发了，为什么，如果仍向kernel下发两者间还要考虑同步且仍然要miss）
                 err = try_send_to_netdev(dpif, op);
                 if (err && err != EEXIST) {
                     if (offload_type == DPIF_OFFLOAD_ALWAYS) {
@@ -2255,6 +2260,7 @@ dpif_netlink_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops,
             dpif_netlink_operate_chunks(dpif, new_ops, count);
         }
     } else if (offload_type != DPIF_OFFLOAD_ALWAYS) {
+    	//全部下发给kernel
         dpif_netlink_operate_chunks(dpif, ops, n_ops);
     }
 }
@@ -2482,7 +2488,7 @@ dpif_netlink_queue_to_priority(const struct dpif *dpif OVS_UNUSED,
 
 static int
 parse_odp_packet(const struct dpif_netlink *dpif, struct ofpbuf *buf,
-                 struct dpif_upcall *upcall, int *dp_ifindex)
+                 struct dpif_upcall *upcall, int *dp_ifindex/*出参，报文来源于哪个datapath*/)
 {
     static const struct nl_policy ovs_packet_policy[] = {
         /* Always present. */
@@ -2511,7 +2517,7 @@ parse_odp_packet(const struct dpif_netlink *dpif, struct ofpbuf *buf,
     }
 
     int type = (genl->cmd == OVS_PACKET_CMD_MISS ? DPIF_UC_MISS/*底层失配*/
-                : genl->cmd == OVS_PACKET_CMD_ACTION ? DPIF_UC_ACTION
+                : genl->cmd == OVS_PACKET_CMD_ACTION ? DPIF_UC_ACTION/*kernel执行action送给用户态*/
                 : -1);
     if (type < 0) {
         return EINVAL;
@@ -2529,6 +2535,7 @@ parse_odp_packet(const struct dpif_netlink *dpif, struct ofpbuf *buf,
     upcall->mru = a[OVS_PACKET_ATTR_MRU];
 
     /* Allow overwriting the netlink attribute header without reallocating. */
+    //获得报文内容
     dp_packet_use_stub(&upcall->packet,
                     CONST_CAST(struct nlattr *,
                                nl_attr_get(a[OVS_PACKET_ATTR_PACKET])) - 1,
@@ -2538,6 +2545,7 @@ parse_odp_packet(const struct dpif_netlink *dpif, struct ofpbuf *buf,
                     (char *)dp_packet_data(&upcall->packet) + sizeof(struct nlattr));
     dp_packet_set_size(&upcall->packet, nl_attr_get_size(a[OVS_PACKET_ATTR_PACKET]));
 
+    //按key指明，设置报文格式
     if (nl_attr_find__(upcall->key, upcall->key_len, OVS_KEY_ATTR_ETHERNET)) {
         /* Ethernet frame */
         upcall->packet.packet_type = htonl(PT_ETH);
@@ -2630,7 +2638,7 @@ dpif_netlink_recv_windows(struct dpif_netlink *dpif, uint32_t handler_id,
 #else
 static int
 dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id/*使用哪个handler*/,
-                    struct dpif_upcall *upcall, struct ofpbuf *buf)
+                    struct dpif_upcall *upcall/*出参，记录收取的报文信息*/, struct ofpbuf *buf/*存放报文的buffer*/)
     OVS_REQ_RDLOCK(dpif->upcall_lock)
 {
     struct dpif_handler *handler;
@@ -2700,6 +2708,7 @@ dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id/*使用哪个
             //解析读到的报文
             error = parse_odp_packet(dpif, buf, upcall, &dp_ifindex);
             if (!error && dp_ifindex == dpif->dp_ifindex) {
+            	//收上来的报文与dpif对应的datapath一致，接收成功
                 return 0;
             } else if (error) {
                 return error;
@@ -3450,7 +3459,7 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_flow_dump_thread_create,
     dpif_netlink_flow_dump_thread_destroy,
     dpif_netlink_flow_dump_next,
-    dpif_netlink_operate,
+    dpif_netlink_operate,//向kernel下发flow
     dpif_netlink_recv_set,
     dpif_netlink_handlers_set,
     NULL,                       /* set_config */

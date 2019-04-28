@@ -1169,9 +1169,10 @@ classifier_lookup__(const struct classifier *cls, ovs_version_t version,
  *
  * 'flow' is non-const to allow for temporary modifications during the lookup.
  * Any changes are restored before returning. */
+//查分类器对应的表结构
 const struct cls_rule *
 classifier_lookup(const struct classifier *cls, ovs_version_t version,
-                  struct flow *flow, struct flow_wildcards *wc)//查分类器对应的表结构
+                  struct flow *flow, struct flow_wildcards *wc)
 {
     return classifier_lookup__(cls, version, flow, wc, true);
 }

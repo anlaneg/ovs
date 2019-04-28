@@ -1607,8 +1607,8 @@ dpif_set_config(struct dpif *dpif, const struct smap *cfg)
  * Returns 0 if successful, otherwise a positive errno value.  Returns EAGAIN
  * if no upcall is immediately available. */
 int
-dpif_recv(struct dpif *dpif, uint32_t handler_id, struct dpif_upcall *upcall,
-          struct ofpbuf *buf)
+dpif_recv(struct dpif *dpif, uint32_t handler_id, struct dpif_upcall *upcall/*记录收到的报文*/,
+          struct ofpbuf *buf/*存放报文的buffer*/)
 {
     int error = EAGAIN;
 

@@ -1338,6 +1338,7 @@ is_all_byte(const void *p_, size_t n, uint8_t byte)
     const uint8_t *p = p_;
     size_t i;
 
+    //检查n个字节是否均被设置为byte
     for (i = 0; i < n; i++) {
         if (p[i] != byte) {
             return false;

@@ -154,6 +154,7 @@ const char *ovs_dp_name(const struct datapath *dp)
 	return ovs_vport_name(vport);
 }
 
+//取datapath对应的ifindex
 static int get_dpifindex(const struct datapath *dp)
 {
 	struct vport *local;

@@ -64,20 +64,20 @@ struct xlate_out {
 };
 
 struct xlate_in {
-    struct ofproto_dpif *ofproto;
+    struct ofproto_dpif *ofproto;//xlate_in对应的交换机
     ovs_version_t        tables_version;   /* Lookup in this version. */ //要查的表的版本
 
     /* Flow to which the OpenFlow actions apply.  xlate_actions() will modify
      * this flow when actions change header fields. */
-    struct flow flow;//报文信息
+    struct flow flow;//upcall时报文的flow
 
     /* Pointer to the original flow received during the upcall. xlate_actions()
      * will never modify this flow. */
-    const struct flow *upcall_flow;
+    const struct flow *upcall_flow;//指向upcall时报文flow
 
     /* The packet corresponding to 'flow', or a null pointer if we are
      * revalidating without a packet to refer to. */
-    const struct dp_packet *packet;
+    const struct dp_packet *packet;//upcall报文
 
     /* Should OFPP_NORMAL update the MAC learning table?  Should "learn"
      * actions update the flow table? Should FIN_TIMEOUT change the

@@ -2574,7 +2574,7 @@ static const struct attr_len_tbl ovs_tun_key_attr_lens[OVS_TUNNEL_KEY_ATTR_MAX +
     [OVS_TUNNEL_KEY_ATTR_ERSPAN_OPTS]   = { .len = ATTR_LEN_VARIABLE },
 };
 
-//ovs各key属性长度定义
+//ovs与kernel通过netlink通信时，各key属性长度定义
 const struct attr_len_tbl ovs_flow_key_attr_lens[OVS_KEY_ATTR_MAX + 1] = {
     [OVS_KEY_ATTR_ENCAP]     = { .len = ATTR_LEN_NESTED },
     [OVS_KEY_ATTR_PRIORITY]  = { .len = 4 },
@@ -6434,7 +6434,7 @@ odp_to_ovs_frag(uint8_t odp_frag, bool is_mask)
 //将key指向的netlink attr进行解析，将解析出来的内容存入在attrs中，attrs长度大于等于OVS_KEY_ATTR_MAX
 static bool
 parse_flow_nlattrs(const struct nlattr *key, size_t key_len,
-                   const struct nlattr *attrs[], uint64_t *present_attrsp,//那些属性出现了
+                   const struct nlattr *attrs[], uint64_t *present_attrsp,//哪些属性出现了
                    int *out_of_range_attrp, char **errorp)//是否有type超过范围，是哪个type (由于不是一遇到就停下来，故报出的为最后一个）
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
@@ -6448,13 +6448,14 @@ parse_flow_nlattrs(const struct nlattr *key, size_t key_len,
     //遍历key指向的netlink消息属性
     NL_ATTR_FOR_EACH (nla, left, key, key_len) {
         uint16_t type = nl_attr_type(nla);
+        //报报文中给出的属性长度
         size_t len = nl_attr_get_size(nla);
-        //取得当前type的属性长度
+        //取得当前type的约定属性长度
         int expected_len = odp_key_attr_len(ovs_flow_key_attr_lens,
                                             OVS_KEY_ATTR_MAX, type);
 
         if (len != expected_len && expected_len >= 0) {
-        	//负载的长度与期待的长度不符，消息格式有误，解析失败
+        	//报文中的长度与约定的长度不符，消息格式有误，解析失败
             char namebuf[OVS_KEY_ATTR_BUFSIZE];
 
             odp_parse_error(&rl, errorp, "attribute %s has length %"PRIuSIZE" "
@@ -6482,6 +6483,7 @@ parse_flow_nlattrs(const struct nlattr *key, size_t key_len,
 
             //标记，我们已遇到过此属性
             present_attrs |= UINT64_C(1) << type;
+            //记录此属性的(key,length,value)
             attrs[type] = nla;//记录此属性头
         }
     }
@@ -7031,18 +7033,21 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     uint64_t expected_attrs;
     uint64_t present_attrs;
     int out_of_range_attr;
-    bool is_mask = src_flow != flow;//检查当前填充的是否为mask
+
+    //检查当前填充的是否为mask
+    bool is_mask = src_flow != flow;
 
     memset(flow, 0, sizeof *flow);
 
     /* Parse attributes. */
-    if (!parse_flow_nlattrs(key, key_len, attrs, &present_attrs,
+    if (!parse_flow_nlattrs(key, key_len, attrs/*出参，记录按key索引的*/, &present_attrs/*出参，记录出现的key*/,
                             &out_of_range_attr, errorp)) {
     	//解析失败，返回错误
         goto exit;
     }
     expected_attrs = 0;
 
+    //利用attrs填充flow
     /* Metadata. */
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_RECIRC_ID)) {
     	//如果出现了此属性，在flow中设置此属性
@@ -7449,7 +7454,8 @@ static void
 commit_set_action(struct ofpbuf *odp_actions, enum ovs_key_attr key_type,
                   const void *key, size_t key_size)
 {
-    size_t offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_SET);//获取未放数据前的offset
+	//获取未放数据前的offset
+    size_t offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_SET);
     nl_msg_put_unspec(odp_actions, key_type, key, key_size);//放数据
     nl_msg_end_nested(odp_actions, offset);//设置长度
 }
@@ -7460,15 +7466,18 @@ commit_set_action(struct ofpbuf *odp_actions, enum ovs_key_attr key_type,
 void
 commit_masked_set_action(struct ofpbuf *odp_actions,
                          enum ovs_key_attr key_type,
-                         const void *key_, const void *mask_, size_t key_size)
+                         const void *key_/*待存入的key形式*/, const void *mask_/*待存入的掩码形式*/, size_t key_size)
 {
     size_t offset = nl_msg_start_nested(odp_actions,
                                         OVS_ACTION_ATTR_SET_MASKED);
+    //需要两个key大小
     char *data = nl_msg_put_unspec_uninit(odp_actions, key_type, key_size * 2);
     const char *key = key_, *mask = mask_;
 
+    //一个放掩码
     memcpy(data + key_size, mask, key_size);
     /* Clear unmasked bits while copying. */
+    //一个放key
     while (key_size--) {
         *data++ = *key++ & *mask++;
     }
@@ -7506,6 +7515,7 @@ struct offsetof_sizeof {
  * Returns true if all of the fields are equal, false if at least one differs.
  * As a side effect, for each field that is the same in 'key0' and 'key1',
  * zeros the corresponding bytes in 'mask'. */
+//检查offsetof_size_arr中指定的field是否被修改
 static bool
 keycmp_mask(const void *key0, const void *key1,
             struct offsetof_sizeof *offsetof_sizeof_arr, void *mask)
@@ -7516,6 +7526,7 @@ keycmp_mask(const void *key0, const void *key1,
         int size = offsetof_sizeof_arr[field].size;
         int offset = offsetof_sizeof_arr[field].offset;
         if (size == 0) {
+        	//达到数组结尾，跳出
             break;
         }
 
@@ -7523,6 +7534,7 @@ keycmp_mask(const void *key0, const void *key1,
         char *pkey1 = ((char *)key1) + offset;
         char *pmask = ((char *)mask) + offset;
         if (memcmp(pkey0, pkey1, size) == 0) {
+        	//pkey0与pkey1完全相同，pmask置为0（认为未修改）
             memset(pmask, 0, size);
         } else {
             differ = true;
@@ -7534,20 +7546,21 @@ keycmp_mask(const void *key0, const void *key1,
 
 //利用此函数完成动作生成
 static bool
-commit(enum ovs_key_attr attr, bool use_masked_set,
-       const void *key, void *base, void *mask, size_t size,
+commit(enum ovs_key_attr attr/*待提交的action类型*/, bool use_masked_set/*是否可支持mask设置*/,
+       const void *key/*转换后值*/, void *base/*转换前值*/, void *mask/*修改的mask*/,
+	   size_t size/*key大小*/,
        struct offsetof_sizeof *offsetof_sizeof_arr,
-       struct ofpbuf *odp_actions)
+       struct ofpbuf *odp_actions/*转换后存放位置*/)
 {
     if (keycmp_mask(key, base, offsetof_sizeof_arr, mask)) {
-    	//如果key与base不同（说明本次动作执行影响到此字段），需要生成动作
+    	//如果key与base不同（说明执行的动作修改了此字段），需要生成动作
         bool fully_masked = odp_mask_is_exact(attr, mask, size);//是否全匹配（是否全掩码）
 
-        if (use_masked_set && !fully_masked) {//可以使用masked_set,且非全匹配
+        if (use_masked_set && !fully_masked) {//可以使用掩码形式,且非全匹配
         	//生成masked_set类动作
             commit_masked_set_action(odp_actions, attr, key, mask, size);
         } else {
-        	//dp不支持masked_set,改为全mask
+        	//dp不支持掩码或者全匹配,改为全mask
             if (!fully_masked) {
                 memset(mask, 0xff, size);//将mask变更为全ff
             }
@@ -7593,9 +7606,9 @@ commit_set_ether_action(const struct flow *flow, struct flow *base_flow,
     }
 
     //取src,dst的mac地址
-    get_ethernet_key(flow, &key);//取flow中的
-    get_ethernet_key(base_flow, &base);//取base_flow中的
-    get_ethernet_key(&wc->masks, &mask);//取wc->masks
+    get_ethernet_key(flow, &key);//flow中记录的是最终状态
+    get_ethernet_key(base_flow, &base);//base_flow中记录的是起始状态
+    get_ethernet_key(&wc->masks, &mask);//wc->masks中记录的是变更的mask
 
     if (commit(OVS_KEY_ATTR_ETHERNET, use_masked,
                &key, &base, &mask, sizeof key,
@@ -8384,7 +8397,7 @@ commit_encap_decap_action(const struct flow *flow,
 //用于生成规则，且为base上加path,使其变更为flow，方向goto语义继续执行
 enum slow_path_reason
 commit_odp_actions(const struct flow *flow, struct flow *base,
-                   struct ofpbuf *odp_actions, struct flow_wildcards *wc,
+                   struct ofpbuf *odp_actions/*记录生成的动作*/, struct flow_wildcards *wc,
                    bool use_masked, bool pending_encap, bool pending_decap,
                    struct ofpbuf *encap_data)
 {

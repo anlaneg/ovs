@@ -133,7 +133,7 @@ struct dp_upcall_info {
 	const struct nlattr *actions;
 	int actions_len;
 	u32 portid;
-	u8 cmd;
+	u8 cmd;//命令字
 	u16 mru;
 };
 
