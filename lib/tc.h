@@ -90,8 +90,8 @@ struct tc_cookie {
 };
 
 struct tc_flower_key {
-    ovs_be16 eth_type;
-    uint8_t ip_proto;
+    ovs_be16 eth_type;//链路层报文格式
+    uint8_t ip_proto;//ip协议号
 
     struct eth_addr dst_mac;
     struct eth_addr src_mac;
@@ -99,7 +99,7 @@ struct tc_flower_key {
     ovs_be32 mpls_lse;
     ovs_be16 tcp_src;
     ovs_be16 tcp_dst;
-    ovs_be16 tcp_flags;
+    ovs_be16 tcp_flags;//tcp flags支持
 
     ovs_be16 udp_src;
     ovs_be16 udp_dst;
@@ -133,16 +133,16 @@ struct tc_flower_key {
         struct {
             ovs_be32 ipv4_src;
             ovs_be32 ipv4_dst;
-        } ipv4;
+        } ipv4;//tunnel的源ip,dstip
         struct {
             struct in6_addr ipv6_src;
             struct in6_addr ipv6_dst;
         } ipv6;
-        uint8_t tos;
-        uint8_t ttl;
-        ovs_be16 tp_src;
+        uint8_t tos;//tunnel设置的tos
+        uint8_t ttl;//tunnel设置的ttl
+        ovs_be16 tp_src;//tunnel的传输层端口号
         ovs_be16 tp_dst;
-        ovs_be64 id;
+        ovs_be64 id;//tunnel id号（例如vxlan id)
         struct tun_metadata metadata;
     } tunnel;
 };
@@ -160,13 +160,13 @@ struct tc_action {
         struct {
             int ifindex_out;
             bool ingress;
-        } out;
+        } out;//output action
 
         struct {
             ovs_be16 vlan_push_tpid;
             uint16_t vlan_push_id;
             uint8_t vlan_push_prio;
-        } vlan;
+        } vlan;//vlan push action
 
         struct {
             bool id_present;
@@ -185,7 +185,7 @@ struct tc_action {
                 struct in6_addr ipv6_dst;
             } ipv6;
             struct tun_metadata data;
-        } encap;
+        } encap;//隧道封装
      };
 
      enum tc_action_type type;
@@ -202,7 +202,7 @@ struct tc_flower {
     uint32_t prio;
 
     struct tc_flower_key key;
-    struct tc_flower_key mask;
+    struct tc_flower_key mask;//掩码
 
     int action_count;
     struct tc_action actions[TCA_ACT_MAX_PRIO];
@@ -218,7 +218,7 @@ struct tc_flower {
 
     uint32_t csum_update_flags;
 
-    bool tunnel;
+    bool tunnel;//指明是否有tunnel区分
 
     struct tc_cookie act_cookie;
 

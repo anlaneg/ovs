@@ -2076,6 +2076,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
                           &info, put->stats);
 
     if (!err) {
+    	//如果向硬件下发成功，且为要修改的flow，则删除flow
         if (put->flags & DPIF_FP_MODIFY) {
             struct dpif_op *opp;
             struct dpif_op op;
@@ -2111,6 +2112,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
             }
             netdev_set_hw_info(oor_netdev, HW_INFO_TYPE_OOR, true);
         }
+        //除不支持及无空间外，其它错误均以error打出
         level = (err == ENOSPC || err == EOPNOTSUPP) ? VLL_DBG : VLL_ERR;
         VLOG_RL(&rl, level, "failed to offload flow: %s: %s",
                 ovs_strerror(err),

@@ -938,6 +938,7 @@ dpctl_free_portno_names(struct hmap *portno_names)
     }
 }
 
+//dump flows命令实现
 static int
 dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 {

@@ -794,6 +794,7 @@ parse_put_flow_set_masked_action(struct tc_flower *flower,
     set_data = CONST_CAST(char *, nl_attr_get(attr));
     set_mask = set_data + size;
 
+    //检查要设置的flow是否支持
     if (type >= ARRAY_SIZE(set_flower_map)
         || !set_flower_map[type][0].size) {
         VLOG_DBG_RL(&rl, "unsupported set action type: %d", type);
@@ -851,6 +852,7 @@ parse_put_flow_set_action(struct tc_flower *flower, struct tc_action *action,
     size_t tun_left, tunnel_len;
 
     if (nl_attr_type(set) != OVS_KEY_ATTR_TUNNEL) {
+    	//常见字段变更
             return parse_put_flow_set_masked_action(flower, action, set,
                                                     set_len, false);
     }
@@ -861,6 +863,7 @@ parse_put_flow_set_action(struct tc_flower *flower, struct tc_action *action,
     action->type = TC_ACT_ENCAP;
     action->encap.id_present = false;
     flower->action_count++;
+    //隧道封装
     NL_ATTR_FOR_EACH_UNSAFE(tun_attr, tun_left, tunnel, tunnel_len) {
         switch (nl_attr_type(tun_attr)) {
         case OVS_TUNNEL_KEY_ATTR_ID: {
@@ -927,12 +930,14 @@ test_key_and_mask(struct match *match)
     }
 
     if (mask->recirc_id && key->recirc_id) {
+    	//不支持recirc_id
         VLOG_DBG_RL(&rl, "offloading attribute recirc_id isn't supported");
         return EOPNOTSUPP;
     }
     mask->recirc_id = 0;
 
     if (mask->dp_hash) {
+    	//不支持dp_hash
         VLOG_DBG_RL(&rl, "offloading attribute dp_hash isn't supported");
         return EOPNOTSUPP;
     }
@@ -981,6 +986,7 @@ test_key_and_mask(struct match *match)
 
     for (int i = 0; i < FLOW_N_REGS; i++) {
         if (mask->regs[i]) {
+        	//不支持改寄存器
             VLOG_DBG_RL(&rl,
                         "offloading attribute regs[%d] isn't supported", i);
             return EOPNOTSUPP;
@@ -1004,6 +1010,7 @@ test_key_and_mask(struct match *match)
         }
     }
 
+    //不支持icmp
     if (key->dl_type == htons(ETH_TYPE_IP) &&
         key->nw_proto == IPPROTO_ICMP) {
         if (mask->tp_src) {
@@ -1082,7 +1089,7 @@ flower_match_to_tun_opt(struct tc_flower *flower, const struct flow_tnl *tnl,
     flower->mask.tunnel.metadata.present.len = tnl->metadata.present.len;
 }
 
-//通过tc offload flow
+//通过tc offload flow（创建或修改）
 int
 netdev_tc_flow_put(struct netdev *netdev, struct match *match,
                    struct nlattr *actions, size_t actions_len,
@@ -1105,6 +1112,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     int ifindex;
     int err;
 
+    //选择要操纵的接口
     ifindex = netdev_get_ifindex(netdev);
     if (ifindex < 0) {
         VLOG_ERR_RL(&error_rl, "flow_put: failed to get ifindex for %s: %s",
@@ -1112,9 +1120,11 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         return -ifindex;
     }
 
+    //这里会将mask也一并清0
     memset(&flower, 0, sizeof flower);
 
     if (flow_tnl_dst_is_set(&key->tunnel)) {
+    	//需要匹配外层隧道
         VLOG_DBG_RL(&rl,
                     "tunnel: id %#" PRIx64 " src " IP_FMT
                     " dst " IP_FMT " tp_src %d tp_dst %d",
@@ -1133,6 +1143,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         flower.mask.tunnel.tos = tnl_mask->ip_tos;
         flower.mask.tunnel.ttl = tnl_mask->ip_ttl;
         flower.mask.tunnel.id = (tnl->flags & FLOW_TNL_F_KEY) ? tnl_mask->tun_id : 0;
+        //填充tunnel的选项字段
         flower_match_to_tun_opt(&flower, tnl, tnl_mask);
         flower.tunnel = true;
     }
@@ -1141,6 +1152,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     flower.key.eth_type = key->dl_type;
     flower.mask.eth_type = mask->dl_type;
     if (mask->mpls_lse[0]) {
+    	//mpls填充
         flower.key.mpls_lse = key->mpls_lse[0];
         flower.mask.mpls_lse = mask->mpls_lse[0];
         flower.key.encap_eth_type[0] = flower.key.eth_type;
@@ -1148,6 +1160,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     mask->mpls_lse[0] = 0;
 
     if (mask->vlans[0].tci) {
+    	//vlan0填充
         ovs_be16 vid_mask = mask->vlans[0].tci & htons(VLAN_VID_MASK);
         ovs_be16 pcp_mask = mask->vlans[0].tci & htons(VLAN_PCP_MASK);
         ovs_be16 cfi = mask->vlans[0].tci & htons(VLAN_CFI);
@@ -1179,6 +1192,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     }
 
     if (mask->vlans[1].tci) {
+    	//vlan1填充
         ovs_be16 vid_mask = mask->vlans[1].tci & htons(VLAN_VID_MASK);
         ovs_be16 pcp_mask = mask->vlans[1].tci & htons(VLAN_PCP_MASK);
         ovs_be16 cfi = mask->vlans[1].tci & htons(VLAN_CFI);
@@ -1209,6 +1223,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     }
     memset(mask->vlans, 0, sizeof mask->vlans);
 
+    //二层源目的mac,协议号填充
     flower.key.dst_mac = key->dl_dst;
     flower.mask.dst_mac = mask->dl_dst;
     flower.key.src_mac = key->dl_src;
@@ -1219,6 +1234,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     mask->in_port.odp_port = 0;
 
     if (is_ip_any(key)) {
+    	//ipv4,ipv6情况进入
         flower.key.ip_proto = key->nw_proto;
         flower.mask.ip_proto = mask->nw_proto;
         mask->nw_proto = 0;
@@ -1229,6 +1245,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         flower.mask.ip_ttl = mask->nw_ttl;
         mask->nw_ttl = 0;
 
+        //分片标记（首片，分片）
         if (mask->nw_frag & FLOW_NW_FRAG_ANY) {
             flower.mask.flags |= TCA_FLOWER_KEY_FLAGS_IS_FRAGMENT;
 
@@ -1248,6 +1265,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         }
 
         if (key->nw_proto == IPPROTO_TCP) {
+        	//tcp层填充
             flower.key.tcp_dst = key->tp_dst;
             flower.mask.tcp_dst = mask->tp_dst;
             flower.key.tcp_src = key->tp_src;
@@ -1258,6 +1276,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             mask->tp_dst = 0;
             mask->tcp_flags = 0;
         } else if (key->nw_proto == IPPROTO_UDP) {
+        	//udp层填充
             flower.key.udp_dst = key->tp_dst;
             flower.mask.udp_dst = mask->tp_dst;
             flower.key.udp_src = key->tp_src;
@@ -1265,6 +1284,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             mask->tp_src = 0;
             mask->tp_dst = 0;
         } else if (key->nw_proto == IPPROTO_SCTP) {
+        	//sctp填充
             flower.key.sctp_dst = key->tp_dst;
             flower.mask.sctp_dst = mask->tp_dst;
             flower.key.sctp_src = key->tp_src;
@@ -1273,6 +1293,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             mask->tp_dst = 0;
         }
 
+        //ip地址填充
         if (key->dl_type == htons(ETH_P_IP)) {
             flower.key.ipv4.ipv4_src = key->nw_src;
             flower.mask.ipv4.ipv4_src = mask->nw_src;
@@ -1290,18 +1311,22 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         }
     }
 
+    //将不支持的返回err
     err = test_key_and_mask(match);
     if (err) {
         return err;
     }
 
+    //action转换
     NL_ATTR_FOR_EACH(nla, left, actions, actions_len) {
         if (flower.action_count >= TCA_ACT_MAX_PRIO) {
+        	//action数量超过32则不支持
             VLOG_DBG_RL(&rl, "Can only support %d actions", flower.action_count);
             return EOPNOTSUPP;
         }
         action = &flower.actions[flower.action_count];
         if (nl_attr_type(nla) == OVS_ACTION_ATTR_OUTPUT) {
+        	//转换output action
             odp_port_t port = nl_attr_get_odp_port(nla);
             struct netdev *outdev = netdev_ports_get(port, info->dpif_class);
 
@@ -1311,6 +1336,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             flower.action_count++;
             netdev_close(outdev);
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_PUSH_VLAN) {
+        	//添加vlan
             const struct ovs_action_push_vlan *vlan_push = nl_attr_get(nla);
 
             action->vlan.vlan_push_tpid = vlan_push->vlan_tpid;
@@ -1319,6 +1345,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             action->type = TC_ACT_VLAN_PUSH;
             flower.action_count++;
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_POP_VLAN) {
+        	//pop vlan
             action->type = TC_ACT_VLAN_POP;
             flower.action_count++;
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_SET) {
@@ -1337,12 +1364,14 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             const struct nlattr *set = nl_attr_get(nla);
             const size_t set_len = nl_attr_get_size(nla);
 
+            //设置字段的action
             err = parse_put_flow_set_masked_action(&flower, action, set,
                                                    set_len, true);
             if (err) {
                 return err;
             }
         } else {
+        	//其它的不支持
             VLOG_DBG_RL(&rl, "unsupported put action type: %d",
                         nl_attr_type(nla));
             return EOPNOTSUPP;
@@ -1368,6 +1397,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     flower.act_cookie.data = ufid;
     flower.act_cookie.len = sizeof *ufid;
 
+    //通过netlink的tc接口向下发送flow的增删
     err = tc_replace_flower(ifindex, prio, handle, &flower, block_id, hook);
     if (!err) {
         add_ufid_tc_mapping(ufid, flower.prio, flower.handle, netdev, ifindex);
@@ -1431,6 +1461,7 @@ netdev_tc_flow_get(struct netdev *netdev OVS_UNUSED,
     return 0;
 }
 
+//通过tc删除flow
 int
 netdev_tc_flow_del(struct netdev *netdev OVS_UNUSED,
                    const ovs_u128 *ufid,

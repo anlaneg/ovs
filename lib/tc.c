@@ -1765,6 +1765,7 @@ nl_msg_put_act_skbedit_to_host(struct ofpbuf *request)
 {
     size_t offset;
 
+    //设置kind为skbedit
     nl_msg_put_string(request, TCA_ACT_KIND, "skbedit");
     offset = nl_msg_start_nested(request, TCA_ACT_OPTIONS);
     {
@@ -1966,6 +1967,7 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
     int i, ifindex = 0;
     bool ingress;
 
+    //向netlink消息中封装action字段
     offset = nl_msg_start_nested(request, TCA_FLOWER_ACT);
     {
         int error;
@@ -1980,6 +1982,7 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
         for (i = 0; i < flower->action_count; i++, action++) {
             switch (action->type) {
             case TC_ACT_PEDIT: {
+            	//存放要修改的字段
                 act_offset = nl_msg_start_nested(request, act_index++);
                 error = nl_msg_put_flower_rewrite_pedits(request, flower);
                 if (error) {
