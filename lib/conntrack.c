@@ -310,10 +310,12 @@ ct_print_conn_info(const struct conn *c, const char *log_msg,
 
 /* Initializes the connection tracker 'ct'.  The caller is responsible for
  * calling 'conntrack_destroy()', when the instance is not needed anymore */
-void
-conntrack_init(struct conntrack *ct)
+struct conntrack *
+conntrack_init(void)
 {
     long long now = time_msec();
+
+    struct conntrack *ct = xzalloc(sizeof *ct);
 
     ct_rwlock_init(&ct->resources_lock);
     ct_rwlock_wrlock(&ct->resources_lock);
@@ -345,6 +347,8 @@ conntrack_init(struct conntrack *ct)
     //连接跟踪的老化处理线程
     ct->clean_thread = ovs_thread_create("ct_clean", clean_thread_main, ct);
     ct->ipf = ipf_init();
+
+    return ct;
 }
 
 /* Destroys the connection tracker 'ct' and frees all the allocated memory. */
@@ -390,6 +394,7 @@ conntrack_destroy(struct conntrack *ct)
     ct_rwlock_unlock(&ct->resources_lock);
     ct_rwlock_destroy(&ct->resources_lock);
     ipf_destroy(ct->ipf);
+    free(ct);
 }
 
 static unsigned hash_to_bucket(uint32_t hash)
