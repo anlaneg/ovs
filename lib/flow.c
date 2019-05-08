@@ -788,7 +788,7 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
     /* Metadata. */
     //如果tunnel被配置了
     if (flow_tnl_dst_is_set(&md->tunnel)) {
-    		//从&flow->tunnel开始到&flow->metadata终止，这些bit都需要打上标记
+    	//从&flow->tunnel开始到&flow->metadata终止，这些bit都需要打上标记
         miniflow_push_words(mf, tunnel, &md->tunnel,
                             offsetof(struct flow_tnl, metadata) /
                             sizeof(uint64_t));

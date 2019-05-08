@@ -30,7 +30,7 @@ extern "C" {
 #define FLOW_WC_SEQ 41
 
 /* Number of Open vSwitch extension 32-bit registers. */
-#define FLOW_N_REGS 16
+#define FLOW_N_REGS 16 //open vswitch扩展支持的寄存器数目
 BUILD_ASSERT_DECL(FLOW_N_REGS <= NXM_NX_MAX_REGS);
 BUILD_ASSERT_DECL(FLOW_N_REGS % 4 == 0); /* Handle xxregs. */
 
@@ -102,12 +102,12 @@ struct flow {
     /* Metadata */
     struct flow_tnl tunnel;     /* Encapsulating tunnel parameters. */
     ovs_be64 metadata;          /* OpenFlow Metadata. */
-    uint32_t regs[FLOW_N_REGS]; /* Registers. */
+    uint32_t regs[FLOW_N_REGS]; /* Registers. */ //扩展支持的各寄存器取值
     uint32_t skb_priority;      /* Packet priority for QoS. */
     uint32_t pkt_mark;          /* Packet mark. */
     uint32_t dp_hash;           /* Datapath computed hash value. The exact
                                  * computation is opaque to the user space. */
-    union flow_in_port in_port; /* Input port.*/
+    union flow_in_port in_port; /* Input port.*/ //报文入接口
     uint32_t recirc_id;         /* Must be exact match. */
     uint8_t ct_state;           /* Connection tracking state. */
     uint8_t ct_nw_proto;        /* CT orig tuple IP protocol. */
@@ -130,12 +130,12 @@ struct flow {
     ovs_be32 mpls_lse[ROUND_UP(FLOW_MAX_MPLS_LABELS, 2)]; /* MPLS label stack
                                                              (with padding). */
     /* L3 (64-bit aligned) */
-    ovs_be32 nw_src;            /* IPv4 source address or ARP SPA. */
-    ovs_be32 nw_dst;            /* IPv4 destination address or ARP TPA. */ //网络层目的地址
+    ovs_be32 nw_src;            /* IPv4 source address or ARP SPA. */ //ipv4源地址
+    ovs_be32 nw_dst;            /* IPv4 destination address or ARP TPA. */ //ipv4目的地址
     ovs_be32 ct_nw_src;         /* CT orig tuple IPv4 source address. */
     ovs_be32 ct_nw_dst;         /* CT orig tuple IPv4 destination address. */
-    struct in6_addr ipv6_src;   /* IPv6 source address. */
-    struct in6_addr ipv6_dst;   /* IPv6 destination address. */
+    struct in6_addr ipv6_src;   /* IPv6 source address. */ //ipv6源地址
+    struct in6_addr ipv6_dst;   /* IPv6 destination address. */ //ipv6目的地址
     struct in6_addr ct_ipv6_src; /* CT orig tuple IPv6 source address. */
     struct in6_addr ct_ipv6_dst; /* CT orig tuple IPv6 destination address. */
     ovs_be32 ipv6_label;        /* IPv6 flow label. */
