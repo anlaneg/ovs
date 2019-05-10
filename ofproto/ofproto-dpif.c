@@ -6225,7 +6225,7 @@ const struct ofproto_class ofproto_dpif_class = {
     vport_get_status,
     port_dump_start,//对ofproto所有port进行遍历的起始函数
     port_dump_next,//对ofproto所有port进行遍历的next函数
-    port_dump_next,//对ofproto所有port进行遍历的next函数
+    //port_dump_next,//对ofproto所有port进行遍历的next函数
     port_dump_done,//对ofproto所有port进行遍历的完成函数
     port_poll,
     port_poll_wait,

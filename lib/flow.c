@@ -819,13 +819,13 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
 
     miniflow_push_uint32(mf, dp_hash, md->dp_hash);//标记hash位存在，填充dp_hash
     miniflow_push_uint32(mf, in_port, odp_to_u32(md->in_port.odp_port));//标记in_port位存在，填充in_port
-    if (md->ct_state) {//如果recirc_id被设置
+    if (md->ct_state) {
         miniflow_push_uint32(mf, recirc_id, md->recirc_id);
         miniflow_push_uint8(mf, ct_state, md->ct_state);
         ct_nw_proto_p = miniflow_pointer(mf, ct_nw_proto);
         miniflow_push_uint8(mf, ct_nw_proto, 0);
         miniflow_push_uint16(mf, ct_zone, md->ct_zone);
-    } else if (md->recirc_id) {
+    } else if (md->recirc_id) {//如果recirc_id被设置
         miniflow_push_uint32(mf, recirc_id, md->recirc_id);
         miniflow_pad_to_64(mf, recirc_id);
     }

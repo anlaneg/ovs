@@ -214,7 +214,7 @@ struct tc_flower {
         bool rewrite;
         struct tc_flower_key key;
         struct tc_flower_key mask;
-    } rewrite;
+    } rewrite;//记录要重写的字段
 
     uint32_t csum_update_flags;
 

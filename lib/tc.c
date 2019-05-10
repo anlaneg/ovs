@@ -2316,6 +2316,7 @@ tc_replace_flower(int ifindex, uint16_t prio, uint32_t handle,
     int index;
 
     index = block_id ? TCM_IFINDEX_MAGIC_BLOCK : ifindex;
+    //向kernel下发RTM_NEWFILTER消息
     tcmsg = tc_make_request(index, RTM_NEWTFILTER, NLM_F_CREATE | NLM_F_ECHO,
                             &request);
     tcmsg->tcm_parent = (hook == TC_EGRESS) ?

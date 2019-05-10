@@ -67,6 +67,7 @@ get_tc_qdisc_hook(struct netdev *netdev)
 
 static struct netlink_field set_flower_map[][4] = {
     [OVS_KEY_ATTR_IPV4] = {
+    		//ipv4相关的属性设置
         { offsetof(struct ovs_key_ipv4, ipv4_src),
           offsetof(struct tc_flower_key, ipv4.ipv4_src),
           MEMBER_SIZEOF(struct tc_flower_key, ipv4.ipv4_src)
@@ -806,6 +807,7 @@ parse_put_flow_set_masked_action(struct tc_flower *flower,
         struct netlink_field *f = &set_flower_map[type][i];
 
         if (!f->size) {
+        	//跳过字段长度为0的
             break;
         }
 
@@ -813,9 +815,10 @@ parse_put_flow_set_masked_action(struct tc_flower *flower,
         for (j = 0; j < f->size; j++) {
             char maskval = hasmask ? set_mask[f->offset + j] : 0xFF;
 
+            //设置rewrite后的值
             key[f->flower_offset + j] = maskval & set_data[f->offset + j];
+            //设置rewrite使用的mask
             mask[f->flower_offset + j] = maskval;
-
         }
 
         /* set its mask to 0 to show it's been used. */
@@ -824,6 +827,7 @@ parse_put_flow_set_masked_action(struct tc_flower *flower,
         }
     }
 
+    //如果确实需要发生rewrite,则置action为TC_ACT_PEDIT
     if (!is_all_zeros(&flower->rewrite, sizeof flower->rewrite)) {
         if (flower->rewrite.rewrite == false) {
             flower->rewrite.rewrite = true;
@@ -832,6 +836,7 @@ parse_put_flow_set_masked_action(struct tc_flower *flower,
         }
     }
 
+    //遇着不支持的rewrite，报错
     if (hasmask && !is_all_zeros(set_mask, size)) {
         VLOG_DBG_RL(&rl, "unsupported sub attribute of set action type %d",
                     type);
@@ -853,7 +858,7 @@ parse_put_flow_set_action(struct tc_flower *flower, struct tc_action *action,
 
     if (nl_attr_type(set) != OVS_KEY_ATTR_TUNNEL) {
     	//常见字段变更
-            return parse_put_flow_set_masked_action(flower, action, set,
+        return parse_put_flow_set_masked_action(flower, action, set,
                                                     set_len, false);
     }
 

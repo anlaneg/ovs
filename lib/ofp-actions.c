@@ -4834,6 +4834,7 @@ encode_RESUBMIT(const struct ofpact_resubmit *resubmit,
     }
 }
 
+//解析resubmit action
 static char * OVS_WARN_UNUSED_RESULT
 parse_RESUBMIT(char *arg, const struct ofpact_parse_params *pp)
 {
@@ -4842,26 +4843,32 @@ parse_RESUBMIT(char *arg, const struct ofpact_parse_params *pp)
 
     resubmit = ofpact_put_RESUBMIT(pp->ofpacts);
 
+    //检查是否变更inport
     in_port_s = strsep(&arg, ",");
     if (in_port_s && in_port_s[0]) {
+    	//解析并变更in_port
         if (!ofputil_port_from_string(in_port_s, pp->port_map,
                                       &resubmit->in_port)) {
             return xasprintf("%s: resubmit to unknown port", in_port_s);
         }
     } else {
+    	//维持旧的in_port不变
         resubmit->in_port = OFPP_IN_PORT;
     }
 
     table_s = strsep(&arg, ",");
     if (table_s && table_s[0]) {
+    	//解析要查询的表号
         if (!ofputil_table_from_string(table_s, pp->table_map,
                                        &resubmit->table_id)) {
             return xasprintf("%s: resubmit to unknown table", table_s);
         }
     } else {
+    	//使用默认表号
         resubmit->table_id = 255;
     }
 
+    //检查是否有ct修饰
     ct_s = strsep(&arg, ",");
     if (ct_s && ct_s[0]) {
         if (strcmp(ct_s, "ct")) {
