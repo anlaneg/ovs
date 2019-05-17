@@ -44,17 +44,17 @@
 #include "util.h"
 
 struct tcp_peer {
-    enum ct_dpif_tcp_state state;//tcp状态
     uint32_t               seqlo;          /* Max sequence number sent     */ //本端发送的seq
     uint32_t               seqhi;          /* Max the other end ACKd + win */ //对端需要ack的seq
     uint16_t               max_win;        /* largest window (pre scaling) */ //最大窗口大小
     uint8_t                wscale;         /* window scaling factor        */ //窗口放大因子
+    enum ct_dpif_tcp_state state;//tcp状态
 };
 
 //tcp链连跟踪
 struct conn_tcp {
     struct conn up;//基类
-    struct tcp_peer peer[2];//src，目地
+    struct tcp_peer peer[2]; /* 'conn' lock protected. *///src，目地
 };
 
 enum {
@@ -163,7 +163,7 @@ tcp_get_wscale(const struct tcp_header *tcp)
 
 //监测两端的tcp状态，变更自身的tcp状态
 static enum ct_update_res
-tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
+tcp_conn_update(struct conntrack *ct, struct conn *conn_,
                 struct dp_packet *pkt, bool reply, long long now)
 {
     struct conn_tcp *conn = conn_tcp_cast(conn_);
@@ -357,19 +357,19 @@ tcp_conn_update(struct conn *conn_, struct conntrack_bucket *ctb,
 
         if (src->state >= CT_DPIF_TCPS_FIN_WAIT_2
             && dst->state >= CT_DPIF_TCPS_FIN_WAIT_2) {
-        	//将connect换到对应的过期链上
-            conn_update_expiration(ctb, &conn->up, CT_TM_TCP_CLOSED, now);
+            //将connect换到对应的过期链上
+            conn_update_expiration(ct, &conn->up, CT_TM_TCP_CLOSED, now);
         } else if (src->state >= CT_DPIF_TCPS_CLOSING
                    && dst->state >= CT_DPIF_TCPS_CLOSING) {
-            conn_update_expiration(ctb, &conn->up, CT_TM_TCP_FIN_WAIT, now);
+            conn_update_expiration(ct, &conn->up, CT_TM_TCP_FIN_WAIT, now);
         } else if (src->state < CT_DPIF_TCPS_ESTABLISHED
                    || dst->state < CT_DPIF_TCPS_ESTABLISHED) {
-            conn_update_expiration(ctb, &conn->up, CT_TM_TCP_OPENING, now);
+            conn_update_expiration(ct, &conn->up, CT_TM_TCP_OPENING, now);
         } else if (src->state >= CT_DPIF_TCPS_CLOSING
                    || dst->state >= CT_DPIF_TCPS_CLOSING) {
-            conn_update_expiration(ctb, &conn->up, CT_TM_TCP_CLOSING, now);
+            conn_update_expiration(ct, &conn->up, CT_TM_TCP_CLOSING, now);
         } else {
-            conn_update_expiration(ctb, &conn->up, CT_TM_TCP_ESTABLISHED, now);
+            conn_update_expiration(ct, &conn->up, CT_TM_TCP_ESTABLISHED, now);
         }
     } else if ((dst->state < CT_DPIF_TCPS_SYN_SENT
                 || dst->state >= CT_DPIF_TCPS_FIN_WAIT_2
@@ -458,8 +458,7 @@ tcp_valid_new(struct dp_packet *pkt)
 
 //tcp新创建连接跟踪回调
 static struct conn *
-tcp_new_conn(struct conntrack_bucket *ctb, struct dp_packet *pkt,
-             long long now)
+tcp_new_conn(struct conntrack *ct, struct dp_packet *pkt, long long now)
 {
     struct conn_tcp* newconn = NULL;
     struct tcp_header *tcp = dp_packet_l4(pkt);
@@ -505,8 +504,7 @@ tcp_new_conn(struct conntrack_bucket *ctb, struct dp_packet *pkt,
     src->state = CT_DPIF_TCPS_SYN_SENT;//进入syn_send状态（这个状态不是正确的，因为没有检查syn标记）
     dst->state = CT_DPIF_TCPS_CLOSED;//假设对方是closed状态
 
-    conn_init_expiration(ctb, &newconn->up, CT_TM_TCP_FIRST_PACKET,
-                         now);
+    conn_init_expiration(ct, &newconn->up, CT_TM_TCP_FIRST_PACKET, now);
 
     return &newconn->up;
 }
