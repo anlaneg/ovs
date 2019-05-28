@@ -426,6 +426,7 @@ udpif_init(void)
     if (ovsthread_once_start(&once)) {
         unixctl_command_register("upcall/show", "", 0, 0, upcall_unixctl_show,
                                  NULL);
+        //注册disable-megaflows命令行
         unixctl_command_register("upcall/disable-megaflows", "", 0, 0,
                                  upcall_unixctl_disable_megaflows, NULL);
         unixctl_command_register("upcall/enable-megaflows", "", 0, 0,
@@ -456,6 +457,7 @@ udpif_create(struct dpif_backer *backer, struct dpif *dpif)
     udpif->dump_seq = seq_create();
     latch_init(&udpif->exit_latch);
     latch_init(&udpif->pause_latch);
+    //注册新创建的	udpif
     ovs_list_push_back(&all_udpifs, &udpif->list_node);
     atomic_init(&udpif->enable_ufid, false);
     atomic_init(&udpif->n_flows, 0);
@@ -708,6 +710,7 @@ udpif_flush(struct udpif *udpif)
     size_t n_handlers_ = udpif->n_handlers;
     size_t n_revalidators_ = udpif->n_revalidators;
 
+    //停止，移除所有flow,再开启
     udpif_stop_threads(udpif);
     dpif_flow_flush(udpif->dpif);
     udpif_start_threads(udpif, n_handlers_, n_revalidators_);
@@ -1332,15 +1335,13 @@ should_install_flow(struct udpif *udpif, struct upcall *upcall)
 }
 
 //设备upcall回调函数入口
-//flow是自报文中解析出来的数据
-//ufid是由报文中解析数据得出的一个hash
-//wc是收集对应的mask
 //action,put_action收集对应的action信息
 static int
-upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufid,
+upcall_cb(const struct dp_packet *packet, const struct flow *flow/*flow是自报文中解析出来的数据*/,
+		ovs_u128 *ufid/*ufid是由报文中解析数据得出的一个hash*/,
           unsigned pmd_id, enum dpif_upcall_type type,
           const struct nlattr *userdata, struct ofpbuf *actions,
-          struct flow_wildcards *wc, struct ofpbuf *put_actions, void *aux)
+          struct flow_wildcards *wc/*收集对应的mask*/, struct ofpbuf *put_actions, void *aux)
 {
     struct udpif *udpif = aux;//upcall的参数udpif
     struct upcall upcall;
@@ -1362,11 +1363,13 @@ upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufi
     }
 
     if (upcall.xout.slow && put_actions) {
+    	//将upcall.put_actions.data中的存入put_actions
         ofpbuf_put(put_actions, upcall.put_actions.data,
-                   upcall.put_actions.size);//将upcall.put_actions.data中的存入put_actions
+                   upcall.put_actions.size);
     }
 
     if (OVS_UNLIKELY(!megaflow && wc)) {
+    	//如果megaflow为False，则wc将被初始化为精准匹配
         flow_wildcards_init_for_packet(wc, flow);
     }
 
@@ -1678,6 +1681,7 @@ get_ukey_hash(const ovs_u128 *ufid, const unsigned pmd_id)
     return hash_2words(ufid->u32[0], pmd_id);
 }
 
+//通过ufid查询key
 static struct udpif_key *
 ukey_lookup(struct udpif *udpif, const ovs_u128 *ufid, const unsigned pmd_id)
 {
@@ -2954,7 +2958,9 @@ upcall_unixctl_disable_megaflows(struct unixctl_conn *conn,
                                  const char *argv[] OVS_UNUSED,
                                  void *aux OVS_UNUSED)
 {
+	//指定关闭megaflows
     atomic_store_relaxed(&enable_megaflows, false);
+    //移除所有的flows
     udpif_flush_all_datapaths();
     unixctl_command_reply(conn, "megaflows disabled");
 }
@@ -2969,6 +2975,7 @@ upcall_unixctl_enable_megaflows(struct unixctl_conn *conn,
                                 const char *argv[] OVS_UNUSED,
                                 void *aux OVS_UNUSED)
 {
+	//开启megaflows
     atomic_store_relaxed(&enable_megaflows, true);
     udpif_flush_all_datapaths();
     unixctl_command_reply(conn, "megaflows enabled");

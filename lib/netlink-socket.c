@@ -93,7 +93,7 @@ struct nl_sock {
     uint32_t next_seq;
     uint32_t pid;
     int protocol;
-    //收取buffer
+    //接收buffer大小
     unsigned int rcvbuf;        /* Receive buffer size (SO_RCVBUF). */
 };
 
@@ -192,6 +192,7 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
         goto error;
     }
 #else
+    //设置接收缓冲区大小
     if (setsockopt(sock->fd, SOL_SOCKET, SO_RCVBUFFORCE,
                    &rcvbuf, sizeof rcvbuf)) {
         /* Only root can use SO_RCVBUFFORCE.  Everyone else gets EPERM.
@@ -202,6 +203,7 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
         }
     }
 
+    //获取接受buffer大小
     retval = get_socket_rcvbuf(sock->fd);
     if (retval < 0) {
         retval = -retval;

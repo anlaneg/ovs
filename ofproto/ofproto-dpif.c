@@ -772,7 +772,8 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
     //创建backer
     backer = xmalloc(sizeof *backer);
 
-    error = dpif_create_and_open(backer_name, type, &backer->dpif);//创建及打开后端
+    //创建及打开后端
+    error = dpif_create_and_open(backer_name, type, &backer->dpif);
     free(backer_name);
     if (error) {
         VLOG_ERR("failed to open datapath of type %s: %s", type,
@@ -1495,8 +1496,9 @@ check_support(struct dpif_backer *backer)
     backer->rt_support.odp.ct_orig_tuple6 = check_ct_orig_tuple6(backer);
 }
 
+//ofproto构造函数
 static int
-construct(struct ofproto *ofproto_)//ofproto构造函数
+construct(struct ofproto *ofproto_)
 {
     struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofproto_);
     struct shash_node *node, *next;

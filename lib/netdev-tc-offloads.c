@@ -1587,6 +1587,7 @@ probe_tc_block_support(int ifindex)
     }
 }
 
+//netdev的tc init
 int
 netdev_tc_init_flow_api(struct netdev *netdev)
 {
@@ -1597,6 +1598,7 @@ netdev_tc_init_flow_api(struct netdev *netdev)
     int ifindex;
     int error;
 
+    //获取netdev对应的ifindex
     ifindex = netdev_get_ifindex(netdev);
     if (ifindex < 0) {
         VLOG_ERR_RL(&error_rl, "init: failed to get ifindex for %s: %s",
@@ -1605,6 +1607,7 @@ netdev_tc_init_flow_api(struct netdev *netdev)
     }
 
     /* make sure there is no ingress qdisc */
+    //删除ingress队列
     tc_add_del_qdisc(ifindex, false, 0, TC_INGRESS);
 
     if (ovsthread_once_start(&block_once)) {
@@ -1617,6 +1620,7 @@ netdev_tc_init_flow_api(struct netdev *netdev)
         ovsthread_once_done(&multi_mask_once);
     }
 
+    //添加ingress队列
     block_id = get_block_id_from_netdev(netdev);
     error = tc_add_del_qdisc(ifindex, true, block_id, hook);
 

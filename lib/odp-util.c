@@ -1131,13 +1131,15 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
         odp_portno_name_format(portno_names, nl_attr_get_odp_port(a), ds);
         ds_put_char(ds, ')');
         break;
-    case OVS_ACTION_ATTR_TUNNEL_PUSH://tunnel_push动作
+    case OVS_ACTION_ATTR_TUNNEL_PUSH:
+    	//tunnel_push动作
         format_odp_tnl_push_action(ds, a, portno_names);
         break;
     case OVS_ACTION_ATTR_USERSPACE:
         format_odp_userspace_action(ds, a, portno_names);
         break;
     case OVS_ACTION_ATTR_RECIRC:
+    	//显示recirc
         format_odp_recirc_action(ds, nl_attr_get_u32(a));
         break;
     case OVS_ACTION_ATTR_HASH:
@@ -1244,6 +1246,7 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
     }
 }
 
+//格式化action输出
 void
 format_odp_actions(struct ds *ds, const struct nlattr *actions,
                    size_t actions_len, const struct hmap *portno_names)
@@ -1254,6 +1257,7 @@ format_odp_actions(struct ds *ds, const struct nlattr *actions,
 
         NL_ATTR_FOR_EACH (a, left, actions, actions_len) {
             if (a != actions) {
+            	//非首个action
                 ds_put_char(ds, ',');
             }
             format_odp_action(ds, a, portno_names);
@@ -1271,6 +1275,7 @@ format_odp_actions(struct ds *ds, const struct nlattr *actions,
             ds_put_char(ds, ')');
         }
     } else {
+    	//无action长度时，指定为drop
         ds_put_cstr(ds, "drop");
     }
 }
@@ -3212,6 +3217,7 @@ odp_mask_attr_is_wildcard(const struct nlattr *ma)
 static bool
 odp_mask_is_exact(enum ovs_key_attr attr, const void *mask, size_t size)
 {
+	//检查给定的mask是否被设置为全'1'
     return odp_mask_is_constant__(attr, mask, size, -1);
 }
 
@@ -3960,8 +3966,10 @@ format_odp_key_attr__(const struct nlattr *a, const struct nlattr *ma,
     char namebuf[OVS_KEY_ATTR_BUFSIZE];
     bool is_exact;
 
+    //通过ma，检查是否为全'1'掩码
     is_exact = ma ? odp_mask_attr_is_exact(ma) : true;
 
+    //设置属性名称，例如 recirc_id,in_port等
     ds_put_cstr(ds, ovs_key_attr_to_string(attr, namebuf, sizeof namebuf));
 
     ds_put_char(ds, '(');
@@ -4133,6 +4141,7 @@ format_odp_key_attr__(const struct nlattr *a, const struct nlattr *ma,
     case OVS_KEY_ATTR_ETHERTYPE:
         ds_put_format(ds, "0x%04"PRIx16, ntohs(nl_attr_get_be16(a)));
         if (!is_exact) {
+        	//输出mask
             ds_put_format(ds, "/0x%04"PRIx16, ntohs(nl_attr_get_be16(ma)));
         }
         break;
@@ -4399,6 +4408,7 @@ odp_format_ufid(const ovs_u128 *ufid, struct ds *ds)
  * OVS_KEY_ATTR_* attributes in 'key'. If non-null, additionally formats the
  * 'mask_len' bytes of 'mask' which apply to 'key'. If 'portno_names' is
  * non-null, translates odp port number to its name. */
+//格式化flow
 void
 odp_flow_format(const struct nlattr *key, size_t key_len,
                 const struct nlattr *mask, size_t mask_len,
@@ -4449,8 +4459,10 @@ odp_flow_format(const struct nlattr *key, size_t key_len,
                                                     &ofp, a);
                 }
                 if (!first_field) {
+                	//非首个字段，则采用‘，’号将其隔开
                     ds_put_char(ds, ',');
                 }
+                //输出各字段详情
                 format_odp_key_attr__(a, ma, portno_names, ds, verbose);
                 first_field = false;
             } else if (attr_type == OVS_KEY_ATTR_ETHERNET

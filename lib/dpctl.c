@@ -141,6 +141,7 @@ get_one_dp(struct dpctl_params *dpctl_p)
 
     sset_init(&types);
     dp_enumerate_types(&types);
+    //返回当前已知的datapath type
     SSET_FOR_EACH (type, &types) {
         struct sset names;
 
@@ -148,6 +149,7 @@ get_one_dp(struct dpctl_params *dpctl_p)
         if (!dp_enumerate_names(type, &names)) {
             count += sset_count(&names);
             if (!dp_name && count == 1) {
+            	//仅有一个datapath,置此名称为dp_name
                 dp_name = xasprintf("%s@%s", type, SSET_FIRST(&names));
             }
         }
@@ -172,9 +174,11 @@ parsed_dpif_open(const char *arg_, bool create, struct dpif **dpifp)
     int result;
     char *name, *type;
 
+    //将datapath名称划分为type,name两个，例如system,ovs-system
     dp_parse_name(arg_, &name, &type);
 
     if (create) {
+    	//如需要create,则创建此dpif
         result = dpif_create(name, type, dpifp);
     } else {
         result = dpif_open(name, type, dpifp);
@@ -223,8 +227,10 @@ opt_dpif_open(int argc, const char *argv[], struct dpctl_params *dpctl_p,
     char *dpname;
 
     if (dp_arg_exists(argc, argv)) {
+    	//指定dpname的情况
         dpname = xstrdup(argv[1]);
     } else if (argc != max_args) {
+    	//自底层取datapath名称
         dpname = get_one_dp(dpctl_p);
     } else {
         /* If the arguments are the maximum possible number and there is no
@@ -816,6 +822,7 @@ format_dpif_flow(struct ds *ds, const struct dpif_flow *f, struct hmap *ports,
                     dpctl_p->verbosity);
     ds_put_cstr(ds, ", ");
 
+    //格式化统计信息
     dpif_flow_stats_format(&f->stats, ds);
     if (dpctl_p->verbosity && f->attrs.offloaded) {
         ds_put_cstr(ds, ", offloaded:yes");
@@ -823,6 +830,7 @@ format_dpif_flow(struct ds *ds, const struct dpif_flow *f, struct hmap *ports,
     if (dpctl_p->verbosity && f->attrs.dp_layer) {
         ds_put_format(ds, ", dp:%s", f->attrs.dp_layer);
     }
+    //显示actions信息
     ds_put_cstr(ds, ", actions:");
     format_odp_actions(ds, f->actions, f->actions_len, ports);
 }
@@ -962,8 +970,10 @@ dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
     while (argc > 1 && lastargc != argc) {
         lastargc = argc;
         if (!strncmp(argv[argc - 1], "filter=", 7) && !filter) {
+        	//解析filter参数
             filter = xstrdup(argv[--argc] + 7);
         } else if (!strncmp(argv[argc - 1], "type=", 5) && !types_list) {
+        	//解析type参数
             types_list = xstrdup(argv[--argc] + 5);
         }
     }
@@ -973,6 +983,7 @@ dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
         goto out_free;
     }
 
+    //取所有ports
     struct hmap *portno_names = dpctl_get_portno_names(dpif, dpctl_p);
 
     if (filter) {
@@ -982,6 +993,7 @@ dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
         struct dpif_port_dump port_dump;
         struct dpif_port dpif_port;
         DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
+        	//构造port_no与port_name映射
             ofputil_port_map_put(&port_map,
                                  u16_to_ofp(odp_to_u32(dpif_port.port_no)),
                                  dpif_port.name);

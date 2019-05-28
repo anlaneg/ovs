@@ -98,8 +98,9 @@ ofpbuf_use_stack(struct ofpbuf *b, void *base, size_t allocated)
  * buffer into a malloc()'d buffer.  Thus, it is wise to call ofpbuf_uninit()
  * on an ofpbuf initialized by this function, so that if it expanded into the
  * heap, that memory is freed. */
+//用静态内存初始化ofpbuf
 void
-ofpbuf_use_stub(struct ofpbuf *b, void *base, size_t allocated)//用静态内存初始化ofpbuf
+ofpbuf_use_stub(struct ofpbuf *b, void *base, size_t allocated)
 {
     ofpbuf_use__(b, base, allocated, 0, OFPBUF_STUB);
 }
@@ -288,7 +289,8 @@ ofpbuf_resize__(struct ofpbuf *b, size_t new_headroom, size_t new_tailroom)//空
 void
 ofpbuf_prealloc_tailroom(struct ofpbuf *b, size_t size)
 {
-    if (size > ofpbuf_tailroom(b)) {//空间不够
+    if (size > ofpbuf_tailroom(b)) {
+    	//空间不够，增加空间
         ofpbuf_resize__(b, ofpbuf_headroom(b), MAX(size, 64));
     }
 }

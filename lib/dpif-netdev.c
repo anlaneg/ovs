@@ -7690,6 +7690,7 @@ dpif_netdev_ipf_dump_done(struct dpif *dpif OVS_UNUSED, void *ipf_dump_ctx)
 
 }
 
+//走用户态转发的datapath
 const struct dpif_class dpif_netdev_class = {
     "netdev",
     dpif_netdev_init,

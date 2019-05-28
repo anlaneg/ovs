@@ -79,7 +79,8 @@ main(int argc, char *argv[])
     struct ovs_vswitchd_exit_args exit_args = {&exiting, &cleanup};
     int retval;
 
-    set_program_name(argv[0]);//设置进程名称，进程版本号
+    //设置进程名称，进程版本号
+    set_program_name(argv[0]);
     ovsthread_id_init();
 
     dns_resolve_init(true);

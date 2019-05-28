@@ -1027,8 +1027,9 @@ netdev_mtu_is_user_config(struct netdev *netdev)//如果用户明确指定mtu值
  * Some network devices may not implement support for this function.  In such
  * cases this function will always return -EOPNOTSUPP.
  */
+//返回接口对应的ifindex
 int
-netdev_get_ifindex(const struct netdev *netdev)//返回接口对应的ifindex
+netdev_get_ifindex(const struct netdev *netdev)
 {
     int (*get_ifindex)(const struct netdev *);
 
@@ -2382,8 +2383,10 @@ netdev_is_flow_api_enabled(void)
 /* Protects below port hashmaps. */
 static struct ovs_mutex netdev_hmap_mutex = OVS_MUTEX_INITIALIZER;
 
+//port_no到netdev的映射
 static struct hmap port_to_netdev OVS_GUARDED_BY(netdev_hmap_mutex)
     = HMAP_INITIALIZER(&port_to_netdev);
+//ifindex到netdev的映射
 static struct hmap ifindex_to_port OVS_GUARDED_BY(netdev_hmap_mutex)
     = HMAP_INITIALIZER(&ifindex_to_port);
 
@@ -2402,6 +2405,7 @@ netdev_ports_hash(odp_port_t port, const struct dpif_class *dpif_class)
     return hash_int(odp_to_u32(port), hash_pointer(dpif_class, 0));
 }
 
+//给定port_no,获取netdev
 static struct port_to_netdev_data *
 netdev_ports_lookup(odp_port_t port_no, const struct dpif_class *dpif_class)
     OVS_REQUIRES(netdev_hmap_mutex)
@@ -2410,7 +2414,7 @@ netdev_ports_lookup(odp_port_t port_no, const struct dpif_class *dpif_class)
 
     HMAP_FOR_EACH_WITH_HASH (data, portno_node,
                              netdev_ports_hash(port_no, dpif_class),
-                             &port_to_netdev) {
+                             &port_to_netdev/*记录port_no到netdev的映射*/) {
         if (data->dpif_class == dpif_class
             && data->dpif_port.port_no == port_no) {
             return data;
@@ -2432,6 +2436,7 @@ netdev_ports_insert(struct netdev *netdev, const struct dpif_class *dpif_class,
 
     ovs_mutex_lock(&netdev_hmap_mutex);
     if (netdev_ports_lookup(dpif_port->port_no, dpif_class)) {
+    	//指定的port已存在
         ovs_mutex_unlock(&netdev_hmap_mutex);
         return EEXIST;
     }
@@ -2447,6 +2452,7 @@ netdev_ports_insert(struct netdev *netdev, const struct dpif_class *dpif_class,
     hmap_insert(&ifindex_to_port, &data->ifindex_node, ifindex);
     ovs_mutex_unlock(&netdev_hmap_mutex);
 
+    //初始化netdev的flow api(例如tc情况下创建ingress队列）
     netdev_init_flow_api(netdev);
 
     return 0;

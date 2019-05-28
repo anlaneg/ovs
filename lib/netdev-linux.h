@@ -38,6 +38,6 @@ int linux_get_ifindex(const char *netdev_name);
    .flow_put = netdev_tc_flow_put,/*通过tc offload flow*/ \
    .flow_get = netdev_tc_flow_get,                      \
    .flow_del = netdev_tc_flow_del,/*通过tc 删除offload的flow*/ \
-   .init_flow_api = netdev_tc_init_flow_api
+   .init_flow_api = netdev_tc_init_flow_api /*队列初始化*/
 
 #endif /* netdev-linux.h */

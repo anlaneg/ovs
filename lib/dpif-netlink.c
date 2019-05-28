@@ -751,10 +751,10 @@ netdev_to_ovs_vport_type(const char *type)
 
 //向kernel下发vport创建命令
 static int
-dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name,
-                        enum ovs_vport_type type,
+dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name/*port名称*/,
+                        enum ovs_vport_type type/*要创建的port类型*/,
                         struct ofpbuf *options,
-                        odp_port_t *port_nop)
+                        odp_port_t *port_nop/*port编号*/)
     OVS_REQ_WRLOCK(dpif->upcall_lock)
 {
     struct dpif_netlink_vport request, reply;
@@ -781,6 +781,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name,
     if (socksp) {
         upcall_pids = nl_sock_pid(socksp);
     }
+
     //指明接受upcall的进程pid
     request.n_upcall_pids = 1;
     request.upcall_pids = &upcall_pids;
@@ -3433,12 +3434,13 @@ probe_broken_meters(struct dpif *dpif)
     return broken_meters;
 }
 
+//实现基于kernel datapatch转发（完成向kernel下发flow,配置，自kernel获取信息，报文等）
 const struct dpif_class dpif_netlink_class = {
     "system",
     NULL,                       /* init */
     dpif_netlink_enumerate,
     NULL,
-    dpif_netlink_open,
+    dpif_netlink_open,//创建或者打开datapath
     dpif_netlink_close,
     dpif_netlink_destroy,
     dpif_netlink_run,
@@ -3461,12 +3463,14 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_flow_dump_thread_create,
     dpif_netlink_flow_dump_thread_destroy,
     dpif_netlink_flow_dump_next,
-    dpif_netlink_operate,//向kernel下发flow
+	//向kernel下发flow
+    dpif_netlink_operate,
     dpif_netlink_recv_set,
     dpif_netlink_handlers_set,
     NULL,                       /* set_config */
     dpif_netlink_queue_to_priority,
-    dpif_netlink_recv,/*收取kernel发送过来的netlink消息*/
+	/*收取kernel发送过来的netlink消息*/
+    dpif_netlink_recv,
     dpif_netlink_recv_wait,
     dpif_netlink_recv_purge,
     NULL,                       /* register_dp_purge_cb */
@@ -3818,6 +3822,7 @@ dpif_netlink_dp_init(struct dpif_netlink_dp *dp)
     memset(dp, 0, sizeof *dp);
 }
 
+//开始dump datapath，发送OVS_DP_CMD_GET命令
 static void
 dpif_netlink_dp_dump_start(struct nl_dump *dump)
 {

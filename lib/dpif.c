@@ -121,7 +121,8 @@ dp_initialize(void)
         dpctl_unixctl_register();
         tnl_port_map_init();
         tnl_neigh_cache_init();
-        route_table_init();//路由表初始化（会监听kernel路由表变化）
+        //路由表初始化（会监听kernel路由表变化）
+        route_table_init();
 
         //注册base_dpif_classes中的dpif_class,目前两个system,netdev
         //注册dpif_classes{netdev,netlink方式}
@@ -269,8 +270,9 @@ dp_class_unref(struct registered_dpif_class *rc)
     ovs_mutex_unlock(&dpif_mutex);
 }
 
+//通过类型查找对应注册的class,目前有两种system,netdev
 static struct registered_dpif_class *
-dp_class_lookup(const char *type)//通过类型查找对应注册的class,目前有两种system,netdev
+dp_class_lookup(const char *type)
 {
     struct registered_dpif_class *rc;
 
@@ -290,8 +292,9 @@ dp_class_lookup(const char *type)//通过类型查找对应注册的class,目前
  *
  * Some kinds of datapaths might not be practically enumerable.  This is not
  * considered an error. */
+//返回此type对应的所有dp的名称
 int
-dp_enumerate_names(const char *type, struct sset *names)//返回此type对应的所有dp的名称
+dp_enumerate_names(const char *type, struct sset *names)
 {
     struct registered_dpif_class *registered_class;
     const struct dpif_class *dpif_class;
@@ -300,15 +303,17 @@ dp_enumerate_names(const char *type, struct sset *names)//返回此type对应的
     dp_initialize();
     sset_clear(names);
 
+    //采用type查找dpif_class
     registered_class = dp_class_lookup(type);
     if (!registered_class) {
         VLOG_WARN("could not enumerate unknown type: %s", type);
         return EAFNOSUPPORT;
     }
 
+    //枚举由此class创建的所有datapath
     dpif_class = registered_class->dpif_class;
     error = (dpif_class->enumerate
-             ? dpif_class->enumerate(names, dpif_class)//枚举由此class创建的所有dp
+             ? dpif_class->enumerate(names, dpif_class)
              : 0);
     if (error) {
         VLOG_WARN("failed to enumerate %s datapaths: %s", dpif_class->type,
@@ -351,6 +356,7 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
 
     dp_initialize();
 
+    //取type对应的dpif_class
     type = dpif_normalize_type(type);
     registered_class = dp_class_lookup(type);
     if (!registered_class) {
@@ -361,7 +367,7 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
         goto exit;
     }
 
-    //使用此类理的dpif_class,创建dp
+    //使用此类型的dpif_class,创建dp
     error = registered_class->dpif_class->open(registered_class->dpif_class,
                                                name, create, &dpif);
     if (!error) {
@@ -381,6 +387,7 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
             err = netdev_open(dpif_port.name, dpif_port.type, &netdev);
 
             if (!err) {
+            	//将port添加进datapath
                 netdev_ports_insert(netdev, dpif->dpif_class, &dpif_port);
                 netdev_close(netdev);
             } else {
@@ -406,7 +413,8 @@ exit:
 int
 dpif_open(const char *name, const char *type, struct dpif **dpifp)
 {
-    return do_open(name, type, false, dpifp);//false防创建
+	//false防创建
+    return do_open(name, type, false, dpifp);
 }
 
 /* Tries to create and open a new datapath with the given 'name' and 'type'.
@@ -552,10 +560,12 @@ dpif_delete(struct dpif *dpif)
 int
 dpif_get_dp_stats(const struct dpif *dpif, struct dpif_dp_stats *stats)
 {
+	//获取统计信息
     int error = dpif->dpif_class->get_stats(dpif, stats);
     if (error) {
         memset(stats, 0, sizeof *stats);
     }
+    //显示get_stats的结果
     log_operation(dpif, "get_stats", error);
     return error;
 }
@@ -807,6 +817,7 @@ dpif_port_get_name(struct dpif *dpif, odp_port_t port_no,
 void
 dpif_port_dump_start(struct dpif_port_dump *dump, const struct dpif *dpif)
 {
+	//开始dump datapath interface中的	port
     dump->dpif = dpif;
     dump->error = dpif->dpif_class->port_dump_start(dpif, &dump->state);
     log_operation(dpif, "port_dump_start", dump->error);
@@ -908,6 +919,7 @@ dpif_flow_stats_extract(const struct flow *flow, const struct dp_packet *packet,
 }
 
 /* Appends a human-readable representation of 'stats' to 's'. */
+//格式化flow的统计信息
 void
 dpif_flow_stats_format(const struct dpif_flow_stats *stats, struct ds *s)
 {
@@ -1435,6 +1447,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
 
                 case DPIF_OP_EXECUTE:
                     COVERAGE_INC(dpif_execute);
+                    //显示要执行的action
                     log_execute_message(dpif, &this_module, &op->execute,
                                         false, error);
                     break;
@@ -1550,6 +1563,7 @@ dpif_disable_upcall(struct dpif *dpif)
     }
 }
 
+//显示收到的upcall报文
 void
 dpif_print_packet(struct dpif *dpif, struct dpif_upcall *upcall)
 {
@@ -1560,6 +1574,7 @@ dpif_print_packet(struct dpif *dpif, struct dpif_upcall *upcall)
         packet = ofp_dp_packet_to_string(&upcall->packet);
 
         ds_init(&flow);
+        //upcall报文的key
         odp_flow_key_format(upcall->key, upcall->key_len, &flow);
 
         VLOG_DBG("%s: %s upcall:\n%s\n%s",
@@ -1700,6 +1715,7 @@ dpif_init(struct dpif *dpif, const struct dpif_class *dpif_class,
 {
     dpif->dpif_class = dpif_class;
     dpif->base_name = xstrdup(name);
+    //例如 system@ovs-system
     dpif->full_name = xasprintf("%s@%s", dpif_class->type, name);
     dpif->netflow_engine_type = netflow_engine_type;
     dpif->netflow_engine_id = netflow_engine_id;
@@ -1874,11 +1890,14 @@ log_execute_message(const struct dpif *dpif,
                       (subexecute ? "sub-"
                        : dpif_execute_needs_help(execute) ? "super-"
                        : ""));
+        //显示要执行的action
         format_odp_actions(&ds, execute->actions, execute->actions_len, NULL);
         if (error) {
             ds_put_format(&ds, " failed (%s)", ovs_strerror(error));
         }
+        //显示action要执行的packet
         ds_put_format(&ds, " on packet %s", packet);
+        //显示metadata
         ds_put_format(&ds, " with metadata ");
         odp_flow_format(md.data, md.size, NULL, 0, NULL, &ds, true);
         ds_put_format(&ds, " mtu %d", execute->mtu);
