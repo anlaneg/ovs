@@ -42,6 +42,7 @@ static void recirc_id_node_free(struct recirc_id_node *);
 
 /* This should be called by the revalidator once at each round (every 500ms or
  * more). */
+//1.删除expired链上的元素;2.将expiring链上的元素移动到expired链上，实现延迟删除
 void
 recirc_run(void)
 {
@@ -71,10 +72,12 @@ recirc_run(void)
          * which should be enough for any ongoing recirculations to be
          * finished. */
         LIST_FOR_EACH_POP (node, exp_node, &expired) {
+        	//移除掉已经过期的recirc_node
             cmap_remove(&id_map, &node->id_node, node->id);
             ovsrcu_postpone(recirc_id_node_free, node);
         }
 
+        //将expiring中的元素移入到expired,实现延迟删除
         if (!ovs_list_is_empty(&expiring)) {
             /* 'expired' is now empty, move nodes in 'expiring' to it. */
             ovs_list_splice(&expired, ovs_list_front(&expiring), &expiring);
@@ -100,6 +103,7 @@ recirc_find__(uint32_t id)
 const struct recirc_id_node *
 recirc_id_node_find(uint32_t id)
 {
+	//recirc node查找
     const struct cmap_node *node = cmap_find(&id_map, id);
 
     return node
@@ -273,6 +277,7 @@ recirc_find_id(const struct frozen_state *target)
 uint32_t
 recirc_alloc_id_ctx(const struct frozen_state *state)
 {
+	//为frozen_state申请recirc id
     uint32_t hash = frozen_state_hash(state);
     struct recirc_id_node *node = recirc_ref_equal(state, hash);
     if (!node) {

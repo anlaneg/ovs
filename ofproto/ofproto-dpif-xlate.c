@@ -196,7 +196,7 @@ struct xlate_ctx {
     struct xlate_in *xin;
     struct xlate_out *xout;
 
-    struct xlate_cfg *xcfg;
+    struct xlate_cfg *xcfg;//保存配置快照，转换时使用的配置快照
     const struct xbridge *xbridge;
 
     /* Flow at the last commit. */
@@ -220,7 +220,7 @@ struct xlate_ctx {
     /* Flow translation populates this with wildcards relevant in translation.
      * When 'xin->wc' is nonnull, this is the same pointer.  When 'xin->wc' is
      * null, this is a pointer to a temporary buffer. */
-    struct flow_wildcards *wc;//flow的通配符
+    struct flow_wildcards *wc;//flow的通配符，用于指出哪些字段发生了修改
 
     /* Output buffer for datapath actions.  When 'xin->odp_actions' is nonnull,
      * this is the same pointer.  When 'xin->odp_actions' is null, this points
@@ -270,6 +270,7 @@ struct xlate_ctx {
     uint32_t sflow_n_outputs;   /* Number of output ports. */
     odp_port_t sflow_odp_port;  /* Output port for composing sFlow action. */
     ofp_port_t nf_output_iface; /* Output interface index for NetFlow. */
+    //是否需要退出转换
     bool exit;                  /* No further actions should be processed. */
     mirror_mask_t mirrors;      /* Bitmap of associated mirrors. */
     int mirror_snaplen;         /* Max size of a mirror packet in byte. */
@@ -412,6 +413,7 @@ struct xlate_ctx {
     bool action_set_has_group;  /* Action set contains OFPACT_GROUP? */
     struct ofpbuf action_set;   /* Action set. */
 
+    //转换错误状态
     enum xlate_error error;     /* Translation failed. */
 };
 
@@ -460,6 +462,7 @@ static void
 patch_port_output(struct xlate_ctx *ctx, const struct xport *in_dev,
                   struct xport *out_dev);
 
+//触发冻结状态
 static void
 ctx_trigger_freeze(struct xlate_ctx *ctx)
 {
@@ -3382,7 +3385,8 @@ process_special(struct xlate_ctx *ctx, const struct xport *xport)
         slow = SLOW_CFM;
     } else if (xport->bfd && bfd_should_process_flow(xport->bfd, flow, wc)) {
         if (packet) {
-            bfd_process_packet(xport->bfd, flow, packet);//双向转发检测处理
+        	//双向转发检测处理
+            bfd_process_packet(xport->bfd, flow, packet);
             /* If POLL received, immediately sends FINAL back. */
             if (bfd_should_send_packet(xport->bfd)) {
                 ofproto_dpif_monitor_port_send_soon(xport->ofport);
@@ -3789,7 +3793,7 @@ xlate_commit_actions(struct xlate_ctx *ctx)
     bool use_masked = ctx->xbridge->support.masked_set_action;
 
     ctx->xout->slow |= commit_odp_actions(&ctx->xin->flow/*当前转换后flow*/, &ctx->base_flow/*基线flow*/,
-                                          ctx->odp_actions, ctx->wc,
+                                          ctx->odp_actions/*出参，记录生成的action*/, ctx->wc/*各字段变更掩码*/,
                                           use_masked, ctx->pending_encap,
                                           ctx->pending_decap, ctx->encap_data);
     ctx->pending_encap = false;
@@ -4767,6 +4771,7 @@ xlate_ofpact_resubmit(struct xlate_ctx *ctx,
         in_port = ctx->xin->flow.in_port.ofp_port;
     }
 
+    //跳到指定的表
     table_id = resubmit->table_id;
     if (table_id == 255) {
         table_id = ctx->table_id;
@@ -5015,9 +5020,11 @@ compose_recirculate_and_fork(struct xlate_ctx *ctx, uint8_t table,
 {
     uint32_t recirc_id;
     ctx->freezing = true;
+    //记录当前状态，生成recirc_id
     recirc_id = finish_freezing__(ctx, table);
 
     if (OVS_UNLIKELY(ctx->xin->trace) && recirc_id) {
+    	//记录此recirc状态
         if (oftrace_add_recirc_node(ctx->xin->recirc_queue,
                                     OFT_RECIRC_CONNTRACK, &ctx->xin->flow,
                                     ctx->xin->packet, recirc_id, zone)) {
@@ -5839,6 +5846,7 @@ static void
 compose_clone(struct xlate_ctx *ctx, const struct ofpact_nest *oc,
               bool is_last_action)
 {
+	//clone的报文长度
     size_t oc_actions_len = ofpact_nest_get_action_len(oc);
 
     clone_xlate_actions(oc->actions, oc_actions_len, ctx, is_last_action,
@@ -5854,8 +5862,9 @@ xlate_meter_action(struct xlate_ctx *ctx, const struct ofpact_meter *meter)
     }
 }
 
+//检查xport是否可以收取报文
 static bool
-may_receive(const struct xport *xport, struct xlate_ctx *ctx)//检查xport是否可以收取报文
+may_receive(const struct xport *xport, struct xlate_ctx *ctx)
 {
     if (xport->config & (is_stp(&ctx->xin->flow)
                          ? OFPUTIL_PC_NO_RECV_STP
@@ -6194,7 +6203,8 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc,
     put_ct_mark(&ctx->xin->flow, ctx->odp_actions, ctx->wc);
     put_ct_label(&ctx->xin->flow, ctx->odp_actions, ctx->wc);
     put_ct_helper(ctx, ctx->odp_actions, ofc);
-    put_ct_nat(ctx);//生成nat动作
+    //生成nat动作
+    put_ct_nat(ctx);
     ctx->ct_nat_action = NULL;
     nl_msg_end_nested(ctx->odp_actions, ct_offset);
 
@@ -6202,6 +6212,7 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc,
     ctx->wc->masks.ct_mark = old_ct_mark_mask;
     ctx->wc->masks.ct_label = old_ct_label_mask;
 
+    //需要等待ct完成后再做下一步处理，故freezen
     if (ofc->recirc_table != NX_CT_RECIRC_NONE) {
         ctx->conntracked = true;
         compose_recirculate_and_fork(ctx, ofc->recirc_table, zone);
@@ -6577,11 +6588,13 @@ recirc_for_mpls(const struct ofpact *a, struct xlate_ctx *ctx)
 {
     /* No need to recirculate if already exiting. */
     if (ctx->exit) {
+    	//如果需要退出处理，则直接返回
         return;
     }
 
     /* Do not consider recirculating unless the packet was previously MPLS. */
     if (!ctx->was_mpls) {
+    	//非mpls报文退出
         return;
     }
 
@@ -6711,6 +6724,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
     /* dl_type already in the mask, not set below. */
 
     if (!ofpacts_len) {
+    	//action长度为0,指定为drop
         xlate_report(ctx, OFT_ACTION, "drop");
         return;
     }
@@ -6725,6 +6739,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
                     && ctx->action_set.size;
 
         if (ctx->error) {
+        	//如转换出错，则退出
             break;
         }
 
@@ -6842,6 +6857,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
 
         case OFPACT_SET_ETH_SRC:
         	//设置src mac
+        	//置dl_src的mask为全1
             WC_MASK_FIELD(wc, dl_src);
             flow->dl_src = ofpact_get_SET_ETH_SRC(a)->mac;
             break;
@@ -6935,10 +6951,12 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
         	//设置skb_priority
             memset(&wc->masks.skb_priority, 0xff,
                    sizeof wc->masks.skb_priority);
+            //将queue_id转换为skb_priority
             xlate_set_queue_action(ctx, ofpact_get_SET_QUEUE(a)->queue_id);
             break;
 
-        case OFPACT_POP_QUEUE://还原到原始优先级
+        case OFPACT_POP_QUEUE:
+        	//还原skb_priority
             memset(&wc->masks.skb_priority, 0xff,
                    sizeof wc->masks.skb_priority);
             if (flow->skb_priority != ctx->orig_skb_priority) {
@@ -6950,10 +6968,12 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_REG_MOVE:
+        	//实现寄存器move
             xlate_ofpact_reg_move(ctx, ofpact_get_REG_MOVE(a));
             break;
 
-        case OFPACT_SET_FIELD://针对具体一个字段进行设置
+        case OFPACT_SET_FIELD:
+        	//针对具体一个字段进行设置
             set_field = ofpact_get_SET_FIELD(a);
             mf = set_field->field;
 
@@ -7132,6 +7152,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
         }
 
         case OFPACT_CT:
+        	//ct action转换
             compose_conntrack_action(ctx, ofpact_get_CT(a), last);
             break;
 
@@ -7213,6 +7234,7 @@ xlate_in_init(struct xlate_in *xin, struct ofproto_dpif *ofproto/*upcall报文�
     /* Do recirc lookup. */
     xin->frozen_state = NULL;
     if (flow->recirc_id) {
+    	//通过recirc_id查找对应的recirc_node,并还原frozen_state
         const struct recirc_id_node *node
             = recirc_id_node_find(flow->recirc_id);
         if (node) {
@@ -7456,7 +7478,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
     //取当前配置
     struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
-    //当前转文对应的bridge
+    //当前报文对应的bridge
     struct xbridge *xbridge = xbridge_lookup(xcfg, xin->ofproto);
     if (!xbridge) {
         return XLATE_BRIDGE_NOT_FOUND;
@@ -7475,7 +7497,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         .xout = xout,
         .base_flow = *flow,//保存基准flow,生成action时用
         .orig_tunnel_ipv6_dst = flow_tnl_dst(&flow->tunnel),
-        .xcfg = xcfg,
+        .xcfg = xcfg,//保存转换时使用的配置快照
         .xbridge = xbridge,
         .stack = OFPBUF_STUB_INITIALIZER(stack_stub),
         .rule = xin->rule,
@@ -7532,7 +7554,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     xin->trace = xlate_report(&ctx, OFT_BRIDGE, "bridge(\"%s\")",
                               xbridge->name);
     if (xin->frozen_state) {
-    	//重入后，当recirc_id不为0时，此变量有值
+    	//当recirc_id不为0时，此变量有值
         const struct frozen_state *state = xin->frozen_state;
 
         struct ovs_list *old_trace = xin->trace;
@@ -7644,9 +7666,11 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
     /* Get the proximate input port of the packet.  (If xin->frozen_state,
      * flow->in_port is the ultimate input port of the packet.) */
+    //取报文入接口对应的xport
     struct xport *in_port = get_ofp_port(xbridge,
                                          ctx.base_flow.in_port.ofp_port);
     if (in_port && !in_port->peer) {
+    	//非patch口，记录首个非patch口xport对应的uuid
         ctx.xin->xport_uuid = in_port->uuid;
     }
 
@@ -7744,7 +7768,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
                 OVS_NOT_REACHED();
             }
 
-            mirror_ingress_packet(&ctx);//mirror处理
+            //mirror处理
+            mirror_ingress_packet(&ctx);
 
             //执行action转换（完成在ctx中的动作合并）
             do_xlate_actions(ofpacts, ofpacts_len, &ctx, true, false);

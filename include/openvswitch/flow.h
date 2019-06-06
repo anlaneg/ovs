@@ -126,7 +126,8 @@ struct flow {
                                    packets of type PACKET_TYPE(1, Ethertype) */
     uint8_t pad1[2];            /* Pad to 64 bits. */ //为minflow补齐为一个2个unit64_t
 
-    union flow_vlan_hdr vlans[FLOW_MAX_VLAN_HEADERS]; /* VLANs */ //为了支持双层vlan
+    //为了支持双层vlan
+    union flow_vlan_hdr vlans[FLOW_MAX_VLAN_HEADERS]; /* VLANs */
     ovs_be32 mpls_lse[ROUND_UP(FLOW_MAX_MPLS_LABELS, 2)]; /* MPLS label stack
                                                              (with padding). */
     /* L3 (64-bit aligned) */

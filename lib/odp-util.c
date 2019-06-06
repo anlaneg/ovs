@@ -7563,8 +7563,8 @@ commit_odp_tunnel_action(const struct flow *flow, struct flow *base,
 }
 
 struct offsetof_sizeof {
-    int offset;
-    int size;
+    int offset;//元素起始位置的offset
+    int size;//元素大小
 };
 
 /* Compares each of the fields in 'key0' and 'key1'.  The fields are specified
@@ -7591,9 +7591,10 @@ keycmp_mask(const void *key0, const void *key1,
         char *pkey1 = ((char *)key1) + offset;
         char *pmask = ((char *)mask) + offset;
         if (memcmp(pkey0, pkey1, size) == 0) {
-        	//pkey0与pkey1完全相同，pmask置为0（认为未修改）
+        	//pkey0与pkey1完全相同，将pmask置为0（认为未修改）
             memset(pmask, 0, size);
         } else {
+        	//两者不同
             differ = true;
         }
     }
@@ -7604,7 +7605,7 @@ keycmp_mask(const void *key0, const void *key1,
 //利用此函数完成动作生成
 static bool
 commit(enum ovs_key_attr attr/*待提交的action类型*/, bool use_masked_set/*是否可支持mask设置*/,
-       const void *key/*转换后值*/, void *base/*转换前值*/, void *mask/*修改的mask*/,
+       const void *key/*key转换后值*/, void *base/*key转换前值*/, void *mask/*修改的mask*/,
 	   size_t size/*key大小*/,
        struct offsetof_sizeof *offsetof_sizeof_arr,
        struct ofpbuf *odp_actions/*转换后存放位置*/)
@@ -7635,6 +7636,7 @@ commit(enum ovs_key_attr attr/*待提交的action类型*/, bool use_masked_set/*
     }
 }
 
+//取flow中的源目的地址
 static void
 get_ethernet_key(const struct flow *flow, struct ovs_key_ethernet *eth)
 {
@@ -7670,7 +7672,7 @@ commit_set_ether_action(const struct flow *flow, struct flow *base_flow,
     if (commit(OVS_KEY_ATTR_ETHERNET, use_masked,
                &key, &base, &mask, sizeof key,
                ovs_key_ethernet_offsetof_sizeof_arr, odp_actions)) {
-    	//动作生成，完成flow变更
+    	//动作生成，还原baseflow变更
         put_ethernet_key(&base, base_flow);//base_flow变更
         put_ethernet_key(&mask, &wc->masks);//wc->masks变更
     }
@@ -7791,8 +7793,8 @@ put_ipv4_key(const struct ovs_key_ipv4 *ipv4, struct flow *flow, bool is_mask)
 }
 
 static void
-commit_set_ipv4_action(const struct flow *flow, struct flow *base_flow,
-                       struct ofpbuf *odp_actions, struct flow_wildcards *wc,
+commit_set_ipv4_action(const struct flow *flow/*最终状态*/, struct flow *base_flow/*起始状态*/,
+                       struct ofpbuf *odp_actions/*出参，记录生成的action*/, struct flow_wildcards *wc/*变更mask*/,
                        bool use_masked)
 {
     struct ovs_key_ipv4 key, mask, base;
@@ -7814,6 +7816,7 @@ commit_set_ipv4_action(const struct flow *flow, struct flow *base_flow,
         mask.ipv4_tos &= ~IP_ECN_MASK;
     }
 
+    //生成ipv4的变更
     if (commit(OVS_KEY_ATTR_IPV4, use_masked, &key, &base, &mask, sizeof key,
                ovs_key_ipv4_offsetof_sizeof_arr, odp_actions)) {
         put_ipv4_key(&base, base_flow, false);
@@ -8312,6 +8315,7 @@ commit_set_priority_action(const struct flow *flow, struct flow *base_flow,
     base = base_flow->skb_priority;
     mask = wc->masks.skb_priority;
 
+    //生成针对优先级的变更
     if (commit(OVS_KEY_ATTR_PRIORITY, use_masked, &key, &base, &mask,
                sizeof key, ovs_key_prio_offsetof_sizeof_arr, odp_actions)) {
         base_flow->skb_priority = base;
@@ -8468,23 +8472,31 @@ commit_odp_actions(const struct flow *flow, struct flow *base,
 
     commit_encap_decap_action(flow, base, odp_actions, wc,
                               pending_encap, pending_decap, encap_data);
+    //生成源目的mac变更action
     commit_set_ether_action(flow, base, odp_actions, wc, use_masked);
     /* Make packet a non-MPLS packet before committing L3/4 actions,
      * which would otherwise do nothing. */
-    if (eth_type_mpls(base->dl_type) && !eth_type_mpls(flow->dl_type)) {//mpls处理
+    if (eth_type_mpls(base->dl_type) && !eth_type_mpls(flow->dl_type)) {
+    	//mpls处理
         commit_mpls_action(flow, base, odp_actions);
         mpls_done = true;
     }
-    commit_set_nsh_action(flow, base, odp_actions, wc, use_masked);//ipv4,ipv6,arp处理
+    commit_set_nsh_action(flow, base, odp_actions, wc, use_masked);
+    //ipv4,ipv6,arp处理
     slow1 = commit_set_nw_action(flow, base, odp_actions, wc, use_masked);
-    commit_set_port_action(flow, base, odp_actions, wc, use_masked);//tcp,udp,sctp处理
-    slow2 = commit_set_icmp_action(flow, base, odp_actions, wc);//icmpv4,icmpv6
+    //tcp,udp,sctp处理
+    commit_set_port_action(flow, base, odp_actions, wc, use_masked);
+    //icmpv4,icmpv6
+    slow2 = commit_set_icmp_action(flow, base, odp_actions, wc);
     if (!mpls_done) {
         commit_mpls_action(flow, base, odp_actions);
     }
-    commit_vlan_action(flow, base, odp_actions, wc);//vlan处理
-    commit_set_priority_action(flow, base, odp_actions, wc, use_masked);//ip报文的优先级(qos)
-    commit_set_pkt_mark_action(flow, base, odp_actions, wc, use_masked);//pkt mark
+    //vlan处理
+    commit_vlan_action(flow, base, odp_actions, wc);
+    //ip报文的优先级(qos)
+    commit_set_priority_action(flow, base, odp_actions, wc, use_masked);
+    //生成针对pkt mark的变更
+    commit_set_pkt_mark_action(flow, base, odp_actions, wc, use_masked);
 
     return slow1 ? slow1 : slow2;
 }

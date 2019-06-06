@@ -127,12 +127,14 @@ struct udpif {
     struct dpif *dpif;                 /* Datapath handle. */
     struct dpif_backer *backer;        /* Opaque dpif_backer pointer. */
 
+    //每个handler线程一个handler结构
     struct handler *handlers;          /* Upcall handlers. */
     size_t n_handlers;
 
     struct revalidator *revalidators;  /* Flow revalidators. */
     size_t n_revalidators;
 
+    //通知子线程退出
     struct latch exit_latch;           /* Tells child threads to exit. */
 
     /* Revalidation. */
@@ -570,6 +572,7 @@ udpif_start_threads(struct udpif *udpif, size_t n_handlers_,
         udpif->n_handlers = n_handlers_;
         udpif->n_revalidators = n_revalidators_;
 
+        //创建n_handlers个handler线程
         udpif->handlers = xzalloc(udpif->n_handlers * sizeof *udpif->handlers);
         for (size_t i = 0; i < udpif->n_handlers; i++) {
             struct handler *handler = &udpif->handlers[i];
@@ -589,6 +592,8 @@ udpif_start_threads(struct udpif *udpif, size_t n_handlers_,
         udpif->reval_exit = false;
         udpif->pause = false;
         udpif->offload_rebalance_time = time_msec();
+
+        //创建n_revalidators个revalidator线程
         udpif->revalidators = xzalloc(udpif->n_revalidators
                                       * sizeof *udpif->revalidators);
         for (size_t i = 0; i < udpif->n_revalidators; i++) {
@@ -762,6 +767,7 @@ udpif_get_n_flows(struct udpif *udpif)
 /* The upcall handler thread tries to read a batch of UPCALL_MAX_BATCH
  * upcalls from dpif, processes the batch and installs corresponding flows
  * in dpif. */
+//handler线程入口
 static void *
 udpif_upcall_handler(void *arg)
 {
@@ -770,11 +776,14 @@ udpif_upcall_handler(void *arg)
 
     while (!latch_is_set(&handler->udpif->exit_latch)) {
         if (recv_upcalls(handler)) {
+        	//收到多个报文，立即唤醒
             poll_immediate_wake();
         } else {
+        	//未收到报文，等待报文及等待线程退出
             dpif_recv_wait(udpif->dpif, handler->handler_id);
             latch_wait(&udpif->exit_latch);
         }
+
         //等待事件触发
         poll_block();
     }

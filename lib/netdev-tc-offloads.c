@@ -48,9 +48,9 @@ static bool multi_mask_per_prio = false;
 static bool block_support = false;
 
 struct netlink_field {
-    int offset;
-    int flower_offset;
-    int size;
+    int offset;//字段在源结构体中的偏移量
+    int flower_offset;//字段在目的结构体中的偏移量
+    int size;//字段类型的大小
 };
 
 static bool
@@ -62,6 +62,7 @@ is_internal_port(const char *type)
 static enum tc_qdisc_hook
 get_tc_qdisc_hook(struct netdev *netdev)
 {
+	//除internal使用egress外，其它均采用ingress方向
     return is_internal_port(netdev_get_type(netdev)) ? TC_EGRESS : TC_INGRESS;
 }
 
@@ -103,6 +104,7 @@ static struct netlink_field set_flower_map[][4] = {
           MEMBER_SIZEOF(struct tc_flower_key, ipv6.rewrite_tclass)
         },
     },
+	//以太头字段
     [OVS_KEY_ATTR_ETHERNET] = {
         { offsetof(struct ovs_key_ethernet, eth_src),
           offsetof(struct tc_flower_key, src_mac),
@@ -119,6 +121,7 @@ static struct netlink_field set_flower_map[][4] = {
           MEMBER_SIZEOF(struct tc_flower_key, eth_type)
         },
     },
+	//tcp字段
     [OVS_KEY_ATTR_TCP] = {
         { offsetof(struct ovs_key_tcp, tcp_src),
           offsetof(struct tc_flower_key, tcp_src),
@@ -129,6 +132,7 @@ static struct netlink_field set_flower_map[][4] = {
           MEMBER_SIZEOF(struct tc_flower_key, tcp_dst)
         },
     },
+	//udp字段
     [OVS_KEY_ATTR_UDP] = {
         { offsetof(struct ovs_key_udp, udp_src),
           offsetof(struct tc_flower_key, udp_src),
@@ -156,14 +160,20 @@ static struct ovs_mutex ufid_lock = OVS_MUTEX_INITIALIZER;
 struct ufid_tc_data {
     struct hmap_node ufid_node;
     struct hmap_node tc_node;
-    ovs_u128 ufid;
+
+    //ufid做为主键，查找ufid_node
+    ovs_u128 ufid;//规则对应的id
+
+    //prio,handle合起来可以做为主键查找tc_node
     uint16_t prio;
     uint32_t handle;
-    int ifindex;
-    struct netdev *netdev;
+
+    int ifindex;//netdev对应的ifindex
+    struct netdev *netdev;//规则所属的设备
 };
 
 /* Remove matching ufid entry from ufid_tc hashmap. */
+//删除ufid对应的tc规则
 static void
 del_ufid_tc_mapping(const ovs_u128 *ufid)
 {
@@ -204,6 +214,7 @@ del_filter_and_ufid_mapping(int ifindex, int prio, int handle,
 }
 
 /* Add ufid entry to ufid_tc hashmap. */
+//添加ufid对应的数据，（prio,handle）对应的数据
 static void
 add_ufid_tc_mapping(const ovs_u128 *ufid, int prio, int handle,
                     struct netdev *netdev, int ifindex)
@@ -234,13 +245,14 @@ add_ufid_tc_mapping(const ovs_u128 *ufid, int prio, int handle,
  * Otherwise returns 0.
  */
 static int
-get_ufid_tc_mapping(const ovs_u128 *ufid, int *prio, struct netdev **netdev)
+get_ufid_tc_mapping(const ovs_u128 *ufid, int *prio/*出参，优先级*/, struct netdev **netdev/*出参，规则对应的设备*/)
 {
     size_t ufid_hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct ufid_tc_data *data;
     int handle = 0;
 
     ovs_mutex_lock(&ufid_lock);
+    //遍历ufid_tc表(ufid_hash对应的通）
     HMAP_FOR_EACH_WITH_HASH(data, ufid_node, ufid_hash, &ufid_tc) {
         if (ovs_u128_equals(*ufid, data->ufid)) {
             if (prio) {
@@ -249,6 +261,7 @@ get_ufid_tc_mapping(const ovs_u128 *ufid, int *prio, struct netdev **netdev)
             if (netdev) {
                 *netdev = netdev_ref(data->netdev);
             }
+            /*返回规则对应的handle*/
             handle = data->handle;
             break;
         }
@@ -263,6 +276,7 @@ get_ufid_tc_mapping(const ovs_u128 *ufid, int *prio, struct netdev **netdev)
  *
  * Returns true on success.
  */
+//通过（prio,handle）查找ufid及其对应的规则所属的netdev
 static bool
 find_ufid(int prio, int handle, struct netdev *netdev, ovs_u128 *ufid)
 {
@@ -324,6 +338,7 @@ get_prio_for_tc_flower(struct tc_flower *flower)
         }
     }
 
+    //last_prio达到最大时，返回0，标明分配失败
     if (last_prio == UINT16_MAX) {
         /* last_prio can overflow if there will be many different kinds of
          * flows which shouldn't happen organically. */
@@ -333,9 +348,9 @@ get_prio_for_tc_flower(struct tc_flower *flower)
 
     new_data = xzalloc(sizeof *new_data);
     memcpy(&new_data->mask, &flower->mask, key_len);
-    new_data->prio = ++last_prio;
-    new_data->protocol = flower->key.eth_type;
-    hmap_insert(&prios, &new_data->node, hash);
+    new_data->prio = ++last_prio;//分配优先级
+    new_data->protocol = flower->key.eth_type;//设置以太报文类型
+    hmap_insert(&prios, &new_data->node, hash);//加入到prios表中
     ovs_mutex_unlock(&prios_lock);
 
     return new_data->prio;
@@ -422,6 +437,7 @@ parse_flower_rewrite_to_netlink_action(struct ofpbuf *buf,
             continue;
         }
 
+        //遍历flower支持的所有type
         for (int j = 0; j < ARRAY_SIZE(set_flower_map[type]); j++) {
             struct netlink_field *f = &set_flower_map[type][j];
 
@@ -429,13 +445,16 @@ parse_flower_rewrite_to_netlink_action(struct ofpbuf *buf,
                 break;
             }
 
+            //此字段被设置
             if (!is_all_zeros(mask + f->flower_offset, f->size)) {
                 if (!put) {
+                	//首次设置
                     nested = nl_msg_start_nested(buf,
                                                  OVS_ACTION_ATTR_SET_MASKED);
                     put = nl_msg_put_unspec_zero(buf, type, len * 2);
                 }
 
+                //设置字段值，字段mask到netlink消息中
                 memcpy(put + f->offset, data + f->flower_offset, f->size);
                 memcpy(put + len + f->offset,
                        mask + f->flower_offset, f->size);
@@ -770,10 +789,11 @@ netdev_tc_flow_dump_next(struct netdev_flow_dump *dump,
     return false;
 }
 
+//填充flower中的key,mask字段，
 static int
 parse_put_flow_set_masked_action(struct tc_flower *flower,
-                                 struct tc_action *action,
-                                 const struct nlattr *set,
+                                 struct tc_action *action/*填充转换后action*/,
+                                 const struct nlattr *set/*待转换action*/,
                                  size_t set_len,
                                  bool hasmask)
 {
@@ -790,9 +810,13 @@ parse_put_flow_set_masked_action(struct tc_flower *flower,
     /* copy so we can set attr mask to 0 for used ovs key struct members  */
     attr = ofpbuf_put(&set_buf, set, set_len);
 
+    //记录要设置的key类别
     type = nl_attr_type(attr);
+    //key,mask大小为一半一半
     size = nl_attr_get_size(attr) / 2;
+    //指向key值对应的指针
     set_data = CONST_CAST(char *, nl_attr_get(attr));
+    //指向mask值对应的指针
     set_mask = set_data + size;
 
     //检查要设置的flow是否支持
@@ -813,6 +837,7 @@ parse_put_flow_set_masked_action(struct tc_flower *flower,
 
         /* copy masked value */
         for (j = 0; j < f->size; j++) {
+        	//如果hashmask不为正，则使用0xFF,否则使用mask值，一个字节一个字节地设置
             char maskval = hasmask ? set_mask[f->offset + j] : 0xFF;
 
             //设置rewrite后的值
@@ -827,7 +852,7 @@ parse_put_flow_set_masked_action(struct tc_flower *flower,
         }
     }
 
-    //如果确实需要发生rewrite,则置action为TC_ACT_PEDIT
+    //如果确实有字段需要发生rewrite,则置action为TC_ACT_PEDIT
     if (!is_all_zeros(&flower->rewrite, sizeof flower->rewrite)) {
         if (flower->rewrite.rewrite == false) {
             flower->rewrite.rewrite = true;
@@ -836,7 +861,7 @@ parse_put_flow_set_masked_action(struct tc_flower *flower,
         }
     }
 
-    //遇着不支持的rewrite，报错
+    //遇着不支持的字段的rewrite，报错
     if (hasmask && !is_all_zeros(set_mask, size)) {
         VLOG_DBG_RL(&rl, "unsupported sub attribute of set action type %d",
                     type);
@@ -935,7 +960,7 @@ test_key_and_mask(struct match *match)
     }
 
     if (mask->recirc_id && key->recirc_id) {
-    	//不支持recirc_id
+    	//不支持匹配recirc_id
         VLOG_DBG_RL(&rl, "offloading attribute recirc_id isn't supported");
         return EOPNOTSUPP;
     }
@@ -964,21 +989,25 @@ test_key_and_mask(struct match *match)
     }
 
     if (mask->ct_state) {
+    	//不支持ct状态匹配
         VLOG_DBG_RL(&rl, "offloading attribute ct_state isn't supported");
         return EOPNOTSUPP;
     }
 
     if (mask->ct_zone) {
+    	//不支持ct zone设置
         VLOG_DBG_RL(&rl, "offloading attribute ct_zone isn't supported");
         return EOPNOTSUPP;
     }
 
     if (mask->ct_mark) {
+    	//不支持ct mark设置
         VLOG_DBG_RL(&rl, "offloading attribute ct_mark isn't supported");
         return EOPNOTSUPP;
     }
 
     if (mask->packet_type && key->packet_type) {
+    	//不支持改packet_type
         VLOG_DBG_RL(&rl, "offloading attribute packet_type isn't supported");
         return EOPNOTSUPP;
     }
@@ -1015,7 +1044,7 @@ test_key_and_mask(struct match *match)
         }
     }
 
-    //不支持icmp
+    //不支持icmp的type,code匹配
     if (key->dl_type == htons(ETH_TYPE_IP) &&
         key->nw_proto == IPPROTO_ICMP) {
         if (mask->tp_src) {
@@ -1059,6 +1088,7 @@ test_key_and_mask(struct match *match)
     }
 
     if (!is_all_zeros(mask, sizeof *mask)) {
+    	//不支持其它mask
         VLOG_DBG_RL(&rl, "offloading isn't supported, unknown attribute");
         return EOPNOTSUPP;
     }
@@ -1096,7 +1126,7 @@ flower_match_to_tun_opt(struct tc_flower *flower, const struct flow_tnl *tnl,
 
 //通过tc offload flow（创建或修改）
 int
-netdev_tc_flow_put(struct netdev *netdev, struct match *match,
+netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match *match,
                    struct nlattr *actions, size_t actions_len,
                    const ovs_u128 *ufid, struct offload_info *info,
                    struct dpif_flow_stats *stats OVS_UNUSED)
@@ -1117,6 +1147,8 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     int ifindex;
     int err;
 
+    //以下代码在针对某field完成赋值给flower后，会在mask中将此值置为0，原因是为了配合
+    //函数test_key_and_mask对不支持的字段的检查。
     //选择要操纵的接口
     ifindex = netdev_get_ifindex(netdev);
     if (ifindex < 0) {
@@ -1141,12 +1173,15 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         flower.key.tunnel.ipv4.ipv4_dst = tnl->ip_dst;
         flower.key.tunnel.ipv6.ipv6_src = tnl->ipv6_src;
         flower.key.tunnel.ipv6.ipv6_dst = tnl->ipv6_dst;
+
         flower.key.tunnel.tos = tnl->ip_tos;
         flower.key.tunnel.ttl = tnl->ip_ttl;
         flower.key.tunnel.tp_src = tnl->tp_src;
         flower.key.tunnel.tp_dst = tnl->tp_dst;
+        //mask信息
         flower.mask.tunnel.tos = tnl_mask->ip_tos;
         flower.mask.tunnel.ttl = tnl_mask->ip_ttl;
+        //必须有key标记，才设置	mask
         flower.mask.tunnel.id = (tnl->flags & FLOW_TNL_F_KEY) ? tnl_mask->tun_id : 0;
         //填充tunnel的选项字段
         flower_match_to_tun_opt(&flower, tnl, tnl_mask);
@@ -1316,7 +1351,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         }
     }
 
-    //将不支持的返回err
+    //为不支持的流返回err
     err = test_key_and_mask(match);
     if (err) {
         return err;
@@ -1331,10 +1366,11 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         }
         action = &flower.actions[flower.action_count];
         if (nl_attr_type(nla) == OVS_ACTION_ATTR_OUTPUT) {
-        	//转换output action
+        	//转换ovs output action
             odp_port_t port = nl_attr_get_odp_port(nla);
             struct netdev *outdev = netdev_ports_get(port, info->dpif_class);
 
+            //生成action
             action->out.ifindex_out = netdev_get_ifindex(outdev);
             action->out.ingress = is_internal_port(netdev_get_type(outdev));
             action->type = TC_ACT_OUTPUT;
@@ -1354,6 +1390,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             action->type = TC_ACT_VLAN_POP;
             flower.action_count++;
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_SET) {
+        	//属性设置
             const struct nlattr *set = nl_attr_get(nla);
             const size_t set_len = nl_attr_get_size(nla);
 
@@ -1369,7 +1406,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             const struct nlattr *set = nl_attr_get(nla);
             const size_t set_len = nl_attr_get_size(nla);
 
-            //设置字段的action
+            //设置字段的mask action
             err = parse_put_flow_set_masked_action(&flower, action, set,
                                                    set_len, true);
             if (err) {
@@ -1384,8 +1421,10 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     }
 
     block_id = get_block_id_from_netdev(netdev);
+    //如果未查找，返回0
     handle = get_ufid_tc_mapping(ufid, &prio, NULL);
     if (handle && prio) {
+    	//规则已存在，需要更新（先删除再新增）
         VLOG_DBG_RL(&rl, "updating old handle: %d prio: %d", handle, prio);
         del_filter_and_ufid_mapping(ifindex, prio, handle, block_id, ufid,
                                     hook);
@@ -1394,17 +1433,20 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     if (!prio) {
         prio = get_prio_for_tc_flower(&flower);
         if (prio == 0) {
+        	//分配优先级失败
             VLOG_ERR_RL(&rl, "couldn't get tc prio: %s", ovs_strerror(ENOSPC));
             return ENOSPC;
         }
     }
 
+    //将ufid传入
     flower.act_cookie.data = ufid;
     flower.act_cookie.len = sizeof *ufid;
 
     //通过netlink的tc接口向下发送flow的增删
     err = tc_replace_flower(ifindex, prio, handle, &flower, block_id, hook);
     if (!err) {
+    	//缓存已下发的tc规则
         add_ufid_tc_mapping(ufid, flower.prio, flower.handle, netdev, ifindex);
     }
 
@@ -1522,11 +1564,13 @@ probe_multi_mask_per_prio(int ifindex)
     int block_id = 0;
     int error;
 
+    //添加ingress队列
     error = tc_add_del_qdisc(ifindex, true, block_id, TC_INGRESS);
     if (error) {
         return;
     }
 
+    //构造命中ip报文，目的mac为11:11:11:11:11:11的报文
     memset(&flower, 0, sizeof flower);
 
     flower.key.eth_type = htons(ETH_P_IP);
@@ -1534,27 +1578,33 @@ probe_multi_mask_per_prio(int ifindex)
     memset(&flower.key.dst_mac, 0x11, sizeof flower.key.dst_mac);
     memset(&flower.mask.dst_mac, 0xff, sizeof flower.mask.dst_mac);
 
+    //下发此条规则
     error = tc_replace_flower(ifindex, 1, 1, &flower, block_id, TC_INGRESS);
     if (error) {
         goto out;
     }
 
+    //构造源mac为11:11:11:11:11:11报文
     memset(&flower.key.src_mac, 0x11, sizeof flower.key.src_mac);
     memset(&flower.mask.src_mac, 0xff, sizeof flower.mask.src_mac);
 
     error = tc_replace_flower(ifindex, 1, 2, &flower, block_id, TC_INGRESS);
+
+    //移除ifindex上ingress的规则1
     tc_del_filter(ifindex, 1, 1, block_id, TC_INGRESS);
 
     if (error) {
         goto out;
     }
 
+    //移除ifindex上ingress的规则2
     tc_del_filter(ifindex, 1, 2, block_id, TC_INGRESS);
 
     multi_mask_per_prio = true;
     VLOG_INFO("probe tc: multiple masks on single tc prio is supported.");
 
 out:
+	//如果出错，删除disc
     tc_add_del_qdisc(ifindex, false, block_id, TC_INGRESS);
 }
 
@@ -1616,6 +1666,7 @@ netdev_tc_init_flow_api(struct netdev *netdev)
     }
 
     if (ovsthread_once_start(&multi_mask_once)) {
+    	//环境检测
         probe_multi_mask_per_prio(ifindex);
         ovsthread_once_done(&multi_mask_once);
     }

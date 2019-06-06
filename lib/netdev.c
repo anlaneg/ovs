@@ -2239,7 +2239,7 @@ netdev_flow_dump_next(struct netdev_flow_dump *dump, struct match *match,
 int
 netdev_flow_put(struct netdev *netdev, struct match *match/*下发的match字段*/,
                 struct nlattr *actions/*下发的actions字段*/, size_t act_len/*action大小*/,
-                const ovs_u128 *ufid, struct offload_info *info,
+                const ovs_u128 *ufid/*用于唯一标识规则*/, struct offload_info *info,
                 struct dpif_flow_stats *stats)
 {
     const struct netdev_class *class = netdev->netdev_class;
@@ -2275,15 +2275,18 @@ netdev_flow_del(struct netdev *netdev, const ovs_u128 *ufid,
             : EOPNOTSUPP);
 }
 
+//按不同接口初始化flow api
 int
 netdev_init_flow_api(struct netdev *netdev)
 {
     const struct netdev_class *class = netdev->netdev_class;
 
     if (!netdev_is_flow_api_enabled()) {
+    	//未开启offload,不初始化
         return EOPNOTSUPP;
     }
 
+    //按netdev对应的class执行初始化
     return (class->init_flow_api
             ? class->init_flow_api(netdev)
             : EOPNOTSUPP);

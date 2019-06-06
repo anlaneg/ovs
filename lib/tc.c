@@ -71,17 +71,18 @@ struct tc_pedit_key_ex {
 };
 
 struct flower_key_to_pedit {
+	//被修改字段头部类型
     enum pedit_header_type htype;
-    int offset;
-    int flower_offset;
-    int size;
+    int offset;//自被修改字段所属头部位置到字段的偏移量
+    int flower_offset;//字段在flower中的偏移量
+    int size;//字段大小
     int boundary_shift;
 };
 
 static struct flower_key_to_pedit flower_pedit_map[] = {
     {
-        TCA_PEDIT_KEY_EX_HDR_TYPE_IP4,
-        12,
+        TCA_PEDIT_KEY_EX_HDR_TYPE_IP4,//被修改字段属于ipv4头部
+        12,//源ip在ipv4头部的12字节处
         offsetof(struct tc_flower_key, ipv4.ipv4_src),
         MEMBER_SIZEOF(struct tc_flower_key, ipv4.ipv4_src),
         0
@@ -193,6 +194,7 @@ tc_make_request(int ifindex, int type, unsigned int flags,
     return tcmsg;
 }
 
+//向外发送netlink消息request,并接收replay
 int
 tc_transact(struct ofpbuf *request, struct ofpbuf **replyp)
 {
@@ -228,8 +230,8 @@ tc_transact(struct ofpbuf *request, struct ofpbuf **replyp)
  * Returns 0 if successful, otherwise a positive errno value.
  */
 int
-tc_add_del_qdisc(int ifindex, bool add, uint32_t block_id,
-                 enum tc_qdisc_hook hook)
+tc_add_del_qdisc(int ifindex, bool add/*true为添加，false为删除*/, uint32_t block_id,
+                 enum tc_qdisc_hook hook/*队列的方向*/)
 {
     struct ofpbuf request;
     struct tcmsg *tcmsg;
@@ -237,6 +239,7 @@ tc_add_del_qdisc(int ifindex, bool add, uint32_t block_id,
     int type = add ? RTM_NEWQDISC : RTM_DELQDISC;
     int flags = add ? NLM_F_EXCL | NLM_F_CREATE : 0;
 
+    /*构造增删队列的消息头*/
     tcmsg = tc_make_request(ifindex, type, flags, &request);
 
     if (hook == TC_EGRESS) {
@@ -244,6 +247,7 @@ tc_add_del_qdisc(int ifindex, bool add, uint32_t block_id,
         tcmsg->tcm_parent = TC_H_CLSACT;
         nl_msg_put_string(&request, TCA_KIND, "clsact");
     } else {
+    	//ingress方向参数
         tcmsg->tcm_handle = TC_H_MAKE(TC_H_INGRESS, 0);
         tcmsg->tcm_parent = TC_H_INGRESS;
         nl_msg_put_string(&request, TCA_KIND, "ingress");
@@ -251,9 +255,11 @@ tc_add_del_qdisc(int ifindex, bool add, uint32_t block_id,
 
     nl_msg_put_unspec(&request, TCA_OPTIONS, NULL, 0);
     if (hook == TC_INGRESS && block_id) {
+    	//存入block_id
         nl_msg_put_u32(&request, TCA_INGRESS_BLOCK, block_id);
     }
 
+    //发送请求，不接收响应
     error = tc_transact(&request, NULL);
     if (error) {
         /* If we're deleting the qdisc, don't worry about some of the
@@ -1507,6 +1513,7 @@ tc_flush(int ifindex, uint32_t block_id, enum tc_qdisc_hook hook)
     return tc_transact(&request, NULL);
 }
 
+//删除filter规则
 int
 tc_del_filter(int ifindex, int prio, int handle, uint32_t block_id,
               enum tc_qdisc_hook hook)
@@ -1812,8 +1819,10 @@ nl_msg_put_act_cookie(struct ofpbuf *request, struct tc_cookie *ck) {
  * (as we read entire words). */
 static void
 calc_offsets(struct tc_flower *flower, struct flower_key_to_pedit *m,
-             int *cur_offset, int *cnt, ovs_be32 *last_word_mask,
-             ovs_be32 *first_word_mask, ovs_be32 **mask, ovs_be32 **data)
+             int *cur_offset/*出参，记录起始offset*/, int *cnt/*出参，总长度占sizeof(int)的总数*/,
+			 ovs_be32 *last_word_mask/*出参，为size对齐，而在右侧需要对齐的mask*/,
+             ovs_be32 *first_word_mask/*出参，为start对齐，而在左侧需要对齐的mask*/,
+			 ovs_be32 **mask/*出参，mask指针*/, ovs_be32 **data/*出参，data指针*/)
 {
     int start_offset, max_offset, total_size;
     int diff, right_zero_bits, left_zero_bits;
@@ -1821,10 +1830,15 @@ calc_offsets(struct tc_flower *flower, struct flower_key_to_pedit *m,
     char *rewrite_mask = (void *) &flower->rewrite.mask;
 
     max_offset = m->offset + m->size;
+    //字段必须以4字节对齐
     start_offset = ROUND_DOWN(m->offset, 4);
+    //为了考虑对齐，而产生的差值
     diff = m->offset - start_offset;
     total_size = max_offset - start_offset;
+
+    //右侧补多少bits，才能长度对齐
     right_zero_bits = 8 * (4 - ((max_offset % 4) ? : 4));
+    //左侧补多少bits，才能起始位置对齐
     left_zero_bits = 8 * (m->offset - start_offset);
 
     *cur_offset = start_offset;
@@ -1883,6 +1897,7 @@ csum_update_flag(struct tc_flower *flower,
     return EOPNOTSUPP;
 }
 
+//实现rewrite操作
 static int
 nl_msg_put_flower_rewrite_pedits(struct ofpbuf *request,
                                  struct tc_flower *flower)
@@ -1905,27 +1920,31 @@ nl_msg_put_flower_rewrite_pedits(struct ofpbuf *request,
         ovs_be32 *mask, *data, first_word_mask, last_word_mask;
         int cnt = 0, cur_offset = 0;
 
+        //跳过flower_pedit_map中未设置的field
         if (!m->size) {
             continue;
         }
 
-        calc_offsets(flower, m, &cur_offset, &cnt, &last_word_mask,
-                     &first_word_mask, &mask, &data);
+        calc_offsets(flower, m, &cur_offset/*字段起始offset*/, &cnt/*字段总长度,单位sizeof(int)=4*/,
+        		&last_word_mask,&first_word_mask, &mask, &data);
 
         for (j = 0; j < cnt; j++,  mask++, data++, cur_offset += 4) {
             ovs_be32 mask_word = *mask;
             ovs_be32 data_word = *data;
 
             if (j == 0) {
+            	//设置第一个字节的mask
                 mask_word &= first_word_mask;
             }
             if (j == cnt - 1) {
                 mask_word &= last_word_mask;
             }
             if (!mask_word) {
+            	//此4字节mask为0，跳过
                 continue;
             }
             if (sel.sel.nkeys == MAX_PEDIT_OFFSETS) {
+            	//设置数目超限
                 VLOG_WARN_RL(&error_rl, "reached too many pedit offsets: %d",
                              MAX_PEDIT_OFFSETS);
                 return EOPNOTSUPP;
@@ -1934,11 +1953,11 @@ nl_msg_put_flower_rewrite_pedits(struct ofpbuf *request,
             pedit_key = &sel.keys[sel.sel.nkeys];
             pedit_key_ex = &sel.keys_ex[sel.sel.nkeys];
             pedit_key_ex->cmd = TCA_PEDIT_KEY_EX_CMD_SET;
-            pedit_key_ex->htype = m->htype;
-            pedit_key->off = cur_offset;
+            pedit_key_ex->htype = m->htype;//头部类型
+            pedit_key->off = cur_offset;//字段起始offset
             mask_word = htonl(ntohl(mask_word) >> m->boundary_shift);
             data_word = htonl(ntohl(data_word) >> m->boundary_shift);
-            pedit_key->mask = ~mask_word;
+            pedit_key->mask = ~mask_word;//取反保存
             pedit_key->val = data_word & mask_word;
             sel.sel.nkeys++;
 
@@ -2178,9 +2197,9 @@ nl_msg_put_flower_options(struct ofpbuf *request, struct tc_flower *flower)
 {
 
     uint16_t host_eth_type = ntohs(flower->key.eth_type);
-    bool is_vlan = eth_type_vlan(flower->key.eth_type);
-    bool is_qinq = is_vlan && eth_type_vlan(flower->key.encap_eth_type[0]);
-    bool is_mpls = eth_type_mpls(flower->key.eth_type);
+    bool is_vlan = eth_type_vlan(flower->key.eth_type);//是否vlan
+    bool is_qinq = is_vlan && eth_type_vlan(flower->key.encap_eth_type[0]);//是否双vlan
+    bool is_mpls = eth_type_mpls(flower->key.eth_type);//是否mpls
     int err;
 
     /* need to parse acts first as some acts require changing the matching
@@ -2302,6 +2321,7 @@ nl_msg_put_flower_options(struct ofpbuf *request, struct tc_flower *flower)
     return 0;
 }
 
+//向kernel下发一条flower规则
 int
 tc_replace_flower(int ifindex, uint16_t prio, uint32_t handle,
                   struct tc_flower *flower, uint32_t block_id,
@@ -2316,14 +2336,17 @@ tc_replace_flower(int ifindex, uint16_t prio, uint32_t handle,
     int index;
 
     index = block_id ? TCM_IFINDEX_MAGIC_BLOCK : ifindex;
+
     //向kernel下发RTM_NEWFILTER消息
     tcmsg = tc_make_request(index, RTM_NEWTFILTER, NLM_F_CREATE | NLM_F_ECHO,
                             &request);
     tcmsg->tcm_parent = (hook == TC_EGRESS) ?
                         TC_EGRESS_PARENT : (block_id ? : TC_INGRESS_PARENT);
+    //传入报文类型，优先级
     tcmsg->tcm_info = tc_make_handle(prio, eth_type);
     tcmsg->tcm_handle = handle;
 
+    //填充flower对应的opts
     nl_msg_put_string(&request, TCA_KIND, "flower");
     basic_offset = nl_msg_start_nested(&request, TCA_OPTIONS);
     {
@@ -2338,6 +2361,7 @@ tc_replace_flower(int ifindex, uint16_t prio, uint32_t handle,
 
     error = tc_transact(&request, &reply);
     if (!error) {
+    	//下发失败，删除规则
         struct tcmsg *tc =
             ofpbuf_at_assert(reply, NLMSG_HDRLEN, sizeof *tc);
 

@@ -2036,6 +2036,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
         return EOPNOTSUPP;
     }
 
+    //按规则的入接口决定offload到哪个设备
     in_port = match.flow.in_port.odp_port;
     dev = netdev_ports_get(in_port, dpif_class);
     if (!dev) {
@@ -2153,6 +2154,7 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
         struct dpif_flow_put *put = &op->flow_put;
 
         if (!put->ufid) {
+        	//跳过未设置ufid的规则
             break;
         }
 
@@ -2477,6 +2479,7 @@ dpif_netlink_handlers_set(struct dpif *dpif_, uint32_t n_handlers)
     return error;
 }
 
+//实现对列号到优先级转换
 static int
 dpif_netlink_queue_to_priority(const struct dpif *dpif OVS_UNUSED,
                              uint32_t queue_id, uint32_t *priority)
@@ -2506,11 +2509,13 @@ parse_odp_packet(const struct dpif_netlink *dpif, struct ofpbuf *buf,
         [OVS_PACKET_ATTR_MRU] = { .type = NL_A_U16, .optional = true }
     };
 
+    //头部格式：nlmsg + genl + ovs_header
     struct ofpbuf b = ofpbuf_const_initializer(buf->data, buf->size);
     struct nlmsghdr *nlmsg = ofpbuf_try_pull(&b, sizeof *nlmsg);
     struct genlmsghdr *genl = ofpbuf_try_pull(&b, sizeof *genl);
     struct ovs_header *ovs_header = ofpbuf_try_pull(&b, sizeof *ovs_header);
 
+    //消息校验
     struct nlattr *a[ARRAY_SIZE(ovs_packet_policy)];
     if (!nlmsg || !genl || !ovs_header
         || nlmsg->nlmsg_type != ovs_packet_family
@@ -2689,7 +2694,7 @@ dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id/*使用哪个
                 return EAGAIN;
             }
 
-            //自ch设备读取内容
+            //自socket中读取内容
             error = nl_sock_recv(ch->sock, buf, NULL, false);
             if (error == ENOBUFS) {
                 /* ENOBUFS typically means that we've received so many
@@ -2736,6 +2741,7 @@ dpif_netlink_recv(struct dpif *dpif_, uint32_t handler_id,
 #ifdef _WIN32
     error = dpif_netlink_recv_windows(dpif, handler_id, upcall, buf);
 #else
+    //upcall报文接收
     error = dpif_netlink_recv__(dpif, handler_id, upcall, buf);
 #endif
     fat_rwlock_unlock(&dpif->upcall_lock);
@@ -3468,6 +3474,7 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_recv_set,
     dpif_netlink_handlers_set,
     NULL,                       /* set_config */
+	/*queue_id到优先级转换*/
     dpif_netlink_queue_to_priority,
 	/*收取kernel发送过来的netlink消息*/
     dpif_netlink_recv,

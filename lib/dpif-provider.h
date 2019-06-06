@@ -112,6 +112,7 @@ struct dpif_ipf_status {
  * necessary to obtain a result.  Thus, they may not return EAGAIN or
  * EWOULDBLOCK or EINPROGRESS.  We may relax this requirement in the future if
  * and when we encounter performance problems. */
+//负责向下统一封装datapath，向上提供datapath 调用接口
 struct dpif_class {
     /* Type of dpif in this class, e.g. "system", "netdev", etc.
      *

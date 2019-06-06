@@ -653,6 +653,7 @@ struct dpif_flow_put {
     const struct nlattr *actions;   /* Actions to perform on flow. */
     size_t actions_len;             /* Length of 'actions' in bytes. */
 
+    //唯一标识一条规则
     const ovs_u128 *ufid;           /* Optional unique flow identifier. */
     unsigned pmd_id;                /* Datapath poll mode driver id. */
 

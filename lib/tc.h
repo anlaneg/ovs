@@ -93,23 +93,29 @@ struct tc_flower_key {
     ovs_be16 eth_type;//链路层报文格式
     uint8_t ip_proto;//ip协议号
 
+    //二层填充信息
     struct eth_addr dst_mac;
     struct eth_addr src_mac;
 
     ovs_be32 mpls_lse;
+    //tcp相关
     ovs_be16 tcp_src;
     ovs_be16 tcp_dst;
     ovs_be16 tcp_flags;//tcp flags支持
 
+    //udp相关
     ovs_be16 udp_src;
     ovs_be16 udp_dst;
 
+    //sctp相关
     ovs_be16 sctp_src;
     ovs_be16 sctp_dst;
 
+    //0层vlan,1层vlan
     uint16_t vlan_id[FLOW_MAX_VLAN_HEADERS];
     uint8_t vlan_prio[FLOW_MAX_VLAN_HEADERS];
 
+    //0层vlan,1层vlan分别对应的eth_type
     ovs_be16 encap_eth_type[FLOW_MAX_VLAN_HEADERS];
 
     uint8_t flags;
@@ -140,17 +146,17 @@ struct tc_flower_key {
         } ipv6;
         uint8_t tos;//tunnel设置的tos
         uint8_t ttl;//tunnel设置的ttl
-        ovs_be16 tp_src;//tunnel的传输层端口号
-        ovs_be16 tp_dst;
+        ovs_be16 tp_src;//tunnel的传输层源端口号
+        ovs_be16 tp_dst;//tunnel的传输层目的端口号
         ovs_be64 id;//tunnel id号（例如vxlan id)
         struct tun_metadata metadata;
-    } tunnel;
+    } tunnel;//隧道相关
 };
 
 enum tc_action_type {
     TC_ACT_OUTPUT,
-    TC_ACT_ENCAP,
-    TC_ACT_PEDIT,
+    TC_ACT_ENCAP,//隧道封装
+    TC_ACT_PEDIT,//报文修改
     TC_ACT_VLAN_POP,
     TC_ACT_VLAN_PUSH,
 };
@@ -158,18 +164,18 @@ enum tc_action_type {
 struct tc_action {
     union {
         struct {
-            int ifindex_out;
-            bool ingress;
+            int ifindex_out;//出接口ifid
+            bool ingress;//是否存放在ingress队列（仅internal类型接口在egress)
         } out;//output action
 
         struct {
-            ovs_be16 vlan_push_tpid;
-            uint16_t vlan_push_id;
-            uint8_t vlan_push_prio;
+            ovs_be16 vlan_push_tpid;//下一层eth_type
+            uint16_t vlan_push_id;//vlan id号
+            uint8_t vlan_push_prio;//vlan优先级
         } vlan;//vlan push action
 
         struct {
-            bool id_present;
+            bool id_present;//是否包含key
             ovs_be64 id;
             ovs_be16 tp_src;
             ovs_be16 tp_dst;
@@ -185,10 +191,10 @@ struct tc_action {
                 struct in6_addr ipv6_dst;
             } ipv6;
             struct tun_metadata data;
-        } encap;//隧道封装
+        } encap;//隧道封装action
      };
 
-     enum tc_action_type type;
+     enum tc_action_type type;//action类型
 };
 
 enum tc_offloaded_state {
@@ -201,9 +207,10 @@ struct tc_flower {
     uint32_t handle;
     uint32_t prio;
 
-    struct tc_flower_key key;
+    struct tc_flower_key key;//匹配值
     struct tc_flower_key mask;//掩码
 
+    //记录由ovs转tc flower的actions
     int action_count;
     struct tc_action actions[TCA_ACT_MAX_PRIO];
 
@@ -220,7 +227,7 @@ struct tc_flower {
 
     bool tunnel;//指明是否有tunnel区分
 
-    struct tc_cookie act_cookie;
+    struct tc_cookie act_cookie;//记录ufid
 
     bool needs_full_ip_proto_mask;
 

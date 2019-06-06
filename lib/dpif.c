@@ -1622,7 +1622,7 @@ dpif_set_config(struct dpif *dpif, const struct smap *cfg)
  * Returns 0 if successful, otherwise a positive errno value.  Returns EAGAIN
  * if no upcall is immediately available. */
 int
-dpif_recv(struct dpif *dpif, uint32_t handler_id, struct dpif_upcall *upcall/*记录收到的报文*/,
+dpif_recv(struct dpif *dpif, uint32_t handler_id/*当前handler编号*/, struct dpif_upcall *upcall/*记录收到的报文*/,
           struct ofpbuf *buf/*存放报文的buffer*/)
 {
     int error = EAGAIN;
@@ -1695,8 +1695,9 @@ dpif_get_netflow_ids(const struct dpif *dpif,
  * On failure, returns a positive errno value and stores 0 into '*priority'. */
 int
 dpif_queue_to_priority(const struct dpif *dpif, uint32_t queue_id,
-                       uint32_t *priority)
+                       uint32_t *priority/*出参，报文对应的优先级*/)
 {
+	//将queue_id转换为优先级
     int error = (dpif->dpif_class->queue_to_priority
                  ? dpif->dpif_class->queue_to_priority(dpif, queue_id,
                                                        priority)

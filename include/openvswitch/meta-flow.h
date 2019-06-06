@@ -2087,6 +2087,7 @@ struct mf_field {
     /* Identification. */
 	//字段id
     enum mf_field_id id;        /* MFF_*. */
+    //字段名称
     const char *name;           /* Name of this field, e.g. "eth_type". */
     //别名
     const char *extra_name;     /* Alternate name, e.g. "dl_type", or NULL. */

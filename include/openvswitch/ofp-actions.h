@@ -221,6 +221,7 @@ ofpact_end(const struct ofpact *ofpacts, size_t ofpacts_len)
     return ALIGNED_CAST(struct ofpact *, (uint8_t *) ofpacts + ofpacts_len);
 }
 
+//检查a是否为ofpacts集合中的最后一个action
 static inline bool
 ofpact_last(const struct ofpact *a, const struct ofpact *ofpacts,
             size_t ofpact_len)

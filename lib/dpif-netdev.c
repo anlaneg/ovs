@@ -7725,6 +7725,7 @@ const struct dpif_class dpif_netdev_class = {
     NULL,                       /* handlers_set */
     dpif_netdev_set_config,
     dpif_netdev_queue_to_priority,
+	//dpdk方式破坏了这一封装，没有提供recv
     NULL,                       /* recv */
     NULL,                       /* recv_wait */
     NULL,                       /* recv_purge */

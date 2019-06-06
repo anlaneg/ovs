@@ -234,7 +234,9 @@ enum {
 		(__TCA_FLOWER_KEY_ENC_OPT_GENEVE_MAX - 1)
 
 enum {
+	//分片报文
 	TCA_FLOWER_KEY_FLAGS_IS_FRAGMENT = (1 << 0),
+	//分片报文，且最后一片
 	TCA_FLOWER_KEY_FLAGS_FRAG_IS_FIRST = (1 << 1),
 };
 

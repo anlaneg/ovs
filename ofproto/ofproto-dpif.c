@@ -4165,9 +4165,10 @@ rule_dpif_credit_stats__(struct rule_dpif *rule,
     rule->stats.used = MAX(rule->stats.used, stats->used);//更新规则的touch时间
 }
 
+//更新规则对应的统计信息
 void
 rule_dpif_credit_stats(struct rule_dpif *rule,
-                       const struct dpif_flow_stats *stats)//更新规则对应的统计信息
+                       const struct dpif_flow_stats *stats)
 {
     ovs_mutex_lock(&rule->stats_mutex);
     if (OVS_UNLIKELY(rule->new_rule)) {//什么情况下new_rule不为NULL ?

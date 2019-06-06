@@ -2596,6 +2596,7 @@ mf_subfield_copy(const struct mf_subfield *src,
                  const struct mf_subfield *dst,
                  struct flow *flow, struct flow_wildcards *wc)
 {
+	//两者长度必须一致
     ovs_assert(src->n_bits == dst->n_bits);
     if (mf_are_prereqs_ok(dst->field, flow, wc)
         && mf_are_prereqs_ok(src->field, flow, wc)) {
