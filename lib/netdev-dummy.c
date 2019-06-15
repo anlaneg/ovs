@@ -24,6 +24,7 @@
 #include "dp-packet.h"
 #include "dpif-netdev.h"
 #include "flow.h"
+#include "netdev-offload-provider.h"
 #include "netdev-provider.h"
 #include "netdev-vport.h"
 #include "odp-util.h"
@@ -1524,10 +1525,6 @@ exit:
     return error ? -1 : 0;
 }
 
-#define DUMMY_FLOW_OFFLOAD_API                          \
-    .flow_put = netdev_dummy_flow_put,                  \
-    .flow_del = netdev_dummy_flow_del
-
 #define NETDEV_DUMMY_CLASS_COMMON                       \
     .run = netdev_dummy_run,                            \
     .wait = netdev_dummy_wait,                          \
@@ -1560,8 +1557,7 @@ exit:
     .rxq_dealloc = netdev_dummy_rxq_dealloc,            \
     .rxq_recv = netdev_dummy_rxq_recv,                  \
     .rxq_wait = netdev_dummy_rxq_wait,                  \
-    .rxq_drain = netdev_dummy_rxq_drain,                \
-    DUMMY_FLOW_OFFLOAD_API
+    .rxq_drain = netdev_dummy_rxq_drain
 
 static const struct netdev_class dummy_class = {
     NETDEV_DUMMY_CLASS_COMMON,
@@ -1579,6 +1575,20 @@ static const struct netdev_class dummy_pmd_class = {
     .is_pmd = true,
     .reconfigure = netdev_dummy_reconfigure
 };
+
+static int
+netdev_dummy_offloads_init_flow_api(struct netdev *netdev)
+{
+    return is_dummy_class(netdev->netdev_class) ? 0 : EOPNOTSUPP;
+}
+
+static const struct netdev_flow_api netdev_offload_dummy = {
+    .type = "dummy",
+    .flow_put = netdev_dummy_flow_put,
+    .flow_del = netdev_dummy_flow_del,
+    .init_flow_api = netdev_dummy_offloads_init_flow_api,
+};
+
 
 /* Helper functions. */
 
@@ -2026,5 +2036,8 @@ netdev_dummy_register(enum dummy_level level)
     netdev_register_provider(&dummy_internal_class);
     netdev_register_provider(&dummy_pmd_class);
 
-    netdev_vport_tunnel_register();//加入vxlan类型
+    netdev_register_flow_api_provider(&netdev_offload_dummy);
+
+    //加入vxlan类型
+    netdev_vport_tunnel_register();
 }

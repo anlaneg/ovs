@@ -80,8 +80,5 @@ testsuite.tmp.orig
 .project
 .settings/
 /.venv
-<<<<<<< HEAD
 .pydevproject
-=======
 /cxx-check
->>>>>>> upstream/master

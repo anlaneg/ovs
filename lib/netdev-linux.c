@@ -55,7 +55,6 @@
 #include "hash.h"
 #include "openvswitch/hmap.h"
 #include "netdev-provider.h"
-#include "netdev-tc-offloads.h"
 #include "netdev-vport.h"
 #include "netlink-notifier.h"
 #include "netlink-socket.h"
@@ -3324,7 +3323,6 @@ exit:
 //linux类型的netdev
 const struct netdev_class netdev_linux_class = {
     NETDEV_LINUX_CLASS_COMMON,
-    LINUX_FLOW_OFFLOAD_API,
     .type = "system",
     .construct = netdev_linux_construct,
     .get_stats = netdev_linux_get_stats,
@@ -3346,7 +3344,6 @@ const struct netdev_class netdev_tap_class = {
 //internal类型的netdev
 const struct netdev_class netdev_internal_class = {
     NETDEV_LINUX_CLASS_COMMON,
-    LINUX_FLOW_OFFLOAD_API,
     .type = "internal",
     .construct = netdev_linux_construct,
     .get_stats = netdev_internal_get_stats,

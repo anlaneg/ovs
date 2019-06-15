@@ -1,4 +1,3 @@
-
 /*
  * Copyright (c) 2016 Mellanox Technologies, Ltd.
  *
@@ -16,7 +15,6 @@
  */
 
 #include <config.h>
-#include "netdev-tc-offloads.h"
 
 #include <errno.h>
 #include <linux/if_ether.h>
@@ -31,6 +29,8 @@
 #include "openvswitch/util.h"
 #include "openvswitch/vlog.h"
 #include "netdev-linux.h"
+#include "netdev-offload-provider.h"
+#include "netdev-provider.h"
 #include "netlink.h"
 #include "netlink-socket.h"
 #include "odp-netlink.h"
@@ -39,7 +39,7 @@
 #include "unaligned.h"
 #include "util.h"
 
-VLOG_DEFINE_THIS_MODULE(netdev_tc_offloads);
+VLOG_DEFINE_THIS_MODULE(netdev_offload_tc);
 
 static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(60, 5);
 
@@ -366,7 +366,7 @@ get_block_id_from_netdev(struct netdev *netdev)
     return 0;
 }
 
-int
+static int
 netdev_tc_flow_flush(struct netdev *netdev)
 {
     enum tc_qdisc_hook hook = get_tc_qdisc_hook(netdev);
@@ -384,7 +384,7 @@ netdev_tc_flow_flush(struct netdev *netdev)
     return tc_flush(ifindex, block_id, hook);
 }
 
-int
+static int
 netdev_tc_flow_dump_create(struct netdev *netdev,
                            struct netdev_flow_dump **dump_out)
 {
@@ -411,7 +411,7 @@ netdev_tc_flow_dump_create(struct netdev *netdev,
     return 0;
 }
 
-int
+static int
 netdev_tc_flow_dump_destroy(struct netdev_flow_dump *dump)
 {
     nl_dump_done(dump->nl_dump);
@@ -750,7 +750,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
 }
 
 //dump tc flower规则
-bool
+static bool
 netdev_tc_flow_dump_next(struct netdev_flow_dump *dump,
                          struct match *match,
                          struct nlattr **actions,
@@ -1126,7 +1126,7 @@ flower_match_to_tun_opt(struct tc_flower *flower, const struct flow_tnl *tnl,
 }
 
 //通过tc offload flow（创建或修改，完成对openvswitch规则映射为tc规则）
-int
+static int
 netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match *match/*规则匹配字段*/,
                    struct nlattr *actions/*规则对应的action信息*/, size_t actions_len,
                    const ovs_u128 *ufid/*规则标识符*/, struct offload_info *info,
@@ -1201,6 +1201,10 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
     }
     mask->mpls_lse[0] = 0;
 
+    if (eth_type_vlan(key->vlans[0].tpid)) {
+        flower.key.encap_eth_type[0] = flower.key.eth_type;
+        flower.key.eth_type = key->vlans[0].tpid;
+    }
     if (mask->vlans[0].tci) {
     	//vlan0填充
         ovs_be16 vid_mask = mask->vlans[0].tci & htons(VLAN_VID_MASK);
@@ -1222,8 +1226,6 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
                 VLOG_DBG_RL(&rl, "vlan_prio[0]: %d\n",
                             flower.key.vlan_prio[0]);
             }
-            flower.key.encap_eth_type[0] = flower.key.eth_type;
-            flower.key.eth_type = key->vlans[0].tpid;
         } else if (mask->vlans[0].tci == htons(0xffff) &&
                    ntohs(key->vlans[0].tci) == 0) {
             /* exact && no vlan */
@@ -1233,6 +1235,10 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
         }
     }
 
+    if (eth_type_vlan(key->vlans[1].tpid)) {
+        flower.key.encap_eth_type[1] = flower.key.encap_eth_type[0];
+        flower.key.encap_eth_type[0] = key->vlans[1].tpid;
+    }
     if (mask->vlans[1].tci) {
     	//vlan1填充
         ovs_be16 vid_mask = mask->vlans[1].tci & htons(VLAN_VID_MASK);
@@ -1253,8 +1259,6 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
                 flower.mask.vlan_prio[1] = vlan_tci_to_pcp(mask->vlans[1].tci);
                 VLOG_DBG_RL(&rl, "vlan_prio[1]: %d", flower.key.vlan_prio[1]);
             }
-            flower.key.encap_eth_type[1] = flower.key.encap_eth_type[0];
-            flower.key.encap_eth_type[0] = key->vlans[1].tpid;
         } else if (mask->vlans[1].tci == htons(0xffff) &&
                    ntohs(key->vlans[1].tci) == 0) {
             /* exact && no vlan */
@@ -1455,7 +1459,7 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
     return err;
 }
 
-int
+static int
 netdev_tc_flow_get(struct netdev *netdev OVS_UNUSED,
                    struct match *match,
                    struct nlattr **actions,
@@ -1511,7 +1515,7 @@ netdev_tc_flow_get(struct netdev *netdev OVS_UNUSED,
 }
 
 //通过tc删除flow
-int
+static int
 netdev_tc_flow_del(struct netdev *netdev OVS_UNUSED,
                    const ovs_u128 *ufid,
                    struct dpif_flow_stats *stats)
@@ -1640,7 +1644,7 @@ probe_tc_block_support(int ifindex)
 }
 
 //netdev的tc init
-int
+static int
 netdev_tc_init_flow_api(struct netdev *netdev)
 {
     static struct ovsthread_once multi_mask_once = OVSTHREAD_ONCE_INITIALIZER;
@@ -1653,14 +1657,14 @@ netdev_tc_init_flow_api(struct netdev *netdev)
     //获取netdev对应的ifindex
     ifindex = netdev_get_ifindex(netdev);
     if (ifindex < 0) {
-        VLOG_ERR_RL(&error_rl, "init: failed to get ifindex for %s: %s",
-                    netdev_get_name(netdev), ovs_strerror(-ifindex));
+        VLOG_INFO("init: failed to get ifindex for %s: %s",
+                  netdev_get_name(netdev), ovs_strerror(-ifindex));
         return -ifindex;
     }
 
-    /* make sure there is no ingress qdisc */
+    /* make sure there is no ingress/egress qdisc */
     //删除ingress队列
-    tc_add_del_qdisc(ifindex, false, 0, TC_INGRESS);
+    tc_add_del_qdisc(ifindex, false, 0, hook);
 
     if (ovsthread_once_start(&block_once)) {
         probe_tc_block_support(ifindex);
@@ -1678,8 +1682,8 @@ netdev_tc_init_flow_api(struct netdev *netdev)
     error = tc_add_del_qdisc(ifindex, true, block_id, hook);
 
     if (error && error != EEXIST) {
-        VLOG_ERR("failed adding ingress qdisc required for offloading: %s",
-                 ovs_strerror(error));
+        VLOG_INFO("failed adding ingress qdisc required for offloading: %s",
+                  ovs_strerror(error));
         return error;
     }
 
@@ -1687,3 +1691,16 @@ netdev_tc_init_flow_api(struct netdev *netdev)
 
     return 0;
 }
+
+//offload流的api
+const struct netdev_flow_api netdev_offload_tc = {
+   .type = "linux_tc",
+   .flow_flush = netdev_tc_flow_flush,
+   .flow_dump_create = netdev_tc_flow_dump_create,
+   .flow_dump_destroy = netdev_tc_flow_dump_destroy,
+   .flow_dump_next = netdev_tc_flow_dump_next,
+   .flow_put = netdev_tc_flow_put,/*通过tc offload flow*/
+   .flow_get = netdev_tc_flow_get,
+   .flow_del = netdev_tc_flow_del,/*通过tc 删除offload的flow*/
+   .init_flow_api = netdev_tc_init_flow_api,/*队列初始化*/
+};

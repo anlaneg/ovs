@@ -346,6 +346,7 @@ conn_clean(struct conntrack *ct, struct conn *conn)
         cmap_remove(&ct->conns, &conn->nat_conn->cm_node, hash);
     }
     ovs_list_remove(&conn->exp_node);
+    conn->cleaned = true;
     ovsrcu_postpone(delete_conn, conn);
     atomic_count_dec(&ct->n_conn);
 }
@@ -357,6 +358,7 @@ conn_clean_one(struct conntrack *ct, struct conn *conn)
     conn_clean_cmn(ct, conn);
     if (conn->conn_type == CT_CONN_TYPE_DEFAULT) {
         ovs_list_remove(&conn->exp_node);
+        conn->cleaned = true;
         atomic_count_dec(&ct->n_conn);
     }
     ovsrcu_postpone(delete_conn_one, conn);
@@ -427,6 +429,14 @@ conn_key_lookup(struct conntrack *ct, const struct conn_key *key,
         *conn_out = NULL;
     }
     return found;
+}
+
+static bool
+conn_lookup(struct conntrack *ct, const struct conn_key *key,
+            long long now, struct conn **conn_out, bool *reply)
+{
+    uint32_t hash = conn_key_hash(key, ct->hash_basis);
+    return conn_key_lookup(ct, key, hash, now, conn_out, reply);
 }
 
 static void
@@ -801,10 +811,8 @@ conn_seq_skew_set(struct conntrack *ct, const struct conn *conn_in,
     OVS_NO_THREAD_SAFETY_ANALYSIS
 {
     struct conn *conn;
-    bool reply;
-    uint32_t hash = conn_key_hash(&conn_in->key, ct->hash_basis);
     ovs_mutex_unlock(&conn_in->lock);
-    conn_key_lookup(ct, &conn_in->key, hash, now, &conn, &reply);
+    conn_lookup(ct, &conn_in->key, now, &conn, NULL);
     ovs_mutex_lock(&conn_in->lock);
 
     if (conn && seq_skew) {
@@ -995,8 +1003,10 @@ conn_update_state(struct conntrack *ct, struct dp_packet *pkt,
             break;
         case CT_UPDATE_NEW:
             ovs_mutex_lock(&ct->ct_lock);
-            //认为旧状态机过期，新建连接
-            conn_clean(ct, conn);
+            if (conn_lookup(ct, &conn->key, now, NULL, NULL)) {
+            	//认为旧状态机过期，新建连接
+                conn_clean(ct, conn);
+            }
             ovs_mutex_unlock(&ct->ct_lock);
             create_new_conn = true;
             break;
@@ -1090,13 +1100,10 @@ check_orig_tuple(struct conntrack *ct, struct dp_packet *pkt,
     //填写链路层协议及zone
     key.dl_type = ctx_in->key.dl_type;
     key.zone = pkt->md.ct_zone;
-    //填写hash
-    uint32_t hash = conn_key_hash(&key, ct->hash_basis);
-    bool reply;
     //找到要插入的桶
     //由于我们上面解锁了，为防止在填写时已被加入，再查找一遍。
-    conn_key_lookup(ct, &key, hash, now, conn, &reply);
-    //检查是否检找到了
+    conn_lookup(ct, &key, now, conn, NULL);
+    //检查是否找到了
     return *conn ? true : false;
 }
 
@@ -1151,7 +1158,9 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     //如果是force被指定，则ctx必须是发起方向，如果是响应方向，则移除conn
     if (OVS_UNLIKELY(force && ctx->reply && conn)) {
         ovs_mutex_lock(&ct->ct_lock);
-        conn_clean(ct, conn);
+        if (conn_lookup(ct, &conn->key, now, NULL, NULL)) {
+            conn_clean(ct, conn);
+        }
         ovs_mutex_unlock(&ct->ct_lock);
         conn = NULL;
     }
@@ -1228,9 +1237,11 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
         ovs_rwlock_unlock(&ct->resources_lock);
 
         ovs_mutex_lock(&ct->ct_lock);
-        //创建连接
-        conn = conn_not_found(ct, pkt, ctx, commit, now, nat_action_info,
-                              helper, alg_exp, ct_alg_ctl);
+        if (!conn_lookup(ct, &ctx->key, now, NULL, NULL)) {
+            //创建连接
+            conn = conn_not_found(ct, pkt, ctx, commit, now, nat_action_info,
+                                  helper, alg_exp, ct_alg_ctl);
+        }
         ovs_mutex_unlock(&ct->ct_lock);
     }
 
@@ -2154,17 +2165,19 @@ nat_select_range_tuple(struct conntrack *ct, const struct conn *conn,
         if (conn->nat_info->nat_action & NAT_ACTION_SRC) {
         	//要做snat，则反向包的dst.addr即为转换后地址
             nat_conn->rev_key.dst.addr = ct_addr;
-            nat_conn->rev_key.dst.port = htons(port);
+            if (pat_enabled) {
+                nat_conn->rev_key.dst.port = htons(port);
+            }
         } else {
         	//要做dnat,则反方向的src.addr即为转换后地址
             nat_conn->rev_key.src.addr = ct_addr;
-            nat_conn->rev_key.src.port = htons(port);
+            if (pat_enabled) {
+                nat_conn->rev_key.src.port = htons(port);
+            }
         }
 
-        uint32_t conn_hash = conn_key_hash(&nat_conn->rev_key,
-                                           ct->hash_basis);
-        bool found = conn_key_lookup(ct, &nat_conn->rev_key, conn_hash,
-                                     time_msec(), NULL, NULL);
+        bool found = conn_lookup(ct, &nat_conn->rev_key, time_msec(), NULL,
+                                 NULL);
         if (!found) {
             return true;
         } else if (pat_enabled && !all_ports_tried) {
@@ -2372,7 +2385,7 @@ tuple_to_conn_key(const struct ct_dpif_tuple *tuple, uint16_t zone,
 
 static void
 conn_to_ct_dpif_entry(const struct conn *conn, struct ct_dpif_entry *entry,
-                      long long now, int bkt)
+                      long long now)
 {
     memset(entry, 0, sizeof *entry);
     conn_key_to_tuple(&conn->key, &entry->tuple_orig);
@@ -2383,23 +2396,16 @@ conn_to_ct_dpif_entry(const struct conn *conn, struct ct_dpif_entry *entry,
     ovs_mutex_lock(&conn->lock);
     entry->mark = conn->mark;
     memcpy(&entry->labels, &conn->label, sizeof entry->labels);
-    ovs_mutex_unlock(&conn->lock);
 
-    /* Not implemented yet */
-    entry->timestamp.start = 0;
-    entry->timestamp.stop = 0;
-
-    ovs_mutex_lock(&conn->lock);
     long long expiration = conn->expiration - now;
-    ovs_mutex_unlock(&conn->lock);
-    entry->timeout = (expiration > 0) ? expiration / 1000 : 0;
 
     struct ct_l4_proto *class = l4_protos[conn->key.nw_proto];
     if (class->conn_get_protoinfo) {
         class->conn_get_protoinfo(conn, &entry->protoinfo);
     }
+    ovs_mutex_unlock(&conn->lock);
 
-    entry->bkt = bkt;
+    entry->timeout = (expiration > 0) ? expiration / 1000 : 0;
 
     if (conn->alg) {
         /* Caller is responsible for freeing. */
@@ -2445,7 +2451,7 @@ conntrack_dump_next(struct conntrack_dump *dump, struct ct_dpif_entry *entry)
         INIT_CONTAINER(conn, cm_node, cm_node);
         if ((!dump->filter_zone || conn->key.zone == dump->zone) &&
             (conn->conn_type != CT_CONN_TYPE_UN_NAT)) {
-            conn_to_ct_dpif_entry(conn, entry, now, 0);
+            conn_to_ct_dpif_entry(conn, entry, now);
             return 0;
         }
     }
@@ -2479,18 +2485,17 @@ int
 conntrack_flush_tuple(struct conntrack *ct, const struct ct_dpif_tuple *tuple,
                       uint16_t zone)
 {
-    struct conn_lookup_ctx ctx;
     int error = 0;
+    struct conn_key key;
+    struct conn *conn;
 
-    memset(&ctx, 0, sizeof(ctx));
-    tuple_to_conn_key(tuple, zone, &ctx.key);
-    ctx.hash = conn_key_hash(&ctx.key, ct->hash_basis);
+    memset(&key, 0, sizeof(key));
+    tuple_to_conn_key(tuple, zone, &key);
     ovs_mutex_lock(&ct->ct_lock);
-    conn_key_lookup(ct, &ctx.key, ctx.hash, time_msec(), &ctx.conn,
-                    &ctx.reply);
+    conn_lookup(ct, &key, time_msec(), &conn, NULL);
 
-    if (ctx.conn && ctx.conn->conn_type == CT_CONN_TYPE_DEFAULT) {
-        conn_clean(ct, ctx.conn);
+    if (conn && conn->conn_type == CT_CONN_TYPE_DEFAULT) {
+        conn_clean(ct, conn);
     } else {
         VLOG_WARN("Must flush tuple using the original pre-NATed tuple");
         error = ENOENT;

@@ -74,6 +74,7 @@ struct ovsdb_idl_row {
     struct ovsdb_idl_table *table; /* Containing table. *///属于哪张表
     //当新插入时，old,new指向同一块数据，更新时，new指向新的数据,old指向原来的数据，删除时new指向null，old指向原来的数据
     struct ovsdb_datum *old_datum; /* Committed data (null if orphaned). */
+    bool parsed; /* Whether the row is parsed. */
 
     /* Transactional data. *///更新或者新插入行时，此字符不为null
     struct ovsdb_datum *new_datum; /* Modified data (null to delete row). */
@@ -89,6 +90,7 @@ struct ovsdb_idl_row {
     unsigned int change_seqno[OVSDB_IDL_CHANGE_MAX];
     struct ovs_list track_node; /* Rows modified/added/deleted by IDL */
     unsigned long int *updated; /* Bitmap of columns updated by IDL */
+    struct ovsdb_datum *tracked_old_datum; /* Old deleted data. */
 };
 
 struct ovsdb_idl_column {

@@ -22,6 +22,7 @@
 #include "csum.h"
 #include "dirs.h"
 #include "dp-packet.h"
+#include "encaps.h"
 #include "flow.h"
 #include "ha-chassis.h"
 #include "lport.h"
@@ -91,11 +92,13 @@ VLOG_DEFINE_THIS_MODULE(pinctrl);
  *
  *   - arp/nd_ns      - These actions generate an ARP/IPv6 Neighbor solicit
  *                      requests. The original packets are buffered and
- *                      injected back when put_arp/put_nd actions are called.
+ *                      injected back when put_arp/put_nd resolves
+ *                      corresponding ARP/IPv6 Neighbor solicit requests.
  *                      When pinctrl_run(), writes the mac bindings from the
  *                      'put_mac_bindings' hmap to the MAC_Binding table in
- *                      SB DB, it moves these mac bindings to another hmap -
- *                      'buffered_mac_bindings'.
+ *                      SB DB, run_buffered_binding will add the buffered
+ *                      packets to buffered_mac_bindings and notify
+ *                      pinctrl_handler.
  *
  *                      The pinctrl_handler thread calls the function -
  *                      send_mac_binding_buffered_pkts(), which uses
@@ -464,6 +467,7 @@ static int
 pinctrl_handle_buffered_packets(const struct flow *ip_flow,
                                 struct dp_packet *pkt_in,
                                 const struct match *md, bool is_arp)
+    OVS_REQUIRES(pinctrl_mutex)
 {
     struct buffered_packets *bp;
     struct dp_packet *clone;
@@ -512,7 +516,9 @@ pinctrl_handle_arp(struct rconn *swconn, const struct flow *ip_flow,
         return;
     }
 
+    ovs_mutex_lock(&pinctrl_mutex);
     pinctrl_handle_buffered_packets(ip_flow, pkt_in, md, true);
+    ovs_mutex_unlock(&pinctrl_mutex);
 
     /* Compose an ARP packet. */
     uint64_t packet_stub[128 / 8];
@@ -2469,6 +2475,7 @@ run_put_mac_bindings(struct ovsdb_idl_txn *ovnsb_idl_txn,
                             sbrec_mac_binding_by_lport_ip,
                             pmb);
     }
+    flush_put_mac_bindings();
 }
 
 static void
@@ -2727,7 +2734,8 @@ get_localnet_vifs_l3gwports(
         }
         const char *tunnel_id = smap_get(&port_rec->external_ids,
                                           "ovn-chassis-id");
-        if (tunnel_id && strstr(tunnel_id, chassis->name)) {
+        if (tunnel_id &&
+                encaps_tunnel_id_match(tunnel_id, chassis->name, NULL)) {
             continue;
         }
         const char *localnet = smap_get(&port_rec->external_ids,
@@ -3147,7 +3155,9 @@ pinctrl_handle_nd_ns(struct rconn *swconn, const struct flow *ip_flow,
         return;
     }
 
+    ovs_mutex_lock(&pinctrl_mutex);
     pinctrl_handle_buffered_packets(ip_flow, pkt_in, md, false);
+    ovs_mutex_unlock(&pinctrl_mutex);
 
     uint64_t packet_stub[128 / 8];
     struct dp_packet packet;
