@@ -403,6 +403,7 @@ af_inet_ioctl(unsigned long int command, const void *arg)
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
     static int sock;
 
+    //创建socket
     if (ovsthread_once_start(&once)) {
         sock = socket(AF_INET, SOCK_DGRAM, 0);
         if (sock < 0) {
@@ -413,6 +414,7 @@ af_inet_ioctl(unsigned long int command, const void *arg)
         ovsthread_once_done(&once);
     }
 
+    //执行ioctl
     return (sock < 0 ? -sock
             : ioctl(sock, command, arg) == -1 ? errno
             : 0);

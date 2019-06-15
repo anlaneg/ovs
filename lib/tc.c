@@ -1155,6 +1155,7 @@ static const struct nl_policy mirred_policy[] = {
                         .optional = false, },
 };
 
+//解析mirred action
 static int
 nl_parse_act_mirred(struct nlattr *options, struct tc_flower *flower)
 {
@@ -1434,6 +1435,7 @@ nl_parse_flower_options(struct nlattr *nl_options, struct tc_flower *flower)
     return nl_parse_flower_actions(attrs, flower);
 }
 
+//将netlink消息解析为flower对象
 int
 parse_netlink_to_tc_flower(struct ofpbuf *reply, struct tc_flower *flower)
 {
@@ -1538,6 +1540,7 @@ tc_del_filter(int ifindex, int prio, int handle, uint32_t block_id,
     return error;
 }
 
+//获取指定规则
 int
 tc_get_flower(int ifindex, int prio, int handle, struct tc_flower *flower,
               uint32_t block_id, enum tc_qdisc_hook hook)
@@ -1577,6 +1580,7 @@ tc_get_tc_cls_policy(enum tc_offload_policy policy)
     return 0;
 }
 
+//下发checksum action更新action
 static void
 nl_msg_put_act_csum(struct ofpbuf *request, uint32_t flags)
 {
@@ -1663,6 +1667,7 @@ nl_msg_put_act_tunnel_key_release(struct ofpbuf *request)
     nl_msg_put_string(request, TCA_ACT_KIND, "tunnel_key");
     offset = nl_msg_start_nested(request, TCA_ACT_OPTIONS);
     {
+    	//丢弃skb上的隧道参数
         struct tc_tunnel_key tun = { .action = TC_ACT_PIPE,
                                      .t_action = TCA_TUNNEL_KEY_ACT_RELEASE };
 
@@ -1705,6 +1710,7 @@ nl_msg_put_act_tunnel_geneve_option(struct ofpbuf *request,
     nl_msg_end_nested(request, outer);
 }
 
+//设置隧道encap参数
 static void
 nl_msg_put_act_tunnel_key_set(struct ofpbuf *request, bool id_present,
                               ovs_be64 id, ovs_be32 ipv4_src,
@@ -1784,6 +1790,7 @@ nl_msg_put_act_skbedit_to_host(struct ofpbuf *request)
     nl_msg_end_nested(request, offset);
 }
 
+//存入mirred action
 static void
 nl_msg_put_act_mirred(struct ofpbuf *request, int ifindex, int action,
                       int eaction)
@@ -1986,12 +1993,13 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
     int i, ifindex = 0;
     bool ingress;
 
-    //向netlink消息中封装action字段
+    //向netlink消息中封装actions字段(采用flower分类器）
     offset = nl_msg_start_nested(request, TCA_FLOWER_ACT);
     {
         int error;
 
         if (flower->tunnel) {
+        	//添加丢弃隧道dst的action
             act_offset = nl_msg_start_nested(request, act_index++);
             nl_msg_put_act_tunnel_key_release(request);
             nl_msg_end_nested(request, act_offset);
@@ -2009,6 +2017,7 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
                 }
                 nl_msg_end_nested(request, act_offset);
 
+                //如有需要添加checksum更新action
                 if (flower->csum_update_flags) {
                     act_offset = nl_msg_start_nested(request, act_index++);
                     nl_msg_put_act_csum(request, flower->csum_update_flags);
@@ -2017,6 +2026,7 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
             }
             break;
             case TC_ACT_ENCAP: {
+            	//添加隧道set action
                 act_offset = nl_msg_start_nested(request, act_index++);
                 nl_msg_put_act_tunnel_key_set(request, action->encap.id_present,
                                               action->encap.id,
@@ -2033,12 +2043,14 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
             }
             break;
             case TC_ACT_VLAN_POP: {
+            	//vlan剥离
                 act_offset = nl_msg_start_nested(request, act_index++);
                 nl_msg_put_act_pop_vlan(request);
                 nl_msg_end_nested(request, act_offset);
             }
             break;
             case TC_ACT_VLAN_PUSH: {
+            	//vlan添加
                 act_offset = nl_msg_start_nested(request, act_index++);
                 nl_msg_put_act_push_vlan(request,
                                          action->vlan.vlan_push_tpid,
@@ -2047,10 +2059,12 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
                 nl_msg_end_nested(request, act_offset);
             }
             break;
+            //输出到指定port
             case TC_ACT_OUTPUT: {
                 ingress = action->out.ingress;
-                ifindex = action->out.ifindex_out;
+                ifindex = action->out.ifindex_out;/*报文去向接口*/
                 if (ifindex < 1) {
+                	//ifindex有误
                     VLOG_ERR_RL(&error_rl, "%s: invalid ifindex: %d, type: %d",
                                 __func__, ifindex, action->type);
                     return EINVAL;
@@ -2066,7 +2080,9 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
 
                 act_offset = nl_msg_start_nested(request, act_index++);
                 if (i == flower->action_count - 1) {
+                	//最后一个action时，存笔试redirect action,使底层直接将报文送出
                     if (ingress) {
+                    	//下发redirect
                         nl_msg_put_act_mirred(request, ifindex, TC_ACT_STOLEN,
                                               TCA_INGRESS_REDIR);
                     } else {
@@ -2074,6 +2090,7 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
                                               TCA_EGRESS_REDIR);
                     }
                 } else {
+                	//非最后一个port,存入mirror action,使底层clone一份送出
                     if (ingress) {
                         nl_msg_put_act_mirred(request, ifindex, TC_ACT_PIPE,
                                               TCA_INGRESS_MIRROR);
@@ -2092,6 +2109,7 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
     if (!ifindex) {
         act_offset = nl_msg_start_nested(request, act_index++);
         nl_msg_put_act_drop(request);
+        //ifindex为0时，添加act_cookie
         nl_msg_put_act_cookie(request, &flower->act_cookie);
         nl_msg_end_nested(request, act_offset);
     }

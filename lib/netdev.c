@@ -200,7 +200,7 @@ netdev_wait(void)//对所有class调用wait函数＊＊＊wait入口
     }
 }
 
-//给定名称，返回对应的已注册netdev
+//给定名称，返回对应的已注册netdev_class
 static struct netdev_registered_class *
 netdev_lookup_class(const char *type)
 {
@@ -217,8 +217,9 @@ netdev_lookup_class(const char *type)
 /* Initializes and registers a new netdev provider.  After successful
  * registration, new netdevs of that type can be opened using netdev_open(). */
 //netdev_class有两个来源，一个是本函数提供添加新注册，一个由netdev_initialize提供（属于原生的class)
+//注册新的netdev_class
 int
-netdev_register_provider(const struct netdev_class *new_class)//注册新的netdev_class
+netdev_register_provider(const struct netdev_class *new_class)
     OVS_EXCLUDED(netdev_class_mutex, netdev_mutex)
 {
     int error;
@@ -554,13 +555,15 @@ netdev_get_config(const struct netdev *netdev, struct smap *args)//通过get_con
     return error;
 }
 
+//通过get_tunnel_config获取隧道口对应的配置
 const struct netdev_tunnel_config *
-netdev_get_tunnel_config(const struct netdev *netdev)//通过get_tunnel_config获取隧道口对应的配置
+netdev_get_tunnel_config(const struct netdev *netdev)
     OVS_EXCLUDED(netdev_mutex)
 {
     if (netdev->netdev_class->get_tunnel_config) {
         return netdev->netdev_class->get_tunnel_config(netdev);
     } else {
+    	//非tunnel类型的netdev没有get_tunnel_config函数，故返回NULL
         return NULL;
     }
 }
@@ -1897,15 +1900,17 @@ netdev_dump_queue_stats(const struct netdev *netdev,
 /* Returns the class type of 'netdev'.
  *
  * The caller must not free the returned value. */
+//获取netdev类型名称（vxlan,internal等)
 const char *
-netdev_get_type(const struct netdev *netdev)//获取netdev对应类型
+netdev_get_type(const struct netdev *netdev)
 {
     return netdev->netdev_class->type;
 }
 
 /* Returns the class associated with 'netdev'. */
+//获取netdev对应class
 const struct netdev_class *
-netdev_get_class(const struct netdev *netdev)//获取netdev对应class
+netdev_get_class(const struct netdev *netdev)
 {
     return netdev->netdev_class;
 }

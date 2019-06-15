@@ -197,15 +197,17 @@ struct dpif_handler {
 
 /* Datapath interface for the openvswitch Linux kernel module. */
 struct dpif_netlink {
-    struct dpif dpif;
+    struct dpif dpif;//基类
     int dp_ifindex;//datapath对应的ifindex
 
     /* Upcall messages. */
     struct fat_rwlock upcall_lock;//用于upcall互斥，配置加写锁，转发加读锁
+    //用于记录事件处理
     struct dpif_handler *handlers;
     //指出handlers数组的size
     uint32_t n_handlers;           /* Num of upcall handlers. */
-    //每个vport对应一个channel
+    //每个vport对应一个channel（epoll触发后，由event.data获得vport index,再由index映射到channel)
+    //以后执行针对socket的报文读写
     struct dpif_channel *channels; /* Array of channels for each port. */
     int uc_array_size;             /* Size of 'handler->channels' and */
                                    /* 'handler->epoll_events'. */
@@ -261,6 +263,7 @@ create_nl_sock(struct dpif_netlink *dpif OVS_UNUSED, struct nl_sock **socksp)
     OVS_REQ_WRLOCK(dpif->upcall_lock)
 {
 #ifndef _WIN32
+	//创建netlink socket
     return nl_sock_create(NETLINK_GENERIC, socksp);
 #else
     /* Pick netlink sockets to use in a round-robin fashion from each
@@ -500,7 +503,7 @@ vport_add_channel(struct dpif_netlink *dpif, odp_port_t port_no,
 
     memset(&event, 0, sizeof event);
     event.events = EPOLLIN | EPOLLEXCLUSIVE;
-    event.data.u32 = port_idx;
+    event.data.u32 = port_idx;/*port在datapath中对应的编号*/
 
     for (i = 0; i < dpif->n_handlers; i++) {
         struct dpif_handler *handler = &dpif->handlers[i];
@@ -672,6 +675,7 @@ dpif_netlink_get_stats(const struct dpif *dpif_, struct dpif_dp_stats *stats)
     return error;
 }
 
+//返回vport对应的字符串类别名称
 static const char *
 get_vport_type(const struct dpif_netlink_vport *vport)
 {
@@ -721,18 +725,21 @@ get_vport_type(const struct dpif_netlink_vport *vport)
     return "unknown";
 }
 
+//依据接口类别名称，返回type
 enum ovs_vport_type
 netdev_to_ovs_vport_type(const char *type)
 {
     if (!strcmp(type, "tap") || !strcmp(type, "system")) {
         return OVS_VPORT_TYPE_NETDEV;
     } else if (!strcmp(type, "internal")) {
+    	//internal类型接口
         return OVS_VPORT_TYPE_INTERNAL;
     } else if (strstr(type, "stt")) {
         return OVS_VPORT_TYPE_STT;
     } else if (!strcmp(type, "geneve")) {
         return OVS_VPORT_TYPE_GENEVE;
     } else if (!strcmp(type, "vxlan")) {
+    	//vxlan类型接口
         return OVS_VPORT_TYPE_VXLAN;
     } else if (!strcmp(type, "lisp")) {
         return OVS_VPORT_TYPE_LISP;
@@ -745,6 +752,7 @@ netdev_to_ovs_vport_type(const char *type)
     } else if (!strcmp(type, "gre")) {
         return OVS_VPORT_TYPE_GRE;
     } else {
+    	//未指定名称的port类型
         return OVS_VPORT_TYPE_UNSPEC;
     }
 }
@@ -753,8 +761,8 @@ netdev_to_ovs_vport_type(const char *type)
 static int
 dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name/*port名称*/,
                         enum ovs_vport_type type/*要创建的port类型*/,
-                        struct ofpbuf *options,
-                        odp_port_t *port_nop/*port编号*/)
+                        struct ofpbuf *options/*接口对应的附加选项*/,
+                        odp_port_t *port_nop/*port在datapath中的编号*/)
     OVS_REQ_WRLOCK(dpif->upcall_lock)
 {
     struct dpif_netlink_vport request, reply;
@@ -804,7 +812,8 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name/*port名称*
         goto exit;
     }
 
-    //增加channel（指针一个vport)
+    //增加channel（每一个vport对应一个channel,原因epool只能给出一个u32的值（即index),需要由其再映射到channel
+    //来获取socket,执行读写)
     error = vport_add_channel(dpif, *port_nop, socksp);
     if (error) {
         VLOG_INFO("%s: could not add channel for port %s",
@@ -839,8 +848,10 @@ dpif_netlink_port_add_compat(struct dpif_netlink *dpif, struct netdev *netdev,
     struct ofpbuf options;
     const char *name;
 
+    //接口名称
     name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
 
+    //接口类型
     ovs_type = netdev_to_ovs_vport_type(netdev_get_type(netdev));
     if (ovs_type == OVS_VPORT_TYPE_UNSPEC) {
         VLOG_WARN_RL(&error_rl, "%s: cannot create port `%s' because it has "
@@ -849,10 +860,12 @@ dpif_netlink_port_add_compat(struct dpif_netlink *dpif, struct netdev *netdev,
         return EINVAL;
     }
 
+    //针对tap,system类型的port
     if (ovs_type == OVS_VPORT_TYPE_NETDEV) {
 #ifdef _WIN32
         /* XXX : Map appropiate Windows handle */
 #else
+    	//开启lro功能，支持tcp大包收取
         netdev_linux_ethtool_set_flag(netdev, ETH_FLAG_LRO, "LRO", false);
 #endif
     }
@@ -868,8 +881,10 @@ dpif_netlink_port_add_compat(struct dpif_netlink *dpif, struct netdev *netdev,
 
     tnl_cfg = netdev_get_tunnel_config(netdev);
     if (tnl_cfg && (tnl_cfg->dst_port != 0 || tnl_cfg->exts)) {
+    	//隧道类接口，需要下发隧道参数
         ofpbuf_use_stack(&options, options_stub, sizeof options_stub);
         if (tnl_cfg->dst_port) {
+        	//封装隧道目的端口
             nl_msg_put_u16(&options, OVS_TUNNEL_ATTR_DST_PORT,
                            ntohs(tnl_cfg->dst_port));
         }
@@ -888,6 +903,7 @@ dpif_netlink_port_add_compat(struct dpif_netlink *dpif, struct netdev *netdev,
         return dpif_netlink_port_add__(dpif, name, ovs_type, &options,
                                        port_nop);
     } else {
+    	//添加非options的port创建
         return dpif_netlink_port_add__(dpif, name, ovs_type, NULL, port_nop);
     }
 
@@ -906,6 +922,7 @@ dpif_netlink_rtnl_port_create_and_add(struct dpif_netlink *dpif,
 
     error = dpif_netlink_rtnl_port_create(netdev);
     if (error) {
+    	//非隧道口返回error
         if (error != EOPNOTSUPP) {
             VLOG_WARN_RL(&rl, "Failed to create %s with rtnetlink: %s",
                          netdev_get_name(netdev), ovs_strerror(error));
@@ -913,6 +930,7 @@ dpif_netlink_rtnl_port_create_and_add(struct dpif_netlink *dpif,
         return error;
     }
 
+    //获取要创建的netdev类型，例如"internal"
     name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
     error = dpif_netlink_port_add__(dpif, name, OVS_VPORT_TYPE_NETDEV, NULL,
                                     port_nop);
@@ -922,6 +940,7 @@ dpif_netlink_rtnl_port_create_and_add(struct dpif_netlink *dpif,
     return error;
 }
 
+//向linux kernel通过netlink下发port创建消息
 static int
 dpif_netlink_port_add(struct dpif *dpif_, struct netdev *netdev,
                       odp_port_t *port_nop)
@@ -930,10 +949,12 @@ dpif_netlink_port_add(struct dpif *dpif_, struct netdev *netdev,
     int error = EOPNOTSUPP;
 
     fat_rwlock_wrlock(&dpif->upcall_lock);
+    //依据此变量决定如何创建port
     if (!ovs_tunnels_out_of_tree) {
         error = dpif_netlink_rtnl_port_create_and_add(dpif, netdev, port_nop);
     }
     if (error) {
+    	//支持创建非tunnel口
         error = dpif_netlink_port_add_compat(dpif, netdev, port_nop);
     }
     fat_rwlock_unlock(&dpif->upcall_lock);
@@ -2050,12 +2071,15 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
             struct netdev *outdev;
             odp_port_t out_port;
 
+            //output action对应的port_id,取其对应的netdev
             out_port = nl_attr_get_odp_port(nla);
             outdev = netdev_ports_get(out_port, dpif_class);
             if (!outdev) {
                 err = EOPNOTSUPP;
                 goto out;
             }
+
+            //如果此接口为tunnel dev,记录dst_port,csum_on
             tnl_cfg = netdev_get_tunnel_config(outdev);
             if (tnl_cfg && tnl_cfg->dst_port != 0) {
                 dst_port = tnl_cfg->dst_port;
@@ -2070,6 +2094,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
     info.dpif_class = dpif_class;
     info.tp_dst_port = dst_port;
     info.tunnel_csum_on = csum_on;
+
     //向硬件下发flow
     err = netdev_flow_put(dev, &match,
                           CONST_CAST(struct nlattr *, put->actions),
@@ -2681,6 +2706,7 @@ dpif_netlink_recv__(struct dpif_netlink *dpif, uint32_t handler_id/*使用哪个
 
     //事件处理（当前待处理位置为handler->event_offset)
     while (handler->event_offset < handler->n_events) {
+    	/*idx指出datapatch中哪个port触发了事件*/
         int idx = handler->epoll_events[handler->event_offset].data.u32;
         struct dpif_channel *ch = &dpif->channels[idx];/*读取idx对应的channel*/
 
@@ -3452,7 +3478,7 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_run,
     NULL,                       /* wait */
     dpif_netlink_get_stats,
-    dpif_netlink_port_add,
+    dpif_netlink_port_add,//接口创建
     dpif_netlink_port_del,
     NULL,                       /* port_set_config */
     dpif_netlink_port_query_by_number,
@@ -3655,6 +3681,7 @@ dpif_netlink_vport_to_ofpbuf(const struct dpif_netlink_vport *vport,
         nl_msg_put_odp_port(buf, OVS_VPORT_ATTR_PORT_NO, vport->port_no);
     }
 
+    //存入要创建的port类型（例如vxlan,internal....)
     if (vport->type != OVS_VPORT_TYPE_UNSPEC) {
         nl_msg_put_u32(buf, OVS_VPORT_ATTR_TYPE, vport->type);
     }

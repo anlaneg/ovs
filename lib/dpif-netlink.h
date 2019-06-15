@@ -31,10 +31,10 @@ struct dpif_netlink_vport {
     uint8_t cmd;
 
     /* ovs_vport header. */
-    int dp_ifindex;
+    int dp_ifindex;//datapath对应的ifindex
     int netnsid;                           /* Network Namespace ID. */
-    odp_port_t port_no;                    /* ODPP_NONE if unknown. */
-    enum ovs_vport_type type;
+    odp_port_t port_no;/*接口在datapath中的编号*/ /* ODPP_NONE if unknown. */
+    enum ovs_vport_type type;//接口类型
 
     /* Attributes.
      *
@@ -45,8 +45,8 @@ struct dpif_netlink_vport {
     uint32_t n_upcall_pids;
     const uint32_t *upcall_pids;           /* OVS_VPORT_ATTR_UPCALL_PID. */
     const struct ovs_vport_stats *stats;   /* OVS_VPORT_ATTR_STATS. */
-    const struct nlattr *options;          /* OVS_VPORT_ATTR_OPTIONS. */
-    size_t options_len;
+    const struct nlattr *options;/*接口创建附加选项*/  /* OVS_VPORT_ATTR_OPTIONS. */
+    size_t options_len;//附加选项长度
 };
 
 void dpif_netlink_vport_init(struct dpif_netlink_vport *);

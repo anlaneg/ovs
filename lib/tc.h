@@ -223,7 +223,7 @@ struct tc_flower {
         struct tc_flower_key mask;
     } rewrite;//记录要重写的字段
 
-    uint32_t csum_update_flags;
+    uint32_t csum_update_flags;//标记需要执行checksum更新
 
     bool tunnel;//指明是否有tunnel区分
 

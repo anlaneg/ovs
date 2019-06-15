@@ -400,11 +400,14 @@ dpif_netlink_rtnl_port_create(struct netdev *netdev)
     int err;
 
     type = netdev_to_ovs_vport_type(netdev_get_type(netdev));
+    //非tunnel口将返回NULL
     tnl_cfg = netdev_get_tunnel_config(netdev);
     if (!tnl_cfg) {
+    	//不支持创建非tunnel口
         return EOPNOTSUPP;
     }
 
+    //隧道名称必须给出
     kind = vport_type_to_kind(type, tnl_cfg);
     if (!kind) {
         return EOPNOTSUPP;
@@ -493,6 +496,7 @@ dpif_netlink_rtnl_probe_oot_tunnels(void)
     const char *name;
     int error;
 
+    //通过创建geneve类型接口，检测
     error = netdev_open("ovs-system-probe", "geneve", &netdev);
     if (!error) {
         struct ofpbuf *reply;

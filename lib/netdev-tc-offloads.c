@@ -749,6 +749,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
     return 0;
 }
 
+//dump tc flower规则
 bool
 netdev_tc_flow_dump_next(struct netdev_flow_dump *dump,
                          struct match *match,
@@ -1124,14 +1125,15 @@ flower_match_to_tun_opt(struct tc_flower *flower, const struct flow_tnl *tnl,
     flower->mask.tunnel.metadata.present.len = tnl->metadata.present.len;
 }
 
-//通过tc offload flow（创建或修改）
+//通过tc offload flow（创建或修改，完成对openvswitch规则映射为tc规则）
 int
-netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match *match,
-                   struct nlattr *actions, size_t actions_len,
-                   const ovs_u128 *ufid, struct offload_info *info,
+netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match *match/*规则匹配字段*/,
+                   struct nlattr *actions/*规则对应的action信息*/, size_t actions_len,
+                   const ovs_u128 *ufid/*规则标识符*/, struct offload_info *info,
                    struct dpif_flow_stats *stats OVS_UNUSED)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
+    //获得设备对应的规则hook点
     enum tc_qdisc_hook hook = get_tc_qdisc_hook(netdev);
     struct tc_flower flower;
     const struct flow *key = &match->flow;

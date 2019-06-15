@@ -117,13 +117,14 @@ netdev_vport_needs_dst_port(const struct netdev *dev)//是否需要配置目的p
              !strcmp("lisp", type) || !strcmp("stt", type)) );
 }
 
+//获取netdev_class名称
 const char *
 netdev_vport_class_get_dpif_port(const struct netdev_class *class)
 {
     return is_vport_class(class) ? vport_class_cast(class)->dpif_port : NULL;
 }
 
-//返回dpif_port名称
+//返回netdev的接口名称，例如vxlan,internal,gre等
 const char *
 netdev_vport_get_dpif_port(const struct netdev *netdev,
                            char namebuf[], size_t bufsize)
@@ -136,7 +137,8 @@ netdev_vport_get_dpif_port(const struct netdev *netdev,
         return netdev_get_name(netdev);
     }
 
-    if (netdev_vport_needs_dst_port(netdev)) {//如果是tunnel口，创建指定名称（不用netdev->name)
+    if (netdev_vport_needs_dst_port(netdev)) {
+    	//如果是隧道，且有dst_port,返回“type_dstport“方式，例如"vxlan_sys_7499"
         const struct netdev_vport *vport = netdev_vport_cast(netdev);
 
         /*
@@ -148,9 +150,10 @@ netdev_vport_get_dpif_port(const struct netdev *netdev,
         ovs_assert(strlen(dpif_port) + 6 < IFNAMSIZ);
         snprintf(namebuf, bufsize, "%s_%d", dpif_port,
                  ntohs(vport->tnl_cfg.dst_port));
-        return namebuf;//$dpif_port_$dst_port
+        return namebuf;
     } else {
-        return dpif_port;//无目的端口的
+    	//无目的端口的时，直接返回类型名称
+        return dpif_port;
     }
 }
 

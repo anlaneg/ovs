@@ -52,10 +52,13 @@ enum hw_info_type {
  *
  * Network device implementations may read these members but should not modify
  * them. */
+//用于抽象网络设备（其上有port,interface概念）
 struct netdev {
     /* The following do not change during the lifetime of a struct netdev. */
     char *name;                         /* Name of network device. */ //设备名
-    //此netdev由哪个netdev_class处理
+    //此netdev由哪个netdev_class处理(目前netdev_class有netdev_internal_class,
+    //netdev_tap_class,dpdk_class,dpdk_vhost_class等,看netdev_register_provider函数)
+    //用于控制这种netdev
     const struct netdev_class *netdev_class; /* Functions to control
                                                 this device. */
 
@@ -268,7 +271,7 @@ struct netdev_class {
      * the type assumed if no type is specified when opening a netdev.
      * The "system" type corresponds to an existing network device on
      * the system. */
-    const char *type;
+    const char *type;//接口类型
 
     /* If 'true' then this netdev should be polled by PMD threads. */
     bool is_pmd;
@@ -283,7 +286,8 @@ struct netdev_class {
      *
      * This function may be set to null if a network device class needs no
      * initialization at registration time. */
-    int (*init)(void);//模块注册时做初始化用
+    //模块注册时做初始化用
+    int (*init)(void);
 
     /* Performs periodic work needed by netdevs of this class.  May be null if
      * no periodic work is necessary.

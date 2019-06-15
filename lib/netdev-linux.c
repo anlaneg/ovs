@@ -3321,6 +3321,7 @@ exit:
     .rxq_wait = netdev_linux_rxq_wait,                          \
     .rxq_drain = netdev_linux_rxq_drain
 
+//linux类型的netdev
 const struct netdev_class netdev_linux_class = {
     NETDEV_LINUX_CLASS_COMMON,
     LINUX_FLOW_OFFLOAD_API,
@@ -3332,6 +3333,7 @@ const struct netdev_class netdev_linux_class = {
     .get_block_id = netdev_linux_get_block_id
 };
 
+//tap类型的netdev
 const struct netdev_class netdev_tap_class = {
     NETDEV_LINUX_CLASS_COMMON,
     .type = "tap",
@@ -3341,6 +3343,7 @@ const struct netdev_class netdev_tap_class = {
     .get_status = netdev_linux_get_status,
 };
 
+//internal类型的netdev
 const struct netdev_class netdev_internal_class = {
     NETDEV_LINUX_CLASS_COMMON,
     LINUX_FLOW_OFFLOAD_API,
@@ -5823,6 +5826,7 @@ netdev_linux_ethtool_set_flag(struct netdev *netdev, uint32_t flag,
 
     COVERAGE_INC(netdev_get_ethtool);
     memset(&evalue, 0, sizeof evalue);
+    //先取flag
     error = netdev_linux_do_ethtool(netdev_name,
                                     (struct ethtool_cmd *)&evalue,
                                     ETHTOOL_GFLAGS, "ETHTOOL_GFLAGS");
@@ -5830,12 +5834,14 @@ netdev_linux_ethtool_set_flag(struct netdev *netdev, uint32_t flag,
         return error;
     }
 
+    //设置flags后
     COVERAGE_INC(netdev_set_ethtool);
     new_flags = (evalue.data & ~flag) | (enable ? flag : 0);
     if (new_flags == evalue.data) {
         return 0;
     }
     evalue.data = new_flags;
+    //使新设置的flags生效
     error = netdev_linux_do_ethtool(netdev_name,
                                     (struct ethtool_cmd *)&evalue,
                                     ETHTOOL_SFLAGS, "ETHTOOL_SFLAGS");
@@ -5845,6 +5851,7 @@ netdev_linux_ethtool_set_flag(struct netdev *netdev, uint32_t flag,
 
     COVERAGE_INC(netdev_get_ethtool);
     memset(&evalue, 0, sizeof evalue);
+    //重新get一遍，看kernel是否确实生效了此flags
     error = netdev_linux_do_ethtool(netdev_name,
                                     (struct ethtool_cmd *)&evalue,
                                     ETHTOOL_GFLAGS, "ETHTOOL_GFLAGS");
@@ -5852,6 +5859,7 @@ netdev_linux_ethtool_set_flag(struct netdev *netdev, uint32_t flag,
         return error;
     }
 
+    //没有生效，报错
     if (new_flags != evalue.data) {
         VLOG_WARN_RL(&rl, "attempt to %s ethtool %s flag on network "
                      "device %s failed", enable ? "enable" : "disable",
@@ -6177,6 +6185,7 @@ netdev_linux_do_ethtool(const char *name, struct ethtool_cmd *ecmd,
     ifr.ifr_data = (caddr_t) ecmd;
 
     ecmd->cmd = cmd;
+    //？？？？
     error = af_inet_ioctl(SIOCETHTOOL, &ifr);
     if (error) {
         if (error != EOPNOTSUPP) {

@@ -609,11 +609,13 @@ dpif_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
         port_no = *port_nop;
     }
 
-    error = dpif->dpif_class->port_add(dpif, netdev, &port_no);//为datapath创建此port
+    //为datapath创建此port
+    error = dpif->dpif_class->port_add(dpif, netdev, &port_no);
     if (!error) {
         VLOG_DBG_RL(&dpmsg_rl, "%s: added %s as port %"PRIu32,
                     dpif_name(dpif), netdev_name, port_no);
 
+        //如果非tap口，则加入到datapath中
         if (!dpif_is_tap_port(netdev_get_type(netdev))) {
 
             struct dpif_port dpif_port;
