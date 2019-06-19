@@ -19,6 +19,7 @@
 #endif
 
 #ifndef rounddown
+//向下取整（x必须为y的整数倍）
 #define rounddown(x, y) (				\
 {							\
 	typeof(x) __x = (x);				\

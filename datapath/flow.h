@@ -172,20 +172,20 @@ static inline bool sw_flow_key_is_nd(const struct sw_flow_key *key)
 }
 
 struct sw_flow_key_range {
-	unsigned short int start;
-	unsigned short int end;
+	unsigned short int start;//记录有效field偏移量的起始位置
+	unsigned short int end;//记录有效field偏移量的终止位置
 };
 
 struct sw_flow_mask {
 	int ref_count;
 	struct rcu_head rcu;
-	struct sw_flow_key_range range;
+	struct sw_flow_key_range range;/*mask对应的range*/
 	struct sw_flow_key key;
 };
 
 struct sw_flow_match {
 	struct sw_flow_key *key;
-	struct sw_flow_key_range range;
+	struct sw_flow_key_range range;/*key对应的range*/
 	struct sw_flow_mask *mask;
 };
 
@@ -223,7 +223,7 @@ struct sw_flow {
 	int stats_last_writer;		/* CPU id of the last writer on
 					 * 'stats[0]'.
 					 */
-	struct sw_flow_key key;
+	struct sw_flow_key key;//解析到的数据
 	struct sw_flow_id id;
 	struct cpumask cpu_used_mask;
 	struct sw_flow_mask *mask;

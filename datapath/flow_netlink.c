@@ -102,23 +102,28 @@ static bool actions_may_change_flow(const struct nlattr *actions)
 }
 
 static void update_range(struct sw_flow_match *match,
-			 size_t offset, size_t size, bool is_mask)
+			 size_t offset/*feild在sw_flow_key结构体中的offset*/,
+			 size_t size/*feild占用的字节数*/, bool is_mask/*feild是否指mask*/)
 {
 	struct sw_flow_key_range *range;
+	//取字段起始位置，终止位置（向上向下取整）
 	size_t start = rounddown(offset, sizeof(long));
 	size_t end = roundup(offset + size, sizeof(long));
 
+	//更新range
 	if (!is_mask)
 		range = &match->range;
 	else
 		range = &match->mask->range;
 
+	//首次range更新
 	if (range->start == range->end) {
 		range->start = start;
 		range->end = end;
 		return;
 	}
 
+	//更新
 	if (range->start > start)
 		range->start = start;
 
@@ -126,13 +131,16 @@ static void update_range(struct sw_flow_match *match,
 		range->end = end;
 }
 
-#define SW_FLOW_KEY_PUT(match, field, value, is_mask) \
+#define SW_FLOW_KEY_PUT(match, field/*成员名称*/, value/*成员值*/, is_mask/*是否为mask*/) \
 	do { \
+		/*更新range记录有效位置*/\
 		update_range(match, offsetof(struct sw_flow_key, field),    \
 			     sizeof((match)->key->field), is_mask);	    \
 		if (is_mask)						    \
+			/*如果是mask,填充mask中field对应的value*/\
 			(match)->mask->key.field = value;		    \
 		else							    \
+			/*如果是key,填充key中field对应的value*/\
 			(match)->key->field = value;		            \
 	} while (0)
 
@@ -1132,7 +1140,7 @@ static int parse_eth_type_from_nlattrs(struct sw_flow_match *match,
 
 static int metadata_from_nlattrs(struct net *net, struct sw_flow_match *match,
 				  u64 *attrs, const struct nlattr **a,
-				 bool is_mask, bool log)
+				 bool is_mask/*是否在解析mask*/, bool log)
 {
 	u8 mac_proto = MAC_PROTO_ETHERNET;
 

@@ -1541,7 +1541,7 @@ static void process_deferred_actions(struct datapath *dp)
 
 /* Execute a list of actions against 'skb'. */
 int ovs_execute_actions(struct datapath *dp, struct sk_buff *skb,
-			const struct sw_flow_actions *acts,
+			const struct sw_flow_actions *acts/*要执行的action*/,
 			struct sw_flow_key *key)
 {
 	int err, level;
