@@ -605,6 +605,8 @@ struct polled_queue {
     struct dp_netdev_rxq *rxq;//收队列
     odp_port_t port_no;
     bool emc_enabled;
+    bool rxq_enabled;
+    uint64_t change_seq;
 };
 
 /* Contained by struct dp_netdev_pmd_thread's 'poll_list' member. */
@@ -1179,6 +1181,8 @@ pmd_info_show_rxq(struct ds *reply, struct dp_netdev_pmd_thread *pmd)
             }
             ds_put_format(reply, "  port: %-16s  queue-id: %2d", name,
                           netdev_rxq_get_queue_id(list[i].rxq->rx));
+            ds_put_format(reply, " %s", netdev_rxq_enabled(list[i].rxq->rx)
+                                        ? "(enabled) " : "(disabled)");
             ds_put_format(reply, "  pmd usage: ");
             if (total_cycles) {
                 ds_put_format(reply, "%2"PRIu64"",
@@ -5356,6 +5360,11 @@ dpif_netdev_run(struct dpif *dpif)
                 }
 
                 for (i = 0; i < port->n_rxq; i++) {
+
+                    if (!netdev_rxq_enabled(port->rxqs[i].rx)) {
+                        continue;
+                    }
+
                     if (dp_netdev_process_rxq_port(non_pmd,
                                                    &port->rxqs[i],
                                                    port->port_no)) {
@@ -5534,6 +5543,9 @@ pmd_load_queues_and_ports(struct dp_netdev_pmd_thread *pmd,
         poll_list[i].rxq = poll->rxq;
         poll_list[i].port_no = poll->rxq->port->port_no;
         poll_list[i].emc_enabled = poll->rxq->port->emc_enabled;
+        poll_list[i].rxq_enabled = netdev_rxq_enabled(poll->rxq->rx);
+        poll_list[i].change_seq =
+                     netdev_get_change_seq(poll->rxq->port->netdev);
         i++;
     }
 
@@ -5602,6 +5614,10 @@ reload:
 
         for (i = 0; i < poll_cnt; i++) {
 
+            if (!poll_list[i].rxq_enabled) {
+                continue;
+            }
+
             if (poll_list[i].emc_enabled) {
                 atomic_read_relaxed(&pmd->dp->emc_insert_min,
                                     &pmd->ctx.emc_insert_min);
@@ -5640,6 +5656,16 @@ reload:
             atomic_read_relaxed(&pmd->reload, &reload);
             if (reload) {
                 break;
+            }
+
+            for (i = 0; i < poll_cnt; i++) {
+                uint64_t current_seq =
+                         netdev_get_change_seq(poll_list[i].rxq->port->netdev);
+                if (poll_list[i].change_seq != current_seq) {
+                    poll_list[i].change_seq = current_seq;
+                    poll_list[i].rxq_enabled =
+                                 netdev_rxq_enabled(poll_list[i].rxq->rx);
+                }
             }
         }
         pmd_perf_end_iteration(s, rx_packets, tx_packets,

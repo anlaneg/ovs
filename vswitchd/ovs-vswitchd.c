@@ -167,6 +167,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         OPT_BOOTSTRAP_CA_CERT,
         OPT_ENABLE_DUMMY,
         OPT_DISABLE_SYSTEM,
+        OPT_DISABLE_SYSTEM_ROUTE,
         DAEMON_OPTION_ENUMS,
         OPT_DPDK,
         SSL_OPTION_ENUMS,
@@ -184,6 +185,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         {"bootstrap-ca-cert", required_argument, NULL, OPT_BOOTSTRAP_CA_CERT},
         {"enable-dummy", optional_argument, NULL, OPT_ENABLE_DUMMY},//是否需要开启dummy
         {"disable-system", no_argument, NULL, OPT_DISABLE_SYSTEM},//禁止system类型的datapath
+        {"disable-system-route", no_argument, NULL, OPT_DISABLE_SYSTEM_ROUTE},
         {"dpdk", optional_argument, NULL, OPT_DPDK},
         {"dummy-numa", required_argument, NULL, OPT_DUMMY_NUMA},
         {NULL, 0, NULL, 0},
@@ -234,6 +236,9 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         case OPT_DISABLE_SYSTEM:
         	//禁用system类型
             dp_blacklist_provider("system");
+            break;
+
+        case OPT_DISABLE_SYSTEM_ROUTE:
             ovs_router_disable_system_routing_table();
             break;
 

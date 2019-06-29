@@ -160,6 +160,7 @@ tunnel_add(struct tunnel_ctx *tc, const struct sbrec_sb_global *sbg,
     //发包，可使得报文到达new_chassis_id
     smap_add(&options, "remote_ip", encap->ip);
     smap_add(&options, "key", "flow");
+    const char *dst_port = smap_get(&encap->options, "dst_port");
     const char *csum = smap_get(&encap->options, "csum");
     char *tunnel_entry_id = NULL;
 
@@ -173,6 +174,9 @@ tunnel_add(struct tunnel_ctx *tc, const struct sbrec_sb_global *sbg,
     if (csum && (!strcmp(csum, "true") || !strcmp(csum, "false"))) {
     	//checksum谁来处理
         smap_add(&options, "csum", csum);
+    }
+    if (dst_port) {
+        smap_add(&options, "dst_port", dst_port);
     }
 
     /* Add auth info if ipsec is enabled. */
