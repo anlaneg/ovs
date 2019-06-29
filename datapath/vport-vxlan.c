@@ -185,6 +185,7 @@ static struct vport *vxlan_create(const struct vport_parms *parms)
 	if (IS_ERR(vport))
 		return vport;
 
+	//挂载hook
 	return ovs_netdev_link(vport, parms->name);
 }
 
