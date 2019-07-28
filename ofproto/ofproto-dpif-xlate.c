@@ -4186,7 +4186,8 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
           * matches, while explicit set actions on tunnel metadata are.
           */
         flow_tnl = flow->tunnel;
-        odp_port = tnl_port_send(xport->ofport, flow, ctx->wc);//填充flow,返回tunnel指定的输出口
+        //填充flow,返回tunnel指定的输出口
+        odp_port = tnl_port_send(xport->ofport, flow, ctx->wc);
         if (odp_port == ODPP_NONE) {
             xlate_report(ctx, OFT_WARN, "Tunneling decided against output");
             goto out; /* restore flow_nw_tos */
@@ -4196,7 +4197,8 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
             xlate_report(ctx, OFT_WARN, "Not tunneling to our own address");
             goto out; /* restore flow_nw_tos */
         }
-        if (ctx->xin->resubmit_stats) {//增加xport对应计数
+        if (ctx->xin->resubmit_stats) {
+        	//增加xport对应计数
             netdev_vport_inc_tx(xport->netdev, ctx->xin->resubmit_stats);
         }
         if (ctx->xin->xcache) {
@@ -4212,9 +4214,10 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
 
         } else {
             const char *tnl_type;
-	    //kernel进行tunnel处理
+            //kernel进行tunnel处理
             xlate_report(ctx, OFT_DETAIL, "output to kernel tunnel");
             tnl_type = tnl_port_get_type(xport->ofport);
+            //生成tunnel对应的action
             commit_odp_tunnel_action(flow, &ctx->base_flow,
                                      ctx->odp_actions, tnl_type);
             flow->tunnel = flow_tnl; /* Restore tunnel metadata */

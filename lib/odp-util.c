@@ -3060,38 +3060,50 @@ tun_key_to_attr(struct ofpbuf *a, const struct flow_tnl *tun_key,
 {
     size_t tun_key_ofs;
 
+    //添加ovs_key_attr_tunnel
     tun_key_ofs = nl_msg_start_nested(a, OVS_KEY_ATTR_TUNNEL);
 
     /* tun_id != 0 without FLOW_TNL_F_KEY is valid if tun_key is a mask. */
     if (tun_key->tun_id || tun_key->flags & FLOW_TNL_F_KEY) {
+    	//存入tunnel_id
         nl_msg_put_be64(a, OVS_TUNNEL_KEY_ATTR_ID, tun_key->tun_id);
     }
     if (tun_key->ip_src) {
+    	//src ip地址
         nl_msg_put_be32(a, OVS_TUNNEL_KEY_ATTR_IPV4_SRC, tun_key->ip_src);
     }
     if (tun_key->ip_dst) {
+    	//dst ip地址
         nl_msg_put_be32(a, OVS_TUNNEL_KEY_ATTR_IPV4_DST, tun_key->ip_dst);
     }
     if (ipv6_addr_is_set(&tun_key->ipv6_src)) {
+    	//src ipv6地址
         nl_msg_put_in6_addr(a, OVS_TUNNEL_KEY_ATTR_IPV6_SRC, &tun_key->ipv6_src);
     }
     if (ipv6_addr_is_set(&tun_key->ipv6_dst)) {
+    	//dst ipv6地址
         nl_msg_put_in6_addr(a, OVS_TUNNEL_KEY_ATTR_IPV6_DST, &tun_key->ipv6_dst);
     }
     if (tun_key->ip_tos) {
+    	//tos设置
         nl_msg_put_u8(a, OVS_TUNNEL_KEY_ATTR_TOS, tun_key->ip_tos);
     }
+    //ttl设置
     nl_msg_put_u8(a, OVS_TUNNEL_KEY_ATTR_TTL, tun_key->ip_ttl);
     if (tun_key->flags & FLOW_TNL_F_DONT_FRAGMENT) {
+    	//不分片标记
         nl_msg_put_flag(a, OVS_TUNNEL_KEY_ATTR_DONT_FRAGMENT);
     }
     if (tun_key->flags & FLOW_TNL_F_CSUM) {
+    	//标记checksum已校验
         nl_msg_put_flag(a, OVS_TUNNEL_KEY_ATTR_CSUM);
     }
     if (tun_key->tp_src) {
+    	//src port设置
         nl_msg_put_be16(a, OVS_TUNNEL_KEY_ATTR_TP_SRC, tun_key->tp_src);
     }
     if (tun_key->tp_dst) {
+    	//dst port设置
         nl_msg_put_be16(a, OVS_TUNNEL_KEY_ATTR_TP_DST, tun_key->tp_dst);
     }
     if (tun_key->flags & FLOW_TNL_F_OAM) {
@@ -3105,6 +3117,7 @@ tun_key_to_attr(struct ofpbuf *a, const struct flow_tnl *tun_key,
      */
     if ((!tnl_type || !strcmp(tnl_type, "vxlan")) &&
         (tun_key->gbp_flags || tun_key->gbp_id)) {
+    	//vxlan选项信息封装
         size_t vxlan_opts_ofs;
 
         vxlan_opts_ofs = nl_msg_start_nested(a, OVS_TUNNEL_KEY_ATTR_VXLAN_OPTS);
@@ -3133,7 +3146,7 @@ tun_key_to_attr(struct ofpbuf *a, const struct flow_tnl *tun_key,
                           &opts, sizeof(opts));
     }
 
-    nl_msg_end_nested(a, tun_key_ofs);//完成tunnelnested写
+    nl_msg_end_nested(a, tun_key_ofs);//完成tunnel nested写
 }
 
 static bool
@@ -7498,11 +7511,12 @@ odp_put_push_eth_action(struct ofpbuf *odp_actions,
                       &eth, sizeof eth);
 }
 
+//存入自tunnell输出对应的action
 void
 odp_put_tunnel_action(const struct flow_tnl *tunnel,
-		      //指定对报文属性进行设置
-                      struct ofpbuf *odp_actions, const char *tnl_type)
+                      struct ofpbuf *odp_actions, const char *tnl_type/*tunnel类型*/)
 {
+	//填充ovs_action_attr_set动作
     size_t offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_SET);
     tun_key_to_attr(odp_actions, tunnel, tunnel, NULL, tnl_type);
     nl_msg_end_nested(odp_actions, offset);
@@ -7569,7 +7583,8 @@ commit_odp_tunnel_action(const struct flow *flow, struct flow *base,
     /* A valid IPV4_TUNNEL must have non-zero ip_dst; a valid IPv6 tunnel
      * must have non-zero ipv6_dst. */
     if (flow_tnl_dst_is_set(&flow->tunnel)) {
-        if (!memcmp(&base->tunnel, &flow->tunnel, sizeof base->tunnel)) {//如果tunnel无变化，则不需要操作，返回
+        if (!memcmp(&base->tunnel, &flow->tunnel, sizeof base->tunnel)) {
+        	//如果tunnel无变化，则不需要操作，返回
             return;
         }
         memcpy(&base->tunnel, &flow->tunnel, sizeof base->tunnel);

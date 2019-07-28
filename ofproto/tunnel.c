@@ -429,18 +429,22 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
     fat_rwlock_rdlock(&rwlock);
     tnl_port = tnl_find_ofport(ofport);
     out_port = tnl_port ? tnl_port->match.odp_port : ODPP_NONE;
-    if (!tnl_port) {//没有查找到tunnel口，返回ODPP_NONE
+    if (!tnl_port) {
+    	//没有查找到tunnel口，返回ODPP_NONE
         goto out;
     }
 
-    cfg = netdev_get_tunnel_config(tnl_port->netdev);//获取tunnel口的配置
+    //获取tunnel口的配置
+    cfg = netdev_get_tunnel_config(tnl_port->netdev);
     ovs_assert(cfg);
 
-    if (!VLOG_DROP_DBG(&dbg_rl)) {//调试代码
+    if (!VLOG_DROP_DBG(&dbg_rl)) {
+    	//调试代码
         pre_flow_str = flow_to_string(flow, NULL);
     }
 
-    if (!cfg->ip_src_flow) {//填充src-ip
+    if (!cfg->ip_src_flow) {
+    	//填充src-ip
         flow->tunnel.ip_src = in6_addr_get_mapped_ipv4(&tnl_port->match.ipv6_src);
         if (!flow->tunnel.ip_src) {
             flow->tunnel.ipv6_src = tnl_port->match.ipv6_src;
@@ -448,7 +452,8 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
             flow->tunnel.ipv6_src = in6addr_any;
         }
     }
-    if (!cfg->ip_dst_flow) {//填充dst-ip
+    if (!cfg->ip_dst_flow) {
+    	//填充dst-ip
         flow->tunnel.ip_dst = in6_addr_get_mapped_ipv4(&tnl_port->match.ipv6_dst);
         if (!flow->tunnel.ip_dst) {
             flow->tunnel.ipv6_dst = tnl_port->match.ipv6_dst;
@@ -461,14 +466,16 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
         flow->tunnel.tun_id = cfg->out_key;//填充tunnel-id
     }
 
-    if (cfg->ttl_inherit && is_ip_any(flow)) {//ttl处理
+    if (cfg->ttl_inherit && is_ip_any(flow)) {
+    	//ttl inherit处理
         wc->masks.nw_ttl = 0xff;
         flow->tunnel.ip_ttl = flow->nw_ttl;
     } else {
         flow->tunnel.ip_ttl = cfg->ttl;
     }
 
-    if (cfg->tos_inherit && is_ip_any(flow)) {//tos处理
+    if (cfg->tos_inherit && is_ip_any(flow)) {
+    	//tos inherit处理
         wc->masks.nw_tos |= IP_DSCP_MASK;
         flow->tunnel.ip_tos = flow->nw_tos & IP_DSCP_MASK;
     } else {
@@ -476,7 +483,8 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
     }
 
     /* ECN fields are always inherited. */
-    if (is_ip_any(flow)) {//enc总是继承
+    if (is_ip_any(flow)) {
+    	//enc总是继承
         wc->masks.nw_tos |= IP_ECN_MASK;
 
         if (IP_ECN_is_ce(flow->nw_tos)) {
