@@ -2137,6 +2137,7 @@ encode_SET_IP_DSCP(const struct ofpact_dscp *dscp,
     }
 }
 
+//设置tos,将tos修改为指定值
 static char * OVS_WARN_UNUSED_RESULT
 parse_SET_IP_DSCP(char *arg, const struct ofpact_parse_params *pp)
 
