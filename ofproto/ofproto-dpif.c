@@ -2024,6 +2024,7 @@ port_destruct(struct ofport *port_, bool del)
     struct ofport_dpif *port = ofport_dpif_cast(port_);
     struct ofproto_dpif *ofproto = ofproto_dpif_cast(port->up.ofproto);
     const char *devname = netdev_get_name(port->up.netdev);
+    const char *netdev_type = netdev_get_type(port->up.netdev);
     char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
     const char *dp_port_name;
 
@@ -2031,6 +2032,13 @@ port_destruct(struct ofport *port_, bool del)
     xlate_txn_start();
     xlate_ofport_remove(port);
     xlate_txn_commit();
+
+    if (!del && strcmp(netdev_type,
+                       ofproto_port_open_type(port->up.ofproto, "internal"))) {
+        /* Check if datapath requires removal of attached ports.  Avoid
+         * removal of 'internal' ports to preserve user ip/route settings. */
+        del = dpif_cleanup_required(ofproto->backer->dpif);
+    }
 
     dp_port_name = netdev_vport_get_dpif_port(port->up.netdev, namebuf,
                                               sizeof namebuf);

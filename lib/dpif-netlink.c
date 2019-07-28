@@ -3471,6 +3471,7 @@ probe_broken_meters(struct dpif *dpif)
 //实现基于kernel datapatch转发（完成向kernel下发flow,配置，自kernel获取信息，报文等）
 const struct dpif_class dpif_netlink_class = {
     "system",
+    false,                      /* cleanup_required */
     NULL,                       /* init */
     dpif_netlink_enumerate,
     NULL,

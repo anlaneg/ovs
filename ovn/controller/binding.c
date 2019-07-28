@@ -172,13 +172,11 @@ add_local_datapath__(struct ovsdb_idl_index *sbrec_datapath_binding_by_key,
                                          peer->datapath, false,
                                          depth + 1, local_datapaths);
                     //将这个datapath记为自已的对端（自已可以有多个对端）
-                    ld->n_peer_dps++;
-                    ld->peer_dps = xrealloc(
-                            ld->peer_dps,
-                            ld->n_peer_dps * sizeof *ld->peer_dps);
-                    ld->peer_dps[ld->n_peer_dps - 1] = datapath_lookup_by_key(
-                        sbrec_datapath_binding_by_key,
-                        peer->datapath->tunnel_key);//加入对端的datapath
+                    ld->n_peer_ports++;
+                    ld->peer_ports = xrealloc(ld->peer_ports,
+                                              ld->n_peer_ports *
+                                              sizeof *ld->peer_ports);
+                    ld->peer_ports[ld->n_peer_ports - 1] = peer;
                 }
             }
         }

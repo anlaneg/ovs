@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "dp-packet.h"
+#include "netdev-afxdp.h"
 #include "netdev-dpdk.h"
 #include "openvswitch/dynamic-string.h"
 #include "util.h"
@@ -59,6 +60,22 @@ dp_packet_use(struct dp_packet *b, void *base, size_t allocated)
 {
     dp_packet_use__(b, base, allocated, DPBUF_MALLOC);
 }
+
+#if HAVE_AF_XDP
+/* Initialize 'b' as an empty dp_packet that contains
+ * memory starting at AF_XDP umem base.
+ */
+void
+dp_packet_use_afxdp(struct dp_packet *b, void *data, size_t allocated,
+                    size_t headroom)
+{
+    dp_packet_set_base(b, (char *)data - headroom);
+    dp_packet_set_data(b, data);
+    dp_packet_set_size(b, 0);
+
+    dp_packet_init__(b, allocated, DPBUF_AFXDP);
+}
+#endif
 
 /* Initializes 'b' as an empty dp_packet that contains the 'allocated' bytes of
  * memory starting at 'base'.  'base' should point to a buffer on the stack.
@@ -124,6 +141,8 @@ dp_packet_uninit(struct dp_packet *b)
              * created as a dp_packet */
             free_dpdk_buf((struct dp_packet*) b);
 #endif
+        } else if (b->source == DPBUF_AFXDP) {
+            free_afxdp_buf(b);
         }
     }
 }
@@ -254,6 +273,9 @@ dp_packet_resize__(struct dp_packet *b, size_t new_headroom, size_t new_tailroom
         break;
 
     case DPBUF_STACK://stack上无法增加
+        OVS_NOT_REACHED();
+
+    case DPBUF_AFXDP:
         OVS_NOT_REACHED();
 
     case DPBUF_STUB://增大，但不释放旧的
@@ -444,6 +466,7 @@ dp_packet_steal_data(struct dp_packet *b)
 {
     void *p;
     ovs_assert(b->source != DPBUF_DPDK);
+    ovs_assert(b->source != DPBUF_AFXDP);
 
     if (b->source == DPBUF_MALLOC && dp_packet_data(b) == dp_packet_base(b)) {
         p = dp_packet_data(b);

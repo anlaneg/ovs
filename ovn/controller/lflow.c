@@ -70,6 +70,7 @@ static bool consider_logical_flow(
     struct hmap *dhcp_opts,
     struct hmap *dhcpv6_opts,
     struct hmap *nd_ra_opts,
+    struct controller_event_options *controller_event_opts,
     const struct shash *addr_sets,
     const struct shash *port_groups,
     const struct sset *active_tunnels,
@@ -298,13 +299,17 @@ add_logical_flows(
     struct hmap nd_ra_opts = HMAP_INITIALIZER(&nd_ra_opts);
     nd_ra_opts_init(&nd_ra_opts);
 
+    struct controller_event_options controller_event_opts;
+    controller_event_opts_init(&controller_event_opts);
+
     //遍历flow表
     SBREC_LOGICAL_FLOW_TABLE_FOR_EACH (lflow, logical_flow_table) {
         if (!consider_logical_flow(sbrec_multicast_group_by_name_datapath,
                                    sbrec_port_binding_by_name,
                                    lflow, local_datapaths,
                                    chassis, &dhcp_opts, &dhcpv6_opts,
-                                   &nd_ra_opts, addr_sets, port_groups,
+                                   &nd_ra_opts, &controller_event_opts,
+                                   addr_sets, port_groups,
                                    active_tunnels, local_lport_ids,
                                    flow_table, group_table, meter_table,
                                    lfrr, conj_id_ofs)) {
@@ -317,6 +322,7 @@ add_logical_flows(
     dhcp_opts_destroy(&dhcp_opts);
     dhcp_opts_destroy(&dhcpv6_opts);
     nd_ra_opts_destroy(&nd_ra_opts);
+    controller_event_opts_destroy(&controller_event_opts);
 }
 
 bool
@@ -373,6 +379,10 @@ lflow_handle_changed_flows(
             lflow_resource_destroy_lflow(lfrr, &lflow->header_.uuid);
         }
     }
+
+    struct controller_event_options controller_event_opts;
+    controller_event_opts_init(&controller_event_opts);
+
     SBREC_LOGICAL_FLOW_TABLE_FOR_EACH_TRACKED (lflow, logical_flow_table) {
         if (!sbrec_logical_flow_is_deleted(lflow)) {
             /* Now, add/modify existing flows. If the logical
@@ -391,7 +401,8 @@ lflow_handle_changed_flows(
                                        sbrec_port_binding_by_name,
                                        lflow, local_datapaths,
                                        chassis, &dhcp_opts, &dhcpv6_opts,
-                                       &nd_ra_opts, addr_sets, port_groups,
+                                       &nd_ra_opts, &controller_event_opts,
+                                       addr_sets, port_groups,
                                        active_tunnels, local_lport_ids,
                                        flow_table, group_table, meter_table,
                                        lfrr, conj_id_ofs)) {
@@ -403,6 +414,7 @@ lflow_handle_changed_flows(
     dhcp_opts_destroy(&dhcp_opts);
     dhcp_opts_destroy(&dhcpv6_opts);
     nd_ra_opts_destroy(&nd_ra_opts);
+    controller_event_opts_destroy(&controller_event_opts);
     return ret;
 }
 
@@ -468,6 +480,9 @@ lflow_handle_changed_ref(
     struct hmap nd_ra_opts = HMAP_INITIALIZER(&nd_ra_opts);
     nd_ra_opts_init(&nd_ra_opts);
 
+    struct controller_event_options controller_event_opts;
+    controller_event_opts_init(&controller_event_opts);
+
     /* Re-parse the related lflows. */
     LIST_FOR_EACH (lrln, ref_list, &rlfn->ref_lflow_head) {
         const struct sbrec_logical_flow *lflow =
@@ -485,11 +500,13 @@ lflow_handle_changed_ref(
                  UUID_ARGS(&lrln->lflow_uuid),
                  ref_type, ref_name);
         ofctrl_remove_flows(flow_table, &lrln->lflow_uuid);
+
         if (!consider_logical_flow(sbrec_multicast_group_by_name_datapath,
                                    sbrec_port_binding_by_name,
                                    lflow, local_datapaths,
                                    chassis, &dhcp_opts, &dhcpv6_opts,
-                                   &nd_ra_opts, addr_sets, port_groups,
+                                   &nd_ra_opts, &controller_event_opts,
+                                   addr_sets, port_groups,
                                    active_tunnels, local_lport_ids,
                                    flow_table, group_table, meter_table,
                                    lfrr, conj_id_ofs)) {
@@ -508,6 +525,7 @@ lflow_handle_changed_ref(
     dhcp_opts_destroy(&dhcp_opts);
     dhcp_opts_destroy(&dhcpv6_opts);
     nd_ra_opts_destroy(&nd_ra_opts);
+    controller_event_opts_destroy(&controller_event_opts);
     return ret;
 }
 
@@ -533,6 +551,7 @@ consider_logical_flow(
     struct hmap *dhcp_opts,//dhcp选项
     struct hmap *dhcpv6_opts,//dhcpv6选项
     struct hmap *nd_ra_opts,
+    struct controller_event_options *controller_event_opts,
     const struct shash *addr_sets,
     const struct shash *port_groups,
     const struct sset *active_tunnels,
@@ -580,6 +599,7 @@ consider_logical_flow(
         .dhcp_opts = dhcp_opts,
         .dhcpv6_opts = dhcpv6_opts,
         .nd_ra_opts = nd_ra_opts,
+        .controller_event_opts = controller_event_opts,
 
         .pipeline = ingress ? OVNACT_P_INGRESS : OVNACT_P_EGRESS,
         .n_tables = LOG_PIPELINE_LEN,
