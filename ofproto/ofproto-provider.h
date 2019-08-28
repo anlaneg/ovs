@@ -1946,8 +1946,8 @@ struct ofproto_flow_mod {
      * must be eventually be released with ofproto_rule_unref().  */
     struct rule *temp_rule;
     struct rule_criteria criteria;
-    struct cls_conjunction *conjs;
-    size_t n_conjs;
+    struct cls_conjunction *conjs;/*规则中包含的conjunction*/
+    size_t n_conjs;/*规则中包含的conjunction action数目*/
 
     /* Replicate needed fields from ofputil_flow_mod to not need it after the
      * flow has been created. */

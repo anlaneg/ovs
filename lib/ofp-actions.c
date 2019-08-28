@@ -5537,6 +5537,7 @@ struct nx_action_conjunction {
 };
 OFP_ASSERT(sizeof(struct nx_action_conjunction) == 16);
 
+//将conjunction结构填充进out buffer中
 static void
 add_conjunction(struct ofpbuf *out,
                 uint32_t id, uint8_t clause, uint8_t n_clauses)
@@ -5549,11 +5550,13 @@ add_conjunction(struct ofpbuf *out,
     oc->n_clauses = n_clauses;
 }
 
+//自out buffer中解码conjunction action
 static enum ofperr
 decode_NXAST_RAW_CONJUNCTION(const struct nx_action_conjunction *nac,
                              enum ofp_version ofp_version OVS_UNUSED,
                              struct ofpbuf *out)
 {
+	//检查conjunction,case种类必须大于1,小于等于64,情case编号不得大于case种类
     if (nac->n_clauses < 2 || nac->n_clauses > 64
         || nac->clause >= nac->n_clauses) {
         return OFPERR_NXBAC_BAD_CONJUNCTION;
@@ -5563,6 +5566,7 @@ decode_NXAST_RAW_CONJUNCTION(const struct nx_action_conjunction *nac,
     }
 }
 
+//将conjunction action编码进out buffer中
 static void
 encode_CONJUNCTION(const struct ofpact_conjunction *oc,
                    enum ofp_version ofp_version OVS_UNUSED, struct ofpbuf *out)
@@ -5573,6 +5577,7 @@ encode_CONJUNCTION(const struct ofpact_conjunction *oc,
     nac->id = htonl(oc->id);
 }
 
+//格式化conjunction action
 static void
 format_CONJUNCTION(const struct ofpact_conjunction *oc,
                    const struct ofpact_format_params *fp)
@@ -5583,6 +5588,7 @@ format_CONJUNCTION(const struct ofpact_conjunction *oc,
                   colors.paren, colors.end);
 }
 
+//解析conjunction 配置
 static char * OVS_WARN_UNUSED_RESULT
 parse_CONJUNCTION(const char *arg, const struct ofpact_parse_params *pp)
 {
@@ -5591,22 +5597,28 @@ parse_CONJUNCTION(const char *arg, const struct ofpact_parse_params *pp)
     uint32_t id;
     int n;
 
+    //conjunction格式为'1,1/2'
     if (!ovs_scan(arg, "%"SCNi32" , %"SCNu8" / %"SCNu8" %n",
                   &id, &clause, &n_clauses, &n) || n != strlen(arg)) {
         return xstrdup("\"conjunction\" syntax is \"conjunction(id,i/n)\"");
     }
 
     if (n_clauses < 2) {
+    	//必须至少2种情况
         return xstrdup("conjunction must have at least 2 clauses");
     } else if (n_clauses > 64) {
+    	//不支持超过64种情况
         return xstrdup("conjunction must have at most 64 clauses");
     } else if (clause < 1) {
+    	//case编号自1开始
         return xstrdup("clause index must be positive");
     } else if (clause > n_clauses) {
+    	//case编号不得大于情况种类
         return xstrdup("clause index must be less than or equal to "
                        "number of clauses");
     }
 
+    //存入id,case编号-1,情况种类
     add_conjunction(pp->ofpacts, id, clause - 1, n_clauses);
     return NULL;
 }

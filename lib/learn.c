@@ -144,6 +144,7 @@ learn_execute(const struct ofpact_learn *learn, const struct flow *flow,
 
         switch (spec->dst_type) {
         case NX_LEARN_DST_MATCH:
+        	//完成字段匹配
             mf_write_subfield(&spec->dst, &value, &match);
             match_add_ethernet_prereq(&match, spec->dst.field);
             mf_vl_mff_set_tlv_bitmap(
@@ -151,6 +152,7 @@ learn_execute(const struct ofpact_learn *learn, const struct flow *flow,
             break;
 
         case NX_LEARN_DST_LOAD:
+        	//完成字段修改
             sf = ofpact_put_reg_load(ofpacts, spec->dst.field, NULL, NULL);
             bitwise_copy(&value, sizeof value, 0,
                          sf->value, spec->dst.field->n_bytes, spec->dst.ofs,
@@ -161,6 +163,7 @@ learn_execute(const struct ofpact_learn *learn, const struct flow *flow,
             break;
 
         case NX_LEARN_DST_OUTPUT:
+        	//输出到指定port
             if (spec->n_bits <= 16
                 || is_all_zeros(value.u8, sizeof value - 2)) {
                 ofp_port_t port = u16_to_ofp(ntohll(value.integer));
@@ -415,6 +418,7 @@ learn_parse__(char *orig, char *arg, const struct ofputil_port_map *port_map,
                                            &learn->table_id)) {
                 return xasprintf("unknown table \"%s\"", value);
             } else if (learn->table_id == 255) {
+            	//不支持学习到255号表
                 return xasprintf("%s: table id 255 not valid for `learn' "
                                  "action", orig);
             }

@@ -4994,6 +4994,7 @@ get_conjunctions(const struct ofputil_flow_mod *fm,
     int n_conjs = 0;
 
     const struct ofpact *ofpact;
+    //取conjunction action数目
     OFPACT_FOR_EACH (ofpact, fm->ofpacts, fm->ofpacts_len) {
         if (ofpact->type == OFPACT_CONJUNCTION) {
             n_conjs++;
@@ -5004,6 +5005,8 @@ get_conjunctions(const struct ofputil_flow_mod *fm,
             break;
         }
     }
+
+    //收集这n_conjs个conjunction
     if (n_conjs) {
         int i = 0;
 
@@ -5019,6 +5022,7 @@ get_conjunctions(const struct ofputil_flow_mod *fm,
         }
     }
 
+    //返回
     *conjsp = conjs;
     *n_conjsp = n_conjs;
 }
@@ -5040,7 +5044,7 @@ get_conjunctions(const struct ofputil_flow_mod *fm,
  * failure.
  */
 static enum ofperr
-add_flow_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
+add_flow_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm/*出参，初始化待mod的流*/,
               const struct ofputil_flow_mod *fm)
     OVS_EXCLUDED(ofproto_mutex)
 {
@@ -5049,12 +5053,14 @@ add_flow_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
     uint8_t table_id;
     enum ofperr error;
 
+    //检查要添加的流对应的table_id是否有效
     if (!check_table_id(ofproto, fm->table_id)) {
         return OFPERR_OFPBRC_BAD_TABLE_ID;
     }
 
     /* Pick table. */
     if (fm->table_id == 0xff) {
+    	//将规则添加进255号表
         if (ofproto->ofproto_class->rule_choose_table) {
             error = ofproto->ofproto_class->rule_choose_table(ofproto,
                                                               &fm->match,
@@ -5067,12 +5073,15 @@ add_flow_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
             table_id = 0;
         }
     } else if (fm->table_id < ofproto->n_tables) {
+    	//规则添加进其它表
         table_id = fm->table_id;
     } else {
+    	//走不到
         return OFPERR_OFPBRC_BAD_TABLE_ID;
     }
 
     table = &ofproto->tables[table_id];
+    //表只读，返回参数有误
     if (table->flags & OFTABLE_READONLY
         && !(fm->flags & OFPUTIL_FF_NO_READONLY)) {
         return OFPERR_OFPBRC_EPERM;
@@ -5095,7 +5104,7 @@ add_flow_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
                                     fm->hard_timeout, fm->flags,
                                     fm->importance, fm->ofpacts,
                                     fm->ofpacts_len, map,
-                                    fm->ofpacts_tlv_bitmap, &ofm->temp_rule);
+                                    fm->ofpacts_tlv_bitmap, /*出参，构造的临时规则*/&ofm->temp_rule);
         if (error) {
             return error;
         }

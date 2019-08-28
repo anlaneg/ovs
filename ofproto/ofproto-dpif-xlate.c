@@ -5483,8 +5483,10 @@ xlate_learn_action(struct xlate_ctx *ctx, const struct ofpact_learn *learn)
         }
 
         ofpbuf_use_stub(&ofpacts, ofpacts_stub, sizeof ofpacts_stub);
+        //构造学习到的flow
         learn_execute(learn, &ctx->xin->flow, &fm, &ofpacts);
         if (OVS_UNLIKELY(ctx->xin->trace)) {
+        	//显示调试用日志
             struct ds s = DS_EMPTY_INITIALIZER;
             ds_put_format(&s, "table=%"PRIu8" ", fm.table_id);
             minimatch_format(&fm.match,
@@ -5510,6 +5512,8 @@ xlate_learn_action(struct xlate_ctx *ctx, const struct ofpact_learn *learn)
             xlate_report(ctx, OFT_DETAIL, "%s", ds_cstr(&s));
             ds_destroy(&s);
         }
+
+        //将流规则加入相应的表
         error = ofproto_dpif_flow_mod_init_for_learn(ctx->xbridge->ofproto,
                                                      &fm, ofm);
         ofpbuf_uninit(&ofpacts);
