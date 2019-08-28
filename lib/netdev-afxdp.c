@@ -277,8 +277,12 @@ xsk_configure_socket(struct xsk_umem_info *umem, uint32_t ifindex,
 
     /* Make sure the built-in AF_XDP program is loaded. */
     ret = bpf_get_link_xdp_id(ifindex, &prog_id, cfg.xdp_flags);
-    if (ret) {
-        VLOG_ERR("Get XDP prog ID failed (%s)", ovs_strerror(errno));
+    if (ret || !prog_id) {
+        if (ret) {
+            VLOG_ERR("Get XDP prog ID failed (%s)", ovs_strerror(errno));
+        } else {
+            VLOG_ERR("No XDP program is loaded at ifindex %d", ifindex);
+        }
         xsk_socket__delete(xsk->xsk);
         free(xsk);
         return NULL;
@@ -807,15 +811,15 @@ afxdp_complete_tx(struct xsk_socket_info *xsk_info)
         void *elem;
 
         addr = (uint64_t *)xsk_ring_cons__comp_addr(&umem->cq, idx_cq++);
-        if (*addr == UINT64_MAX) {
+        if (*addr != UINT64_MAX) {
+            elem = ALIGNED_CAST(void *, (char *)umem->buffer + *addr);
+            elems_push[tx_to_free] = elem;
+            *addr = UINT64_MAX; /* Mark as pushed. */
+            tx_to_free++;
+        } else {
             /* The elem has been pushed already. */
             COVERAGE_INC(afxdp_cq_skip);
-            continue;
         }
-        elem = ALIGNED_CAST(void *, (char *)umem->buffer + *addr);
-        elems_push[tx_to_free] = elem;
-        *addr = UINT64_MAX; /* Mark as pushed. */
-        tx_to_free++;
 
         if (tx_to_free == BATCH_SIZE || j == tx_done - 1) {
             umem_elem_push_n(&umem->mpool, tx_to_free, elems_push);
