@@ -1848,7 +1848,7 @@ static int
 iface_do_create(const struct bridge *br,
                 const struct ovsrec_interface *iface_cfg,
                 ofp_port_t *ofp_portp, struct netdev **netdevp,
-                char **errp)
+                char **errp/*错误日志缓冲*/)
 {
     struct netdev *netdev = NULL;
     int error;
@@ -1919,7 +1919,8 @@ iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg,
     int error;
 
     /* Do the bits that can fail up front. */
-    ovs_assert(!iface_lookup(br, iface_cfg->name));//此bridge上一定没有这个接口
+    //此bridge上一定没有这个接口
+    ovs_assert(!iface_lookup(br, iface_cfg->name));
     error = iface_do_create(br, iface_cfg, &ofp_port, &netdev, &errp);
     if (error) {
         iface_clear_db_record(iface_cfg, errp);

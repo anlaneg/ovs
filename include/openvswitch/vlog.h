@@ -286,9 +286,12 @@ void vlog_usage(void);
     do {                                                \
         enum vlog_level level__ = LEVEL;                \
         if (this_module.min_level >= level__) {         \
+        	/*模块日志开启*/\
             vlog(&this_module, level__, __VA_ARGS__);   \
         }                                               \
     } while (0)
+
+//限速日志
 #define VLOG_RL(RL, LEVEL, ...)                                         \
     do {                                                                \
         enum vlog_level level__ = LEVEL;                                \

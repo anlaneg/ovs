@@ -187,9 +187,9 @@ struct tc_action {
 
         struct {
             bool id_present;//是否包含key
-            ovs_be64 id;
+            ovs_be64 id;//tunnel id
             ovs_be16 tp_src;
-            ovs_be16 tp_dst;
+            ovs_be16 tp_dst;//目的端口
             uint8_t tos;
             uint8_t ttl;
             uint8_t no_csum;

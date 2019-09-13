@@ -67,8 +67,8 @@ enum tc_offload_policy {
 static enum tc_offload_policy tc_policy = TC_POLICY_NONE;
 
 struct tc_pedit_key_ex {
-    enum pedit_header_type htype;
-    enum pedit_cmd cmd;
+    enum pedit_header_type htype;//重写字段对应的报文头部类型
+    enum pedit_cmd cmd;//set还是add方式
 };
 
 struct flower_key_to_pedit {
@@ -80,6 +80,8 @@ struct flower_key_to_pedit {
     int boundary_shift;
 };
 
+//容许修改的各字段：
+//srcip,dstip,ttl,tos,srcmac,dstmac,ethtype,tcpport,udpport
 static struct flower_key_to_pedit flower_pedit_map[] = {
     {
         TCA_PEDIT_KEY_EX_HDR_TYPE_IP4,//被修改字段属于ipv4头部
@@ -1706,8 +1708,10 @@ nl_msg_put_act_pedit(struct ofpbuf *request, struct tc_pedit *parm,
     {
         parm->action = TC_ACT_PIPE;
 
+        //按TCA_PEDIT_PARMS_EX类型存入
         nl_msg_put_unspec(request, TCA_PEDIT_PARMS_EX, parm, ksize);
         offset_keys_ex = nl_msg_start_nested(request, TCA_PEDIT_KEYS_EX);
+        //添加各个需要rewrite的字段
         for (i = 0; i < parm->nkeys; i++, ex++) {
             offset_key = nl_msg_start_nested(request, TCA_PEDIT_KEY_EX);
             nl_msg_put_u16(request, TCA_PEDIT_KEY_EX_HTYPE, ex->htype);
@@ -1815,6 +1819,7 @@ nl_msg_put_act_set_mpls(struct ofpbuf *request, uint32_t label, uint8_t tc,
     nl_msg_end_nested(request, offset);
 }
 
+//使用tunnel_key action作为隧道的封装action
 static void
 nl_msg_put_act_tunnel_key_release(struct ofpbuf *request)
 {
@@ -1989,6 +1994,7 @@ calc_offsets(struct tc_flower *flower, struct flower_key_to_pedit *m,
 {
     int start_offset, max_offset, total_size;
     int diff, right_zero_bits, left_zero_bits;
+    //要重写的key,mask
     char *rewrite_key = (void *) &flower->rewrite.key;
     char *rewrite_mask = (void *) &flower->rewrite.mask;
 
@@ -2004,14 +2010,18 @@ calc_offsets(struct tc_flower *flower, struct flower_key_to_pedit *m,
     //左侧补多少bits，才能起始位置对齐
     left_zero_bits = 8 * (m->offset - start_offset);
 
-    *cur_offset = start_offset;
-    *cnt = (total_size / 4) + (total_size % 4 ? 1 : 0);
+    *cur_offset = start_offset;/*待个修改字段的起始位置*/
+    *cnt = (total_size / 4) + (total_size % 4 ? 1 : 0);/*最多修改多少个word长度*/
+    //最后一个word对应的mask
     *last_word_mask = htonl(UINT32_MAX << right_zero_bits);
+    //首个word对应的mask
     *first_word_mask = htonl(UINT32_MAX >> left_zero_bits);
+    //key及mask取值
     *data = (void *) (rewrite_key + m->flower_offset - diff);
     *mask = (void *) (rewrite_mask + m->flower_offset - diff);
 }
 
+//考虑因重写导致的checksum更新
 static inline int
 csum_update_flag(struct tc_flower *flower,
                  enum pedit_header_type htype) {
@@ -2031,6 +2041,7 @@ csum_update_flag(struct tc_flower *flower,
     case TCA_PEDIT_KEY_EX_HDR_TYPE_TCP:
     case TCA_PEDIT_KEY_EX_HDR_TYPE_UDP:
         if (flower->key.ip_proto == IPPROTO_TCP) {
+        	//改tcp层，需要考虑ip层protocol的mask
             flower->needs_full_ip_proto_mask = true;
             flower->csum_update_flags |= TCA_CSUM_UPDATE_FLAG_TCP;
         } else if (flower->key.ip_proto == IPPROTO_UDP) {
@@ -2060,7 +2071,7 @@ csum_update_flag(struct tc_flower *flower,
     return EOPNOTSUPP;
 }
 
-//实现rewrite操作
+//采用pedit action,实现rewrite操作
 static int
 nl_msg_put_flower_rewrite_pedits(struct ofpbuf *request,
                                  struct tc_flower *flower)
@@ -2096,25 +2107,29 @@ nl_msg_put_flower_rewrite_pedits(struct ofpbuf *request,
             ovs_be32 data_word = *data;
 
             if (j == 0) {
-            	//设置第一个字节的mask
+            	//设置第一个word的mask
                 mask_word &= first_word_mask;
             }
             if (j == cnt - 1) {
+            	//设置最后一个word的mask
                 mask_word &= last_word_mask;
             }
             if (!mask_word) {
-            	//此4字节mask为0，跳过
+            	//此word的mask为0，跳过，不重写
                 continue;
             }
             if (sel.sel.nkeys == MAX_PEDIT_OFFSETS) {
-            	//设置数目超限
+            	//重写数目超限
                 VLOG_WARN_RL(&error_rl, "reached too many pedit offsets: %d",
                              MAX_PEDIT_OFFSETS);
                 return EOPNOTSUPP;
             }
 
+            //获取本次重写的配置空间
             pedit_key = &sel.keys[sel.sel.nkeys];
             pedit_key_ex = &sel.keys_ex[sel.sel.nkeys];
+
+            //具体填充（注意掩码为取反）
             pedit_key_ex->cmd = TCA_PEDIT_KEY_EX_CMD_SET;
             pedit_key_ex->htype = m->htype;//头部类型
             pedit_key->off = cur_offset;//字段起始offset
@@ -2129,11 +2144,14 @@ nl_msg_put_flower_rewrite_pedits(struct ofpbuf *request,
                 return err;
             }
 
+            //如需要，添加对ip头部protocol字段的匹配
             if (flower->needs_full_ip_proto_mask) {
                 flower->mask.ip_proto = UINT8_MAX;
             }
         }
     }
+
+    //添加pedit action
     nl_msg_put_act_pedit(request, &sel.sel, sel.keys_ex);
 
     return 0;
@@ -2155,7 +2173,8 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
         int error;
 
         if (flower->tunnel) {
-        	//添加丢弃隧道dst的action
+        	//如果有tunnel，置tunnel_key动作
+        	//先添加丢弃隧道dst的action，使之前skb自带dst失效
             act_offset = nl_msg_start_nested(request, act_index++);
             nl_msg_put_act_tunnel_key_release(request);
             nl_msg_end_nested(request, act_offset);
@@ -2400,11 +2419,13 @@ nl_msg_put_flower_options(struct ofpbuf *request, struct tc_flower *flower)
 
     /* need to parse acts first as some acts require changing the matching
      * see csum_update_flag()  */
+    //添加action信息
     err  = nl_msg_put_flower_acts(request, flower);
     if (err) {
         return err;
     }
 
+    //添加flower匹配信息
     if (is_vlan) {
         if (is_qinq) {
             host_eth_type = ntohs(flower->key.encap_eth_type[1]);
@@ -2521,7 +2542,7 @@ nl_msg_put_flower_options(struct ofpbuf *request, struct tc_flower *flower)
 int
 tc_replace_flower(int ifindex, uint16_t prio, uint32_t handle,
                   struct tc_flower *flower, uint32_t block_id,
-                  enum tc_qdisc_hook hook)
+                  enum tc_qdisc_hook hook/*ingress或者egress*/)
 {
     struct ofpbuf request;
     struct tcmsg *tcmsg;
@@ -2542,7 +2563,7 @@ tc_replace_flower(int ifindex, uint16_t prio, uint32_t handle,
     tcmsg->tcm_info = tc_make_handle(prio, eth_type);
     tcmsg->tcm_handle = handle;
 
-    //填充flower对应的opts
+    //指明kind为flower,填充flower对应的opts
     nl_msg_put_string(&request, TCA_KIND, "flower");
     basic_offset = nl_msg_start_nested(&request, TCA_OPTIONS);
     {
@@ -2569,6 +2590,7 @@ tc_replace_flower(int ifindex, uint16_t prio, uint32_t handle,
     return error;
 }
 
+//设置不同的tc策略
 void
 tc_set_policy(const char *policy)
 {

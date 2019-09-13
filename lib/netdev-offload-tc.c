@@ -951,7 +951,8 @@ parse_put_flow_set_action(struct tc_flower *flower, struct tc_action *action,
     action->type = TC_ACT_ENCAP;
     action->encap.id_present = false;
     flower->action_count++;
-    //隧道封装
+
+    //隧道封装相关字段的转换
     NL_ATTR_FOR_EACH_UNSAFE(tun_attr, tun_left, tunnel, tunnel_len) {
         switch (nl_attr_type(tun_attr)) {
         case OVS_TUNNEL_KEY_ATTR_ID: {
@@ -1090,6 +1091,7 @@ test_key_and_mask(struct match *match)
         return EOPNOTSUPP;
     }
 
+    //不支持更改tos
     if (mask->nw_tos) {
         VLOG_DBG_RL(&rl, "offloading attribute nw_tos isn't supported");
         return EOPNOTSUPP;
@@ -1774,7 +1776,7 @@ const struct netdev_flow_api netdev_offload_tc = {
    .flow_dump_create = netdev_tc_flow_dump_create,
    .flow_dump_destroy = netdev_tc_flow_dump_destroy,
    .flow_dump_next = netdev_tc_flow_dump_next,
-   .flow_put = netdev_tc_flow_put,/*通过tc offload flow*/
+   .flow_put = netdev_tc_flow_put,/*通过tc offload 给flower*/
    .flow_get = netdev_tc_flow_get,
    .flow_del = netdev_tc_flow_del,/*通过tc 删除offload的flow*/
    .init_flow_api = netdev_tc_init_flow_api,/*队列初始化*/

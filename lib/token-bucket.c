@@ -64,20 +64,24 @@ token_bucket_withdraw(struct token_bucket *tb, unsigned int n)
     if (tb->tokens < n) {
         long long int now = time_msec();
         if (now > tb->last_fill) {
+        	//当前时间大于上次补充token时间，则补充token
             unsigned long long int elapsed_ull
                 = (unsigned long long int) now - tb->last_fill;
             unsigned int elapsed = MIN(UINT_MAX, elapsed_ull);
             unsigned int add = sat_mul(tb->rate, elapsed);
+            //要补充的tokens
             unsigned int tokens = sat_add(tb->tokens, add);
             tb->tokens = MIN(tokens, tb->burst);
             tb->last_fill = now;
         }
 
+        //token不足
         if (tb->tokens < n) {
             return false;
         }
     }
 
+    //token充足，减去
     tb->tokens -= n;
     return true;
 }

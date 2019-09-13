@@ -1182,6 +1182,7 @@ vlog_valist(const struct vlog_module *module, enum vlog_level level,
     }
 }
 
+//日志输出
 void
 vlog(const struct vlog_module *module, enum vlog_level level,
      const char *message, ...)
@@ -1263,20 +1264,24 @@ vlog_abort(const struct vlog_module *module, const char *message, ...)
     va_end(args);
 }
 
+//检查日志是否超限
 bool
 vlog_should_drop(const struct vlog_module *module, enum vlog_level level,
                  struct vlog_rate_limit *rl)
 {
     if (!module->honor_rate_limits) {
+    	//日志限速功能关闭，不丢日志
         return false;
     }
 
     if (!vlog_is_enabled(module, level)) {
+    	//此模块日志level未开启
         return true;
     }
 
     ovs_mutex_lock(&rl->mutex);
     if (!token_bucket_withdraw(&rl->token_bucket, VLOG_MSG_TOKENS)) {
+    	//token不足，丢日志
         time_t now = time_now();
         if (!rl->n_dropped) {
             rl->first_dropped = now;
@@ -1306,6 +1311,7 @@ vlog_should_drop(const struct vlog_module *module, enum vlog_level level,
     return false;
 }
 
+//速率日志
 void
 vlog_rate_limit(const struct vlog_module *module, enum vlog_level level,
                 struct vlog_rate_limit *rl, const char *message, ...)

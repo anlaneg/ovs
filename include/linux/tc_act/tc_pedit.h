@@ -51,8 +51,11 @@ enum pedit_cmd {
 #define TCA_PEDIT_CMD_MAX (__PEDIT_CMD_MAX - 1)
 
 struct tc_pedit_key {
+	//掩码信息（反码）
 	__u32           mask;  /* AND */
+	//值信息（已和掩码与）
 	__u32           val;   /*XOR */
+	//重写字段跟离其头部的offset
 	__u32           off;  /*offset */
 	__u32           at;
 	__u32           offmask;
@@ -61,7 +64,7 @@ struct tc_pedit_key {
 
 struct tc_pedit_sel {
 	tc_gen;
-	unsigned char           nkeys;
+	unsigned char           nkeys;//指向可用的tc_pedit_key空间
 	unsigned char           flags;
 	struct tc_pedit_key     keys[0];
 };
