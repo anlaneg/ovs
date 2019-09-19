@@ -217,7 +217,8 @@ void
 poll_timer_wait_until_at(long long int when, const char *where)
 {
     struct poll_loop *loop = poll_loop();
-    if (when < loop->timeout_when) {//设置loop时间及位置，设置所有等待中最小的时间
+    if (when < loop->timeout_when) {
+    	//设置loop时间及位置，设置所有等待中最小的时间
         loop->timeout_when = when;
         loop->timeout_where = where;
     }
@@ -318,11 +319,12 @@ free_poll_nodes(struct poll_loop *loop)
 /* Blocks until one or more of the events registered with poll_fd_wait()
  * occurs, or until the minimum duration registered with poll_timer_wait()
  * elapses, or not at all if poll_immediate_wake() has been called. */
-//等待事件触发
+//等待事件触发（会被递归调用）
 void
 poll_block(void)
 {
-    struct poll_loop *loop = poll_loop();//取当前线程poll_loop
+	//取当前线程poll_loop
+    struct poll_loop *loop = poll_loop();
     struct poll_node *node;
     struct pollfd *pollfds;
     HANDLE *wevents = NULL;
@@ -332,14 +334,17 @@ poll_block(void)
 
     /* Register fatal signal events before actually doing any real work for
      * poll_block. */
+    //注册信号事件，使poll_block可处理信号
     fatal_signal_wait();
 
     if (loop->timeout_when == LLONG_MIN) {
+    	//非常短的超时时间，增加统计
         COVERAGE_INC(poll_zero_timeout);
     }
 
     timewarp_run();
-    pollfds = xmalloc(hmap_count(&loop->poll_nodes) * sizeof *pollfds);//申请足够数量的poolfd
+    //申请足够数量的poolfd
+    pollfds = xmalloc(hmap_count(&loop->poll_nodes) * sizeof *pollfds);
 
 #ifdef _WIN32
     wevents = xmalloc(hmap_count(&loop->poll_nodes) * sizeof *wevents);
@@ -347,7 +352,8 @@ poll_block(void)
 
     /* Populate with all the fds and events. */
     i = 0;
-    HMAP_FOR_EACH (node, hmap_node, &loop->poll_nodes) {//填充这些pollfd到pollfds数组
+    HMAP_FOR_EACH (node, hmap_node, &loop->poll_nodes) {
+    	//填充这些pollfd到pollfds数组
         pollfds[i] = node->pollfd;
 #ifdef _WIN32
         wevents[i] = node->wevent;
@@ -404,8 +410,9 @@ free_poll_loop(void *loop_)
     free(loop);
 }
 
+//返回当前线程对应的poll_loop
 static struct poll_loop *
-poll_loop(void)//返回当前线程对应的poll_loop
+poll_loop(void)
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
     static pthread_key_t key;

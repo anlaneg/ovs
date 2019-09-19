@@ -4644,6 +4644,7 @@ rule_destruct(struct rule *rule_)
     }
 }
 
+//自rule中直接取rule->stats
 static void
 rule_get_stats(struct rule *rule_, uint64_t *packets, uint64_t *bytes,
                long long int *used)
@@ -6248,6 +6249,7 @@ const struct ofproto_class ofproto_dpif_class = {
     NULL,                       /* rule_delete */
     rule_destruct,
     rule_dealloc,
+	//获取rule的统计信息
     rule_get_stats,
     packet_xlate,
     packet_xlate_revert,

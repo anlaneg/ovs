@@ -45,6 +45,7 @@ VLOG_DEFINE_THIS_MODULE(fatal_signal);
 
 /* Signals to catch. */
 #ifndef _WIN32
+//需要关注的信号
 static const int fatal_signals[] = { SIGTERM, SIGINT, SIGHUP, SIGALRM };
 #else
 static const int fatal_signals[] = { SIGTERM };
@@ -79,19 +80,23 @@ static BOOL WINAPI ConsoleHandlerRoutine(DWORD dwCtrlType);
  * optional, because calling any other function in the module will also
  * initialize it.  However, in a multithreaded program, the module must be
  * initialized while the process is still single-threaded. */
+//信号处理回调注册，通过函数fatal_signal_handler，将信号触发变更为
+//fd（signal_fds[1]负责通知触发信号，signal_fds[0]负责读）通知
 void
-fatal_signal_init(void)//信号初始化，将信号触发变更为fd通知
+fatal_signal_init(void)
 {
     static bool inited = false;
 
     if (!inited) {
         size_t i;
 
+        //未初始化情况下，必须为单线程，开始执行信息处理句柄初始化
         assert_single_threaded();
         inited = true;
 
         ovs_mutex_init_recursive(&mutex);
 #ifndef _WIN32
+        //产生信号fds,并置为非阻塞
         xpipe_nonblocking(signal_fds);
 #else
         wevent = CreateEvent(NULL, TRUE, FALSE, NULL);
@@ -104,14 +109,18 @@ fatal_signal_init(void)//信号初始化，将信号触发变更为fd通知
         SetConsoleCtrlHandler(ConsoleHandlerRoutine, true);
 #endif
 
+        //遍历处理需要关注的信息，为它们注册回调
         for (i = 0; i < ARRAY_SIZE(fatal_signals); i++) {
             int sig_nr = fatal_signals[i];
 #ifndef _WIN32
             struct sigaction old_sa;
 
-            xsigaction(sig_nr, NULL, &old_sa);//取此信号对应的处理函数
+            //取此信号系统当前提供的默认处理处理函数，如果为DEF函数，则为其
+            //注册fatal_signal_handler
+            xsigaction(sig_nr, NULL, &old_sa);
             if (old_sa.sa_handler == SIG_DFL
-                && signal(sig_nr, fatal_signal_handler) == SIG_ERR) {//如果未注册处理句柄，注册处理函数为fatal_signal_handler
+                && signal(sig_nr, fatal_signal_handler) == SIG_ERR) {
+            	//如果未注册处理句柄，注册处理函数为fatal_signal_handler
                 VLOG_FATAL("signal failed (%s)", ovs_strerror(errno));
             }
 #else
@@ -120,7 +129,8 @@ fatal_signal_init(void)//信号初始化，将信号触发变更为fd通知
             }
 #endif
         }
-        atexit(fatal_signal_atexit_handler);//注册进程退出时，执行函数fatal_signal_atexit_handler
+        //注册进程退出时，执行函数fatal_signal_atexit_handler
+        atexit(fatal_signal_atexit_handler);
     }
 }
 
@@ -168,7 +178,8 @@ void
 fatal_signal_handler(int sig_nr)//信号处理
 {
 #ifndef _WIN32
-    ignore(write(signal_fds[1], "", 1));//向管道中发消息，表明已收到信号
+	//向管道中发消息，表明已收到信号
+    ignore(write(signal_fds[1], "", 1));
 #else
     SetEvent(wevent);
 #endif
@@ -218,14 +229,17 @@ fatal_signal_run(void)
     }
 }
 
+//使信号处理，支持poll
 void
-fatal_signal_wait(void)//创建对信号的等待poll_node
+fatal_signal_wait(void)
 {
+	//将关注的signal注册到系统，并转变为signal_fds[0]的读事件
     fatal_signal_init();
 #ifdef _WIN32
     poll_wevent_wait(wevent);
 #else
-    poll_fd_wait(signal_fds[0], POLLIN);//注册信号fd
+    //注册信号signal_fds[0]的读事件，监听信号发生
+    poll_fd_wait(signal_fds[0], POLLIN);
 #endif
 }
 

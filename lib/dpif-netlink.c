@@ -1452,6 +1452,7 @@ dpif_netlink_populate_flow_dump_types(struct dpif_netlink_flow_dump *dump,
     }
 }
 
+//dump datapath中的flow
 static struct dpif_flow_dump *
 dpif_netlink_flow_dump_create(const struct dpif *dpif_, bool terse,
                               struct dpif_flow_dump_types *types)
@@ -3488,6 +3489,7 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_port_poll,
     dpif_netlink_port_poll_wait,
     dpif_netlink_flow_flush,
+	//datapath流dump
     dpif_netlink_flow_dump_create,
     dpif_netlink_flow_dump_destroy,
     dpif_netlink_flow_dump_thread_create,

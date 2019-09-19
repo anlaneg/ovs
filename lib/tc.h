@@ -225,7 +225,7 @@ struct tc_flower {
     int action_count;
     struct tc_action actions[TCA_ACT_MAX_PRIO];
 
-    struct ovs_flow_stats stats;
+    struct ovs_flow_stats stats;//flower状态
     uint64_t lastused;
 
     struct {

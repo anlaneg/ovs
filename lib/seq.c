@@ -55,7 +55,8 @@ struct seq_thread {
     bool waiting OVS_GUARDED;        /* True if latch_wait() already called. */
 };
 
-static struct ovs_mutex seq_mutex = OVS_MUTEX_INITIALIZER;//所有seq共有这一把锁
+//所有seq共有这一把锁
+static struct ovs_mutex seq_mutex = OVS_MUTEX_INITIALIZER;
 
 static uint64_t seq_next OVS_GUARDED_BY(seq_mutex) = 1;//用于产生序列
 
@@ -181,9 +182,12 @@ seq_wait__(struct seq *seq, uint64_t value, const char *where)
     uint32_t hash = hash_int(id, 0);
     struct seq_waiter *waiter;
 
+    //如果seq->waiters上有waiter,则检查是否有等待此seq的waiter,如果有，则不加入
+    //如果无，且waiter值与当前value不一致，则顺手wakeup这个waiter
     HMAP_FOR_EACH_IN_BUCKET (waiter, hmap_node, hash, &seq->waiters) {
         if (waiter->ovsthread_id == id) {//已存在情况
-            if (waiter->value != value) {//立即唤醒
+            if (waiter->value != value) {
+            	//立即唤醒
                 /* The current value is different from the value we've already
                  * waited for, */
                 poll_immediate_wake_at(where);
@@ -194,7 +198,7 @@ seq_wait__(struct seq *seq, uint64_t value, const char *where)
         }
     }
 
-    //不存在，则创建
+    //waiter不存在，则创建
     waiter = xmalloc(sizeof *waiter);
     waiter->seq = seq;
     hmap_insert(&seq->waiters, &waiter->hmap_node, hash);
@@ -229,9 +233,11 @@ seq_wait_at(const struct seq *seq_, uint64_t value, const char *where)
 
     ovs_mutex_lock(&seq_mutex);//加锁后再检查
     if (value == seq->value) {
-        seq_wait__(seq, value, where);//注册等待句柄
+    	//seq仍然为value,未发生变更，注册seq等待句柄
+        seq_wait__(seq, value, where);
     } else {
-        poll_immediate_wake_at(where);//立即唤醒
+    	//seq已变更，立即唤醒
+        poll_immediate_wake_at(where);
     }
     ovs_mutex_unlock(&seq_mutex);
 }

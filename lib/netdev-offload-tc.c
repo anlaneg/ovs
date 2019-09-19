@@ -774,6 +774,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
 
     if (stats) {
         memset(stats, 0, sizeof *stats);
+        //取flower中的状态
         stats->n_packets = get_32aligned_u64(&flower->stats.n_packets);
         stats->n_bytes = get_32aligned_u64(&flower->stats.n_bytes);
         stats->used = flower->lastused;

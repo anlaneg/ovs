@@ -1298,6 +1298,7 @@ ofputil_flow_stats_format(struct ds *string,
         ds_put_cstr(string, ", ");
     }
     if (show_stats) {
+    	//显示规则匹配的报文及字节数
         print_flow_stat(string, "n_packets", fs->packet_count);
         print_flow_stat(string, "n_bytes", fs->byte_count);
     }
@@ -1328,11 +1329,13 @@ ofputil_flow_stats_format(struct ds *string,
     /* Print the match, followed by a space (but omit the space if the match
      * was an empty string). */
     size_t length = string->length;
+    //显示规则的匹配信息
     match_format(&fs->match, port_map, string, fs->priority);
     if (string->length != length) {
         ds_put_char(string, ' ');
     }
 
+    //显示action信息
     ds_put_format(string, "%sactions=%s", colors.actions, colors.end);
     struct ofpact_format_params fp = {
         .port_map = port_map,

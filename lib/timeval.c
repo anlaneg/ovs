@@ -92,6 +92,7 @@ static bool timewarp_enabled;
 /* Reference to the seq struct.  Threads other than main thread can
  * wait on timewarp_seq and be waken up when time is warped. */
 static struct seq *timewarp_seq;
+//为各线程申请last_seq
 /* Last value of 'timewarp_seq'. */
 DEFINE_STATIC_PER_THREAD_DATA(uint64_t, last_seq, 0);
 
@@ -284,8 +285,9 @@ time_alarm(unsigned int secs)
  * Stores the number of milliseconds elapsed during poll in '*elapsed'. */
 int
 time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
-          long long int timeout_when, int *elapsed)
+          long long int timeout_when/*poll的超时时间*/, int *elapsed/*出参，poll实际占用了多长时间*/)
 {
+	//取当前线程上次wakeup的时间
     long long int *last_wakeup = last_wakeup_get();
     long long int start;
     bool quiescent;
@@ -294,6 +296,7 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
     time_init();
     coverage_clear();//执行统计
     coverage_run();//计算各时间段统计值
+
     if (*last_wakeup && !thread_is_pmd()) {
         log_poll_interval(*last_wakeup);
     }
@@ -307,8 +310,10 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
         int time_left;
 
         if (now >= timeout_when) {
+        	//timeout时间已过
             time_left = 0;
         } else if ((unsigned long long int) timeout_when - now > INT_MAX) {
+        	//timeout时间过大
             time_left = INT_MAX;
         } else {
             time_left = timeout_when - now;
@@ -323,7 +328,8 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
         }
 
 #ifndef _WIN32
-        retval = poll(pollfds, n_pollfds, time_left);//在此阻塞接受fd
+        //在此阻塞接受fd
+        retval = poll(pollfds, n_pollfds, time_left/*poll最长等待时间*/);
         if (retval < 0) {
             retval = -errno;
         }
@@ -363,6 +369,8 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
             break;
         }
     }
+
+    //记录wakeup时间
     *last_wakeup = time_msec();
     refresh_rusage();
     *elapsed = *last_wakeup - start;
@@ -645,6 +653,7 @@ log_poll_interval(long long int last_wakeup)
         struct rusage rusage;
 
         if (!getrusage_thread(&rusage)) {
+        	//poll间隔为interval,并显示这段时间花在uer,sys的时间
             VLOG_WARN("Unreasonably long %lldms poll interval"
                       " (%lldms user, %lldms system)",
                       interval,
@@ -707,16 +716,37 @@ get_cpu_tracker(void)
     return t;
 }
 
+//取上次本线程统计信息
 static struct rusage *
 get_recent_rusage(void)
 {
     return &get_cpu_tracker()->recent_rusage;
 }
 
+//取当前线程统计信息
 static int
 getrusage_thread(struct rusage *rusage OVS_UNUSED)
 {
 #ifdef RUSAGE_THREAD
+	//返回当前线程的用量信息
+	/*struct rusage {
+               struct timeval ru_utime;  user CPU time used
+               struct timeval ru_stime;  system CPU time used
+               long   ru_maxrss;         maximum resident set size
+               long   ru_ixrss;          integral shared memory size
+               long   ru_idrss;          integral unshared data size
+               long   ru_isrss;          integral unshared stack size
+               long   ru_minflt;         page reclaims (soft page faults)
+               long   ru_majflt;         page faults (hard page faults)
+               long   ru_nswap;          swaps
+               long   ru_inblock;        block input operations
+               long   ru_oublock;        block output operations
+               long   ru_msgsnd;         IPC messages sent
+               long   ru_msgrcv;         IPC messages received
+               long   ru_nsignals;       signals received
+               long   ru_nvcsw;          voluntary context switches
+               long   ru_nivcsw;         involuntary context switches
+    };*/
     return getrusage(RUSAGE_THREAD, rusage);
 #else
     errno = EINVAL;

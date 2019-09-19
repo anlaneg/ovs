@@ -574,8 +574,10 @@ open_vconn__(const char *name, enum open_target target,
     int ofp_version;
     int error;
 
+    //连接到unix socket
     bridge_path = xasprintf("%s/%s.%s", ovs_rundir(), name, suffix);
 
+    //解析datapath_name及datapath_type(默认system方式）
     ofproto_parse_name(name, &datapath_name, &datapath_type);
     socket_name = xasprintf("%s/%s.%s", ovs_rundir(), datapath_name, suffix);
     free(datapath_name);
@@ -1452,7 +1454,7 @@ prepare_dump_flows(int argc, char *argv[], bool aggregate,
                    struct ofputil_flow_stats_request *fsr,
                    enum ofputil_protocol *protocolp)
 {
-    const char *vconn_name = argv[1];
+    const char *vconn_name = argv[1];/*桥名称*/
     enum ofputil_protocol usable_protocols, protocol;
     struct vconn *vconn;
     char *error;
@@ -1568,7 +1570,7 @@ ofctl_dump_flows(struct ovs_cmdl_context *ctx)
 
         struct ofputil_flow_stats *fses;
         size_t n_fses;
-        run(vconn_dump_flows(vconn, &fsr, protocol, &fses, &n_fses),
+        run(vconn_dump_flows(vconn, &fsr, protocol, &fses/*出参，规则*/, &n_fses),
             "dump flows");
 
         if (n_criteria) {
@@ -1578,7 +1580,7 @@ ofctl_dump_flows(struct ovs_cmdl_context *ctx)
         struct ds s = DS_EMPTY_INITIALIZER;
         for (size_t i = 0; i < n_fses; i++) {
             ds_clear(&s);
-            ofputil_flow_stats_format(&s, &fses[i],
+            ofputil_flow_stats_format(&s, &fses[i]/*显示规则信息*/,
                                       ports_to_show(ctx->argv[1]),
                                       tables_to_show(ctx->argv[1]),
                                       show_stats);
