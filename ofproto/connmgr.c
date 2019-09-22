@@ -599,6 +599,7 @@ connmgr_set_controllers(struct connmgr *mgr, struct shash *controllers)
         const char *target = node->name;
         const struct ofproto_controller *c = node->data;
         if (!ofservice_lookup(mgr, target)) {
+        	//如果不存在此target,则创建它
             ofservice_create(mgr, target, c);
         }
     }
@@ -736,6 +737,7 @@ update_fail_open(struct connmgr *mgr)
     }
 }
 
+//创建多个pvconnect
 static int
 set_pvconns(struct pvconn ***pvconnsp, size_t *n_pvconnsp,
             const struct sset *sset)
@@ -2003,6 +2005,7 @@ ofservice_run(struct ofservice *ofservice)
 {
     if (ofservice->pvconn) {
         struct vconn *vconn;
+        //接入一个请求
         int retval = pvconn_accept(ofservice->pvconn, &vconn);
         if (!retval) {
             /* Passing default value for creation of the rconn */
@@ -2014,6 +2017,7 @@ ofservice_run(struct ofservice *ofservice)
             rconn_connect_unreliably(rconn, vconn, name);
             free(name);
 
+            //创建client对应的service
             ofconn_create(ofservice, rconn, &ofservice->s);
         } else if (retval != EAGAIN) {
             VLOG_WARN_RL(&rl, "accept failed (%s)", ovs_strerror(retval));

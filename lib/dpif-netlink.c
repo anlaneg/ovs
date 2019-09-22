@@ -3483,6 +3483,7 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_port_query_by_number,
     dpif_netlink_port_query_by_name,
     dpif_netlink_port_get_pid,
+	//dump start
     dpif_netlink_port_dump_start,
     dpif_netlink_port_dump_next,
     dpif_netlink_port_dump_done,

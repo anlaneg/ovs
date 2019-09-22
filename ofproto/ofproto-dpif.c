@@ -3801,7 +3801,7 @@ port_add(struct ofproto *ofproto_, struct netdev *netdev)
         odp_port_t port_no = ODPP_NONE;
         int error;
 
-    	//不存在，则创建并加和入
+    	//不存在，则创建并加入
         error = dpif_port_add(ofproto->backer->dpif, netdev, &port_no);
         if (error) {
             return error;
