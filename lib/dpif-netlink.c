@@ -3679,6 +3679,7 @@ dpif_netlink_vport_to_ofpbuf(const struct dpif_netlink_vport *vport,
     ovs_header->dp_ifindex = vport->dp_ifindex;
 
     if (vport->port_no != ODPP_NONE) {
+    	//如果指明port_number，则添加attr_port_no属性
         nl_msg_put_odp_port(buf, OVS_VPORT_ATTR_PORT_NO, vport->port_no);
     }
 
@@ -3688,6 +3689,7 @@ dpif_netlink_vport_to_ofpbuf(const struct dpif_netlink_vport *vport,
     }
 
     if (vport->name) {
+    	//vport名称
         nl_msg_put_string(buf, OVS_VPORT_ATTR_NAME, vport->name);
     }
 
