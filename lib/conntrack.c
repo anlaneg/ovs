@@ -1207,7 +1207,8 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             handle_nat(pkt, conn, zone, ctx->reply, ctx->icmp_related);
         }
 
-    } else if (check_orig_tuple(ct, pkt, ctx, now, &conn, nat_action_info)) {
+    } else if (pkt->md.ct_state
+               && check_orig_tuple(ct, pkt, ctx, now, &conn, nat_action_info)) {
     	//发现链接已被其它线程创建，走更新流程
         create_new_conn = conn_update_state(ct, pkt, ctx, conn, now);
     } else {
@@ -1607,9 +1608,10 @@ check_l4_icmp6(const struct conn_key *key, const void *data, size_t size,
 }
 
 static inline bool
-extract_l4_tcp(struct conn_key *key, const void *data, size_t size)
+extract_l4_tcp(struct conn_key *key, const void *data, size_t size,
+               size_t *chk_len)
 {
-    if (OVS_UNLIKELY(size < TCP_HEADER_LEN)) {
+    if (OVS_UNLIKELY(size < (chk_len ? *chk_len : TCP_HEADER_LEN))) {
         return false;
     }
 
@@ -1622,9 +1624,10 @@ extract_l4_tcp(struct conn_key *key, const void *data, size_t size)
 }
 
 static inline bool
-extract_l4_udp(struct conn_key *key, const void *data, size_t size)
+extract_l4_udp(struct conn_key *key, const void *data, size_t size,
+               size_t *chk_len)
 {
-    if (OVS_UNLIKELY(size < UDP_HEADER_LEN)) {
+    if (OVS_UNLIKELY(size < (chk_len ? *chk_len : UDP_HEADER_LEN))) {
         return false;
     }
 
@@ -1638,7 +1641,7 @@ extract_l4_udp(struct conn_key *key, const void *data, size_t size)
 
 static inline bool extract_l4(struct conn_key *key, const void *data,
                               size_t size, bool *related, const void *l3,
-                              bool validate_checksum);
+                              bool validate_checksum, size_t *chk_len);
 
 static uint8_t
 reverse_icmp_type(uint8_t type)
@@ -1673,9 +1676,9 @@ reverse_icmp_type(uint8_t type)
 //基本功能，解析icmp信息
 static inline int
 extract_l4_icmp(struct conn_key *key, const void *data, size_t size,
-                bool *related)
+                bool *related, size_t *chk_len)
 {
-    if (OVS_UNLIKELY(size < ICMP_HEADER_LEN)) {
+    if (OVS_UNLIKELY(size < (chk_len ? *chk_len : ICMP_HEADER_LEN))) {
         return false;
     }
 
@@ -1728,9 +1731,10 @@ extract_l4_icmp(struct conn_key *key, const void *data, size_t size,
         key->src = inner_key.src;
         key->dst = inner_key.dst;
         key->nw_proto = inner_key.nw_proto;
+        size_t check_len = ICMP_ERROR_DATA_L4_LEN;
 
         //解析embeed的内层,l4
-        ok = extract_l4(key, l4, tail - l4, NULL, l3, false);
+        ok = extract_l4(key, l4, tail - l4, NULL, l3, false, &check_len);
         if (ok) {
             conn_key_reverse(key);
             *related = true;
@@ -1817,7 +1821,7 @@ extract_l4_icmp6(struct conn_key *key, const void *data, size_t size,
         key->dst = inner_key.dst;
         key->nw_proto = inner_key.nw_proto;
 
-        ok = extract_l4(key, l4, tail - l4, NULL, l3, false);
+        ok = extract_l4(key, l4, tail - l4, NULL, l3, false, NULL);
         if (ok) {
             conn_key_reverse(key);
             *related = true;
@@ -1842,28 +1846,31 @@ extract_l4_icmp6(struct conn_key *key, const void *data, size_t size,
  * an ICMP or ICMP6 header.
  *
  * If 'related' is NULL, it means that we're already parsing a header nested
- * in an ICMP error.  In this case, we skip checksum and length validation. */
+ * in an ICMP error.  In this case, we skip the checksum and some length
+ * validations. */
 //4层报文解析
 static inline bool
 extract_l4(struct conn_key *key, const void *data, size_t size, bool *related,
-           const void *l3, bool validate_checksum)
+           const void *l3, bool validate_checksum, size_t *chk_len)
 {
 	//tcp协议处理
     if (key->nw_proto == IPPROTO_TCP) {
         return (!related || check_l4_tcp(key, data, size, l3,
-                validate_checksum)) && extract_l4_tcp(key, data, size);//解tcp包
+                validate_checksum))
+               && extract_l4_tcp(key, data, size, chk_len);//解tcp包
     } else if (key->nw_proto == IPPROTO_UDP) {
         return (!related || check_l4_udp(key, data, size, l3,
-                validate_checksum)) && extract_l4_udp(key, data, size);//解udp包
+                validate_checksum))
+               && extract_l4_udp(key, data, size, chk_len);//解udp包
     } else if (key->dl_type == htons(ETH_TYPE_IP)
                && key->nw_proto == IPPROTO_ICMP) {
         return (!related || check_l4_icmp(data, size, validate_checksum))
-               && extract_l4_icmp(key, data, size, related);//解icmp
+               && extract_l4_icmp(key, data, size, related, chk_len);//解icmp
     } else if (key->dl_type == htons(ETH_TYPE_IPV6)
                && key->nw_proto == IPPROTO_ICMPV6) {//解icmpv6
         return (!related || check_l4_icmp6(key, data, size, l3,
-                validate_checksum)) && extract_l4_icmp6(key, data, size,
-                related);
+                validate_checksum))
+               && extract_l4_icmp6(key, data, size, related);
     } else {
         return false;
     }
@@ -1948,7 +1955,8 @@ conn_key_extract(struct conntrack *ct, struct dp_packet *pkt, ovs_be16 dl_type,
             /* Validate the checksum only when hwol is not supported. */
             //如果解析成功，则开始解析l4
             if (extract_l4(&ctx->key, l4, dp_packet_l4_size(pkt),
-                           &ctx->icmp_related, l3, !hwol_good_l4_csum)) {
+                           &ctx->icmp_related, l3, !hwol_good_l4_csum,
+                           NULL)) {
                 ctx->hash = conn_key_hash(&ctx->key, ct->hash_basis);
                 return true;
             }

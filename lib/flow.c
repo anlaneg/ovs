@@ -366,7 +366,6 @@ parse_vlan(const void **datap, size_t *sizep, union flow_vlan_hdr *vlan_hdrs)
 {
     const ovs_be16 *eth_type;
 
-    memset(vlan_hdrs, 0, sizeof(union flow_vlan_hdr) * FLOW_MAX_VLAN_HEADERS);
     data_pull(datap, sizep, ETH_ADDR_LEN * 2);//跳过目的mac,源mac
 
     //跳过dst,src mac后到达eth_type
@@ -379,6 +378,7 @@ parse_vlan(const void **datap, size_t *sizep, union flow_vlan_hdr *vlan_hdrs)
             break;
         }
 
+        memset(vlan_hdrs + n, 0, sizeof(union flow_vlan_hdr));
         //设置32bit的vlan头部
         const ovs_16aligned_be32 *qp = data_pull(datap, sizep, sizeof *qp);
         vlan_hdrs[n].qtag = get_16aligned_be32(qp);
@@ -819,26 +819,23 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
 
     miniflow_push_uint32(mf, dp_hash, md->dp_hash);//标记hash位存在，填充dp_hash
     miniflow_push_uint32(mf, in_port, odp_to_u32(md->in_port.odp_port));//标记in_port位存在，填充in_port
-    if (md->ct_state) {
+    if (md->ct_state) {//如果ct_state被设置
         miniflow_push_uint32(mf, recirc_id, md->recirc_id);
         miniflow_push_uint8(mf, ct_state, md->ct_state);
         ct_nw_proto_p = miniflow_pointer(mf, ct_nw_proto);
         miniflow_push_uint8(mf, ct_nw_proto, 0);
         miniflow_push_uint16(mf, ct_zone, md->ct_zone);
-    } else if (md->recirc_id) {//如果recirc_id被设置
-        miniflow_push_uint32(mf, recirc_id, md->recirc_id);
-        miniflow_pad_to_64(mf, recirc_id);
-    }
-
-    if (md->ct_state) {//如果ct_state被设置
         miniflow_push_uint32(mf, ct_mark, md->ct_mark);
         miniflow_push_be32(mf, packet_type, packet_type);
-
         if (!ovs_u128_is_zero(md->ct_label)) {
             miniflow_push_words(mf, ct_label, &md->ct_label,
                                 sizeof md->ct_label / sizeof(uint64_t));
         }
     } else {
+        if (md->recirc_id) {//如果recirc_id被设置
+            miniflow_push_uint32(mf, recirc_id, md->recirc_id);
+            miniflow_pad_to_64(mf, recirc_id);
+        }
         miniflow_pad_from_64(mf, packet_type);
         miniflow_push_be32(mf, packet_type, packet_type);
     }

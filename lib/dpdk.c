@@ -291,7 +291,7 @@ dpdk_init__(const struct smap *ovs_other_config)
     int result;
     bool auto_determine = true;
     int err = 0;
-    cpu_set_t cpuset;
+    struct ovs_numa_dump *affinity = NULL;
     struct svec args = SVEC_EMPTY_INITIALIZER;
 
     log_stream = fopencookie(NULL, "w+", dpdk_log_func);
@@ -383,24 +383,24 @@ dpdk_init__(const struct smap *ovs_other_config)
      */
     //未给出-c,-l参数，构造-c参数
     if (auto_determine) {
+        const struct ovs_numa_info_core *core;
         int cpu = 0;
 
         /* Get the main thread affinity */
-        CPU_ZERO(&cpuset);
-        err = pthread_getaffinity_np(pthread_self(), sizeof(cpu_set_t),
-                                     &cpuset);
-        if (!err) {
-            for (cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+        affinity = ovs_numa_thread_getaffinity_dump();
+        if (affinity) {
+            cpu = INT_MAX;
+            FOR_EACH_CORE_ON_DUMP (core, affinity) {
             	//取cpuset中的第一个cpu,并组装-c 参数
-                if (CPU_ISSET(cpu, &cpuset)) {
-                    break;
+                if (cpu > core->core_id) {
+                    cpu = core->core_id;
                 }
             }
         } else {
         	//获取失败，则使用"-c 0x1"
             /* User did not set dpdk-lcore-mask and unable to get current
              * thread affintity - default to core #0 */
-            VLOG_ERR("Thread getaffinity error %d. Using core #0", err);
+            VLOG_ERR("Thread getaffinity failed. Using core #0");
         }
         svec_add(&args, "-l");
         svec_add_nocopy(&args, xasprintf("%d", cpu));
@@ -433,13 +433,10 @@ dpdk_init__(const struct smap *ovs_other_config)
     svec_destroy(&args);
 
     /* Set the main thread affinity back to pre rte_eal_init() value */
-    if (auto_determine && !err) {
+    if (affinity) {
     	//设置到cpuset上
-        err = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t),
-                                     &cpuset);
-        if (err) {
-            VLOG_ERR("Thread setaffinity error %d", err);
-        }
+        ovs_numa_thread_setaffinity_dump(affinity);
+        ovs_numa_dump_destroy(affinity);
     }
 
     if (result < 0) {
@@ -552,6 +549,12 @@ bool
 dpdk_per_port_memory(void)
 {
     return per_port_memory;
+}
+
+bool
+dpdk_available(void)
+{
+    return dpdk_initialized;
 }
 
 void
