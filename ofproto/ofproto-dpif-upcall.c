@@ -61,7 +61,9 @@ COVERAGE_DEFINE(revalidate_missed_dp_flow);
  * and possibly sets up a kernel flow as a cache. */
 struct handler {
     struct udpif *udpif;               /* Parent udpif. */
+    //handler对应的thread
     pthread_t thread;                  /* Thread ID. */
+    //handler编号
     uint32_t handler_id;               /* Handler id. */
 };
 
@@ -516,9 +518,11 @@ udpif_destroy(struct udpif *udpif)
 }
 
 /* Stops the handler and revalidator threads. */
+//停止所有handler,revalidator线程
 static void
 udpif_stop_threads(struct udpif *udpif)
 {
+	//必须为非0数时，才生效
     if (udpif && (udpif->n_handlers != 0 || udpif->n_revalidators != 0)) {
         size_t i;
 
@@ -528,12 +532,15 @@ udpif_stop_threads(struct udpif *udpif)
         /* Wait for the threads to exit.  Quiesce because this can take a long
          * time.. */
         ovsrcu_quiesce_start();
+        //等待handler,revalidator线程退出
         for (i = 0; i < udpif->n_handlers; i++) {
             xpthread_join(udpif->handlers[i].thread, NULL);
         }
         for (i = 0; i < udpif->n_revalidators; i++) {
             xpthread_join(udpif->revalidators[i].thread, NULL);
         }
+
+        //禁止upcall（netlink实现为空）
         dpif_disable_upcall(udpif->dpif);
         ovsrcu_quiesce_end();
 
@@ -584,6 +591,7 @@ udpif_start_threads(struct udpif *udpif, size_t n_handlers_,
         }
 
         atomic_init(&udpif->enable_ufid, udpif->backer->rt_support.ufid);
+        //handler线程创建成功，开启upcall
         dpif_enable_upcall(udpif->dpif);
 
         ovs_barrier_init(&udpif->reval_barrier, udpif->n_revalidators);
@@ -641,6 +649,7 @@ udpif_set_threads(struct udpif *udpif, size_t n_handlers_,
     ovs_assert(udpif);
     ovs_assert(n_handlers_ && n_revalidators_);
 
+    //handler数目及revalidator数目发生变化，先停止handler,revalidator
     if (udpif->n_handlers != n_handlers_
         || udpif->n_revalidators != n_revalidators_) {
         udpif_stop_threads(udpif);
@@ -649,6 +658,7 @@ udpif_set_threads(struct udpif *udpif, size_t n_handlers_,
     if (!udpif->handlers && !udpif->revalidators) {
         int error;
 
+        //配置handler数目
         error = dpif_handlers_set(udpif->dpif, n_handlers_);
         if (error) {
             VLOG_ERR("failed to configure handlers in dpif %s: %s",
@@ -656,6 +666,7 @@ udpif_set_threads(struct udpif *udpif, size_t n_handlers_,
             return;
         }
 
+        //启动报文处理线程及校验线程
         udpif_start_threads(udpif, n_handlers_, n_revalidators_);
     }
 }
@@ -917,13 +928,15 @@ udpif_run_flow_rebalance(struct udpif *udpif)
     udpif_flow_rebalance(udpif);
 }
 
+//revalidator线程入口
 static void *
 udpif_revalidator(void *arg)
 {
     /* Used by all revalidators. */
     struct revalidator *revalidator = arg;
     struct udpif *udpif = revalidator->udpif;
-    bool leader = revalidator == &udpif->revalidators[0];//0号是leader
+    //检查当前是否为leader(0号revalidator线程为leader)
+    bool leader = revalidator == &udpif->revalidators[0];
 
     /* Used only by the leader. */
     long long int start_time = 0;
@@ -932,7 +945,8 @@ udpif_revalidator(void *arg)
 
     revalidator->id = ovsthread_id_self();
     for (;;) {
-        if (leader) {//leader的工作
+        if (leader) {
+        	//leader的工作
             uint64_t reval_seq;
 
             recirc_run(); /* Recirculation cleanup. */
@@ -963,7 +977,7 @@ udpif_revalidator(void *arg)
                 udpif->dump = dpif_flow_dump_create(udpif->dpif, terse_dump,
                                                     NULL);
             }
-        }
+        }//learder工作结束
 
         /* Wait for the leader to start the flow dump. */
         ovs_barrier_block(&udpif->reval_barrier);//等待所有线程运行到这里

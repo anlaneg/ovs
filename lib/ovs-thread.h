@@ -479,6 +479,7 @@ unsigned int ovsthread_id_init(void);
 static inline unsigned int
 ovsthread_id_self(void)
 {
+	//取thread变量，如果thread变量未初始化，则执行初始化，并返回
     unsigned int id = *ovsthread_id_get();
 
     if (OVS_UNLIKELY(id == OVSTHREAD_ID_UNSET)) {

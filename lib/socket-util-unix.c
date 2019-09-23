@@ -420,6 +420,7 @@ af_inet_ioctl(unsigned long int command, const void *arg)
             : 0);
 }
 
+//通过ioctl请求接口信息
 int
 af_inet_ifreq_ioctl(const char *name, struct ifreq *ifr, unsigned long int cmd,
                     const char *cmd_name)

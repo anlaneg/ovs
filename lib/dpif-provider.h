@@ -424,6 +424,7 @@ struct dpif_class {
     void (*enable_upcall)(struct dpif *);
 
     /* Disables upcalls if 'dpif' directly executes upcall functions. */
+    //临时禁止upcall
     void (*disable_upcall)(struct dpif *);
 
     /* Get datapath version. Caller is responsible for freeing the string

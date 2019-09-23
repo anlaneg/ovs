@@ -352,6 +352,7 @@ struct ovsthread_aux {
     char name[16];
 };
 
+//通过原子变量next_id对thread_id赋值
 unsigned int
 ovsthread_id_init(void)
 {

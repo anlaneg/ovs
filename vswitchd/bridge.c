@@ -643,8 +643,10 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      * down to ofproto or lower layers. */
     add_del_bridges(ovs_cfg);//依据配置，增删除桥
     HMAP_FOR_EACH (br, node, &all_bridges) {
-        bridge_collect_wanted_ports(br, &br->wanted_ports);//收集配置指明的所有口
-        bridge_del_ports(br, &br->wanted_ports);//删除不需要的port,更新已存在的port的配置
+    	//收集配置指明的所有口
+        bridge_collect_wanted_ports(br, &br->wanted_ports);
+        //删除不需要的port,更新已存在的port的配置
+        bridge_del_ports(br, &br->wanted_ports);
     }
 
     //感谢原作者用这一段注释，将bridge与ofproto划分开
@@ -1865,7 +1867,8 @@ iface_do_create(const struct bridge *br,
     //由datapath决定要创建的netdev类型（例如dpdk？tap?等）
     type = ofproto_port_open_type(br->ofproto,
                                   iface_get_type(iface_cfg, br->cfg));
-    error = netdev_open(iface_cfg->name, type, &netdev);//创建对应type的设备
+    //创建对应type的设备
+    error = netdev_open(iface_cfg->name, type, &netdev);
     if (error) {
         VLOG_WARN_BUF(errp, "could not open network device %s (%s)",
                       iface_cfg->name, ovs_strerror(error));

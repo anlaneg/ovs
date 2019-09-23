@@ -1158,6 +1158,7 @@ nl_sock_drain(struct nl_sock *sock)
 void
 nl_dump_start(struct nl_dump *dump, int protocol, const struct ofpbuf *request)
 {
+	//指明DUMP标记，则kernel执行dumpit函数
     nl_msg_nlmsghdr(request)->nlmsg_flags |= NLM_F_DUMP | NLM_F_ACK;
 
     ovs_mutex_init(&dump->mutex);

@@ -203,7 +203,7 @@ struct dpif_netlink {
 
     /* Upcall messages. */
     struct fat_rwlock upcall_lock;//用于upcall互斥，配置加写锁，转发加读锁
-    //用于记录事件处理
+    //用于记录事件处理（数组类型，每个handler线程用一个元素）
     struct dpif_handler *handlers;
     //指出handlers数组的size
     uint32_t n_handlers;           /* Num of upcall handlers. */
@@ -931,7 +931,7 @@ dpif_netlink_rtnl_port_create_and_add(struct dpif_netlink *dpif,
         return error;
     }
 
-    //获取要创建的netdev类型，例如"internal"
+    //获取要创建的netdev类型的接口名称
     name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
     error = dpif_netlink_port_add__(dpif, name, OVS_VPORT_TYPE_NETDEV, NULL,
                                     port_nop);
@@ -952,6 +952,7 @@ dpif_netlink_port_add(struct dpif *dpif_, struct netdev *netdev,
     fat_rwlock_wrlock(&dpif->upcall_lock);
     //依据此变量决定如何创建port
     if (!ovs_tunnels_out_of_tree) {
+    	//通过netlink rtnl消息创建port
         error = dpif_netlink_rtnl_port_create_and_add(dpif, netdev, port_nop);
     }
     if (error) {
@@ -2307,6 +2308,7 @@ dpif_netlink_handler_init(struct dpif_handler *handler)
 }
 #else
 
+//初始化handler，创建epoll fd
 static int
 dpif_netlink_handler_init(struct dpif_handler *handler)
 {
@@ -2341,6 +2343,7 @@ dpif_netlink_refresh_channels(struct dpif_netlink *dpif, uint32_t n_handlers)
     ovs_assert(!WINDOWS || n_handlers <= 1);
     ovs_assert(!WINDOWS || dpif->n_handlers <= 1);
 
+    //变更handler数目
     if (dpif->n_handlers != n_handlers) {
         destroy_all_channels(dpif);
         dpif->handlers = xzalloc(n_handlers * sizeof *dpif->handlers);
@@ -2350,6 +2353,7 @@ dpif_netlink_refresh_channels(struct dpif_netlink *dpif, uint32_t n_handlers)
 
             error = dpif_netlink_handler_init(handler);
             if (error) {
+            	//如果第i个初始化失败，则释放之前已创建的i-1个handler
                 size_t j;
 
                 for (j = 0; j < i; j++) {
@@ -2375,6 +2379,7 @@ dpif_netlink_refresh_channels(struct dpif_netlink *dpif, uint32_t n_handlers)
     keep_channels = bitmap_allocate(keep_channels_nbits);
 
     ofpbuf_use_stub(&buf, reply_stub, sizeof reply_stub);
+    //dump kernel中已有的port
     dpif_netlink_port_dump_start__(dpif, &dump);
     while (!dpif_netlink_port_dump_next__(dpif, &dump, &vport, &buf)) {
         uint32_t port_no = odp_to_u32(vport.port_no);
@@ -3510,6 +3515,7 @@ const struct dpif_class dpif_netlink_class = {
     NULL,                       /* register_dp_purge_cb */
     NULL,                       /* register_upcall_cb */
     NULL,                       /* enable_upcall */
+	//禁止upcall采用空实现
     NULL,                       /* disable_upcall */
     dpif_netlink_get_datapath_version, /* get_datapath_version */
     dpif_netlink_ct_dump_start,
