@@ -137,7 +137,7 @@ size_t cmap_replace(struct cmap *, struct cmap_node *old_node,
          (NODE) != OBJECT_CONTAINING(NULL, NODE, MEMBER);               \
          ASSIGN_CONTAINER(NODE, cmap_node_next_protected(&(NODE)->MEMBER), \
                           MEMBER))
-#define CMAP_FOR_EACH_WITH_HASH(NODE, MEMBER, HASH, CMAP)   \
+#define CMAP_FOR_EACH_WITH_HASH(NODE, MEMBER, HASH/*hashcode*/, CMAP)   \
     CMAP_NODE_FOR_EACH(NODE, MEMBER, cmap_find(CMAP, HASH))
 #define CMAP_FOR_EACH_WITH_HASH_PROTECTED(NODE, MEMBER, HASH, CMAP)     \
     CMAP_NODE_FOR_EACH_PROTECTED(NODE, MEMBER, cmap_find_protected(CMAP, HASH))

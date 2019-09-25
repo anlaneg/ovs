@@ -94,7 +94,9 @@ LOCK_FUNCTION(spin, lock);
                       where, __func__); \
         } \
  \
+ 	 	/*尝试着加pthread的锁*/\
         error = pthread_##TYPE##_##FUN(&l->lock); \
+        /*error=0表示加锁成功，否则加锁失败*/\
         if (OVS_UNLIKELY(error) && error != EBUSY) { \
             ovs_abort(error, "%s: pthread_%s_%s failed", where, #TYPE, #FUN); \
         } \
@@ -103,8 +105,11 @@ LOCK_FUNCTION(spin, lock);
         } \
         return error; \
     }
+//定义mutex的trylock
 TRY_LOCK_FUNCTION(mutex, trylock);
+//rwlock的tryrdlock
 TRY_LOCK_FUNCTION(rwlock, tryrdlock);
+//rwlock的trywrlock
 TRY_LOCK_FUNCTION(rwlock, trywrlock);
 #ifdef HAVE_PTHREAD_SPIN_LOCK
 TRY_LOCK_FUNCTION(spin, trylock);
@@ -322,23 +327,28 @@ ovs_barrier_destroy(struct ovs_barrier *barrier)
  * the effects of prior memory accesses of all the participating threads
  * visible on return and to prevent the following memory accesses to be
  * reordered before the ovs_barrier_block(). */
+//提供同步棚栏机制
 void
-ovs_barrier_block(struct ovs_barrier *barrier)//提供同步棚栏
+ovs_barrier_block(struct ovs_barrier *barrier)
 {
     uint64_t seq = seq_read(barrier->seq);
     uint32_t orig;
 
     orig = atomic_count_inc(&barrier->count);//计数加１
-    if (orig + 1 == barrier->size) {//如果这个线程是barrier约定的最后一个
-        atomic_count_set(&barrier->count, 0);//最后一个线程将计数清０
+    if (orig + 1 == barrier->size) {
+    		//如果这个线程是barrier约定的最后一个，则将count清空为0，以备下次再用
+        atomic_count_set(&barrier->count, 0);
         /* seq_change() serves as a release barrier against the other threads,
          * so the zeroed count is visible to them as they continue. */
-        seq_change(barrier->seq);//通知seq变化，通知其它先进入的小伙伴，指明人到齐，可以开始离开了
-    } else {//早到的小伙伴，需要等其它线程进入后才能开始
+        //促使seq改变，通知其它先进入的小伙伴，指明人已到齐，可以开始开始活动
+        seq_change(barrier->seq);
+    } else {
+    		//早到的小伙伴，需要等其它线程到齐后才能开始
         /* To prevent thread from waking up by other event,
          * keeps waiting for the change of 'barrier->seq'. */
         while (seq == seq_read(barrier->seq)) {
-            seq_wait(barrier->seq, seq);//添加句柄
+        		//如果seq没有发生变换，则使自已阻塞，等待被唤醒
+            seq_wait(barrier->seq, seq);
             poll_block();
         }
     }

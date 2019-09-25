@@ -180,6 +180,7 @@ dpif_sflow_find_port(const struct dpif_sflow *ds, odp_port_t odp_port)
  * to get these stats more efficiently, but this is only going to be called
  * once every 20-30 seconds.  Return number of datapaths found (normally expect
  * 1). */
+//获取系统当前datapath状态
 static int
 sflow_get_dp_stats(struct dpif_sflow *ds OVS_UNUSED,
                    struct dpif_dp_stats *dp_totals)
@@ -190,7 +191,9 @@ sflow_get_dp_stats(struct dpif_sflow *ds OVS_UNUSED,
 
     memset(dp_totals, 0, sizeof *dp_totals);
     sset_init(&types);
+    //枚举datapath类别
     dp_enumerate_types(&types);
+    //遍历所有datapath类别，取其下所有datapath，汇总datapath的统计状态
     SSET_FOR_EACH (type, &types) {
         struct sset names;
         const char *name;

@@ -135,8 +135,9 @@ seq_change_protected(struct seq *seq)
 
 /* Increments 'seq''s sequence number, waking up any threads that are waiting
  * on 'seq'. */
+//变更seq序列，唤醒在此seq上等待基变换的所有waiter
 void
-seq_change(struct seq *seq)//变更seq序列
+seq_change(struct seq *seq)
     OVS_EXCLUDED(seq_mutex)
 {
     ovs_mutex_lock(&seq_mutex);
@@ -161,8 +162,9 @@ seq_read_protected(const struct seq *seq)//返回序列号
  * seq_read() and seq_wait() can be used together to yield a race-free wakeup
  * when an object changes, even without an ability to lock the object.  See
  * Usage in seq.h for details. */
+//返回序列对应的值
 uint64_t
-seq_read(const struct seq *seq)//返回序列对应的值
+seq_read(const struct seq *seq)
     OVS_EXCLUDED(seq_mutex)
 {
     uint64_t value;

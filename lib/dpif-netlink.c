@@ -1453,7 +1453,7 @@ dpif_netlink_populate_flow_dump_types(struct dpif_netlink_flow_dump *dump,
     }
 }
 
-//dump datapath中的flow
+//创建flow dump全局上下文
 static struct dpif_flow_dump *
 dpif_netlink_flow_dump_create(const struct dpif *dpif_, bool terse,
                               struct dpif_flow_dump_types *types)
@@ -1471,6 +1471,7 @@ dpif_netlink_flow_dump_create(const struct dpif *dpif_, bool terse,
     if (dump->types.ovs_flows) {
         dpif_netlink_flow_init(&request);
         request.cmd = OVS_FLOW_CMD_GET;
+        //datapath对应的ifindex
         request.dp_ifindex = dpif->dp_ifindex;
         request.ufid_present = false;
         request.ufid_terse = terse;
@@ -1538,6 +1539,7 @@ dpif_netlink_flow_dump_thread_cast(struct dpif_flow_dump_thread *thread)
     return CONTAINER_OF(thread, struct dpif_netlink_flow_dump_thread, up);
 }
 
+//创建flow dump thread对应的上下文
 static struct dpif_flow_dump_thread *
 dpif_netlink_flow_dump_thread_create(struct dpif_flow_dump *dump_)
 {
@@ -1677,6 +1679,7 @@ dpif_netlink_netdev_match_to_dpif_flow(struct match *match,
     return 0;
 }
 
+//获取下一组flow
 static int
 dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
                             struct dpif_flow *flows, int max_flows)
@@ -3476,7 +3479,8 @@ const struct dpif_class dpif_netlink_class = {
     NULL,                       /* init */
     dpif_netlink_enumerate,
     NULL,
-    dpif_netlink_open,//创建或者打开datapath
+	//创建或者打开datapath
+    dpif_netlink_open,
     dpif_netlink_close,
     dpif_netlink_destroy,
     dpif_netlink_run,

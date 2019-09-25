@@ -620,6 +620,7 @@ netdev_ifindex_to_odp_port(int ifindex)
     return ret;
 }
 
+//默认rebalance的策略为False
 static bool netdev_offload_rebalance_policy = false;
 
 bool

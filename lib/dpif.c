@@ -409,7 +409,7 @@ exit:
  * the empty string to specify the default system type.  Returns 0 if
  * successful, otherwise a positive errno value.  On success stores a pointer
  * to the datapath in '*dpifp', otherwise a null pointer. */
-//尝试着打开一个已存在的命名为name,类型为type的，datapath
+//尝试着打开一个已存在的命名为name,类型为type的，datapath，返回datapath interface做为其引用
 int
 dpif_open(const char *name, const char *type, struct dpif **dpifp)
 {
@@ -564,6 +564,7 @@ dpif_delete(struct dpif *dpif)
 
 /* Retrieves statistics for 'dpif' into 'stats'.  Returns 0 if successful,
  * otherwise a positive errno value. */
+//向datapath请求获得当前状态
 int
 dpif_get_dp_stats(const struct dpif *dpif, struct dpif_dp_stats *stats)
 {

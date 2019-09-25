@@ -130,19 +130,21 @@ struct udpif {
 
     //每个handler线程一个handler结构
     struct handler *handlers;          /* Upcall handlers. */
-    size_t n_handlers;
+    size_t n_handlers;//handler线程数
 
     struct revalidator *revalidators;  /* Flow revalidators. */
-    size_t n_revalidators;
+    size_t n_revalidators;//revalidator线程数
 
-    //通知子线程退出
+    //用于所有validator，handler子线程退出的latch
     struct latch exit_latch;           /* Tells child threads to exit. */
 
     /* Revalidation. */
     struct seq *reval_seq;             /* Incremented to force revalidation. */
+    //标记validator,handler子线程需要退出（leader检查exit_latch后标记）
     bool reval_exit;                   /* Set by leader on 'exit_latch. */
     struct ovs_barrier reval_barrier;  /* Barrier used by revalidators. */
     struct dpif_flow_dump *dump;       /* DPIF flow dump state. */
+    //一次所有thread完成flow revalidator所占用的时间
     long long int dump_duration;       /* Duration of the last flow dump. */
     struct seq *dump_seq;              /* Increments each dump iteration. */
     atomic_bool enable_ufid;           /* If true, skip dumping flow attrs. */
@@ -156,8 +158,10 @@ struct udpif {
      * observes the latch has been set, and this will cause all revalidator
      * threads to wait on 'pause_barrier' at the beginning of the next
      * revalidation round. */
+    //用于标记所有revalidator线程需要暂停（leader检查pause_latch后标记）
     bool pause;                        /* Set by leader on 'pause_latch. */
-    struct latch pause_latch;          /* Set to force revalidators pause. */ //用于暂停revalidators
+    //用于暂停revalidator而需要的latch
+    struct latch pause_latch;          /* Set to force revalidators pause. */
     struct ovs_barrier pause_barrier;  /* Barrier used to pause all */
                                        /* revalidators by main thread. */
 
@@ -169,15 +173,20 @@ struct udpif {
     struct umap *ukeys;
 
     /* Datapath flow statistics. */
+    //记录系统中历史中流的最大数目
     unsigned int max_n_flows;
+    //记录系统中历史流平均数
     unsigned int avg_n_flows;
 
     /* Following fields are accessed and modified by different threads. */
     atomic_uint flow_limit;            /* Datapath flow hard limit. */
 
     /* n_flows_mutex prevents multiple threads updating these concurrently. */
+    //记录当前系统中的datapath flows数目
     atomic_uint n_flows;               /* Number of flows in the datapath. */
+    //上次请求n_flow的时间，用于保证短期内不重复请求
     atomic_llong n_flows_timestamp;    /* Last time n_flows was updated. */
+    //排它锁，保证每次仅一个revalidator线程请求flow数量
     struct ovs_mutex n_flows_mutex;
 
     /* Following fields are accessed and modified only from the main thread. */
@@ -420,6 +429,7 @@ static upcall_callback upcall_cb;
 static dp_purge_callback dp_purge_cb;
 
 static atomic_bool enable_megaflows = ATOMIC_VAR_INIT(true);
+//用于标记ufid是否被开启（默认开启）
 static atomic_bool enable_ufid = ATOMIC_VAR_INIT(true);
 
 void
@@ -609,7 +619,7 @@ udpif_start_threads(struct udpif *udpif, size_t n_handlers_,
             revalidator->udpif = udpif;
             //创建线程
             revalidator->thread = ovs_thread_create(
-                "revalidator", udpif_revalidator, revalidator);
+                "revalidator", udpif_revalidator, revalidator/*每个revalidator对应的变量*/);
         }
         ovsrcu_quiesce_end();
     }
@@ -742,6 +752,7 @@ udpif_flush_all_datapaths(void)
     }
 }
 
+//检查datapath后端是否支持ufid,是否开启ufid
 static bool
 udpif_use_ufid(struct udpif *udpif)
 {
@@ -751,7 +762,7 @@ udpif_use_ufid(struct udpif *udpif)
     return enable && udpif->backer->rt_support.ufid;
 }
 
-
+//取datapath当前流总数
 static unsigned long
 udpif_get_n_flows(struct udpif *udpif)
 {
@@ -759,16 +770,21 @@ udpif_get_n_flows(struct udpif *udpif)
     unsigned long flow_count;
 
     now = time_msec();
+    //取time=udpif->n_flows_timestamp
     atomic_read_relaxed(&udpif->n_flows_timestamp, &time);
     if (time < now - 100 && !ovs_mutex_trylock(&udpif->n_flows_mutex)) {
         struct dpif_dp_stats stats;
 
+        //设置udpif获取n_flows_timestamp的时间
         atomic_store_relaxed(&udpif->n_flows_timestamp, now);
+        //向datapath请求返回当前状态
         dpif_get_dp_stats(udpif->dpif, &stats);
+        //记录当前流总数
         flow_count = stats.n_flows;
         atomic_store_relaxed(&udpif->n_flows, flow_count);
         ovs_mutex_unlock(&udpif->n_flows_mutex);
     } else {
+    		//时间间隔过小或者没有抢到锁，则使用之前的n_flows
         atomic_read_relaxed(&udpif->n_flows, &flow_count);
     }
     return flow_count;
@@ -933,7 +949,9 @@ static void *
 udpif_revalidator(void *arg)
 {
     /* Used by all revalidators. */
+	/*对应所有revalidator的结构，此thread专有的结构*/
     struct revalidator *revalidator = arg;
+    //所有revalidator有唯一一个user datapath interface
     struct udpif *udpif = revalidator->udpif;
     //检查当前是否为leader(0号revalidator线程为leader)
     bool leader = revalidator == &udpif->revalidators[0];
@@ -943,58 +961,75 @@ udpif_revalidator(void *arg)
     uint64_t last_reval_seq = 0;
     size_t n_flows = 0;
 
+    //设置对应的thread id
     revalidator->id = ovsthread_id_self();
     for (;;) {
         if (leader) {
-        	//leader的工作
+        		//leader的工作
             uint64_t reval_seq;
 
             recirc_run(); /* Recirculation cleanup. */
-
+            //取此revalidator的seq
             reval_seq = seq_read(udpif->reval_seq);
-            last_reval_seq = reval_seq;
+            last_reval_seq = reval_seq;//记录上一次的seq
 
+            //取当前系统中实际流总数（非实时）
             n_flows = udpif_get_n_flows(udpif);
+            //系统中历史上最大流数目
             udpif->max_n_flows = MAX(n_flows, udpif->max_n_flows);
+            //系统中历史平均流数目
             udpif->avg_n_flows = (udpif->avg_n_flows + n_flows) / 2;
 
             /* Only the leader checks the pause latch to prevent a race where
              * some threads think it's false and proceed to block on
              * reval_barrier and others think it's true and block indefinitely
              * on the pause_barrier */
+            //检查是否需要暂停revalidator
             udpif->pause = latch_is_set(&udpif->pause_latch);
 
             /* Only the leader checks the exit latch to prevent a race where
              * some threads think it's true and exit and others think it's
              * false and block indefinitely on the reval_barrier */
+            //记录是否需要退出revalidator
             udpif->reval_exit = latch_is_set(&udpif->exit_latch);
 
             start_time = time_msec();
             if (!udpif->reval_exit) {
+            		//如果revalidator不需要退出，则创建flow dump的上下文，准备dump
                 bool terse_dump;
 
+                //检查ufid是否开启
                 terse_dump = udpif_use_ufid(udpif);
+                //创建dump flow全局上下文
                 udpif->dump = dpif_flow_dump_create(udpif->dpif, terse_dump,
                                                     NULL);
             }
         }//learder工作结束
 
         /* Wait for the leader to start the flow dump. */
-        ovs_barrier_block(&udpif->reval_barrier);//等待所有线程运行到这里
+        //等待所有线程运行到这里（主要是等待leader完成flow dump的创建）
+        ovs_barrier_block(&udpif->reval_barrier);
+
+        //响应对revalidator的暂停请求
         if (udpif->pause) {
             revalidator_pause(revalidator);
         }
 
+        //响应对revalidator的退出请法语
         if (udpif->reval_exit) {
             break;
         }
+
+        //处理revalidator工作
         revalidate(revalidator);
 
         /* Wait for all flows to have been dumped before we garbage collect. */
+        //等待所有flow完成dump,以便开始garbage收集
         ovs_barrier_block(&udpif->reval_barrier);
         revalidator_sweep(revalidator);
 
         /* Wait for all revalidators to finish garbage collection. */
+        //等待所有revalidator完成garbage收集
         ovs_barrier_block(&udpif->reval_barrier);
 
         if (leader) {
@@ -1003,14 +1038,22 @@ udpif_revalidator(void *arg)
 
             atomic_read_relaxed(&udpif->flow_limit, &flow_limit);
 
+            //所有revalidator线程均完成了flow dump上下文thread的释放
+            //现在释放全局上下文
             dpif_flow_dump_destroy(udpif->dump);
             seq_change(udpif->dump_seq);
+
+            //如果offload的rebalance policy开启，则执行rebalance
+            //没有深入分析，待继续分析
             if (netdev_is_offload_rebalance_policy_enabled()) {
                 udpif_run_flow_rebalance(udpif);
             }
 
+            //所有revalidator执行完所占用的时间
             duration = MAX(time_msec() - start_time, 1);
             udpif->dump_duration = duration;
+
+            //更新flow_limit（没看懂？？？）
             if (duration > 2000) {
                 flow_limit /= duration / 1000;
             } else if (duration > 1300) {
@@ -1022,18 +1065,25 @@ udpif_revalidator(void *arg)
             flow_limit = MIN(ofproto_flow_limit, MAX(flow_limit, 1000));
             atomic_store_relaxed(&udpif->flow_limit, flow_limit);
 
+            //dump flow时间大于2S，告警
             if (duration > 2000) {
                 VLOG_INFO("Spent an unreasonably long %lldms dumping flows",
                           duration);
             }
 
+            //设置两次dump的时间间隔（采用start_time进行设置，故设置的实际为是开始dump的时间间隔）
             poll_timer_wait_until(start_time + MIN(ofproto_max_idle,
                                                    ofproto_max_revalidator));
             seq_wait(udpif->reval_seq, last_reval_seq);
             latch_wait(&udpif->exit_latch);
             latch_wait(&udpif->pause_latch);
+            //等待事件发生
             poll_block();
 
+            //如果事件发生，但并不是暂停revalidator或者exit revalidator的事件，且我们在
+            //5ms内被唤醒，则再次block
+            //为什么我们会有在5ms内被唤醒的情况（由于我们是按start时间定间隔，运行时间占了很长时间导致我们
+            //在5ms内会被唤醒
             if (!latch_is_set(&udpif->pause_latch) &&
                 !latch_is_set(&udpif->exit_latch)) {
                 long long int now = time_msec();
@@ -1706,7 +1756,7 @@ get_ukey_hash(const ovs_u128 *ufid, const unsigned pmd_id)
     return hash_2words(ufid->u32[0], pmd_id);
 }
 
-//通过ufid查询key
+//通过ufid,pmd_id查询key
 static struct udpif_key *
 ukey_lookup(struct udpif *udpif, const ovs_u128 *ufid, const unsigned pmd_id)
 {
@@ -1936,11 +1986,14 @@ ukey_install__(struct udpif *udpif, struct udpif_key *new_ukey)
     ovs_mutex_lock(&umap->mutex);
     old_ukey = ukey_lookup(udpif, &new_ukey->ufid, new_ukey->pmd_id);
     if (old_ukey) {
+    		//存在旧的ukey,执行替换
         /* Uncommon case: A ukey is already installed with the same UFID. */
         if (old_ukey->key_len == new_ukey->key_len
             && !memcmp(old_ukey->key, new_ukey->key, new_ukey->key_len)) {
+        		//旧的ukey与之相同，执行替换
             locked = try_ukey_replace(umap, old_ukey, new_ukey);
         } else {
+        		//旧的ukey与之不同，构造告警日志，指明flow有冲突的ukey
             struct ds ds = DS_EMPTY_INITIALIZER;
 
             odp_format_ufid(&old_ukey->ufid, &ds);
@@ -1955,6 +2008,7 @@ ukey_install__(struct udpif *udpif, struct udpif_key *new_ukey)
             ds_destroy(&ds);
         }
     } else {
+    		//不同在此ukey,直接插入
         ovs_mutex_lock(&new_ukey->mutex);
         cmap_insert(&umap->cmap, &new_ukey->cmap_node, new_ukey->hash);
         transition_ukey(new_ukey, UKEY_VISIBLE);
@@ -2037,7 +2091,7 @@ ukey_install(struct udpif *udpif, struct udpif_key *ukey)
  * *error is an output parameter provided to appease the threadsafety analyser,
  * and its value matches the return value. */
 static int
-ukey_acquire(struct udpif *udpif, const struct dpif_flow *flow,
+ukey_acquire(struct udpif *udpif, const struct dpif_flow *flow/*自dp dump出现的流*/,
              struct udpif_key **result, int *error)
     OVS_TRY_LOCK(0, (*result)->mutex)
 {
@@ -2048,6 +2102,7 @@ ukey_acquire(struct udpif *udpif, const struct dpif_flow *flow,
     if (ukey) {
         retval = ovs_mutex_trylock(&ukey->mutex);
     } else {
+    		//未查询到此flow对应的ukey,创建其对应的ukey
         /* Usually we try to avoid installing flows from revalidator threads,
          * because locking on a umap may cause handler threads to block.
          * However there are certain cases, like when ovs-vswitchd is
@@ -2055,7 +2110,7 @@ ukey_acquire(struct udpif *udpif, const struct dpif_flow *flow,
          * datapath gracefully (ie, don't just clear the datapath). */
         bool install;
 
-        retval = ukey_create_from_dpif_flow(udpif, flow, &ukey);
+        retval = ukey_create_from_dpif_flow(udpif, flow, &ukey/*出参，生成的ukey*/);
         if (retval) {
             goto done;
         }
@@ -2657,6 +2712,7 @@ udpif_update_flow_pps(struct udpif *udpif, struct udpif_key *ukey,
     ukey->flow_time = udpif->dpif->current_ms;
 }
 
+//revalidator线程需要处理的工作（主要是dump flow)
 static void
 revalidate(struct revalidator *revalidator)
 {
@@ -2671,6 +2727,8 @@ revalidate(struct revalidator *revalidator)
     dump_seq = seq_read(udpif->dump_seq);
     reval_seq = seq_read(udpif->reval_seq);
     atomic_read_relaxed(&udpif->flow_limit, &flow_limit);
+
+    //创建thread专用的dump flow上下文
     dump_thread = dpif_flow_dump_thread_create(udpif->dump);
     for (;;) {
         struct ukey_op ops[REVALIDATE_MAX_BATCH];
@@ -2685,8 +2743,10 @@ revalidate(struct revalidator *revalidator)
         size_t n_dp_flows;
         bool kill_them_all;
 
+        //dump出最多50条流
         n_dumped = dpif_flow_dump_next(dump_thread, flows, ARRAY_SIZE(flows));
         if (!n_dumped) {
+        		//dump结束
             break;
         }
 
@@ -2704,6 +2764,7 @@ revalidate(struct revalidator *revalidator)
          *       measure.  (We reassess this condition for the next batch of
          *       datapath flows, so we will recover before all the flows are
          *       gone.) */
+        //当前系统中流的数目
         n_dp_flows = udpif_get_n_flows(udpif);
         kill_them_all = n_dp_flows > flow_limit * 2;
         max_idle = n_dp_flows > flow_limit ? 100 : ofproto_max_idle;
@@ -2725,6 +2786,7 @@ revalidate(struct revalidator *revalidator)
                 } else {
                     log_unexpected_flow(f, error);
                     if (error != ENOENT) {
+                    		//将这种流删除掉
                         delete_op_init__(udpif, &ops[n_ops++], f);
                     }
                 }
@@ -2785,17 +2847,23 @@ revalidate(struct revalidator *revalidator)
         }
         ovsrcu_quiesce();
     }
+
+    //删除thread专有的flow dump上下文
     dpif_flow_dump_thread_destroy(dump_thread);
     ofpbuf_uninit(&odp_actions);
 }
 
 /* Pauses the 'revalidator', can only proceed after main thread
  * calls udpif_resume_revalidators(). */
+//完成revalidator的暂停
 static void
 revalidator_pause(struct revalidator *revalidator)
 {
     /* The first block is for sync'ing the pause with main thread. */
+	//第一次由main线程发起，故其第一个到达此位置，等所有人到齐，main将被唤醒
     ovs_barrier_block(&revalidator->udpif->pause_barrier);
+    //第二次，当运行到此行时，main被唤醒，但其它revalidator的线程在此集合，等待main线程到达
+    //而main会在resumes时主动到达此状态，从而使大家都离开暂停状态。
     /* The second block is for pausing until main thread resumes. */
     ovs_barrier_block(&revalidator->udpif->pause_barrier);
 }
@@ -2946,10 +3014,12 @@ upcall_unixctl_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
         ufid_enabled = udpif_use_ufid(udpif);
 
         ds_put_format(&ds, "%s:\n", dpif_name(udpif->dpif));
+        //显示系统flow数目，历史上flow最大数，平均flow数，以及配置的最大flow数
         ds_put_format(&ds, "  flows         : (current %lu)"
             " (avg %u) (max %u) (limit %u)\n", udpif_get_n_flows(udpif),
             udpif->avg_n_flows, udpif->max_n_flows, flow_limit);
         ds_put_format(&ds, "  dump duration : %lldms\n", udpif->dump_duration);
+        //显示ufid是否开启
         ds_put_format(&ds, "  ufid enabled : ");
         if (ufid_enabled) {
             ds_put_format(&ds, "true\n");
