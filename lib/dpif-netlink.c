@@ -91,6 +91,7 @@ struct dpif_netlink_dp {
     int dp_ifindex;
 
     /* Attributes. */
+    //datapath名称，来源于OVS_DP_ATTR_NAME
     const char *name;                  /* OVS_DP_ATTR_NAME. */
     const uint32_t *upcall_pid;        /* OVS_DP_ATTR_UPCALL_PID. */
     uint32_t user_features;            /* OVS_DP_ATTR_USER_FEATURES */
@@ -645,6 +646,7 @@ dpif_netlink_run(struct dpif *dpif_)
     return false;
 }
 
+//取datapath的stats
 static int
 dpif_netlink_get_stats(const struct dpif *dpif_, struct dpif_dp_stats *stats)
 {
@@ -3794,7 +3796,7 @@ dpif_netlink_vport_get(const char *name, struct dpif_netlink_vport *reply,
  * 'dp' will contain pointers into 'buf', so the caller should not free 'buf'
  * while 'dp' is still in use. */
 static int
-dpif_netlink_dp_from_ofpbuf(struct dpif_netlink_dp *dp, const struct ofpbuf *buf)
+dpif_netlink_dp_from_ofpbuf(struct dpif_netlink_dp *dp/*出参，解析buf获得*/, const struct ofpbuf *buf)
 {
     static const struct nl_policy ovs_datapath_policy[] = {
         [OVS_DP_ATTR_NAME] = { .type = NL_A_STRING, .max_len = IFNAMSIZ },
@@ -3805,8 +3807,10 @@ dpif_netlink_dp_from_ofpbuf(struct dpif_netlink_dp *dp, const struct ofpbuf *buf
                         .optional = true },
     };
 
+    //清空dp,准备填充
     dpif_netlink_dp_init(dp);
 
+    //取buf的数已白大，分别解nlmsghdr,genlmsghdr,ovs_header三个头部
     struct ofpbuf b = ofpbuf_const_initializer(buf->data, buf->size);
     struct nlmsghdr *nlmsg = ofpbuf_try_pull(&b, sizeof *nlmsg);
     struct genlmsghdr *genl = ofpbuf_try_pull(&b, sizeof *genl);
@@ -3815,11 +3819,13 @@ dpif_netlink_dp_from_ofpbuf(struct dpif_netlink_dp *dp, const struct ofpbuf *buf
     struct nlattr *a[ARRAY_SIZE(ovs_datapath_policy)];
     if (!nlmsg || !genl || !ovs_header
         || nlmsg->nlmsg_type != ovs_datapath_family
+		/*解析消息，并将值填充到a中*/
         || !nl_policy_parse(&b, 0, ovs_datapath_policy, a,
                             ARRAY_SIZE(ovs_datapath_policy))) {
         return EINVAL;
     }
 
+    //通过nlmsghdr,genlmsghdr,ovs_header填充dpif_netlink_dp结构体
     dp->cmd = genl->cmd;
     dp->dp_ifindex = ovs_header->dp_ifindex;
     dp->name = nl_attr_get_string(a[OVS_DP_ATTR_NAME]);
@@ -3840,13 +3846,16 @@ dpif_netlink_dp_to_ofpbuf(const struct dpif_netlink_dp *dp, struct ofpbuf *buf)
 {
     struct ovs_header *ovs_header;
 
+    //存放nlmsghdr+genlmsghdr头部
     nl_msg_put_genlmsghdr(buf, 0, ovs_datapath_family,
-                          NLM_F_REQUEST | NLM_F_ECHO, dp->cmd,
+                          NLM_F_REQUEST | NLM_F_ECHO/*请求，要求响应*/, dp->cmd,
                           OVS_DATAPATH_VERSION);
 
+    //存放ovs_header
     ovs_header = ofpbuf_put_uninit(buf, sizeof *ovs_header);
     ovs_header->dp_ifindex = dp->dp_ifindex;
 
+    //在ovs_header后存放datapath相关的属性信息
     if (dp->name) {
         nl_msg_put_string(buf, OVS_DP_ATTR_NAME, dp->name);
     }
@@ -3900,13 +3909,14 @@ dpif_netlink_dp_transact(const struct dpif_netlink_dp *request,
 
     ovs_assert((reply != NULL) == (bufp != NULL));
 
+    //申请存放消息的buffer
     request_buf = ofpbuf_new(1024);
     dpif_netlink_dp_to_ofpbuf(request, request_buf);
     error = nl_transact(NETLINK_GENERIC, request_buf, bufp);
     ofpbuf_delete(request_buf);
 
     if (reply) {
-    	//将结构体清0
+    	//出参reply存在，则先将结构体清0
         dpif_netlink_dp_init(reply);
         if (!error) {
             error = dpif_netlink_dp_from_ofpbuf(reply, *bufp);

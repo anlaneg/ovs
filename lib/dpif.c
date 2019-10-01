@@ -1033,12 +1033,13 @@ dpif_probe_feature(struct dpif *dpif, const char *name,
 int
 dpif_flow_get(struct dpif *dpif,
               const struct nlattr *key, size_t key_len, const ovs_u128 *ufid,
-              const unsigned pmd_id, struct ofpbuf *buf, struct dpif_flow *flow)
+              const unsigned pmd_id, struct ofpbuf *buf, struct dpif_flow *flow/*出参，获取到的flow信息*/)
 {
+	//向datapath要求指定flow的信息
     struct dpif_op *opp;
     struct dpif_op op;
 
-    op.type = DPIF_OP_FLOW_GET;
+    op.type = DPIF_OP_FLOW_GET;//获取flow信息
     op.flow_get.key = key;
     op.flow_get.key_len = key_len;
     op.flow_get.ufid = ufid;

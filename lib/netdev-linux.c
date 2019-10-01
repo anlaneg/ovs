@@ -5956,6 +5956,7 @@ set_flags(const char *name, unsigned int flags)
     return af_inet_ifreq_ioctl(name, &ifr, SIOCSIFFLAGS, "SIOCSIFFLAGS");
 }
 
+//取指定设备的ifindex
 int
 linux_get_ifindex(const char *netdev_name)
 {
@@ -5983,6 +5984,7 @@ get_ifindex(const struct netdev *netdev_, int *ifindexp)
 {
     struct netdev_linux *netdev = netdev_linux_cast(netdev_);
 
+    //netdev未缓存其对应的的ifindex,则获取，并缓存
     if (!(netdev->cache_valid & VALID_IFINDEX)) {
         netdev_linux_update_via_netlink(netdev);
     }

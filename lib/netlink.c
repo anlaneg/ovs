@@ -116,6 +116,7 @@ nl_msg_put_nlmsghdr(struct ofpbuf *msg,
 
     ovs_assert(msg->size == 0);
 
+    //初始化nlmsghdr
     nl_msg_reserve(msg, NLMSG_HDRLEN + expected_payload);
     nlmsghdr = nl_msg_put_uninit(msg, NLMSG_HDRLEN);
     nlmsghdr->nlmsg_len = 0;
@@ -152,8 +153,10 @@ nl_msg_put_genlmsghdr(struct ofpbuf *msg, size_t expected_payload,
 {
     struct genlmsghdr *genlmsghdr;
 
+    //初始化nlmsghdr
     nl_msg_put_nlmsghdr(msg, GENL_HDRLEN + expected_payload, family, flags);
     ovs_assert(msg->size == NLMSG_HDRLEN);
+    //初始化genlmsghdr
     genlmsghdr = nl_msg_put_uninit(msg, GENL_HDRLEN);
     genlmsghdr->cmd = cmd;
     genlmsghdr->version = version;
@@ -848,7 +851,7 @@ nl_attr_validate(const struct nlattr *nla, const struct nl_policy *policy)
 bool
 nl_policy_parse(const struct ofpbuf *msg, size_t nla_offset,
                 const struct nl_policy policy[],
-                struct nlattr *attrs[], size_t n_attrs)
+                struct nlattr *attrs[]/*出参，属性数组*/, size_t n_attrs/*入参，属性数组大小*/)
 {
     struct nlattr *nla;
     size_t left;
@@ -861,18 +864,22 @@ nl_policy_parse(const struct ofpbuf *msg, size_t nla_offset,
         return false;
     }
 
+    //遍历每个tlv
     NL_ATTR_FOR_EACH (nla, left, ofpbuf_at(msg, nla_offset, 0),
                       msg->size - nla_offset)
     {
         uint16_t type = nl_attr_type(nla);
         if (type < n_attrs && policy[type].type != NL_A_NO_ATTR) {
+        	//执行校验
             const struct nl_policy *e = &policy[type];
             if (!nl_attr_validate(nla, e)) {
                 return false;
             }
             if (attrs[type]) {
+            	//重复给值检测
                 VLOG_DBG_RL(&rl, "duplicate attr %"PRIu16, type);
             }
+            //设置属性值
             attrs[type] = nla;
         }
     }
@@ -881,6 +888,7 @@ nl_policy_parse(const struct ofpbuf *msg, size_t nla_offset,
         return false;
     }
 
+    //对缺失的字段进行报错
     for (i = 0; i < n_attrs; i++) {
         const struct nl_policy *e = &policy[i];
         if (!e->optional && e->type != NL_A_NO_ATTR && !attrs[i]) {

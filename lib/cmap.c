@@ -938,7 +938,8 @@ cmap_replace(struct cmap *cmap, struct cmap_node *old_node,
                cmap_replace__(impl, old_node, new_node, hash, h2));
 
     if (!new_node) {
-        impl->n--;//计数减少
+    	//计数减少
+        impl->n--;
         if (OVS_UNLIKELY(impl->n < impl->min_n)) {
             COVERAGE_INC(cmap_shrink);
             impl = cmap_rehash(cmap, impl->mask >> 1);

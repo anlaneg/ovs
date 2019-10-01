@@ -653,6 +653,7 @@ netdev_set_flow_api_enabled(const struct smap *ovs_other_config)
             VLOG_INFO("netdev: Flow API Enabled");
 
 #ifdef __linux__
+            //设置flow rule的策略，是打到硬件，还是下到软件，还是都下
             tc_set_policy(smap_get_def(ovs_other_config, "tc-policy",
                                        TC_POLICY_DEFAULT));
 #endif
