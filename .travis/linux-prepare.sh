@@ -9,13 +9,14 @@ set -ev
 # linking against it fails.
 git clone git://git.kernel.org/pub/scm/devel/sparse/sparse.git
 cd sparse
-# Commit bb1bf748580d ("cgcc: gendeps for -MM, -MD & -MMD too") makes
-# sparse ignore almost all source files, because 'make' uses '-MD' to
-# generate dependencies as a side effect within compilation commands.
-git revert bb1bf748580d --no-commit
-git diff HEAD
 make -j4 HAVE_LLVM= install
 cd ..
 
 pip install --disable-pip-version-check --user six flake8 hacking
 pip install --user --upgrade docutils
+
+if [ "$M32" ]; then
+    # 32-bit and 64-bit libunwind can not be installed at the same time.
+    # This will remove the 64-bit libunwind and install 32-bit version.
+    sudo apt-get install -y libunwind-dev:i386
+fi

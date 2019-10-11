@@ -15,6 +15,7 @@
  */
 
 #include <config.h>
+#include "backtrace.h"
 #include "daemon.h"
 #include "daemon-private.h"
 #include <errno.h>
@@ -75,7 +76,7 @@ static bool overwrite_pidfile;//是否重写pidfile
 static bool chdir_ = true;//是否需要切换到'/',可由命令行进行变更
 
 /* File descriptor used by daemonize_start() and daemonize_complete(). */
-static int daemonize_fd = -1;
+int daemonize_fd = -1;
 
 /* --monitor: Should a supervisory process monitor the daemon and restart it if
  * it dies due to an error signal? */
@@ -291,8 +292,7 @@ fork_and_wait_for_startup(int *fdp, pid_t *child_pid)
                 OVS_NOT_REACHED();
             }
         }
-        close(fds[0]);
-        *fdp = -1;
+        *fdp = fds[0];
     } else if (!pid) {
         /* Running in child process. */
         close(fds[0]);
@@ -313,8 +313,6 @@ fork_notify_startup(int fd)
         if (error) {
             VLOG_FATAL("pipe write failed (%s)", ovs_strerror(error));
         }
-
-        close(fd);
     }
 }
 
@@ -393,6 +391,8 @@ monitor_daemon(pid_t daemon_pid)
                                   ovs_strerror(errno));
                     }
                 }
+
+                log_received_backtrace(daemonize_fd);
 
                 /* Throttle restarts to no more than once every 10 seconds. */
                 //防止重启过快
@@ -512,8 +512,8 @@ daemonize_complete(void)
     if (!detached) {
         detached = true;
 
-        fork_notify_startup(daemonize_fd);//知会对端，进程起来了
-        daemonize_fd = -1;
+        //知会对端，进程起来了
+        fork_notify_startup(daemonize_fd);
         daemonize_post_detach();
     }
 }

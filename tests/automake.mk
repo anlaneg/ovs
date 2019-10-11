@@ -187,7 +187,7 @@ SYSTEM_DPDK_TESTSUITE = $(srcdir)/tests/system-dpdk-testsuite
 OVSDB_CLUSTER_TESTSUITE = $(srcdir)/tests/ovsdb-cluster-testsuite
 DISTCLEANFILES += tests/atconfig tests/atlocal
 
-AUTOTEST_PATH = utilities:vswitchd:ovsdb:vtep:tests:$(PTHREAD_WIN32_DIR_DLL):$(SSL_DIR):ovn/utilities
+AUTOTEST_PATH = utilities:vswitchd:ovsdb:vtep:tests:$(PTHREAD_WIN32_DIR_DLL):$(SSL_DIR)
 
 check-local:
 	set $(SHELL) '$(TESTSUITE)' -C tests AUTOTEST_PATH=$(AUTOTEST_PATH); \
@@ -199,7 +199,7 @@ check-local:
 COVERAGE = coverage
 COVERAGE_FILE='$(abs_srcdir)/.coverage'
 check-pycov: all clean-pycov
-	PYTHONDONTWRITEBYTECODE=yes COVERAGE_FILE=$(COVERAGE_FILE) PYTHON='$(COVERAGE) run -p' $(SHELL) '$(TESTSUITE)' -C tests AUTOTEST_PATH=$(AUTOTEST_PATH) $(TESTSUITEFLAGS)
+	PYTHONDONTWRITEBYTECODE=yes COVERAGE_FILE=$(COVERAGE_FILE) PYTHON3='$(COVERAGE) run -p' $(SHELL) '$(TESTSUITE)' -C tests AUTOTEST_PATH=$(AUTOTEST_PATH) $(TESTSUITEFLAGS)
 	@cd $(srcdir) && $(COVERAGE) combine && COVERAGE_FILE=$(COVERAGE_FILE) $(COVERAGE) annotate
 	@echo
 	@echo '----------------------------------------------------------------------'
@@ -228,8 +228,6 @@ check-lcov: all $(check_DATA) clean-lcov
 # valgrind support
 
 valgrind_wrappers = \
-	tests/valgrind/ovn-nbctl \
-	tests/valgrind/ovn-sbctl \
 	tests/valgrind/ovs-appctl \
 	tests/valgrind/ovs-ofctl \
 	tests/valgrind/ovs-vsctl \
@@ -283,6 +281,12 @@ check-userspace-valgrind: all $(valgrind_wrappers) $(check_DATA)
 	@echo
 	@echo '----------------------------------------------------------------------'
 	@echo 'Valgrind output can be found in tests/system-userspace-testsuite.dir/*/valgrind.*'
+	@echo '----------------------------------------------------------------------'
+check-afxdp-valgrind: all $(valgrind_wrappers) $(check_DATA)
+	$(SHELL) '$(SYSTEM_AFXDP_TESTSUITE)' -C tests VALGRIND='$(VALGRIND)' AUTOTEST_PATH='tests/valgrind:$(AUTOTEST_PATH)' -d $(TESTSUITEFLAGS) -j1
+	@echo
+	@echo '----------------------------------------------------------------------'
+	@echo 'Valgrind output can be found in tests/system-afxdp-testsuite.dir/*/valgrind.*'
 	@echo '----------------------------------------------------------------------'
 check-helgrind: all $(valgrind_wrappers) $(check_DATA)
 	-$(SHELL) '$(TESTSUITE)' -C tests CHECK_VALGRIND=true VALGRIND='$(HELGRIND)' AUTOTEST_PATH='tests/valgrind:$(AUTOTEST_PATH)' -d $(TESTSUITEFLAGS)

@@ -168,6 +168,7 @@ xsk_configure_umem(void *buffer, uint64_t size, int xdpmode)
 
     umem = xzalloc(sizeof *umem);
 
+    memset(&uconfig, 0, sizeof uconfig);
     uconfig.fill_size = PROD_NUM_DESCS;
     uconfig.comp_size = CONS_NUM_DESCS;
     uconfig.frame_size = FRAME_SIZE;
@@ -524,19 +525,12 @@ netdev_afxdp_reconfigure(struct netdev *netdev)
     netdev->n_rxq = dev->requested_n_rxq;
     netdev->n_txq = netdev->n_rxq;
 
-    if (dev->requested_xdpmode == XDP_ZEROCOPY) {
-        dev->xdpmode = XDP_ZEROCOPY;
-        VLOG_INFO("AF_XDP device %s in DRV mode.", netdev_get_name(netdev));
-        if (setrlimit(RLIMIT_MEMLOCK, &r)) {
-            VLOG_ERR("ERROR: setrlimit(RLIMIT_MEMLOCK): %s",
-                      ovs_strerror(errno));
-        }
-    } else {
-        dev->xdpmode = XDP_COPY;
-        VLOG_INFO("AF_XDP device %s in SKB mode.", netdev_get_name(netdev));
-        /* TODO: set rlimit back to previous value
-         * when no device is in DRV mode.
-         */
+    dev->xdpmode = dev->requested_xdpmode;
+    VLOG_INFO("%s: Setting XDP mode to %s.", netdev_get_name(netdev),
+              dev->xdpmode == XDP_ZEROCOPY ? "DRV" : "SKB");
+
+    if (setrlimit(RLIMIT_MEMLOCK, &r)) {
+        VLOG_ERR("setrlimit(RLIMIT_MEMLOCK) failed: %s", ovs_strerror(errno));
     }
 
     err = xsk_configure_all(netdev);
@@ -765,7 +759,7 @@ free_afxdp_buf_batch(struct dp_packet_batch *batch)
         addr = (uintptr_t)base & (~FRAME_SHIFT_MASK);
         elems[i] = (void *)addr;
     }
-    umem_elem_push_n(xpacket->mpool, batch->count, elems);
+    umem_elem_push_n(xpacket->mpool, dp_packet_batch_size(batch), elems);
     dp_packet_batch_init(batch);
 }
 
@@ -860,9 +854,11 @@ __netdev_afxdp_batch_send(struct netdev *netdev, int qid,
     free_batch = check_free_batch(batch);
 
     umem = xsk_info->umem;
-    ret = umem_elem_pop_n(&umem->mpool, batch->count, elems_pop);
+    ret = umem_elem_pop_n(&umem->mpool, dp_packet_batch_size(batch),
+                          elems_pop);
     if (OVS_UNLIKELY(ret)) {
-        atomic_add_relaxed(&xsk_info->tx_dropped, batch->count, &orig);
+        atomic_add_relaxed(&xsk_info->tx_dropped, dp_packet_batch_size(batch),
+                           &orig);
         VLOG_WARN_RL(&rl, "%s: send failed due to exhausted memory pool.",
                      netdev_get_name(netdev));
         error = ENOMEM;
@@ -870,10 +866,12 @@ __netdev_afxdp_batch_send(struct netdev *netdev, int qid,
     }
 
     /* Make sure we have enough TX descs. */
-    ret = xsk_ring_prod__reserve(&xsk_info->tx, batch->count, &idx);
+    ret = xsk_ring_prod__reserve(&xsk_info->tx, dp_packet_batch_size(batch),
+                                 &idx);
     if (OVS_UNLIKELY(ret == 0)) {
-        umem_elem_push_n(&umem->mpool, batch->count, elems_pop);
-        atomic_add_relaxed(&xsk_info->tx_dropped, batch->count, &orig);
+        umem_elem_push_n(&umem->mpool, dp_packet_batch_size(batch), elems_pop);
+        atomic_add_relaxed(&xsk_info->tx_dropped, dp_packet_batch_size(batch),
+                           &orig);
         COVERAGE_INC(afxdp_tx_full);
         afxdp_complete_tx(xsk_info);
         kick_tx(xsk_info, dev->xdpmode);
@@ -897,8 +895,8 @@ __netdev_afxdp_batch_send(struct netdev *netdev, int qid,
         xsk_ring_prod__tx_desc(&xsk_info->tx, idx + i)->len
             = dp_packet_size(packet);
     }
-    xsk_ring_prod__submit(&xsk_info->tx, batch->count);
-    xsk_info->outstanding_tx += batch->count;
+    xsk_ring_prod__submit(&xsk_info->tx, dp_packet_batch_size(batch));
+    xsk_info->outstanding_tx += dp_packet_batch_size(batch);
 
     ret = kick_tx(xsk_info, dev->xdpmode);
     if (OVS_UNLIKELY(ret)) {

@@ -39,9 +39,14 @@
 #include <config.h>
 
 #include "conntrack-private.h"
+#include "coverage.h"
 #include "ct-dpif.h"
 #include "dp-packet.h"
 #include "util.h"
+
+COVERAGE_DEFINE(conntrack_tcp_seq_chk_bypass);
+COVERAGE_DEFINE(conntrack_tcp_seq_chk_failed);
+COVERAGE_DEFINE(conntrack_invalid_tcp_flags);
 
 struct tcp_peer {
     uint32_t               seqlo;          /* Max sequence number sent     */ //本端发送的seq
@@ -161,6 +166,16 @@ tcp_get_wscale(const struct tcp_header *tcp)
     return wscale;
 }
 
+static bool
+tcp_bypass_seq_chk(struct conntrack *ct)
+{
+    if (!conntrack_get_tcp_seq_chk(ct)) {
+        COVERAGE_INC(conntrack_tcp_seq_chk_bypass);
+        return true;
+    }
+    return false;
+}
+
 //监测两端的tcp状态，变更自身的tcp状态
 static enum ct_update_res
 tcp_conn_update(struct conntrack *ct, struct conn *conn_,
@@ -182,6 +197,7 @@ tcp_conn_update(struct conntrack *ct, struct conn *conn_,
 
     //如果tcp标记位有误，返回更新无效
     if (tcp_invalid_flags(tcp_flags)) {
+        COVERAGE_INC(conntrack_invalid_tcp_flags);
         return CT_UPDATE_INVALID;
     }
 
@@ -308,7 +324,8 @@ tcp_conn_update(struct conntrack *ct, struct conn *conn_,
     //ip头部宣称的最大大小是2字节，故使用0xffff,而1500是作者考虑l2,l3头后加入的值
     int ackskew = check_ackskew ? dst->seqlo - ack : 0;
 #define MAXACKWINDOW (0xffff + 1500)    /* 1500 is an arbitrary fudge factor */
-    if (SEQ_GEQ(src->seqhi, end) //end一定要在自已的窗口范围以内
+    //end一定要在自已的窗口范围以内
+    if ((SEQ_GEQ(src->seqhi, end)
         /* Last octet inside other's window space */
         && SEQ_GEQ(seq, src->seqlo - (dst->max_win << dws))
         /* Retrans: not more than one window back */
@@ -317,7 +334,8 @@ tcp_conn_update(struct conntrack *ct, struct conn *conn_,
         && (ackskew <= (MAXACKWINDOW << sws)) //确认报文一定在窗口范围内
         /* Acking not more than one window forward */
         && ((tcp_flags & TCP_RST) == 0 || orig_seq == src->seqlo
-            || (orig_seq == src->seqlo + 1) || (orig_seq + 1 == src->seqlo))) {
+            || (orig_seq == src->seqlo + 1) || (orig_seq + 1 == src->seqlo)))
+        || tcp_bypass_seq_chk(ct)) {
         /* Require an exact/+1 sequence match on resets when possible */
 
     	//学习更新的数据
@@ -427,7 +445,9 @@ tcp_conn_update(struct conntrack *ct, struct conn *conn_,
             src->state = dst->state = CT_DPIF_TCPS_TIME_WAIT;
         }
     } else {
-        return CT_UPDATE_INVALID;//无效状态
+        COVERAGE_INC(conntrack_tcp_seq_chk_failed);
+        //无效状态
+        return CT_UPDATE_INVALID;
     }
 
     return CT_UPDATE_VALID;//状态有效

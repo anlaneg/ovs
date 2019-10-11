@@ -312,6 +312,7 @@ conntrack_init(void)
     ct->hash_basis = random_uint32();
     atomic_count_init(&ct->n_conn, 0);
     atomic_init(&ct->n_conn_limit, DEFAULT_N_CONN_LIMIT);
+    atomic_init(&ct->tcp_seq_chk, true);
     latch_init(&ct->clean_thread_exit);
     //连接跟踪的老化处理线程
     ct->clean_thread = ovs_thread_create("ct_clean", clean_thread_main, ct);
@@ -704,7 +705,7 @@ static void
 reverse_nat_packet(struct dp_packet *pkt, const struct conn *conn)
 {
     char *tail = dp_packet_tail(pkt);
-    char pad = dp_packet_l2_pad_size(pkt);
+    uint8_t pad = dp_packet_l2_pad_size(pkt);
     struct conn_key inner_key;
     const char *inner_l4 = NULL;
     uint16_t orig_l3_ofs = pkt->l3_ofs;
@@ -714,6 +715,8 @@ reverse_nat_packet(struct dp_packet *pkt, const struct conn *conn)
         struct ip_header *nh = dp_packet_l3(pkt);
         struct icmp_header *icmp = dp_packet_l4(pkt);
         struct ip_header *inner_l3 = (struct ip_header *) (icmp + 1);
+        /* This call is already verified to succeed during the code path from
+         * 'conn_key_extract()' which calls 'extract_l4_icmp()'. */
         extract_l3_ipv4(&inner_key, inner_l3, tail - ((char *)inner_l3) - pad,
                         &inner_l4, false);
         pkt->l3_ofs += (char *) inner_l3 - (char *) nh;
@@ -732,9 +735,11 @@ reverse_nat_packet(struct dp_packet *pkt, const struct conn *conn)
         icmp->icmp_csum = csum(icmp, tail - (char *) icmp - pad);
     } else {
         struct ovs_16aligned_ip6_hdr *nh6 = dp_packet_l3(pkt);
-        struct icmp6_error_header *icmp6 = dp_packet_l4(pkt);
+        struct icmp6_data_header *icmp6 = dp_packet_l4(pkt);
         struct ovs_16aligned_ip6_hdr *inner_l3_6 =
             (struct ovs_16aligned_ip6_hdr *) (icmp6 + 1);
+        /* This call is already verified to succeed during the code path from
+         * 'conn_key_extract()' which calls 'extract_l4_icmp6()'. */
         extract_l3_ipv6(&inner_key, inner_l3_6,
                         tail - ((char *)inner_l3_6) - pad,
                         &inner_l4);
@@ -1047,11 +1052,11 @@ check_orig_tuple(struct conntrack *ct, struct dp_packet *pkt,
                  struct conn **conn,
                  const struct nat_action_info_t *nat_action_info)
 {
-    if ((ctx_in->key.dl_type == htons(ETH_TYPE_IP) &&
+    if (!(pkt->md.ct_state & (CS_SRC_NAT | CS_DST_NAT)) ||
+        (ctx_in->key.dl_type == htons(ETH_TYPE_IP) &&
          !pkt->md.ct_orig_tuple.ipv4.ipv4_proto) ||
         (ctx_in->key.dl_type == htons(ETH_TYPE_IPV6) &&
          !pkt->md.ct_orig_tuple.ipv6.ipv6_proto) ||
-        !(pkt->md.ct_state & (CS_SRC_NAT | CS_DST_NAT)) ||
         nat_action_info) {
     		//解析报文时出错的情况
         return false;
@@ -1142,6 +1147,46 @@ conn_update_state_alg(struct conntrack *ct, struct dp_packet *pkt,
 }
 
 static void
+set_cached_conn(const struct nat_action_info_t *nat_action_info,
+                const struct conn_lookup_ctx *ctx, struct conn *conn,
+                struct dp_packet *pkt)
+{
+    if (OVS_LIKELY(!nat_action_info)) {
+        pkt->md.conn = conn;
+        pkt->md.reply = ctx->reply;
+        pkt->md.icmp_related = ctx->icmp_related;
+    } else {
+        pkt->md.conn = NULL;
+    }
+}
+
+static void
+process_one_fast(uint16_t zone, const uint32_t *setmark,
+                 const struct ovs_key_ct_labels *setlabel,
+                 const struct nat_action_info_t *nat_action_info,
+                 struct conn *conn, struct dp_packet *pkt)
+{
+    if (nat_action_info) {
+        handle_nat(pkt, conn, zone, pkt->md.reply, pkt->md.icmp_related);
+        pkt->md.conn = NULL;
+    }
+
+    pkt->md.ct_zone = zone;
+    ovs_mutex_lock(&conn->lock);
+    pkt->md.ct_mark = conn->mark;
+    pkt->md.ct_label = conn->label;
+    ovs_mutex_unlock(&conn->lock);
+
+    if (setmark) {
+        set_mark(pkt, conn, setmark[0], setmark[1]);
+    }
+
+    if (setlabel) {
+        set_label(pkt, conn, &setlabel[0], &setlabel[1]);
+    }
+}
+
+static void
 process_one(struct conntrack *ct, struct dp_packet *pkt,
             struct conn_lookup_ctx *ctx, uint16_t zone,
             bool force, bool commit, long long now, const uint32_t *setmark,
@@ -1207,8 +1252,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             handle_nat(pkt, conn, zone, ctx->reply, ctx->icmp_related);
         }
 
-    } else if (pkt->md.ct_state
-               && check_orig_tuple(ct, pkt, ctx, now, &conn, nat_action_info)) {
+    } else if (check_orig_tuple(ct, pkt, ctx, now, &conn, nat_action_info)) {
     	//发现链接已被其它线程创建，走更新流程
         create_new_conn = conn_update_state(ct, pkt, ctx, conn, now);
     } else {
@@ -1261,6 +1305,8 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
 
     //alg处理
     handle_alg_ctl(ct, ctx, pkt, ct_alg_ctl, conn, now, !!nat_action_info);
+
+    set_cached_conn(nat_action_info, ctx, conn, pkt);
 }
 
 /* Sends the packets in '*pkt_batch' through the connection tracker 'ct'.  All
@@ -1290,15 +1336,22 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
 
     //遍历处理每个包，对报文进行解析，将解析好的内容存放在ctx.key中
     DP_PACKET_BATCH_FOR_EACH (i, packet, pkt_batch) {
-        if (packet->md.ct_state == CS_INVALID
-            || !conn_key_extract(ct, packet, dl_type, &ctx, zone)) {
+        struct conn *conn = packet->md.conn;
+        if (OVS_UNLIKELY(packet->md.ct_state == CS_INVALID)) {
+            write_ct_md(packet, zone, NULL, NULL, NULL);
+        } else if (conn && conn->key.zone == zone && !force
+                   && !get_alg_ctl_type(packet, tp_src, tp_dst, helper)) {
+            process_one_fast(zone, setmark, setlabel, nat_action_info,
+                             conn, packet);
+        } else if (OVS_UNLIKELY(!conn_key_extract(ct, packet, dl_type, &ctx,
+                                zone))) {
        	    //解析失败，此报文为分片或者格式不正确
             packet->md.ct_state = CS_INVALID;
             write_ct_md(packet, zone, NULL, NULL, NULL);
-            continue;
+        } else {
+            process_one(ct, packet, &ctx, zone, force, commit, now, setmark,
+                        setlabel, nat_action_info, tp_src, tp_dst, helper);
         }
-        process_one(ct, packet, &ctx, zone, force, commit, now, setmark,
-                    setlabel, nat_action_info, tp_src, tp_dst, helper);
     }
 
     ipf_postprocess_conntrack(ct->ipf, pkt_batch, now, dl_type);
@@ -1312,6 +1365,7 @@ conntrack_clear(struct dp_packet *packet)
     /* According to pkt_metadata_init(), ct_state == 0 is enough to make all of
      * the conntrack fields invalid. */
     packet->md.ct_state = 0;
+    pkt_metadata_init_conn(&packet->md);
 }
 
 static void
@@ -2532,6 +2586,21 @@ conntrack_get_nconns(struct conntrack *ct, uint32_t *nconns)
 {
     *nconns = atomic_count_get(&ct->n_conn);
     return 0;
+}
+
+int
+conntrack_set_tcp_seq_chk(struct conntrack *ct, bool enabled)
+{
+    atomic_store_relaxed(&ct->tcp_seq_chk, enabled);
+    return 0;
+}
+
+bool
+conntrack_get_tcp_seq_chk(struct conntrack *ct)
+{
+    bool enabled;
+    atomic_read_relaxed(&ct->tcp_seq_chk, &enabled);
+    return enabled;
 }
 
 /* This function must be called with the ct->resources read lock taken. */
