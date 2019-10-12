@@ -864,6 +864,7 @@ nl_sock_transact_multiple__(struct nl_sock *sock,
     msg.msg_iov = iovs;
     msg.msg_iovlen = n;
     do {
+    	//通过iov发送message
         error = sendmsg(sock->fd, &msg, 0) < 0 ? errno : 0;
     } while (error == EINTR);
 
@@ -893,6 +894,7 @@ nl_sock_transact_multiple__(struct nl_sock *sock,
          * If no such transaction is left, use tmp_txn. */
         buf_txn = &tmp_txn;
         for (i = 0; i < n; i++) {
+        	//如果transactions中包含reply,则使用buf_txn使用transactions[i]的reply
             if (transactions[i]->reply) {
                 buf_txn = transactions[i];
                 break;
@@ -1112,6 +1114,7 @@ nl_sock_transact(struct nl_sock *sock, const struct ofpbuf *request,
     struct nl_transaction transaction;
 
     transaction.request = CONST_CAST(struct ofpbuf *, request);
+    //为reply准备空间
     transaction.reply = replyp ? ofpbuf_new(1024) : NULL;
     transactionp = &transaction;
 
@@ -1119,6 +1122,7 @@ nl_sock_transact(struct nl_sock *sock, const struct ofpbuf *request,
 
     if (replyp) {
         if (transaction.error) {
+        	//消息出错情况
             ofpbuf_delete(transaction.reply);
             *replyp = NULL;
         } else {
@@ -1809,6 +1813,7 @@ nl_transact(int protocol, const struct ofpbuf *request,
     struct nl_sock *sock;
     int error;
 
+    //创建socket
     error = nl_pool_alloc(protocol, &sock);
     if (error) {
         if (replyp) {
@@ -1817,6 +1822,7 @@ nl_transact(int protocol, const struct ofpbuf *request,
         return error;
     }
 
+    //向socket发送请求，并获取其对应响应
     error = nl_sock_transact(sock, request, replyp);
 
     nl_pool_release(sock);

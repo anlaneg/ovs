@@ -2576,9 +2576,10 @@ tc_replace_flower(int ifindex, uint16_t prio, uint32_t handle,
     }
     nl_msg_end_nested(&request, basic_offset);
 
+
     error = tc_transact(&request, &reply);
     if (!error) {
-    	//下发失败，删除规则
+    	//下发成功，更新flower
         struct tcmsg *tc =
             ofpbuf_at_assert(reply, NLMSG_HDRLEN, sizeof *tc);
 
