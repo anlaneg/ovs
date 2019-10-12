@@ -1015,7 +1015,7 @@ udpif_revalidator(void *arg)
             revalidator_pause(revalidator);
         }
 
-        //响应对revalidator的退出请法语
+        //响应对revalidator的退出请求
         if (udpif->reval_exit) {
             break;
         }

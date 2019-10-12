@@ -1449,6 +1449,7 @@ dpif_netlink_populate_flow_dump_types(struct dpif_netlink_flow_dump *dump,
                                       struct dpif_flow_dump_types *types)
 {
     if (!types) {
+    		//如果未指定type,则全为true
         dump->types.ovs_flows = true;
         dump->types.netdev_flows = true;
     } else {
@@ -1472,6 +1473,7 @@ dpif_netlink_flow_dump_create(const struct dpif *dpif_, bool terse,
     dpif_netlink_populate_flow_dump_types(dump, types);
 
     if (dump->types.ovs_flows) {
+    		//执行kernel datapath流表dump请求
         dpif_netlink_flow_init(&request);
         request.cmd = OVS_FLOW_CMD_GET;
         //datapath对应的ifindex
@@ -1552,6 +1554,7 @@ dpif_netlink_flow_dump_thread_create(struct dpif_flow_dump *dump_)
     thread = xmalloc(sizeof *thread);
     dpif_flow_dump_thread_init(&thread->up, &dump->up);
     thread->dump = dump;
+    //使用4096的buffer
     ofpbuf_init(&thread->nl_flows, NL_DUMP_BUFSIZE);
     thread->nl_actions = NULL;
     thread->netdev_dump_idx = 0;
@@ -3995,6 +3998,7 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_flow_dump_destroy,
     dpif_netlink_flow_dump_thread_create,
     dpif_netlink_flow_dump_thread_destroy,
+	//通过此函数完成flow dump
     dpif_netlink_flow_dump_next,
 	//向kernel下发flow
     dpif_netlink_operate,

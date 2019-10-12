@@ -569,6 +569,7 @@ nl_sock_leave_mcgroup(struct nl_sock *sock, unsigned int multicast_group)
     return 0;
 }
 
+//发送netlink请求
 static int
 nl_sock_send__(struct nl_sock *sock, const struct ofpbuf *msg,
                uint32_t nlmsg_seq, bool wait)
