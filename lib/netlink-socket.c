@@ -642,6 +642,7 @@ nl_sock_send_seq(struct nl_sock *sock, const struct ofpbuf *msg,
     return nl_sock_send__(sock, msg, nlmsg_seq, wait);
 }
 
+//执行读取，返回0表示读取成功，返回errno表示读取失败
 static int
 nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, int *nsid, bool wait)
 {
@@ -663,6 +664,7 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, int *nsid, bool wait)
     ovs_assert(buf->allocated >= sizeof *nlmsghdr);
     ofpbuf_clear(buf);
 
+    //准备两个iov分别放buf与tail
     iov[0].iov_base = buf->base;
     iov[0].iov_len = buf->allocated;
     iov[1].iov_base = tail;
@@ -713,10 +715,15 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, int *nsid, bool wait)
         //读取fd，收取netlink消息
         retval = recvmsg(sock->fd, &msg, wait ? 0 : MSG_DONTWAIT);
 #endif
-        error = (retval < 0 ? errno
+        //总共会返回 情况1).errno（>0);情况2).0;
+        //针对errno有以下处理
+        //1。EINTR 继续执行收取
+        //2。ENOBUFS 增加计数，返回
+        //3. 直接返回
+        error = (retval < 0 ? errno/*接收失败，填errno*/
                  : retval == 0 ? ECONNRESET /* not possible? */
-                 : nlmsghdr->nlmsg_len != UINT32_MAX ? 0
-                 : retval);
+                 : nlmsghdr->nlmsg_len != UINT32_MAX ? 0 /*返回了长度，也改了buffer*/
+                 : retval/*返回了长度，但没有更改buffer*/);
     } while (error == EINTR);
     if (error) {
         if (error == ENOBUFS) {
@@ -727,6 +734,7 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, int *nsid, bool wait)
         return error;
     }
 
+    //成功读取了数据，但报文被截断了，则返回E2BIG
     if (msg.msg_flags & MSG_TRUNC) {
     	//报文被截短，报错
         VLOG_ERR_RL(&rl, "truncated message (longer than %"PRIuSIZE" bytes)",
@@ -734,6 +742,7 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, int *nsid, bool wait)
         return E2BIG;
     }
 
+    //recvmsg返回的长度与netlink中指定的消息总长度不等，则返回EPROTO
     if (retval < sizeof *nlmsghdr
         || nlmsghdr->nlmsg_len < sizeof *nlmsghdr
         || nlmsghdr->nlmsg_len > retval) {
@@ -742,6 +751,7 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, int *nsid, bool wait)
         return EPROTO;
     }
 #ifndef _WIN32
+    //给定的buffer较小情况下，扩充buffer
     buf->size = MIN(retval, buf->allocated);
     if (retval > buf->allocated) {
         COVERAGE_INC(netlink_recv_jumbo);
@@ -814,6 +824,7 @@ nl_sock_recv(struct nl_sock *sock, struct ofpbuf *buf, int *nsid, bool wait)
     return nl_sock_recv__(sock, buf, nsid, wait);
 }
 
+//记录error,并将收到的reply清掉
 static void
 nl_sock_record_errors__(struct nl_transaction **transactions, size_t n,
                         int error)
@@ -905,10 +916,15 @@ nl_sock_transact_multiple__(struct nl_sock *sock,
         error = nl_sock_recv__(sock, buf_txn->reply, NULL, false);
         if (error) {
             if (error == EAGAIN) {
+            	//针对EAGAIN,将transactions中n个reply清掉，并设置error
+            	//认为事务成功
                 nl_sock_record_errors__(transactions, n, 0);
                 *done += n;
                 error = 0;
             }
+
+            //任意一个事务失败，整个事务退出
+            //针对非EAGAIN的事务，其error未设置
             break;
         }
 
@@ -1087,14 +1103,16 @@ nl_sock_transact_multiple(struct nl_sock *sock,
             bytes += transactions[count]->request->size;
         }
 
-        //发送消息给sock对端
-        error = nl_sock_transact_multiple__(sock, transactions, count, &done);
+        //发送消息给sock对端（error返回0或者errno)
+        error = nl_sock_transact_multiple__(sock, transactions, count, &done/*出参，完成的事务数*/);
         transactions += done;
         n -= done;
 
         if (error == ENOBUFS) {
+        	//ENOBUFS重发请求
             VLOG_DBG_RL(&rl, "receive buffer overflow, resending request");
         } else if (error) {
+        	//记录其它error
             VLOG_ERR_RL(&rl, "transaction error (%s)", ovs_strerror(error));
             nl_sock_record_errors__(transactions, n, error);
             if (error != EAGAIN) {
@@ -1122,7 +1140,7 @@ nl_sock_transact(struct nl_sock *sock, const struct ofpbuf *request,
 
     if (replyp) {
         if (transaction.error) {
-        	//消息出错情况
+        	//消息出错情况,将buffer删除掉
             ofpbuf_delete(transaction.reply);
             *replyp = NULL;
         } else {
@@ -1130,6 +1148,7 @@ nl_sock_transact(struct nl_sock *sock, const struct ofpbuf *request,
         }
     }
 
+    /*返回事务的error*/
     return transaction.error;
 }
 

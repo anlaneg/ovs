@@ -388,6 +388,7 @@ static const struct nl_policy tca_flower_policy[] = {
                                        .optional = true, },
 };
 
+//解析flower中的eth头
 static void
 nl_parse_flower_eth(struct nlattr **attrs, struct tc_flower *flower)
 {
@@ -409,6 +410,7 @@ nl_parse_flower_eth(struct nlattr **attrs, struct tc_flower *flower)
     }
 }
 
+//解析mpls
 static void
 nl_parse_flower_mpls(struct nlattr **attrs, struct tc_flower *flower)
 {
@@ -449,6 +451,7 @@ nl_parse_flower_mpls(struct nlattr **attrs, struct tc_flower *flower)
     }
 }
 
+//解析vlan
 static void
 nl_parse_flower_vlan(struct nlattr **attrs, struct tc_flower *flower)
 {
@@ -615,6 +618,7 @@ flower_tun_geneve_opt_check_len(struct tun_metadata *key,
     return 0;
 }
 
+//tunnel解析
 static int
 nl_parse_flower_tunnel(struct nlattr **attrs, struct tc_flower *flower)
 {
@@ -689,6 +693,7 @@ nl_parse_flower_tunnel(struct nlattr **attrs, struct tc_flower *flower)
     return 0;
 }
 
+//解析ip
 static void
 nl_parse_flower_ip(struct nlattr **attrs, struct tc_flower *flower) {
     uint8_t ip_proto = 0;
@@ -1569,6 +1574,7 @@ parse_netlink_to_tc_flower(struct ofpbuf *reply, struct tc_flower *flower)
 
     kind = nl_attr_get_string(ta[TCA_KIND]);
     if (strcmp(kind, "flower")) {
+    	//只解析flower规则，其它规则跳过
         VLOG_DBG_ONCE("Unsupported filter: %s", kind);
         return EPROTO;
     }
