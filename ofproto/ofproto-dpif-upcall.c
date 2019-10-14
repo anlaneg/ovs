@@ -73,6 +73,7 @@ struct handler {
 #define N_UMAPS 512 /* per udpif. */
 struct umap {
     struct ovs_mutex mutex;            /* Take for writing to the following. */
+    //通过ufid可获取udpif_key的hashtable
     struct cmap cmap;                  /* Datapath flow keys. */
 };
 
@@ -139,6 +140,7 @@ struct udpif {
     struct latch exit_latch;           /* Tells child threads to exit. */
 
     /* Revalidation. */
+    //为revalidation提供seq
     struct seq *reval_seq;             /* Incremented to force revalidation. */
     //标记validator,handler子线程需要退出（leader检查exit_latch后标记）
     bool reval_exit;                   /* Set by leader on 'exit_latch. */
@@ -294,19 +296,24 @@ struct udpif_key {
 
     /* These elements are read only once created, and therefore aren't
      * protected by a mutex. */
+    //flow对应的key
     const struct nlattr *key;      /* Datapath flow key. */
     size_t key_len;                /* Length of 'key'. */
+    //flow对应的mask
     const struct nlattr *mask;     /* Datapath flow mask. */
     size_t mask_len;               /* Length of 'mask'. */
     ovs_u128 ufid;                 /* Unique flow identifier. */
     bool ufid_present;             /* True if 'ufid' is in datapath. */
+    //ufid生成的hash
     uint32_t hash;                 /* Pre-computed hash for 'key'. */
     unsigned pmd_id;               /* Datapath poll mode driver id. */
 
     struct ovs_mutex mutex;                   /* Guards the following. */
     struct dpif_flow_stats stats OVS_GUARDED; /* Last known stats.*/
     long long int created OVS_GUARDED;        /* Estimate of creation time. */
+    //规则dump时的seq号
     uint64_t dump_seq OVS_GUARDED;            /* Tracks udpif->dump_seq. */
+    //规则reval时的seq号
     uint64_t reval_seq OVS_GUARDED;           /* Tracks udpif->reval_seq. */
     enum ukey_state state OVS_GUARDED;        /* Tracks ukey lifetime. */
 
@@ -321,6 +328,7 @@ struct udpif_key {
     struct xlate_cache *xcache OVS_GUARDED;   /* Cache for xlate entries that
                                                * are affected by this ukey.
                                                * Used for stats and learning.*/
+    //key,mask使用的buffer
     union {
         struct odputil_keybuf buf;
         struct nlattr nla;
@@ -1798,7 +1806,7 @@ ukey_set_actions(struct udpif_key *ukey, const struct ofpbuf *actions)
 
 //创建ukey
 static struct udpif_key *
-ukey_create__(const struct nlattr *key, size_t key_len,
+ukey_create__(const struct nlattr *key/*match字段*/, size_t key_len,
               const struct nlattr *mask, size_t mask_len,
               bool ufid_present, const ovs_u128 *ufid,
               const unsigned pmd_id, const struct ofpbuf *actions,
@@ -1815,10 +1823,11 @@ ukey_create__(const struct nlattr *key, size_t key_len,
     ukey->mask = &ukey->maskbuf.nla;
     ukey->mask_len = mask_len;
     ukey->ufid_present = ufid_present;
-    ukey->ufid = *ufid;
+    ukey->ufid = *ufid;/*对应的ufid*/
     ukey->pmd_id = pmd_id;
     ukey->hash = get_ukey_hash(&ukey->ufid, pmd_id);
 
+    /*设置action*/
     ovsrcu_init(&ukey->actions, NULL);
     ukey_set_actions(ukey, actions);
 
@@ -1882,6 +1891,7 @@ ukey_create_from_upcall(struct upcall *upcall, struct flow_wildcards *wc)
                          &upcall->xout);
 }
 
+//通过flow创建ukey
 static int
 ukey_create_from_dpif_flow(const struct udpif *udpif,
                            const struct dpif_flow *flow,
@@ -2109,7 +2119,7 @@ ukey_acquire(struct udpif *udpif, const struct dpif_flow *flow/*自dp dump出现
     if (ukey) {
         retval = ovs_mutex_trylock(&ukey->mutex);
     } else {
-    	//未查询到此flow对应的ukey,创建其对应的ukey
+    		//未查询到此flow对应的ukey,创建其对应的ukey
         /* Usually we try to avoid installing flows from revalidator threads,
          * because locking on a umap may cause handler threads to block.
          * However there are certain cases, like when ovs-vswitchd is
@@ -2122,10 +2132,13 @@ ukey_acquire(struct udpif *udpif, const struct dpif_flow *flow/*自dp dump出现
         if (retval) {
             goto done;
         }
+
+        //将创建的ukey加入hash
         install = ukey_install__(udpif, ukey);
         if (install) {
             retval = 0;
         } else {
+        		//安装失败，删除
             ukey_delete__(ukey);
             retval = EBUSY;
         }
@@ -2134,8 +2147,10 @@ ukey_acquire(struct udpif *udpif, const struct dpif_flow *flow/*自dp dump出现
 done:
     *error = retval;
     if (retval) {
+    		//加锁失败或安装失败，返回NULL
         *result = NULL;
     } else {
+    		//加锁成功，返回对应的ukey
         *result = ukey;
     }
     return retval;
@@ -2170,6 +2185,7 @@ ukey_delete(struct umap *umap, struct udpif_key *ukey)
     ovs_mutex_unlock(&ukey->mutex);
 }
 
+//规则是否需要revalidate
 static bool
 should_revalidate(const struct udpif *udpif, uint64_t packets,
                   long long int used)
@@ -2177,6 +2193,7 @@ should_revalidate(const struct udpif *udpif, uint64_t packets,
     long long int metric, now, duration;
 
     if (!used) {
+    		//规则没被用
         /* Always revalidate the first time a flow is dumped. */
         return true;
     }
@@ -2255,6 +2272,7 @@ xlate_key(struct udpif *udpif, const struct nlattr *key, unsigned int len,
         xin.allow_side_effects = true;
     }
     xin.xcache = ctx->xcache;
+    //执行慢路检测
     xlate_actions(&xin, &ctx->xout);
     if (fitness == ODP_FIT_TOO_LITTLE) {
         ctx->xout.slow |= SLOW_MATCH;
@@ -2335,6 +2353,7 @@ revalidate_ukey__(struct udpif *udpif, const struct udpif_key *ukey,
         ofpbuf_clear(odp_actions);
 
         if (!ofproto) {
+        		//ofproto删除，规则删除
             goto exit;
         }
 
@@ -2403,6 +2422,7 @@ revalidate_ukey(struct udpif *udpif, struct udpif_key *ukey,
                 struct recirc_refs *recircs)
     OVS_REQUIRES(ukey->mutex)
 {
+	//如果上一次reval的seq与本次不相同，则需要revalidate
     bool need_revalidate = ukey->reval_seq != reval_seq;
     enum reval_result result = UKEY_DELETE;
     struct dpif_flow_stats push;
@@ -2606,15 +2626,17 @@ log_unexpected_flow(const struct dpif_flow *flow, int error)
 }
 
 static void
-reval_op_init(struct ukey_op *op, enum reval_result result,
+reval_op_init(struct ukey_op *op, enum reval_result result/*流的操作结果*/,
               struct udpif *udpif, struct udpif_key *ukey,
               struct recirc_refs *recircs, struct ofpbuf *odp_actions)
     OVS_REQUIRES(ukey->mutex)
 {
     if (result == UKEY_DELETE) {
+    		//需要删除的flow
         delete_op_init(udpif, op, ukey);
         transition_ukey(ukey, UKEY_EVICTING);
     } else if (result == UKEY_MODIFY) {
+    		//需要修改的flow
         /* Store the new recircs. */
         recirc_refs_swap(&ukey->recircs, recircs);
         /* Release old recircs. */
@@ -2733,6 +2755,7 @@ revalidate(struct revalidator *revalidator)
     unsigned int flow_limit;
 
     dump_seq = seq_read(udpif->dump_seq);
+    //取reval时的seq
     reval_seq = seq_read(udpif->reval_seq);
     atomic_read_relaxed(&udpif->flow_limit, &flow_limit);
 
@@ -2779,6 +2802,7 @@ revalidate(struct revalidator *revalidator)
 
         udpif->dpif->current_ms = time_msec();
         for (f = flows; f < &flows[n_dumped]; f++) {
+        		//流的上次使用时间
             long long int used = f->stats.used;
             struct recirc_refs recircs = RECIRC_REFS_EMPTY_INITIALIZER;
             enum reval_result result;
@@ -2786,6 +2810,7 @@ revalidate(struct revalidator *revalidator)
             bool already_dumped;
             int error;
 
+            //将f加入到udpif的hash表中
             if (ukey_acquire(udpif, f, &ukey, &error)) {
                 if (error == EBUSY) {
                     /* Another thread is processing this flow, so don't bother
@@ -2826,13 +2851,15 @@ revalidate(struct revalidator *revalidator)
             }
 
             if (!used) {
+            		//流创建的时间
                 used = ukey->created;
             }
             if (kill_them_all || (used && used < now - max_idle)) {
+            		//删除所有流或者上次使用已超过max_idle,则删除
                 result = UKEY_DELETE;
             } else {
                 result = revalidate_ukey(udpif, ukey, &f->stats, &odp_actions,
-                                         reval_seq, &recircs);
+                                         reval_seq/*reval时的seq*/, &recircs);
             }
             ukey->dump_seq = dump_seq;
 

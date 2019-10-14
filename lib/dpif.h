@@ -578,12 +578,15 @@ void dpif_flow_dump_thread_destroy(struct dpif_flow_dump_thread *);
 
 /* A datapath flow as dumped by dpif_flow_dump_next(). */
 struct dpif_flow {
+	//flow的key
     const struct nlattr *key;     /* Flow key, as OVS_KEY_ATTR_* attrs. */
     size_t key_len;               /* 'key' length in bytes. */
     const struct nlattr *mask;    /* Flow mask, as OVS_KEY_ATTR_* attrs. */
     size_t mask_len;              /* 'mask' length in bytes. */
+    //flow的action
     const struct nlattr *actions; /* Actions, as OVS_ACTION_ATTR_ */
     size_t actions_len;           /* 'actions' length in bytes. */
+    //flow的id
     ovs_u128 ufid;                /* Unique flow identifier. */
     bool ufid_present;            /* True if 'ufid' was provided by datapath.*/
     unsigned pmd_id;              /* Datapath poll mode driver id. */
