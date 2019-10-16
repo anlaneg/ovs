@@ -3885,22 +3885,24 @@ port_add(struct ofproto *ofproto_, struct netdev *netdev)
     const char *dp_port_name;
 
     if (netdev_vport_is_patch(netdev)) {
-    	//如果是patch口，加入ghost_ports即可，tunnel口，patch口
+    		//如果是patch口，加入ghost_ports即可，tunnel口，patch口
         sset_add(&ofproto->ghost_ports, netdev_get_name(netdev));
         return 0;
     }
 
     dp_port_name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
     if (!dpif_port_exists(ofproto->backer->dpif, dp_port_name)) {
+    		//datapath下没有这个dp_port_name,则创建并加入
         odp_port_t port_no = ODPP_NONE;
         int error;
 
-    	//不存在，则创建并加入
+        //通过datapath interface完成port添加
         error = dpif_port_add(ofproto->backer->dpif, netdev, &port_no);
         if (error) {
             return error;
         }
-        if (netdev_get_tunnel_config(netdev)) {//tunnel口
+        if (netdev_get_tunnel_config(netdev)) {
+        		//tunnel口
             simap_put(&ofproto->backer->tnl_backers,
                       dp_port_name, odp_to_u32(port_no));
         }
@@ -6583,6 +6585,7 @@ meter_del(struct ofproto *ofproto_, ofproto_meter_id meter_id)
     ovsrcu_postpone(free_meter_id, arg);
 }
 
+//当前系统唯一的ofproto实现
 const struct ofproto_class ofproto_dpif_class = {
     init,
 	//所以ofproto的datapath对应的类型，目前有system,netdev
@@ -6603,7 +6606,8 @@ const struct ofproto_class ofproto_dpif_class = {
     construct,
     destruct,
     dealloc,
-    run,//各ofproto对应的周期事务,例如snooping表过期啊，什么的
+	//各ofproto对应的周期事务,例如snooping表过期啊，什么的
+    run,
     ofproto_dpif_wait,
     NULL,                       /* get_memory_usage. */
     type_get_memory_usage,

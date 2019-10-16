@@ -508,6 +508,8 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
 
     datapath_type = ofproto_normalize_type(datapath_type);
     //目前仅可以返回ofproto_class（目前仅支持system,netdev)
+    //system为走kernel datapath
+    //netdev为走dpdk datapath
     class = ofproto_class_find__(datapath_type);
     if (!class) {
         VLOG_WARN("could not create datapath %s of unknown type %s",
@@ -2095,8 +2097,10 @@ ofproto_port_add(struct ofproto *ofproto, struct netdev *netdev,
     ofp_port_t ofp_port = ofp_portp ? *ofp_portp : OFPP_NONE;
     int error;
 
+    //通过ofproto完成port添加
     error = ofproto->ofproto_class->port_add(ofproto, netdev);
     if (!error) {
+    		//添加port成功
         const char *netdev_name = netdev_get_name(netdev);
 
         simap_put(&ofproto->ofp_requests, netdev_name,
@@ -2112,7 +2116,7 @@ ofproto_port_add(struct ofproto *ofproto, struct netdev *netdev,
                                                netdev_get_name(netdev),
                                                &ofproto_port);
             if (!error) {
-            	//按传入参数，设置ofproto_port对应的ofp_port
+            		//按传入参数，设置ofproto_port对应的ofp_port
                 *ofp_portp = ofproto_port.ofp_port;
                 ofproto_port_destroy(&ofproto_port);
             }
@@ -2127,13 +2131,13 @@ ofproto_port_add(struct ofproto *ofproto, struct netdev *netdev,
  *
  * The caller owns the data in 'ofproto_port' and must free it with
  * ofproto_port_destroy() when it is no longer needed. */
-//给一个名称，返回一个port
 int
 ofproto_port_query_by_name(const struct ofproto *ofproto, const char *devname,
                            struct ofproto_port *port)
 {
     int error;
 
+    //通过名称查询指定netdev对应的ofp_port
     error = ofproto->ofproto_class->port_query_by_name(ofproto, devname, port);
     if (error) {
         memset(port, 0, sizeof *port);

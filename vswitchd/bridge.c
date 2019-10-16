@@ -1010,6 +1010,7 @@ iface_set_netdev_mtu(const struct ovsrec_interface *iface_cfg,
                      struct netdev *netdev)
 {
     if (iface_cfg->n_mtu_request == 1) {
+    		//指明了进行mtu配置
         /* The user explicitly asked for this MTU. */
         netdev_mtu_user_config(netdev, true);//锁定此mtu
         /* Try to set the MTU to the requested value. */
@@ -1171,7 +1172,9 @@ bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
 {
     struct shash_node *port_node;
 
+    //遍历所有准备添加的口
     SHASH_FOR_EACH (port_node, wanted_ports) {
+    		//取此port的配置
         const struct ovsrec_port *port_cfg = port_node->data;
         size_t i;
 
@@ -1180,11 +1183,12 @@ bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
             ofp_port_t requested_ofp_port;
 
             requested_ofp_port = iface_get_requested_ofp_port(iface_cfg);
-            if ((requested_ofp_port != OFPP_NONE) == with_requested_port) {//是否要求请求的port
+            if ((requested_ofp_port != OFPP_NONE) == with_requested_port) {
+            		//指定的ofp_port有效，且处理指定ofp_port的interface,则创建不存在iface
                 struct iface *iface = iface_lookup(br, iface_cfg->name);
 
                 if (!iface) {
-                	//做实际工作，创建iface
+                		//做实际工作，创建iface
                     iface_create(br, iface_cfg, port_cfg);
                 }
             }
@@ -2054,7 +2058,7 @@ iface_set_netdev_config(const struct ovsrec_interface *iface_cfg,
                         struct netdev *netdev, char **errp)
 {
 	//设置netdev的配置，netdev的配置值采用options下发
-    return netdev_set_config(netdev, &iface_cfg->options, errp);
+    return netdev_set_config(netdev, &iface_cfg->options/*interface对应的配置信息*/, errp);
 }
 
 /* Opens a network device for 'if_cfg' and configures it.  Adds the network
@@ -2063,9 +2067,9 @@ iface_set_netdev_config(const struct ovsrec_interface *iface_cfg,
  * If successful, returns 0 and stores the network device in '*netdevp'.  On
  * failure, returns a positive errno value and stores NULL in '*netdevp'. */
 static int
-//创建interface,并返回其关联的netdev(iface_cfg是其对应的配置，
+//创建interface,并返回其关联的netdev
 iface_do_create(const struct bridge *br,
-                const struct ovsrec_interface *iface_cfg,
+                const struct ovsrec_interface *iface_cfg/*接口对应的配置*/,
                 ofp_port_t *ofp_portp, struct netdev **netdevp,
                 char **errp/*错误日志缓冲*/)
 {
@@ -2074,7 +2078,7 @@ iface_do_create(const struct bridge *br,
     const char *type;
 
     if (netdev_is_reserved_name(iface_cfg->name)) {
-    	//检查要创建的接口名称是否已预留
+    		//检查要创建的接口名称是否已预留
         VLOG_WARN("could not create interface %s, name is reserved",
                   iface_cfg->name);
         error = EINVAL;
@@ -2084,7 +2088,7 @@ iface_do_create(const struct bridge *br,
     //由datapath决定要创建的netdev类型（例如dpdk？tap?等）
     type = ofproto_port_open_type(br->ofproto,
                                   iface_get_type(iface_cfg, br->cfg));
-    //创建对应type的设备
+    //申请指定type的netdev对应的空间，初始化它
     error = netdev_open(iface_cfg->name, type, &netdev);
     if (error) {
         VLOG_WARN_BUF(errp, "could not open network device %s (%s)",
@@ -2092,7 +2096,8 @@ iface_do_create(const struct bridge *br,
         goto error;
     }
 
-    error = iface_set_netdev_config(iface_cfg, netdev, errp);//配置此设备
+    //采用iface_cfg配置此netdev
+    error = iface_set_netdev_config(iface_cfg, netdev, errp);
     if (error) {
         goto error;
     }
@@ -2101,8 +2106,8 @@ iface_do_create(const struct bridge *br,
 
     *ofp_portp = iface_pick_ofport(iface_cfg);//ofp_portp是来源于配置
 
-    //向ofproto内添加这个port
-    error = ofproto_port_add(br->ofproto, netdev, ofp_portp);
+    //将此netdev加入到ofproto
+    error = ofproto_port_add(br->ofproto, netdev, ofp_portp/*此port对应的id*/);
     if (error) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
@@ -2133,8 +2138,8 @@ error:
  *
  * Return true if an iface is successfully created, false otherwise. */
 static bool
-iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg,
-             const struct ovsrec_port *port_cfg)
+iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg/*interface从属于port,interface所属的配置*/,
+             const struct ovsrec_port *port_cfg/*port的配置*/)
 {
     struct netdev *netdev;
     struct iface *iface;
@@ -2148,6 +2153,7 @@ iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg,
     ovs_assert(!iface_lookup(br, iface_cfg->name));
     error = iface_do_create(br, iface_cfg, &ofp_port, &netdev, &errp);
     if (error) {
+    		//创建interface失败，记录错误信息到db,清除其它状态
         iface_clear_db_record(iface_cfg, errp);
         free(errp);
         return false;
@@ -4853,6 +4859,7 @@ iface_clear_db_record(const struct ovsrec_interface *if_cfg, char *errp)
 {
     if (!ovsdb_idl_row_is_synthetic(&if_cfg->header_)) {
         iface_set_ofport(if_cfg, OFPP_NONE);
+        //设置接口的错误信息
         ovsrec_interface_set_error(if_cfg, errp);
         ovsrec_interface_set_status(if_cfg, NULL);
         ovsrec_interface_set_admin_state(if_cfg, NULL);
@@ -5019,20 +5026,25 @@ iface_is_synthetic(const struct iface *iface)
 static ofp_port_t
 iface_validate_ofport__(size_t n, int64_t *ofport)
 {
+	//如果*ofport合法，则返回*ofport，否则返回NONE
     return (n && *ofport >= 1 && *ofport < ofp_to_u16(OFPP_MAX)
             ? u16_to_ofp(*ofport)
             : OFPP_NONE);
 }
 
 static ofp_port_t
-iface_get_requested_ofp_port(const struct ovsrec_interface *cfg)//返回ofport_request或者OFPP_NONE
+iface_get_requested_ofp_port(const struct ovsrec_interface *cfg)
 {
+	//如果n_ofport_request不为0，且ofprot_request有效，则返回ofport_request
+	//否则返回OFPP_NONE
     return iface_validate_ofport__(cfg->n_ofport_request, cfg->ofport_request);
 }
 
 static ofp_port_t
-iface_pick_ofport(const struct ovsrec_interface *cfg)//返回ofport_request或者cfg->ofport或者OFPP_NONE
+iface_pick_ofport(const struct ovsrec_interface *cfg)
 {
+	//如果配置指定了有效的requested_ofp_port，则使用此requested_ofp_port,如果未指定
+	//则使用cfg->ofport
     ofp_port_t requested_ofport = iface_get_requested_ofp_port(cfg);
     return (requested_ofport != OFPP_NONE
             ? requested_ofport

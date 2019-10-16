@@ -617,7 +617,7 @@ dpif_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
         port_no = *port_nop;
     }
 
-    //为datapath创建此port
+    //通过datapath interface创建此port
     error = dpif->dpif_class->port_add(dpif, netdev, &port_no);
     if (!error) {
         VLOG_DBG_RL(&dpmsg_rl, "%s: added %s as port %"PRIu32,
@@ -634,10 +634,13 @@ dpif_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
             netdev_ports_insert(netdev, dpif->dpif_class, &dpif_port);
         }
     } else {
+    		//向datapath添加指定port失败
         VLOG_WARN_RL(&error_rl, "%s: failed to add %s as port: %s",
                      dpif_name(dpif), netdev_name, ovs_strerror(error));
         port_no = ODPP_NONE;
     }
+
+    //如果添加port成功，则返回其对应的port_no
     if (port_nop) {
         *port_nop = port_no;
     }
