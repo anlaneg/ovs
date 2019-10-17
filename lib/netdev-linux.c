@@ -5784,7 +5784,7 @@ netdev_linux_ethtool_set_flag(struct netdev *netdev, uint32_t flag,
 
     COVERAGE_INC(netdev_get_ethtool);
     memset(&evalue, 0, sizeof evalue);
-    //先取flag
+    //通过ioctl先取flag
     error = netdev_linux_do_ethtool(netdev_name,
                                     (struct ethtool_cmd *)&evalue,
                                     ETHTOOL_GFLAGS, "ETHTOOL_GFLAGS");
@@ -5799,7 +5799,7 @@ netdev_linux_ethtool_set_flag(struct netdev *netdev, uint32_t flag,
         return 0;
     }
     evalue.data = new_flags;
-    //使新设置的flags生效
+    //通过ioctl使新设置的flags生效
     error = netdev_linux_do_ethtool(netdev_name,
                                     (struct ethtool_cmd *)&evalue,
                                     ETHTOOL_SFLAGS, "ETHTOOL_SFLAGS");
@@ -6145,7 +6145,7 @@ netdev_linux_do_ethtool(const char *name, struct ethtool_cmd *ecmd,
     ifr.ifr_data = (caddr_t) ecmd;
 
     ecmd->cmd = cmd;
-    //？？？？
+    //调用ethtool的ioctl,完成功能请求
     error = af_inet_ioctl(SIOCETHTOOL, &ifr);
     if (error) {
         if (error != EOPNOTSUPP) {

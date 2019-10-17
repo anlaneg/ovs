@@ -130,6 +130,7 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
         int save_errno = errno;
         errno = 0;
 
+        //取iov支持的最大数
         max_iovs = sysconf(_SC_UIO_MAXIOV);
         if (max_iovs < _XOPEN_IOV_MAX) {
             if (max_iovs == -1 && errno) {
@@ -213,6 +214,7 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
     retval = 0;
 
     /* Connect to kernel (pid 0) as remote address. */
+    //连接到kernel
     memset(&remote, 0, sizeof remote);
     remote.nl_family = AF_NETLINK;
     remote.nl_pid = 0;
@@ -232,6 +234,7 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
         retval = EINVAL;
         goto error;
     }
+    //取本地地址的pid
     sock->pid = local.nl_pid;
 #endif
 
@@ -1473,6 +1476,7 @@ static const struct nl_policy family_policy[CTRL_ATTR_MAX + 1] = {
     [CTRL_ATTR_MCAST_GROUPS] = {.type = NL_A_NESTED, .optional = true},
 };
 
+//通过family_id获取genl_family
 static struct genl_family *
 find_genl_family_by_id(uint16_t id)
 {
@@ -1490,6 +1494,7 @@ find_genl_family_by_id(uint16_t id)
 static void
 define_genl_family(uint16_t id, const char *name)
 {
+	//通过id获取genl_family,如果不存在，则创建它，并加入hashtable
     struct genl_family *family = find_genl_family_by_id(id);
 
     if (family) {
@@ -1532,6 +1537,7 @@ do_lookup_genl_family(const char *name, struct nlattr **attrs,
     }
 
     ofpbuf_init(&request, 0);
+    //发送取$name对应getfamily的请求
     nl_msg_put_genlmsghdr(&request, 0, GENL_ID_CTRL, NLM_F_REQUEST,
                           CTRL_CMD_GETFAMILY, 1);
     nl_msg_put_string(&request, CTRL_ATTR_FAMILY_NAME, name);
@@ -1719,6 +1725,7 @@ nl_lookup_genl_family(const char *name, int *number)
 
         error = do_lookup_genl_family(name, attrs, &reply);
         if (!error) {
+        		//取返回的family_id
             *number = nl_attr_get_u16(attrs[CTRL_ATTR_FAMILY_ID]);
             define_genl_family(*number, name);
         } else {

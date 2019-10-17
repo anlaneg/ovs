@@ -777,7 +777,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name/*port名称*
     int error = 0;
 
     if (dpif->handlers) {
-    	//创建netlink socket
+    		//创建netlink socket
         error = create_nl_sock(dpif, &sock);
         if (error) {
             return error;
@@ -786,7 +786,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name/*port名称*
 
     dpif_netlink_vport_init(&request);
     request.cmd = OVS_VPORT_CMD_NEW;
-    request.dp_ifindex = dpif->dp_ifindex;
+    request.dp_ifindex = dpif->dp_ifindex;//datapath对应的ifindex
     request.type = type;//接口类型
     request.name = name;//接口名称
 
@@ -804,6 +804,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name/*port名称*
         request.options_len = options->size;
     }
 
+    //向kernel发送port create请求
     error = dpif_netlink_vport_transact(&request, &reply, &buf);
     if (!error) {
         *port_nop = reply.port_no;
@@ -853,7 +854,7 @@ dpif_netlink_port_add_compat(struct dpif_netlink *dpif, struct netdev *netdev,
     struct ofpbuf options;
     const char *name;
 
-    //接口名称
+    //取接口名称
     name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
 
     //接口类型
@@ -870,7 +871,7 @@ dpif_netlink_port_add_compat(struct dpif_netlink *dpif, struct netdev *netdev,
 #ifdef _WIN32
         /* XXX : Map appropiate Windows handle */
 #else
-    	//开启lro功能，支持tcp大包收取
+    		//通过ethtool开启lro功能，支持tcp大包收取
         netdev_linux_ethtool_set_flag(netdev, ETH_FLAG_LRO, "LRO", false);
 #endif
     }
@@ -956,11 +957,11 @@ dpif_netlink_port_add(struct dpif *dpif_, struct netdev *netdev,
     fat_rwlock_wrlock(&dpif->upcall_lock);
     //依据此变量决定如何创建port
     if (!ovs_tunnels_out_of_tree) {
-    	//通过netlink rtnl消息创建port
+    		//通过netlink rtnl消息创建port
         error = dpif_netlink_rtnl_port_create_and_add(dpif, netdev, port_nop);
     }
     if (error) {
-    	//支持创建非tunnel口
+    		//通过compat方式创建接口
         error = dpif_netlink_port_add_compat(dpif, netdev, port_nop);
     }
     fat_rwlock_unlock(&dpif->upcall_lock);
@@ -4057,6 +4058,7 @@ dpif_netlink_init(void)
     static int error;
 
     if (ovsthread_once_start(&once)) {
+    		//获取并加载各family
         error = nl_lookup_genl_family(OVS_DATAPATH_FAMILY,
                                       &ovs_datapath_family);
         if (error) {
