@@ -601,6 +601,7 @@ show_dpif(struct dpif *dpif, struct dpctl_params *dpctl_p)
 
     dpctl_print(dpctl_p, "%s:\n", dpif_name(dpif));
     if (!dpif_get_dp_stats(dpif, &stats)) {
+    	//显示datapath统计信息
         dpctl_print(dpctl_p, "  lookups: hit:%"PRIu64" missed:%"PRIu64
                              " lost:%"PRIu64"\n  flows: %"PRIu64"\n",
                     stats.n_hit, stats.n_missed, stats.n_lost, stats.n_flows);
@@ -721,6 +722,7 @@ show_dpif(struct dpif *dpif, struct dpctl_params *dpctl_p)
 
 typedef void (*dps_for_each_cb)(struct dpif *, struct dpctl_params *);
 
+/*遍历所有datapath并执行cb回调*/
 static int
 dps_for_each(struct dpctl_params *dpctl_p, dps_for_each_cb cb)
 {
@@ -732,18 +734,22 @@ dps_for_each(struct dpctl_params *dpctl_p, dps_for_each_cb cb)
 
     dp_enumerate_types(&dpif_types);
 
+    //遍历所有datapath type
     SSET_FOR_EACH (type, &dpif_types) {
+    	//遍历此type下所有datapath
         error = dp_enumerate_names(type, &dpif_names);
         if (error) {
             enumerror = error;
         }
 
+        //遍历并打开指定名称的datapath
         SSET_FOR_EACH (name, &dpif_names) {
             struct dpif *dpif;
 
             at_least_one = true;
             error = dpif_open(name, type, &dpif);
             if (!error) {
+            	//针对此datapath,执行cb回调
                 cb(dpif, dpctl_p);
                 dpif_close(dpif);
             } else {
@@ -780,6 +786,7 @@ dpctl_show(int argc, const char *argv[], struct dpctl_params *dpctl_p)
             const char *name = argv[i];
             struct dpif *dpif;
 
+            //打开指定的datapath
             error = parsed_dpif_open(name, false, &dpif);
             if (!error) {
                 show_dpif(dpif, dpctl_p);
@@ -2610,6 +2617,7 @@ dpctl_unixctl_handler(struct unixctl_conn *conn, int argc, const char *argv[],
     /* Parse options (like getopt). Unfortunately it does
      * not seem a good idea to call getopt_long() here, since it uses global
      * variables */
+    //处理命令的统一选项
     bool set_names = false;
     while (argc > 1 && !error) {
         const char *arg = argv[1];
@@ -2622,8 +2630,10 @@ dpctl_unixctl_handler(struct unixctl_conn *conn, int argc, const char *argv[],
             } else if (!strcmp(arg, "--may-create")) {
                 dpctl_p.may_create = true;
             } else if (!strcmp(arg, "--more")) {
+            	//更详细的显示
                 dpctl_p.verbosity++;
             } else if (!strcmp(arg, "--names")) {
+            	//显示名称
                 dpctl_p.names = true;
                 set_names = true;
             } else if (!strcmp(arg, "--no-names")) {
@@ -2639,9 +2649,11 @@ dpctl_unixctl_handler(struct unixctl_conn *conn, int argc, const char *argv[],
 
             while (*opt && !error) {
                 switch (*opt) {
+                //更详细的显示
                 case 'm':
                     dpctl_p.verbosity++;
                     break;
+                //显示statis
                 case 's':
                     dpctl_p.print_statistics = true;
                     break;
@@ -2667,6 +2679,7 @@ dpctl_unixctl_handler(struct unixctl_conn *conn, int argc, const char *argv[],
         dpctl_p.names = dpctl_p.verbosity > 0;
     }
 
+    //调用命令行对应的handler
     if (!error) {
         dpctl_command_handler *handler = (dpctl_command_handler *) aux;
         error = handler(argc, argv, &dpctl_p) != 0;
@@ -2686,6 +2699,7 @@ dpctl_unixctl_register(void)
 {
     const struct dpctl_command *p;
 
+    //注册dpctl对应的命令
     for (p = all_commands; p->name != NULL; p++) {
         if (strcmp(p->name, "help")) {
             char *cmd_name = xasprintf("dpctl/%s", p->name);

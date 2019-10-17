@@ -7180,6 +7180,7 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     }
 
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_SKB_MARK)) {
+    	//填充pkt_mark
         flow->pkt_mark = nl_attr_get_u32(attrs[OVS_KEY_ATTR_SKB_MARK]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_SKB_MARK;
     }

@@ -138,7 +138,8 @@ struct bridge {
     struct hmap mappings;       /* "struct" indexed by UUID */
 
     /* Used during reconfiguration. */
-    struct shash wanted_ports;//配置指明需要创建的port
+    //配置指明需要创建的port
+    struct shash wanted_ports;
 
     /* Synthetic local port if necessary. */
     struct ovsrec_port synth_local_port;
@@ -838,7 +839,8 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      *
      * This is mostly an update to bridge data structures. Nothing is pushed
      * down to ofproto or lower layers. */
-    add_del_bridges(ovs_cfg);//依据配置，增删除桥
+    //依据配置，增删除桥
+    add_del_bridges(ovs_cfg);
     HMAP_FOR_EACH (br, node, &all_bridges) {
     	//收集配置指明的所有口
         bridge_collect_wanted_ports(br, &br->wanted_ports);
@@ -896,7 +898,8 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
     config_ofproto_types(&ovs_cfg->other_config);
 
     HMAP_FOR_EACH (br, node, &all_bridges) {
-        bridge_add_ports(br, &br->wanted_ports);//为br创建需要的port
+    	//为br创建需要的port
+        bridge_add_ports(br, &br->wanted_ports);
         shash_destroy(&br->wanted_ports);
     }
 

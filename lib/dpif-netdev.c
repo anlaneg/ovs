@@ -2504,6 +2504,7 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
                                 &dp_flow_offload.mutex);
             ovsrcu_quiesce_end();
         }
+
         //取出需要offload的流，按op执行添加删除修改
         list = ovs_list_pop_front(&dp_flow_offload.list);
         offload = CONTAINER_OF(list, struct dp_flow_offload_item, node);
@@ -2579,12 +2580,15 @@ queue_netdev_flow_put(struct dp_netdev_pmd_thread *pmd,
     } else {
         op = DP_NETDEV_FLOW_OFFLOAD_OP_ADD;
     }
+
+    //构造offload对应的match及actions
     offload = dp_netdev_alloc_flow_offload(pmd, flow, op);
     offload->match = *match;
     offload->actions = xmalloc(actions_len);
     memcpy(offload->actions, actions, actions_len);
     offload->actions_len = actions_len;
 
+    //将要offload的flow添加进list
     dp_netdev_append_flow_offload(offload);
 }
 
@@ -3309,7 +3313,8 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
                && !FLOWMAP_HAS_FIELD(&mask.mf.map, regs));
 
     /* Do not allocate extra space. */
-    flow = xmalloc(sizeof *flow - sizeof flow->cr.flow.mf + mask.len);//这个flow的空间不完全（在这个结构的前半部分按成员放了数据，故最后面的不要）
+    //这个flow的空间不完全（在这个结构的前半部分按成员放了数据，故最后面的不要）
+    flow = xmalloc(sizeof *flow - sizeof flow->cr.flow.mf + mask.len);
     memset(&flow->stats, 0, sizeof flow->stats);
     flow->dead = false;
     flow->batch = NULL;

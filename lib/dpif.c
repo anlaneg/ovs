@@ -425,6 +425,7 @@ dpif_open(const char *name, const char *type, struct dpif **dpifp)
 int
 dpif_create(const char *name, const char *type, struct dpif **dpifp)
 {
+	//创建并打开一个datapath
     return do_open(name, type, true, dpifp);
 }
 

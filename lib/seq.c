@@ -77,13 +77,16 @@ seq_create(void)
 
     seq_init();
 
-    seq = xmalloc(sizeof *seq);//创建一个seq
+    //创建一个seq
+    seq = xmalloc(sizeof *seq);
 
     COVERAGE_INC(seq_change);
 
     ovs_mutex_lock(&seq_mutex);
-    seq->value = seq_next++;//给seq赋初始值
-    hmap_init(&seq->waiters);//初始化其对应的等待队列
+    //给seq赋初始值
+    seq->value = seq_next++;
+    //初始化其对应的等待队列
+    hmap_init(&seq->waiters);
     ovs_mutex_unlock(&seq_mutex);
 
     return seq;//返回对应的seq

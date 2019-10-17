@@ -109,7 +109,7 @@ unixctl_version(struct unixctl_conn *conn, int argc OVS_UNUSED,
  * made eventually to avoid blocking that connection. */
 //实现命令注册
 void
-unixctl_command_register(const char *name, const char *usage,
+unixctl_command_register(const char *name/*命令*/, const char *usage,
                          int min_args, int max_args,
                          unixctl_cb_func *cb, void *aux)
 {
@@ -118,7 +118,8 @@ unixctl_command_register(const char *name, const char *usage,
 
     ovs_assert(!lookup || lookup->cb == cb);
 
-    if (lookup) {//如果已存在，则不容许变更，直接返回
+    if (lookup) {
+    	//如果已存在，则不容许变更，直接返回
         return;
     }
 
@@ -128,7 +129,8 @@ unixctl_command_register(const char *name, const char *usage,
     command->max_args = max_args;
     command->cb = cb;
     command->aux = aux;
-    shash_add(&commands, name, command);//将command加入总hash表
+    //将command加入总hash表
+    shash_add(&commands, name, command);
 }
 
 //命令响应底层
@@ -294,7 +296,8 @@ process_command(struct unixctl_conn *conn, struct jsonrpc_msg *request)
     }
 
     params = json_array(request->params);
-    command = shash_find_data(&commands, request->method);//找出要调用的命令，并进行简单的参数检查
+    //找出要调用的命令，并进行简单的参数检查
+    command = shash_find_data(&commands, request->method);
     if (!command) {
         //无此对应的命令
         error = xasprintf("\"%s\" is not a valid command (use "
@@ -312,16 +315,19 @@ process_command(struct unixctl_conn *conn, struct jsonrpc_msg *request)
         struct svec argv = SVEC_EMPTY_INITIALIZER;
         int  i;
 
-        svec_add(&argv, request->method);//将method加入
+        //将method加入
+        svec_add(&argv, request->method);
+        //将参数加入
         for (i = 0; i < params->n; i++) {
             if (params->elems[i]->type != JSON_STRING) {
                 error = xasprintf("\"%s\" command has non-string argument",
                                   request->method);
                 break;
             }
-            svec_add(&argv, json_string(params->elems[i]));//将参数加入
+            svec_add(&argv, json_string(params->elems[i]));
         }
-        svec_terminate(&argv);//通过NULL来标记数组最后一元素
+        //通过NULL来标记数组最后一元素s
+        svec_terminate(&argv);
 
         if (!error) {
         	//回调命令（参数总数，参数数组，用户自定义参数
