@@ -131,8 +131,9 @@ shash_add(struct shash *sh, const char *name, const void *data)
     return shash_add_nocopy(sh, xstrdup(name), data);
 }
 
+//只容许有一个$name对应的key,如果已存在，则不容许插入
 bool
-shash_add_once(struct shash *sh, const char *name, const void *data)//保容许有一个name,如果已存在，则不容许插入
+shash_add_once(struct shash *sh, const char *name, const void *data)
 {
     if (!shash_find(sh, name)) {
         shash_add(sh, name, data);

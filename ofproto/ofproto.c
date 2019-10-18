@@ -584,7 +584,8 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
 
     /* Check that hidden tables, if any, are at the end. */
     ovs_assert(ofproto->n_tables);
-    for (i = 0; i + 1 < ofproto->n_tables; i++) {//在construct中，我们完成表数量设置
+    //在construct中，我们完成表数量设置
+    for (i = 0; i + 1 < ofproto->n_tables; i++) {
         enum oftable_flags flags = ofproto->tables[i].flags;
         enum oftable_flags next_flags = ofproto->tables[i + 1].flags;
 
@@ -813,6 +814,7 @@ ofproto_type_set_config(const char *datapath_type, const struct smap *cfg)
     }
 }
 
+//更新handler,revalidator的线程数
 void
 ofproto_set_threads(int n_handlers_, int n_revalidators_)
 {
@@ -1726,6 +1728,7 @@ ofproto_destroy(struct ofproto *p, bool del)
     }
 
     ofproto_flush__(p);
+    //销毁ofproto上所有ofport
     HMAP_FOR_EACH_SAFE (ofport, next_ofport, hmap_node, &p->ports) {
         ofport_destroy(ofport, del);
     }
@@ -1734,6 +1737,7 @@ ofproto_destroy(struct ofproto *p, bool del)
         free(usage);
     }
 
+    //执行ofproto销毁
     p->ofproto_class->destruct(p, del);
 
     /* We should not postpone this because it involves deleting a listening
@@ -2100,7 +2104,7 @@ ofproto_port_add(struct ofproto *ofproto, struct netdev *netdev,
     //通过ofproto完成port添加
     error = ofproto->ofproto_class->port_add(ofproto, netdev);
     if (!error) {
-    		//添加port成功
+    	//添加port成功,取netdev对应的名称
         const char *netdev_name = netdev_get_name(netdev);
 
         simap_put(&ofproto->ofp_requests, netdev_name,
@@ -2116,7 +2120,7 @@ ofproto_port_add(struct ofproto *ofproto, struct netdev *netdev,
                                                netdev_get_name(netdev),
                                                &ofproto_port);
             if (!error) {
-            		//按传入参数，设置ofproto_port对应的ofp_port
+            	//按传入参数，设置ofproto_port对应的ofp_port
                 *ofp_portp = ofproto_port.ofp_port;
                 ofproto_port_destroy(&ofproto_port);
             }
@@ -2440,10 +2444,11 @@ ofport_open(struct ofproto *ofproto,
     }
 
     if (ofproto_port->ofp_port == OFPP_NONE) {
-        if (!strcmp(ofproto->name, ofproto_port->name)) {//如果port名称与交换机名称一样，则定义为local接口
+        if (!strcmp(ofproto->name, ofproto_port->name)) {
+        	//如果port名称与交换机名称一样，则定义为local接口
             ofproto_port->ofp_port = OFPP_LOCAL;
         } else {
-            //分配一个编号
+            //port无编号，为其分配一个编号
             ofp_port_t ofp_port = alloc_ofp_port(ofproto,
                                                  ofproto_port->name);
             if (ofp_port == OFPP_NONE) {
@@ -2456,6 +2461,7 @@ ofport_open(struct ofproto *ofproto,
         }
     }
     pp->port_no = ofproto_port->ofp_port;
+    //取netdev对应的mac地址
     netdev_get_etheraddr(netdev, &pp->hw_addr);
     ovs_strlcpy(pp->name, ofproto_port->name, sizeof pp->name);
     netdev_get_flags(netdev, &flags);
@@ -2751,6 +2757,7 @@ update_port(struct ofproto *ofproto, const char *name)
     if (ofproto_port_query_by_name(ofproto, name, &ofproto_port)) {
         netdev = NULL;
     } else {
+    	//找到了此netdev对应的ofproto_port，尝试着打开它
         error = ofport_open(ofproto, &ofproto_port, &pp, &netdev);
     }
 

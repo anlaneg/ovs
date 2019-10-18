@@ -138,7 +138,7 @@ struct bridge {
     struct hmap mappings;       /* "struct" indexed by UUID */
 
     /* Used during reconfiguration. */
-    //配置指明需要创建的port
+    //配置指明需要存在的port及其配置
     struct shash wanted_ports;
 
     /* Synthetic local port if necessary. */
@@ -179,7 +179,7 @@ struct datapath {
 };
 
 /* All bridges, indexed by name. */
-//所有的桥将被加入到此全局变量，按名称索引
+//当前ovs-vswitch中所有的桥将被加入到此全局变量，按名称索引
 static struct hmap all_bridges = HMAP_INITIALIZER(&all_bridges);
 
 /* All datapath configuartions, indexed by type. */
@@ -639,6 +639,8 @@ config_ofproto_types(const struct smap *other_config)
 
     /* Pass custom configuration to datapath types. */
     sset_init(&types);
+
+    //针对所有datapath type,执行other_config的配置生效工作
     ofproto_enumerate_types(&types);
     SSET_FOR_EACH (type, &types) {
         ofproto_type_set_config(type, other_config);
@@ -840,7 +842,11 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      * This is mostly an update to bridge data structures. Nothing is pushed
      * down to ofproto or lower layers. */
     //依据配置，增删除桥
+    //此步执行完在配置指定的桥将存在，没指定的桥将被移除
     add_del_bridges(ovs_cfg);
+
+    //针对当前配置指定的桥，更新删除桥上的port
+    //此步执行后，配置当前指定的，且之前已存在的桥上port
     HMAP_FOR_EACH (br, node, &all_bridges) {
     	//收集配置指明的所有口
         bridge_collect_wanted_ports(br, &br->wanted_ports);
@@ -863,10 +869,12 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      * deletions (they might especially overlap in name). */
     //上面我们依据配置，将上层不需要的birdges,port已删除，这里我们检查all_bridges即可知道哪些
     //ofprotos需要删除。
-    bridge_delete_ofprotos();//删除不再需要的ofproto
+
+    //删除不再需要的ofproto
+    bridge_delete_ofprotos();
+
+    //如果br有它对应的ofproto,则需要检查ofproto中的port，并进行删除及重配置
     HMAP_FOR_EACH (br, node, &all_bridges) {
-    	//如果br有它对应的ofproto,则需要检查ofproto中的port，并进行
-    	//删除及更新
         if (br->ofproto) {
             bridge_delete_or_reconfigure_ports(br);
         }
@@ -877,9 +885,9 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      *     - Create ofprotos that are missing.
      *
      *     - Add ports that are missing. */
+    //针对配置指定的新增，我们已创建了bridge,现在我们还没有创建ofproto的bridge，执行创建
     HMAP_FOR_EACH_SAFE (br, next, node, &all_bridges) {
         if (!br->ofproto) {
-        	//br有了配置，我们还没有没有创建对应的ofproto，现在创建
             int error;
 
             error = ofproto_create(br->name, br->type, &br->ofproto);
@@ -895,6 +903,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
         }
     }
 
+    //使ovs中的other_config生效
     config_ofproto_types(&ovs_cfg->other_config);
 
     HMAP_FOR_EACH (br, node, &all_bridges) {
@@ -978,11 +987,14 @@ bridge_delete_ofprotos(void)
     /* Delete ofprotos with no bridge or with the wrong type. */
     sset_init(&names);
     sset_init(&types);
+
+    //遍历当前支持的每种datapath type
     ofproto_enumerate_types(&types);
-    SSET_FOR_EACH (type, &types) {//遍历每种datapath type
+    SSET_FOR_EACH (type, &types) {
         const char *name;
 
-        ofproto_enumerate_names(type, &names);//取出这种datapath type下所有ofproto的名称
+        //取出这种datapath type下所有ofproto的名称
+        ofproto_enumerate_names(type, &names);
         SSET_FOR_EACH (name, &names) {
             br = bridge_lookup(name);
             //如果我们没有找到这个桥，或者这个桥的类型变了，则删除这个ofproto
@@ -1177,7 +1189,7 @@ bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
 
     //遍历所有准备添加的口
     SHASH_FOR_EACH (port_node, wanted_ports) {
-    		//取此port的配置
+    	//取此port的配置
         const struct ovsrec_port *port_cfg = port_node->data;
         size_t i;
 
@@ -2012,13 +2024,15 @@ add_del_bridges(const struct ovsrec_open_vswitch *cfg)
     size_t i;
 
     /* Collect new bridges' names and types. */
-    //收集有效的桥配置
+    //收集有效的桥配置到new_br中
     shash_init(&new_br);
-    for (i = 0; i < cfg->n_bridges; i++) {//遍历所有的桥
+    for (i = 0; i < cfg->n_bridges; i++) {
+    	//遍历配置给出的所有桥
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
         const struct ovsrec_bridge *br_cfg = cfg->bridges[i];
 
-        if (strchr(br_cfg->name, '/') || strchr(br_cfg->name, '\\')) {//不容许包含'/','\\'的桥名称
+        //不容许包含'/','\\'符号的桥名称
+        if (strchr(br_cfg->name, '/') || strchr(br_cfg->name, '\\')) {
             /* Prevent remote ovsdb-server users from accessing arbitrary
              * directories, e.g. consider a bridge named "../../../etc/".
              *
@@ -2027,15 +2041,16 @@ add_del_bridges(const struct ovsrec_open_vswitch *cfg)
             VLOG_WARN_RL(&rl, "ignoring bridge with invalid name \"%s\"",
                          br_cfg->name);
         } else if (!shash_add_once(&new_br, br_cfg->name, br_cfg)) {
-        	//桥已存在，说明用户配置某个桥两次，忽略
+        	//桥已在new_br中存在，说明配置中有两个，忽略
             VLOG_WARN_RL(&rl, "bridge %s specified twice", br_cfg->name);
         }
     }
 
     /* Get rid of deleted bridges or those whose types have changed.
      * Update 'cfg' of bridges that still exist. */
+    //获取ovs-vswitchd中已存在的桥，对照配置，如果配置中br不再存在，或者br的datapath_type发生变化，则br桥需要销毁
     HMAP_FOR_EACH_SAFE (br, next, node, &all_bridges) {
-    	//获取br对应的配置，如果br不再存在，或者br的datapath_type发生变化，则br桥需要销毁
+
         br->cfg = shash_find_data(&new_br, br->name);
         if (!br->cfg || strcmp(br->type, ofproto_normalize_type(
                                    br->cfg->datapath_type))) {
@@ -2044,7 +2059,8 @@ add_del_bridges(const struct ovsrec_open_vswitch *cfg)
     }
 
     /* Add new bridges. */
-    SHASH_FOR_EACH(node, &new_br) {//创建之前不存在的桥
+    //创建之前不存在的桥
+    SHASH_FOR_EACH(node, &new_br) {
         const struct ovsrec_bridge *br_cfg = node->data;
         if (!bridge_lookup(br_cfg->name)) {
             bridge_create(br_cfg);
@@ -3362,9 +3378,11 @@ bridge_run(void)
         if_notifier_changed(ifnotifier)) {
         struct ovsdb_idl_txn *txn;
 
-        idl_seqno = ovsdb_idl_get_seqno(idl);//记录序列号
+        //记录序列号
+        idl_seqno = ovsdb_idl_get_seqno(idl);
         txn = ovsdb_idl_txn_create(idl);
-        bridge_reconfigure(cfg ? cfg : &null_cfg);//执行bridge对cfg的配置
+        //执行bridge对cfg的配置
+        bridge_reconfigure(cfg ? cfg : &null_cfg);
 
         if (cfg) {
             ovsrec_open_vswitch_set_cur_cfg(cfg, cfg->next_cfg);
@@ -3625,23 +3643,31 @@ bridge_create(const struct ovsrec_bridge *br_cfg)
     hmap_insert(&all_bridges, &br->node, hash_string(br->name, 0));
 }
 
+//删除掉不再需要的桥br
 static void
-bridge_destroy(struct bridge *br, bool del)//桥的销毁
+bridge_destroy(struct bridge *br, bool del)
 {
     if (br) {
         struct mirror *mirror, *next_mirror;
         struct port *port, *next_port;
 
-        //桥所有port删除
+        //删除桥上所有port
         HMAP_FOR_EACH_SAFE (port, next_port, hmap_node, &br->ports) {
             port_destroy(port);
         }
+
+        //删除桥上所有mirror信息
         HMAP_FOR_EACH_SAFE (mirror, next_mirror, hmap_node, &br->mirrors) {
             mirror_destroy(mirror);
         }
 
+        //将br自all_bridges上移除
         hmap_remove(&all_bridges, &br->node);
+
+        //br对应的ofproto销毁
         ofproto_destroy(br->ofproto, del);
+
+        //查询用hashtable销毁
         hmap_destroy(&br->ifaces);
         hmap_destroy(&br->ports);
         hmap_destroy(&br->iface_by_name);
@@ -3744,7 +3770,7 @@ bridge_collect_wanted_ports(struct bridge *br,
 
     shash_init(wanted_ports);
 
-    //遍历桥配置中指明的所有接口
+    //遍历桥配置中指明的所有接口,将其加入wanted_ports
     for (i = 0; i < br->cfg->n_ports; i++) {
         const char *name = br->cfg->ports[i]->name;
         if (!shash_add_once(wanted_ports, name, br->cfg->ports[i])) {
@@ -3787,9 +3813,9 @@ bridge_del_ports(struct bridge *br, const struct shash *wanted_ports)
 
     /* Get rid of deleted ports.
      * Get rid of deleted interfaces on ports that still exist. */
-    //遍历当前桥上所有的口，如果这个接口可以找到cfg,则这个桥在新配置中还在
+    //遍历当前桥上所有的口，如果这个接口可以在wanted_port中找到cfg,则这个port需要保留
     //如果这个port找不到cfg,则这个桥在新配置中就不在了，需要port_destroy
-    //如果这个port找到了cfg,则需要检查这个port是否需要删除ifaces（port_del_ifaces)
+    //如果这个port找到了cfg,则需要检查这个port下是否需要删除ifaces（port_del_ifaces)
     HMAP_FOR_EACH_SAFE (port, next, hmap_node, &br->ports) {
         port->cfg = shash_find_data(wanted_ports, port->name);
         if (!port->cfg) {
@@ -3801,7 +3827,7 @@ bridge_del_ports(struct bridge *br, const struct shash *wanted_ports)
     }
 
     /* Update iface->cfg and iface->type in interfaces that still exist. */
-    //处理所有需要更新的port，更新它们的，“配置”，”类型“及netdev_type
+    //针对wanted_ports中所有port,针对它们的interface,为其更新当前本置及type
     SHASH_FOR_EACH (port_node, wanted_ports) {
         const struct ovsrec_port *port_rec = port_node->data;
         size_t i;
@@ -4459,7 +4485,7 @@ port_del_ifaces(struct port *port)
     sset_destroy(&new_ifaces);
 }
 
-//移除掉port
+//自桥上移除掉port
 static void
 port_destroy(struct port *port)
 {
@@ -4473,11 +4499,13 @@ port_destroy(struct port *port)
             ofproto_bundle_unregister(br->ofproto, port);
         }
 
-        LIST_FOR_EACH_SAFE (iface, next, port_elem, &port->ifaces) {//销毁ifaces
+        //依据此port下对应的ifaces
+        LIST_FOR_EACH_SAFE (iface, next, port_elem, &port->ifaces) {
             iface_destroy__(iface);
         }
 
-        hmap_remove(&br->ports, &port->hmap_node);//仅ports链中移除
+        //仅ports链中移除
+        hmap_remove(&br->ports, &port->hmap_node);
         free(port->name);
         free(port);
     }

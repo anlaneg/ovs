@@ -1023,6 +1023,7 @@ dpif_netlink_port_del(struct dpif *dpif_, odp_port_t port_no)
     return error;
 }
 
+//向kernel请求指定port的信息
 static int
 dpif_netlink_port_query__(const struct dpif_netlink *dpif, odp_port_t port_no,
                           const char *port_name, struct dpif_port *dpif_port)

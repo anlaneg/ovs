@@ -101,6 +101,7 @@ simap_put(struct simap *simap, const char *name, unsigned int data)
 
     node = simap_find__(simap, name, length, hash);
     if (node) {
+    	//如果name已存在，则更新data
         node->data = data;
         return false;
     } else {
