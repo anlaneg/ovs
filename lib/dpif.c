@@ -346,9 +346,9 @@ dp_parse_name(const char *datapath_name_, char **name, char **type)
     }
 }
 
-//创建或者打开已存在的dpif（create为true时，容许创建）
+//创建或者打开已存在的dpif
 static int
-do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
+do_open(const char *name, const char *type, bool create/*是否创建datapath*/, struct dpif **dpifp)
 {
     struct dpif *dpif = NULL;
     int error;
@@ -360,7 +360,7 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
     type = dpif_normalize_type(type);
     registered_class = dp_class_lookup(type);
     if (!registered_class) {
-    	//如果此type没有注册dp class，则无法执行操作，退出
+    		//如果此type没有注册dp class，则无法执行操作，退出
         VLOG_WARN("could not create datapath %s of unknown type %s", name,
                   type);
         error = EAFNOSUPPORT;
@@ -434,15 +434,16 @@ dpif_create(const char *name, const char *type, struct dpif **dpifp)
  * the default system type.  Returns 0 if successful, otherwise a positive
  * errno value. On success stores a pointer to the datapath in '*dpifp',
  * otherwise a null pointer. */
+//创建并打开datapath后端
 int
-dpif_create_and_open(const char *name, const char *type, struct dpif **dpifp)
+dpif_create_and_open(const char *name, const char *type, struct dpif **dpifp/*出参，创建的后端*/)
 {
     int error;
 
     //创建后端对应的dpifp
     error = dpif_create(name, type, dpifp);
     if (error == EEXIST || error == EBUSY) {
-    	//如果已被创建，则失败，改为接受打开
+    		//如果已被创建，则失败，改为接受打开
         error = dpif_open(name, type, dpifp);
         if (error) {
             VLOG_WARN("datapath %s already exists but cannot be opened: %s",

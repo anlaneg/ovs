@@ -694,8 +694,9 @@ type_wait(const char *type)
 
 static int add_internal_flows(struct ofproto_dpif *);
 
+//交换机空间申请
 static struct ofproto *
-alloc(void)//交换机空间申请
+alloc(void)
 {
     struct ofproto_dpif *ofproto = xzalloc(sizeof *ofproto);
     return &ofproto->up;
@@ -748,6 +749,7 @@ struct odp_garbage {
 static void check_support(struct dpif_backer *backer);
 
 //创建类型为type的dpif后端（每种类型仅有一个）
+//移除dpif后端中已存在的port
 static int
 open_dpif_backer(const char *type, struct dpif_backer **backerp)
 {
@@ -772,28 +774,34 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
         return 0;
     }
 
+    //dp后端名称
     backer_name = xasprintf("ovs-%s", type);
 
     /* Remove any existing datapaths, since we assume we're the only
      * userspace controlling the datapath. */
-    //防止存在别人创建的交换机（我们这边正在创建第一个交换机)
+    //移除掉所有已存在的datapath,当前认为我们是首个控制datapath的，因为还不存在此
+    //后端。
+
+    //1。取此type已存在的所有datapath
     sset_init(&names);
     dp_enumerate_names(type, &names);
+
+    //2。遍历每一个datapath名称，除backer_name名删除其它datapath
     SSET_FOR_EACH(name, &names) {
         struct dpif *old_dpif;
 
         /* Don't remove our backer if it exists. */
         if (!strcmp(name, backer_name)) {
-        	//不能删除backer
+        		//datapath名称不能与backer_name相同
             continue;
         }
 
-        //删除datapath
+        //打开名称为name，类别为type的datapth
         if (dpif_open(name, type, &old_dpif)) {
-        	//尝试着去打开一个datapath，但失败了,报警
+        		//打开失败，报警
             VLOG_WARN("couldn't open old datapath %s to remove it", name);
         } else {
-        	//我们打开成功了，删除此datapath
+        		//打开成功了，删除此datapath
             dpif_delete(old_dpif);
             dpif_close(old_dpif);
         }
@@ -802,8 +810,6 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
 
     //创建backer
     backer = xmalloc(sizeof *backer);
-
-    //创建及打开后端
     error = dpif_create_and_open(backer_name, type, &backer->dpif);
     free(backer_name);
     if (error) {
@@ -832,6 +838,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
 
     /* Loop through the ports already on the datapath and remove any
      * that we don't need anymore. */
+    //遍历datapath上所有port,移除掉init_ofp_ports中未指定的port及backer port名称
     ovs_list_init(&garbage_list);
     dpif_port_dump_start(&port_dump, backer->dpif);
     while (dpif_port_dump_next(&port_dump, &port)) {
@@ -845,15 +852,17 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
     }
     dpif_port_dump_done(&port_dump);
 
-    //遍历需要清除的port，则它们释放
+    //处理移除，并释放
     LIST_FOR_EACH_POP (garbage, list_node, &garbage_list) {
         dpif_port_del(backer->dpif, garbage->odp_port, false);
         free(garbage);
     }
 
-    shash_add(&all_dpif_backers, type, backer);//加入此backer
+    //加入此backer
+    shash_add(&all_dpif_backers, type, backer);
 
-    check_support(backer);//获取后端功能支持
+    //获取后端功能支持
+    check_support(backer);
     atomic_count_init(&backer->tnl_count, 0);
 
     error = dpif_recv_set(backer->dpif, backer->recv_set_enable);
@@ -1642,10 +1651,10 @@ construct(struct ofproto *ofproto_)
         struct iface_hint *iface_hint = node->data;
 
         if (!strcmp(iface_hint->br_name, ofproto->up.name)) {
-        	//是我们这个交换机的配置
+        		//是我们这个交换机的配置
             /* Check if the datapath already has this port. */
             if (dpif_port_exists(ofproto->backer->dpif, node->name)) {
-            	//这个接口在我们这个交换机上已存在
+            		//这个接口在我们这个交换机上已存在
                 sset_add(&ofproto->ports, node->name);
             }
 
@@ -2027,8 +2036,9 @@ port_dealloc(struct ofport *port_)//释放ofport空间
     free(port);
 }
 
+//ofport构造
 static int
-port_construct(struct ofport *port_)//ofport构造
+port_construct(struct ofport *port_)
 {
     struct ofport_dpif *port = ofport_dpif_cast(port_);
     struct ofproto_dpif *ofproto = ofproto_dpif_cast(port->up.ofproto);
@@ -2053,7 +2063,8 @@ port_construct(struct ofport *port_)//ofport构造
     port->n_qdscp = 0;
     port->carrier_seq = netdev_get_carrier_resets(netdev);
 
-    if (netdev_vport_is_patch(netdev)) {//patch口处理
+    //patch口处理
+    if (netdev_vport_is_patch(netdev)) {
         /* By bailing out here, we don't submit the port to the sFlow module
          * to be considered for counter polling export.  This is correct
          * because the patch port represents an interface that sFlow considers
@@ -2085,7 +2096,8 @@ port_construct(struct ofport *port_)//ofport构造
         }
 
         port->is_tunnel = true;//呵呵，标记为tunnel口，鼓掌！
-    } else {//非tunnel口
+    } else {
+    		//非tunnel口
         /* Sanity-check that a mapping doesn't already exist.  This
          * shouldn't happen for non-tunnel ports. */
         if (odp_port_to_ofp_port(ofproto, port->odp_port) != OFPP_NONE) {

@@ -477,6 +477,7 @@ int dpif_port_dump_done(struct dpif_port_dump *);
  *
  * If you break out of the loop, then you need to free the dump structure by
  * hand using dpif_port_dump_done(). */
+//dump指定dp上的所有port
 #define DPIF_PORT_FOR_EACH(DPIF_PORT, DUMP, DPIF)   \
     for (dpif_port_dump_start(DUMP, DPIF);          \
          (dpif_port_dump_next(DUMP, DPIF_PORT)      \

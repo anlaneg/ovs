@@ -315,7 +315,7 @@ unsigned ofproto_min_revalidate_pps = OFPROTO_MIN_REVALIDATE_PPS_DEFAULT;
 size_t n_handlers, n_revalidators;
 
 /* Map from datapath name to struct ofproto, for use by unixctl commands. */
-//记录所有的open flow交换机
+//记录系统创建的所有ofproto
 static struct hmap all_ofprotos = HMAP_INITIALIZER(&all_ofprotos);
 
 /* Initial mappings of port to OpenFlow number mappings. */
@@ -495,7 +495,7 @@ ofproto_bump_tables_version(struct ofproto *ofproto)
 
 //创建openflow交换机
 int
-ofproto_create(const char *datapath_name, const char *datapath_type,
+ofproto_create(const char *datapath_name, const char *datapath_type/*ofproto对应的datapath类型*/,
                struct ofproto **ofprotop)
     OVS_EXCLUDED(ofproto_mutex)
 {
@@ -517,7 +517,8 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
         return EAFNOSUPPORT;
     }
 
-    ofproto = class->alloc();//申请openflow交换机空间
+    //申请openflow交换机空间
+    ofproto = class->alloc();
     if (!ofproto) {
         VLOG_ERR("failed to allocate datapath %s of type %s",
                  datapath_name, datapath_type);
@@ -530,8 +531,9 @@ ofproto_create(const char *datapath_name, const char *datapath_type,
     ofproto->ofproto_class = class;//设置对应的class
     ofproto->name = xstrdup(datapath_name);//设置datapath名称
     ofproto->type = xstrdup(datapath_type);//设置datapath类型
+    //注册所有ofproto到all_ofprotos
     hmap_insert(&all_ofprotos, &ofproto->hmap_node,
-                hash_string(ofproto->name, 0));//将交换机加入到all_ofprotos中
+                hash_string(ofproto->name, 0));
     ofproto->datapath_id = 0;
     ofproto->forward_bpdu = false;//默认不转发bpdu
     ofproto->fallback_dpid = pick_fallback_dpid();

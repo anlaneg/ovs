@@ -332,8 +332,9 @@ dpif_netlink_enumerate(struct sset *all_dps,
     return nl_dump_done(&dump);
 }
 
+//创建或者打开netlink类型的datapath
 static int
-dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name,
+dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name/*要创建的datapath名称*/,
                   bool create, struct dpif **dpifp)
 {
     struct dpif_netlink_dp dp_request, dp;
@@ -349,10 +350,12 @@ dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name,
     /* Create or look up datapath. */
     dpif_netlink_dp_init(&dp_request);
     if (create) {
+    		//发送datapath创建命令
         dp_request.cmd = OVS_DP_CMD_NEW;
         upcall_pid = 0;
         dp_request.upcall_pid = &upcall_pid;
     } else {
+    		//发送datapath更新命令
         /* Use OVS_DP_CMD_SET to report user features */
         dp_request.cmd = OVS_DP_CMD_SET;
     }
@@ -364,6 +367,7 @@ dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name,
         return error;
     }
 
+    //向kernel发送创建datapath成功，构造dpifp
     error = open_dpif(&dp, dpifp);
     ofpbuf_delete(buf);
     return error;
@@ -1133,6 +1137,7 @@ struct dpif_netlink_port_state {
     struct ofpbuf buf;
 };
 
+//通过OVS_VPORT_CMD_GET dump 指定dp的port
 static void
 dpif_netlink_port_dump_start__(const struct dpif_netlink *dpif,
                                struct nl_dump *dump)
@@ -1146,10 +1151,12 @@ dpif_netlink_port_dump_start__(const struct dpif_netlink *dpif,
 
     buf = ofpbuf_new(1024);
     dpif_netlink_vport_to_ofpbuf(&request, buf);
+    //发送dump请求给kernel
     nl_dump_start(dump, NETLINK_GENERIC, buf);
     ofpbuf_delete(buf);
 }
 
+//通过netlink dump port
 static int
 dpif_netlink_port_dump_start(const struct dpif *dpif_, void **statep)
 {
@@ -1184,6 +1191,7 @@ dpif_netlink_port_dump_next__(const struct dpif_netlink *dpif,
     return error;
 }
 
+//dump_start用于发送请求，dump_next读取port请求响应并解析
 static int
 dpif_netlink_port_dump_next(const struct dpif *dpif_, void *state_,
                             struct dpif_port *dpif_port)
@@ -1200,7 +1208,7 @@ dpif_netlink_port_dump_next(const struct dpif *dpif_, void *state_,
     }
     dpif_port->name = CONST_CAST(char *, vport.name);
     dpif_port->type = CONST_CAST(char *, get_vport_type(&vport));
-    dpif_port->port_no = vport.port_no;
+    dpif_port->port_no = vport.port_no;/*port编号*/
     return 0;
 }
 
@@ -4316,7 +4324,7 @@ dpif_netlink_dp_from_ofpbuf(struct dpif_netlink_dp *dp/*出参，解析buf获得
     //清空dp,准备填充
     dpif_netlink_dp_init(dp);
 
-    //取buf的数已白大，分别解nlmsghdr,genlmsghdr,ovs_header三个头部
+    //取buf的数据，分别解nlmsghdr,genlmsghdr,ovs_header三个头部
     struct ofpbuf b = ofpbuf_const_initializer(buf->data, buf->size);
     struct nlmsghdr *nlmsg = ofpbuf_try_pull(&b, sizeof *nlmsg);
     struct genlmsghdr *genl = ofpbuf_try_pull(&b, sizeof *genl);

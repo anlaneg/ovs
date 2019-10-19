@@ -885,7 +885,8 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      *     - Create ofprotos that are missing.
      *
      *     - Add ports that are missing. */
-    //针对配置指定的新增，我们已创建了bridge,现在我们还没有创建ofproto的bridge，执行创建
+    //针对配置指定的新增，我们已创建了bridge,
+    //但我们还没有创建bridge对应的ofproto，现在执行创建
     HMAP_FOR_EACH_SAFE (br, next, node, &all_bridges) {
         if (!br->ofproto) {
             int error;
@@ -1069,7 +1070,8 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
         ofp_port_t requested_ofp_port;
         struct iface *iface;
 
-        sset_add(&ofproto_ports, ofproto_port.name);//记录接口名称
+        //记录接口名称
+        sset_add(&ofproto_ports, ofproto_port.name);
 
         //检查br中是否还存在此iface
         iface = iface_lookup(br, ofproto_port.name);
@@ -1085,7 +1087,8 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
                 && !strcmp(ofproto_port.type, "internal")) {
                 continue;
             }
-            goto delete;//否则都删除
+            //否则都删除
+            goto delete;
         }
 
         const char *netdev_type = ofproto_port_open_type(br->ofproto,
@@ -1145,6 +1148,7 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
         iface_destroy(iface);
         del = add_ofp_port(ofproto_port.ofp_port, del, &n, &allocated);
     }
+
     //通过ofport的id号删除ofproto中的port
     for (i = 0; i < n; i++) {
         ofproto_port_del(br->ofproto, del[i]);
