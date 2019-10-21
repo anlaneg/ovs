@@ -694,7 +694,7 @@ type_wait(const char *type)
 
 static int add_internal_flows(struct ofproto_dpif *);
 
-//交换机空间申请
+//ofproto空间申请
 static struct ofproto *
 alloc(void)
 {
@@ -852,7 +852,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
     }
     dpif_port_dump_done(&port_dump);
 
-    //处理移除，并释放
+    //处理dp port移除，并释放
     LIST_FOR_EACH_POP (garbage, list_node, &garbage_list) {
         dpif_port_del(backer->dpif, garbage->odp_port, false);
         free(garbage);
@@ -1611,7 +1611,7 @@ construct(struct ofproto *ofproto_)
     /* Tunnel module can get used right after the udpif threads are running. */
     ofproto_tunnel_init();
 
-    //创建datapath 接口对应的后端，设置upcall
+    //创建datapath 接口对应的后端，设置udpif
     error = open_dpif_backer(ofproto->up.type, &ofproto->backer);
     if (error) {
         return error;
@@ -1626,6 +1626,7 @@ construct(struct ofproto *ofproto_)
     ofproto->rstp = NULL;
     ofproto->dump_seq = 0;
     hmap_init(&ofproto->bundles);
+    //初始化mac学习表
     ofproto->ml = mac_learning_create(MAC_ENTRY_DEFAULT_IDLE_TIME);
     ofproto->ms = NULL;
     ofproto->mbridge = mbridge_create();
@@ -1645,7 +1646,7 @@ construct(struct ofproto *ofproto_)
 
 
     //我们在ofproto初始化时，传入了ovsdb中传来的首次port信息
-    //我们现在正在创建交换机，所以需要查看是否有这个交换机的port需要创建
+    //我们现在正在创建ofproto，所以需要查看是否有这个交换机的port需要创建
     //这个适用于在我们启动前ovsdb中已存在某一交换机的配置。
     SHASH_FOR_EACH_SAFE (node, next, &init_ofp_ports) {
         struct iface_hint *iface_hint = node->data;
@@ -1659,7 +1660,6 @@ construct(struct ofproto *ofproto_)
             }
 
             //此节点init_ofp_ports已被我们初始化了，删除掉
-            //XXX 没有明白，这样做的意义
             free(iface_hint->br_name);
             free(iface_hint->br_type);
             free(iface_hint);
@@ -1674,10 +1674,14 @@ construct(struct ofproto *ofproto_)
     hmap_insert(&all_ofproto_dpifs_by_uuid,
                 &ofproto->all_ofproto_dpifs_by_uuid_node,
                 uuid_hash(&ofproto->uuid));
-    memset(&ofproto->stats, 0, sizeof ofproto->stats);//准备统计状态
 
-    ofproto_init_tables(ofproto_, N_TABLES);//默认构造255个表
-    error = add_internal_flows(ofproto);//加入内部流
+    //准备统计状态
+    memset(&ofproto->stats, 0, sizeof ofproto->stats);
+
+    //默认构造255个表
+    ofproto_init_tables(ofproto_, N_TABLES);
+    //加入内部流
+    error = add_internal_flows(ofproto);
 
     //将最后一个表定义hidden,readonly
     ofproto->up.tables[TBL_INTERNAL].flags = OFTABLE_HIDDEN | OFTABLE_READONLY;
@@ -2075,6 +2079,7 @@ port_construct(struct ofport *port_)
         return 0;
     }
 
+    //接口名称
     dp_port_name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
     error = dpif_port_query_by_name(ofproto->backer->dpif, dp_port_name,
                                     &dpif_port);
@@ -2085,7 +2090,7 @@ port_construct(struct ofport *port_)
     port->odp_port = dpif_port.port_no;
 
     if (netdev_get_tunnel_config(netdev)) {
-    	    //此netdev有tunnel配置，则其需要创建tunnel口
+    	//此netdev有tunnel配置，则其需要创建tunnel口
         atomic_count_inc(&ofproto->backer->tnl_count);
         error = tnl_port_add(port, port->up.netdev, port->odp_port,
                              ovs_native_tunneling_is_on(ofproto), dp_port_name);
@@ -2097,7 +2102,7 @@ port_construct(struct ofport *port_)
 
         port->is_tunnel = true;//呵呵，标记为tunnel口，鼓掌！
     } else {
-    		//非tunnel口
+    	//非tunnel口
         /* Sanity-check that a mapping doesn't already exist.  This
          * shouldn't happen for non-tunnel ports. */
         if (odp_port_to_ofp_port(ofproto, port->odp_port) != OFPP_NONE) {
@@ -3855,7 +3860,7 @@ port_query_by_name(const struct ofproto *ofproto_, const char *devname,
     struct dpif_port dpif_port;
     int error;
 
-    //如果ghost_ports中含有此名称
+    //如果查询的是ghost_ports中的port
     if (sset_contains(&ofproto->ghost_ports, devname)) {
     	//先获取此netdev的名称
         const char *type = netdev_get_type_from_name(devname);
@@ -3879,9 +3884,12 @@ port_query_by_name(const struct ofproto *ofproto_, const char *devname,
     if (!sset_contains(&ofproto->ports, devname)) {
         return ENODEV;
     }
+
+    //向datapath请求$devname对应的port信息
     error = dpif_port_query_by_name(ofproto->backer->dpif,
                                     devname, &dpif_port);
     if (!error) {
+    	//datapath存在接口devname,采用dpif_port填充ofproto_port
         ofproto_port_from_dpif_port(ofproto, ofproto_port, &dpif_port);
     }
     return error;
@@ -4045,7 +4053,9 @@ port_get_lacp_stats(const struct ofport *ofport_, struct lacp_slave_stats *stats
 }
 
 struct port_dump_state {
+	//当前dump位置
     struct sset_position pos;
+    //是否在dump ofproto->ghost_ports中的port
     bool ghost;
 
     struct ofproto_port port;
@@ -4070,9 +4080,12 @@ port_dump_next(const struct ofproto *ofproto_, void *state_,
     struct sset_node *node;
 
     if (state->has_port) {
+    	//上次记录了返回的port,这里将其释放掉
         ofproto_port_destroy(&state->port);
         state->has_port = false;
     }
+
+    //选择遍历哪个set
     sset = state->ghost ? &ofproto->ghost_ports : &ofproto->ports;
     while ((node = sset_at_position(sset, &state->pos))) {
         int error;
@@ -4080,6 +4093,7 @@ port_dump_next(const struct ofproto *ofproto_, void *state_,
         //在ofproto中查找名称为node->name的port
         error = port_query_by_name(ofproto_, node->name, &state->port);
         if (!error) {
+        	//node->name对应的port在datapath中存在，通过port记录
             *port = state->port;
             state->has_port = true;
             return 0;
@@ -4088,7 +4102,7 @@ port_dump_next(const struct ofproto *ofproto_, void *state_,
         }
     }
 
-    //变更为ghost中的port
+    //变更为遍历ghost中的port
     if (!state->ghost) {
         state->ghost = true;
         memset(&state->pos, 0, sizeof state->pos);

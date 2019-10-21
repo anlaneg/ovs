@@ -354,6 +354,7 @@ struct ukey_op {
 };
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+//记录系统中所有upcall datapath接口（udpif)
 static struct ovs_list all_udpifs = OVS_LIST_INITIALIZER(&all_udpifs);
 
 static size_t recv_upcalls(struct handler *);
@@ -490,7 +491,9 @@ udpif_create(struct dpif_backer *backer, struct dpif *dpif)
         ovs_mutex_init(&udpif->ukeys[i].mutex);
     }
 
-    dpif_register_upcall_cb(dpif, upcall_cb, udpif);//注册upcall回调
+    //注册upcall回调
+    dpif_register_upcall_cb(dpif, upcall_cb, udpif);
+    //注册do_purrge_cb回调
     dpif_register_dp_purge_cb(dpif, dp_purge_cb, udpif);
 
     return udpif;

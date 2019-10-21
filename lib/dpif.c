@@ -767,6 +767,7 @@ dpif_port_query_by_name(const struct dpif *dpif, const char *devname,
         VLOG_DBG_RL(&dpmsg_rl, "%s: device %s is on port %"PRIu32,
                     dpif_name(dpif), devname, port->port_no);
     } else {
+    	//未查询到此port,将其值清零
         memset(port, 0, sizeof *port);
 
         /* For ENODEV we use DBG level because the caller is probably
@@ -1554,7 +1555,7 @@ dpif_register_dp_purge_cb(struct dpif *dpif, dp_purge_callback *cb, void *aux)
     }
 }
 
-//注册upcall回调及回调对应参数
+//注册upcall回调及回调对应参数(目前仅netdev方式的dpif有此注册函数）
 void
 dpif_register_upcall_cb(struct dpif *dpif, upcall_callback *cb, void *aux)
 {

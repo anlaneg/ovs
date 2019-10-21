@@ -73,7 +73,8 @@ int
 main(int argc, char *argv[])
 {
     char *unixctl_path = NULL;
-    struct unixctl_server *unixctl;//unixctl服务器
+    //unixctl服务器
+    struct unixctl_server *unixctl;
     char *remote;
     bool exiting, cleanup;
     struct ovs_vswitchd_exit_args exit_args = {&exiting, &cleanup};
@@ -84,11 +85,16 @@ main(int argc, char *argv[])
     ovsthread_id_init();
 
     dns_resolve_init(true);
-    ovs_cmdl_proctitle_init(argc, argv);//非linux机器不做作何处理
-    service_start(&argc, &argv);//linux机器不做任何处理
-    remote = parse_options(argc, argv, &unixctl_path);//解析命令行
+    //非linux机器不做作何处理
+    ovs_cmdl_proctitle_init(argc, argv);
+    //linux机器不做任何处理
+    service_start(&argc, &argv);
+    //解析命令行
+    remote = parse_options(argc, argv, &unixctl_path);
+    //忽略pipe信号
     fatal_ignore_sigpipe();
 
+    //完成daemon创建
     daemonize_start(true);
 
     if (want_mlockall) {//锁内存处理
@@ -111,13 +117,14 @@ main(int argc, char *argv[])
     unixctl_command_register("exit", "[--cleanup]", 0, 1,
                              ovs_vswitchd_exit, &exit_args);//注册退出命令
 
-    bridge_init(remote);//命令及ovsdb连接初始化
+    //命令及ovsdb连接初始化
+    bridge_init(remote);
     free(remote);
 
     exiting = false;
     cleanup = false;
+
     while (!exiting) {
-    	//run代码段
         memory_run();
         if (memory_should_report()) {
             struct simap usage;
@@ -127,6 +134,7 @@ main(int argc, char *argv[])
             memory_report(&usage);
             simap_destroy(&usage);
         }
+
         bridge_run();
         unixctl_server_run(unixctl);
         //由此函数下去，经dpif_netdev_run->reconfigure_datapath->...可到达pmd_thread_main
@@ -138,9 +146,11 @@ main(int argc, char *argv[])
         unixctl_server_wait(unixctl);
         netdev_wait();
         if (exiting) {
-            poll_immediate_wake();//立即触发poll_block()
+        	//立即触发poll_block()
+            poll_immediate_wake();
         }
-        poll_block();//阻塞等待事件
+        //阻塞等待事件
+        poll_block();
         if (should_service_stop()) {
             exiting = true;
         }

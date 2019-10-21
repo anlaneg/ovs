@@ -638,6 +638,7 @@ netdev_ports_flow_init(void)
     ovs_rwlock_unlock(&netdev_hmap_rwlock);
 }
 
+//hw-offload初始化（仅初始化一次）
 void
 netdev_set_flow_api_enabled(const struct smap *ovs_other_config)
 {

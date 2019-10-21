@@ -196,6 +196,7 @@ mac_learning_clear_statistics(struct mac_learning *ml)
 /* Creates and returns a new MAC learning table with an initial MAC aging
  * timeout of 'idle_time' seconds and an initial maximum of MAC_DEFAULT_MAX
  * entries. */
+//创建mac学习表
 struct mac_learning *
 mac_learning_create(unsigned int idle_time)
 {

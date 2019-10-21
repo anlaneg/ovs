@@ -419,7 +419,7 @@ if_change_cb(void *aux OVS_UNUSED)
     seq_change(ifaces_changed);
 }
 
-//检查是否发生变化，如果未变化，则注册变化通知
+//检查interface是否发生变化，如果未变化，则注册变化通知,等待变换
 static bool
 if_notifier_changed(struct if_notifier *notifier OVS_UNUSED)
 {
@@ -439,8 +439,9 @@ if_notifier_changed(struct if_notifier *notifier OVS_UNUSED)
 /* Initializes the bridge module, configuring it to obtain its configuration
  * from an OVSDB server accessed over 'remote', which should be a string in a
  * form acceptable to ovsdb_idl_create(). */
+//用database路径初始化桥
 void
-bridge_init(const char *remote)//用database路径初始化桥
+bridge_init(const char *remote)
 {
     /* Create connection to database. */
     idl = ovsdb_idl_create(remote, &ovsrec_idl_class, true, true);
@@ -536,13 +537,15 @@ bridge_init(const char *remote)//用database路径初始化桥
     bond_init();
     cfm_init();
     bfd_init();
-    ovs_numa_init();//numa初始化
+    //numa初始化
+    ovs_numa_init();
     stp_init();
     lldp_init();
     rstp_init();
     ifaces_changed = seq_create();
     last_ifaces_changed = seq_read(ifaces_changed);
-    ifnotifier = if_notifier_create(if_change_cb, NULL);//接口发生变化时，更改ifaces_changed值
+    //接口发生变化时，更改ifaces_changed值
+    ifnotifier = if_notifier_create(if_change_cb, NULL);
 }
 
 void
@@ -793,6 +796,7 @@ datapath_reconfigure(const struct ovsrec_open_vswitch *cfg)
 
         dp = datapath_lookup(dp_name);
         if (!dp) {
+            //创建不存在的datapath
             dp = datapath_create(dp_name);
         }
         dp->last_used = idl_seqno;
@@ -800,6 +804,7 @@ datapath_reconfigure(const struct ovsrec_open_vswitch *cfg)
     }
 
     /* Purge deleted 'datapath's. */
+    //删除不需要的datapath
     HMAP_FOR_EACH_SAFE (dp, next, node, &all_datapaths) {
         if (dp->last_used != idl_seqno) {
             datapath_destroy(dp);
@@ -1203,11 +1208,11 @@ bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
 
             requested_ofp_port = iface_get_requested_ofp_port(iface_cfg);
             if ((requested_ofp_port != OFPP_NONE) == with_requested_port) {
-            		//指定的ofp_port有效，且处理指定ofp_port的interface,则创建不存在iface
+                //指定的ofp_port有效，且处理指定ofp_port的interface,则创建不存在iface
                 struct iface *iface = iface_lookup(br, iface_cfg->name);
 
                 if (!iface) {
-                		//做实际工作，创建iface
+                    //做实际工作，创建iface
                     iface_create(br, iface_cfg, port_cfg);
                 }
             }
@@ -1215,16 +1220,19 @@ bridge_add_ports__(struct bridge *br, const struct shash *wanted_ports,
     }
 }
 
+//按期待创建port
 static void
-bridge_add_ports(struct bridge *br, const struct shash *wanted_ports)//按期待创建port
+bridge_add_ports(struct bridge *br, const struct shash *wanted_ports)
 {
     /* First add interfaces that request a particular port number. */
-    bridge_add_ports__(br, wanted_ports, true);//对指定id的port先创建
+    //对指定id的port先创建
+    bridge_add_ports__(br, wanted_ports, true);
 
     /* Then add interfaces that want automatic port number assignment.
      * We add these afterward to avoid accidentally taking a specifically
      * requested port number. */
-    bridge_add_ports__(br, wanted_ports, false);//再创建可任意id的port
+    //再创建可任意id的port
+    bridge_add_ports__(br, wanted_ports, false);
 }
 
 static void
@@ -2176,7 +2184,7 @@ iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg/*interf
     ovs_assert(!iface_lookup(br, iface_cfg->name));
     error = iface_do_create(br, iface_cfg, &ofp_port, &netdev, &errp);
     if (error) {
-    		//创建interface失败，记录错误信息到db,清除其它状态
+        //创建interface失败，记录错误信息到db,清除其它状态
         iface_clear_db_record(iface_cfg, errp);
         free(errp);
         return false;
@@ -2185,13 +2193,14 @@ iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg/*interf
     /* Get or create the port structure. */
     port = port_lookup(br, port_cfg->name);
     if (!port) {
-    		//port不存在时，创建port
+        //port不存在时，创建port
         port = port_create(br, port_cfg);
     }
 
     /* Create the iface structure. */
     iface = xzalloc(sizeof *iface);
     ovs_list_push_back(&port->ifaces, &iface->port_elem);
+    //ofproto创建成功，将其添加到br上
     hmap_insert(&br->iface_by_name, &iface->name_node,
                 hash_string(iface_cfg->name, 0));
     iface->port = port;
@@ -3311,12 +3320,14 @@ bridge_run(void)
 
     ovsrec_open_vswitch_init(&null_cfg);
 
-    ovsdb_idl_run(idl);//数据库里的消息处理（监听db变化）
+    //数据库里的消息处理（监听db变化）
+    ovsdb_idl_run(idl);
 
-    if_notifier_run();//来自kernel的信息
+    //处理来自kernel的netlink通信信息
+    if_notifier_run();
 
     if (ovsdb_idl_is_lock_contended(idl)) {
-    	//我们没有拿到锁
+    	//我们没有拿到锁，移除掉所有bridge,并停止进程
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
         struct bridge *br, *next_br;
 
@@ -3339,10 +3350,12 @@ bridge_run(void)
          * contents. */
         return;
     }
+
     //实际上内容调用的是：ovsdb_idl_first_row，取到配置
     cfg = ovsrec_open_vswitch_first(idl);
 
     if (cfg) {
+    	//hw-offload初始化
         netdev_set_flow_api_enabled(&cfg->other_config);
     	//dpdk配置（取出数据库中的other_config)
         dpdk_init(&cfg->other_config);
@@ -3377,7 +3390,7 @@ bridge_run(void)
         stream_ssl_set_ca_cert_file(ssl->ca_cert, ssl->bootstrap_ca_cert);
     }
 
-    //配置发生了变化
+    //配置发生了变化或者
     if (ovsdb_idl_get_seqno(idl) != idl_seqno ||
         if_notifier_changed(ifnotifier)) {
         struct ovsdb_idl_txn *txn;

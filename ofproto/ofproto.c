@@ -493,7 +493,7 @@ ofproto_bump_tables_version(struct ofproto *ofproto)
                                                ofproto->tables_version);
 }
 
-//创建openflow交换机
+//创建ofproto
 int
 ofproto_create(const char *datapath_name, const char *datapath_type/*ofproto对应的datapath类型*/,
                struct ofproto **ofprotop)
@@ -507,9 +507,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type/*ofproto对�
     *ofprotop = NULL;
 
     datapath_type = ofproto_normalize_type(datapath_type);
-    //目前仅可以返回ofproto_class（目前仅支持system,netdev)
-    //system为走kernel datapath
-    //netdev为走dpdk datapath
+    //当前系统仅有一种ofproto_class
     class = ofproto_class_find__(datapath_type);
     if (!class) {
         VLOG_WARN("could not create datapath %s of unknown type %s",
@@ -517,7 +515,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type/*ofproto对�
         return EAFNOSUPPORT;
     }
 
-    //申请openflow交换机空间
+    //申请ofproto空间
     ofproto = class->alloc();
     if (!ofproto) {
         VLOG_ERR("failed to allocate datapath %s of type %s",
@@ -531,9 +529,11 @@ ofproto_create(const char *datapath_name, const char *datapath_type/*ofproto对�
     ofproto->ofproto_class = class;//设置对应的class
     ofproto->name = xstrdup(datapath_name);//设置datapath名称
     ofproto->type = xstrdup(datapath_type);//设置datapath类型
+
     //注册所有ofproto到all_ofprotos
     hmap_insert(&all_ofprotos, &ofproto->hmap_node,
                 hash_string(ofproto->name, 0));
+
     ofproto->datapath_id = 0;
     ofproto->forward_bpdu = false;//默认不转发bpdu
     ofproto->fallback_dpid = pick_fallback_dpid();
@@ -571,7 +571,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type/*ofproto对�
     ovs_mutex_init(&ofproto->vl_mff_map.mutex);
     cmap_init(&ofproto->vl_mff_map.cmap);
 
-    //对交换机进行构造(初始化下发的port)
+    //初始化ofproto
     error = ofproto->ofproto_class->construct(ofproto);
     if (error) {
         VLOG_ERR("failed to open datapath %s: %s",
@@ -587,7 +587,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type/*ofproto对�
     /* Check that hidden tables, if any, are at the end. */
     ovs_assert(ofproto->n_tables);
     //在construct中，我们完成表数量设置
-    for (i = 0; i + 1 < ofproto->n_tables; i++) {
+    for (i = 0; i + 1 /*跳过最后一个隐藏表*/< ofproto->n_tables; i++) {
         enum oftable_flags flags = ofproto->tables[i].flags;
         enum oftable_flags next_flags = ofproto->tables[i + 1].flags;
 
@@ -595,7 +595,8 @@ ofproto_create(const char *datapath_name, const char *datapath_type/*ofproto对�
     }
 
     ofproto->datapath_id = pick_datapath_id(ofproto);
-    init_ports(ofproto);//初始化交换机对应的port
+    //初始化ofproto的port
+    init_ports(ofproto);
 
     /* Initialize meters table. */
     if (ofproto->ofproto_class->meter_get_features) {
@@ -2011,12 +2012,12 @@ ofproto_port_destroy(struct ofproto_port *ofproto_port)
 }
 
 /* Initializes 'dump' to begin dumping the ports in an ofproto.
- * 初始化一个dump,用于遍历ofproto上的ports
  *
  * This function provides no status indication.  An error status for the entire
  * dump operation is provided when it is completed by calling
  * ofproto_port_dump_done().
  */
+//初始化一个dump,用于遍历ofproto上的ports,仅申请空间
 void
 ofproto_port_dump_start(struct ofproto_port_dump *dump,
                         const struct ofproto *ofproto)
@@ -2037,11 +2038,12 @@ ofproto_port_dump_start(struct ofproto_port_dump *dump,
  * The ofproto owns the data stored in 'port'.  It will remain valid until at
  * least the next time 'dump' is passed to ofproto_port_dump_next() or
  * ofproto_port_dump_done(). */
-//获取下一个port
+//获取一个port
 bool
 ofproto_port_dump_next(struct ofproto_port_dump *dump,
                        struct ofproto_port *port)
 {
+	//取要dump的ofproto
     const struct ofproto *ofproto = dump->ofproto;
 
     if (dump->error) {
@@ -2051,6 +2053,7 @@ ofproto_port_dump_next(struct ofproto_port_dump *dump,
     dump->error = ofproto->ofproto_class->port_dump_next(ofproto, dump->state,
                                                          port);
     if (dump->error) {
+    	//dump出错，执行port_dump_done，提前完成dump
         ofproto->ofproto_class->port_dump_done(ofproto, dump->state);
         return false;
     }
@@ -2654,7 +2657,7 @@ ofport_destroy(struct ofport *port, bool del)
      }
 }
 
-//指定交换机，及端口号获取ofport
+//指定ofproto，及端口号获取ofport
 struct ofport *
 ofproto_get_port(const struct ofproto *ofproto, ofp_port_t ofp_port)
 {
@@ -2821,7 +2824,7 @@ init_ports(struct ofproto *p)
     struct ofproto_port ofproto_port;
     struct shash_node *node, *next;
 
-    //遍历交换机所有接口(数据信息来源于ghost_ports,ports)
+    //用ofproto_port遍历交换机所有接口(数据信息来源于ghost_ports,ports)
     OFPROTO_PORT_FOR_EACH (&ofproto_port, &dump, p) {
         const char *name = ofproto_port.name;
 
@@ -2856,7 +2859,8 @@ init_ports(struct ofproto *p)
     SHASH_FOR_EACH_SAFE(node, next, &init_ofp_ports) {
         struct iface_hint *iface_hint = node->data;
 
-        if (!strcmp(iface_hint->br_name, p->name)) {//删除与当前交换机有关的port,已创建
+        if (!strcmp(iface_hint->br_name, p->name)) {
+            //删除init_ofp_ports中与当前交换机有关的port,已创建
             free(iface_hint->br_name);
             free(iface_hint->br_type);
             free(iface_hint);
@@ -8746,6 +8750,7 @@ pick_datapath_id(const struct ofproto *ofproto)
 {
     const struct ofport *port;
 
+    //取ofproto的local口
     port = ofproto_get_port(ofproto, OFPP_LOCAL);
     if (port) {
         struct eth_addr ea;

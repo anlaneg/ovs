@@ -278,6 +278,7 @@ void ofproto_type_get_memory_usage(const char *datapath_type, struct simap *);
  *
  * 'name' and 'type' are suitable for passing to netdev_open(). */
 struct ofproto_port {
+	//ofproto的名称，类型及接口编号
     char *name;                 /* Network device name, e.g. "eth0". */
     char *type;                 /* Network device type, e.g. "system". */
     ofp_port_t ofp_port;        /* OpenFlow port number. */
@@ -286,7 +287,9 @@ void ofproto_port_clone(struct ofproto_port *, const struct ofproto_port *);
 void ofproto_port_destroy(struct ofproto_port *);
 
 struct ofproto_port_dump {
+	//正在dump的ofproto
     const struct ofproto *ofproto;
+    //dump过程中是否出错
     int error;
     void *state;
 };
@@ -301,6 +304,7 @@ int ofproto_port_dump_done(struct ofproto_port_dump *);
  *
  * If you break out of the loop, then you need to free the dump structure by
  * hand using ofproto_port_dump_done(). */
+//dump ofproto上所有port，start用于申请DUMP空间
 #define OFPROTO_PORT_FOR_EACH(OFPROTO_PORT, DUMP, OFPROTO)  \
     for (ofproto_port_dump_start(DUMP, OFPROTO);            \
          (ofproto_port_dump_next(DUMP, OFPROTO_PORT)        \

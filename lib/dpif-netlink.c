@@ -1029,7 +1029,7 @@ dpif_netlink_port_del(struct dpif *dpif_, odp_port_t port_no)
 
 //向kernel请求指定port的信息
 static int
-dpif_netlink_port_query__(const struct dpif_netlink *dpif, odp_port_t port_no,
+dpif_netlink_port_query__(const struct dpif_netlink *dpif, odp_port_t port_no/*port编号*/,
                           const char *port_name, struct dpif_port *dpif_port)
 {
     struct dpif_netlink_vport request;
@@ -1050,6 +1050,7 @@ dpif_netlink_port_query__(const struct dpif_netlink *dpif, odp_port_t port_no,
              * other than 'dpif', but the caller wants to know about 'dpif'. */
             error = ENODEV;
         } else if (dpif_port) {
+        	//获取port信息成功，返回dpif_port
             dpif_port->name = xstrdup(reply.name);
             dpif_port->type = xstrdup(get_vport_type(&reply));
             dpif_port->port_no = reply.port_no;
@@ -1070,7 +1071,7 @@ dpif_netlink_port_query_by_number(const struct dpif *dpif_, odp_port_t port_no,
 
 static int
 dpif_netlink_port_query_by_name(const struct dpif *dpif_, const char *devname,
-                              struct dpif_port *dpif_port)
+                              struct dpif_port *dpif_port/*出参，接口信息*/)
 {
     struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
 
@@ -2861,6 +2862,7 @@ dpif_netlink_recv_purge(struct dpif *dpif_)
     fat_rwlock_unlock(&dpif->upcall_lock);
 }
 
+//netlink类型datapath版本号
 static char *
 dpif_netlink_get_datapath_version(void)
 {

@@ -135,8 +135,9 @@ netdev_has_tunnel_push_pop(const struct netdev *netdev)
            && netdev->netdev_class->pop_header;
 }
 
+//netdev初始化（初始化入口)
 static void
-netdev_initialize(void) //netdev初始化（初始化入口)
+netdev_initialize(void)
     OVS_EXCLUDED(netdev_mutex)
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
@@ -148,9 +149,9 @@ netdev_initialize(void) //netdev初始化（初始化入口)
         netdev_vport_patch_register();//patch类型vport注册
 
 #ifdef __linux__
-        netdev_register_provider(&netdev_linux_class);//system类型注册
-        netdev_register_provider(&netdev_internal_class);//internal类型注册
-        netdev_register_provider(&netdev_tap_class);//tap类型注册
+        netdev_register_provider(&netdev_linux_class);//system类型netdev注册
+        netdev_register_provider(&netdev_internal_class);//internal类型netdev注册
+        netdev_register_provider(&netdev_tap_class);//tap类型netdev注册
         netdev_vport_tunnel_register();//所有tunnel类型vport注册
 
         netdev_register_flow_api_provider(&netdev_offload_tc);
@@ -381,7 +382,7 @@ netdev_is_reserved_name(const char *name)
 //获得netdev,如果netdev不存在，则创建指定netdev（细分为交由type对应的class去创建）
 //对应的alloc()->construct()会被调用
 int
-netdev_open(const char *name, const char *type, struct netdev **netdevp)
+netdev_open(const char *name/*netdev名称*/, const char *type/*netdev类型*/, struct netdev **netdevp)
     OVS_EXCLUDED(netdev_mutex)
 {
     struct netdev *netdev;
@@ -424,17 +425,17 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)
         }
     }
 
-    //检查发现netdev不存在
+    //检查发现netdev还未创建
     if (!netdev) {
         struct netdev_registered_class *rc;
 
         //如果type未指定，采用system
         rc = netdev_lookup_class(type && type[0] ? type : "system");
         if (rc && ovs_refcount_try_ref_rcu(&rc->refcnt)) {
-        		//为netdev申请内存
+            //为netdev申请内存
             netdev = rc->class->alloc();
             if (netdev) {
-            		//分配内存成功，做初始化
+                //分配内存成功，做初始化
                 memset(netdev, 0, sizeof *netdev);
                 netdev->netdev_class = rc->class;
                 netdev->auto_classified = type && type[0] ? false : true;
@@ -457,10 +458,10 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)
                 //构造netdev数据
                 error = rc->class->construct(netdev);
                 if (!error) {
-                		//标明netdev配置发生变化
+                	//标明netdev配置发生变化
                     netdev_change_seq_changed(netdev);
                 } else {
-                		//构造处理失败的话，就释放空间
+                	//构造处理失败的话，就释放空间
                     ovs_refcount_unref(&rc->refcnt);
                     seq_destroy(netdev->reconfigure_seq);
                     free(netdev->name);
@@ -470,11 +471,11 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)
                     rc->class->dealloc(netdev);
                 }
             } else {
-            		//申请netdev内存失败
+            	//申请netdev内存失败
                 error = ENOMEM;
             }
         } else {
-        		//指定的类型不存在
+        	//指定的类型不存在
             VLOG_WARN("could not create netdev %s of unknown type %s",
                       name, type);
             error = EAFNOSUPPORT;
@@ -482,7 +483,7 @@ netdev_open(const char *name, const char *type, struct netdev **netdevp)
     }
 
     if (!error) {
-    		//返回构造好的netdev
+    	//返回构造好的netdev
         netdev->ref_cnt++;
         *netdevp = netdev;
     } else {
@@ -2025,8 +2026,9 @@ netdev_get_vports(size_t *size)//返回所有netdev设备中的vport类型的net
     return vports;
 }
 
+//返回指定名称dev的类型
 const char *
-netdev_get_type_from_name(const char *name)//返回指定名称dev的类型
+netdev_get_type_from_name(const char *name)
 {
     struct netdev *dev;
     const char *type;
@@ -2034,7 +2036,8 @@ netdev_get_type_from_name(const char *name)//返回指定名称dev的类型
     if (type == NULL) {
         dev = netdev_from_name(name);
         type = dev ? netdev_get_type(dev) : NULL;
-        netdev_close(dev);//刚才加了引用计数，现在减掉
+        //刚才加了引用计数，现在减掉
+        netdev_close(dev);
     }
     return type;
 }

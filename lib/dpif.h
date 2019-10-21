@@ -447,8 +447,11 @@ int dpif_port_del(struct dpif *, odp_port_t port_no, bool local_delete);
  *
  * 'name' and 'type' are suitable for passing to netdev_open(). */
 struct dpif_port {
+	//port名称
     char *name;                 /* Network device name, e.g. "eth0". */
+    //port类型
     char *type;                 /* Network device type, e.g. "system". */
+    //port编号
     odp_port_t port_no;         /* Port number within datapath. */
 };
 void dpif_port_clone(struct dpif_port *, const struct dpif_port *);

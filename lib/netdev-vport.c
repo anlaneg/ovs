@@ -132,12 +132,12 @@ netdev_vport_get_dpif_port(const struct netdev *netdev,
     const char *dpif_port = netdev_vport_class_get_dpif_port(class);
 
     if (!dpif_port) {
-    		//非vport_class没有dpif_port，返回设备名称
+    	//非vport_class没有dpif_port，返回设备名称
         return netdev_get_name(netdev);
     }
 
     if (netdev_vport_needs_dst_port(netdev)) {
-    		//如果是隧道，且有dst_port,返回“type_dstport“方式，例如"vxlan_sys_7499"
+    	//如果是隧道，且有dst_port,返回“type_dstport“方式，例如"vxlan_sys_7499"
         const struct netdev_vport *vport = netdev_vport_cast(netdev);
 
         /*
