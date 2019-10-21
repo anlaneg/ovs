@@ -1429,9 +1429,9 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
 
     //action转换
     NL_ATTR_FOR_EACH(nla, left, actions, actions_len) {
-        if (flower.action_count >= TCA_ACT_MAX_PRIO) {
-        	//action数量超过32则不支持
-            VLOG_DBG_RL(&rl, "Can only support %d actions", flower.action_count);
+        if (flower.action_count >= TCA_ACT_MAX_NUM) {
+            //action数量超过TCA_ACT_MAX_NUM则不支持
+            VLOG_DBG_RL(&rl, "Can only support %d actions", TCA_ACT_MAX_NUM);
             return EOPNOTSUPP;
         }
         action = &flower.actions[flower.action_count];
