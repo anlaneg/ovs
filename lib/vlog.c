@@ -106,7 +106,9 @@ DEFINE_STATIC_PER_THREAD_DATA(unsigned int, msg_num, 0);
  * pattern_rwlock. */
 static struct ovs_mutex log_file_mutex OVS_ACQ_AFTER(pattern_rwlock)
     = OVS_MUTEX_INITIALIZER;
+//日志文件对应的文件名称
 static char *log_file_name OVS_GUARDED_BY(log_file_mutex) = NULL;
+//日志文件对应的fd
 static int log_fd OVS_GUARDED_BY(log_file_mutex) = -1;
 static struct async_append *log_writer OVS_GUARDED_BY(log_file_mutex);
 static bool log_async OVS_GUARDED_BY(log_file_mutex);
@@ -952,25 +954,32 @@ vlog_is_enabled(const struct vlog_module *module, enum vlog_level level)
     return module->min_level >= level;
 }
 
+//如果p以'{'开头，则'}'之前的内容将被写入到out中，最大写入out_size个字节
+//否则def的内容将被写入到out中
 static const char *
-fetch_braces(const char *p, const char *def, char *out, size_t out_size)
+fetch_braces(const char *p, const char *def, char *out, size_t out_size/*out buffer的长度*/)
 {
     if (*p == '{') {
+        //'{' 与'}'符号之间的长度
         size_t n = strcspn(p + 1, "}");
+        //可写入的最大数目
         size_t n_copy = MIN(n, out_size - 1);
+        //将'{' ，'}'之间的内容，写入到out中
         memcpy(out, p + 1, n_copy);
         out[n_copy] = '\0';
+        //跳过'{','}'及其中间内容
         p += n + 2;
     } else {
+        //没有遇到'{',原样输出def到out中
         ovs_strlcpy(out, def, out_size);
     }
     return p;
 }
 
 static void
-format_log_message(const struct vlog_module *module, enum vlog_level level,
-                   const char *pattern, const char *message,
-                   va_list args_, struct ds *s)
+format_log_message(const struct vlog_module *module/*模块名称*/, enum vlog_level level/*日志级别*/,
+                   const char *pattern/*前缀格式化形式*/, const char *message/*日志格式化串*/,
+                   va_list args_/*日志参数*/, struct ds *s/*存放格式化后的串*/)
 {
     char tmp[128];
     va_list args;
@@ -985,54 +994,68 @@ format_log_message(const struct vlog_module *module, enum vlog_level level,
         size_t length, field, used;
 
         if (*p != '%') {
+            //未遇到'%'前，原样输出
             ds_put_char(s, *p++);
             continue;
         }
 
+        //跳过遇到的'%'号
         p++;
         if (*p == '-') {
+            //遇到’-‘,认为左对齐
             justify = LEFT;
             p++;
         }
+        //遇到’0‘认为pad为’0‘
         if (*p == '0') {
             pad = '0';
             p++;
         }
+        //如果接下来遇到的是数字，则其指定的为域宽度
         field = 0;
         while (isdigit((unsigned char)*p)) {
             field = (field * 10) + (*p - '0');
             p++;
         }
 
+        //buffer的当前长度
         length = s->length;
         switch (*p++) {
         case 'A':
+            //%A被解释为存放进程名称
             ds_put_cstr(s, program_name);
             break;
         case 'B':
+            //%B被解释为？？？
             atomic_read_explicit(&log_facility, &facility,
                                  memory_order_relaxed);
             facility = facility ? facility : LOG_LOCAL0;
             ds_put_format(s, "%d", facility + syslog_levels[level]);
             break;
         case 'c':
+            //%c{xxxx}中的xxx记录在tmp中
             p = fetch_braces(p, "", tmp, sizeof tmp);
+            //%c被解释为存放模块名称
             ds_put_cstr(s, vlog_get_module_name(module));
             break;
         case 'd':
+            //%d被解释为存放当前时间，%d后面的'{'，'}'之间的内容存放的是时间的格式化符号
             p = fetch_braces(p, "%Y-%m-%d %H:%M:%S.###", tmp, sizeof tmp);
             ds_put_strftime_msec(s, tmp, time_wall_msec(), false);
             break;
         case 'D':
+            //%d等同于%d,使用utc时间
             p = fetch_braces(p, "%Y-%m-%d %H:%M:%S.###", tmp, sizeof tmp);
             ds_put_strftime_msec(s, tmp, time_wall_msec(), true);
             break;
         case 'E':
+            //%E被解释为主机名称
             gethostname(tmp, sizeof tmp);
             tmp[sizeof tmp - 1] = '\0';
             ds_put_cstr(s, tmp);
             break;
         case 'm':
+            //%m 被解析为用户的message信息输出
             /* Format user-supplied log message and trim trailing new-lines. */
             length = s->length;
             va_copy(args, args_);
@@ -1043,34 +1066,43 @@ format_log_message(const struct vlog_module *module, enum vlog_level level,
             }
             break;
         case 'N':
+            //%N 被解释为message编号
             ds_put_format(s, "%u", *msg_num_get_unsafe());
             break;
         case 'n':
+            //%n 被解析为添加'\n'
             ds_put_char(s, '\n');
             break;
         case 'p':
+            //%p 被解释为添加level名称
             ds_put_cstr(s, vlog_get_level_name(level));
             break;
         case 'P':
+            //%P 被解释为添加父pid
             ds_put_format(s, "%ld", (long int) getpid());
             break;
         case 'r':
+            //%r 被解析进程启动时间
             ds_put_format(s, "%lld", time_msec() - time_boot_msec());
             break;
         case 't':
+            //%t 被解析为子进程名称
             subprogram_name = get_subprogram_name();
             ds_put_cstr(s, subprogram_name[0] ? subprogram_name : "main");
             break;
         case 'T':
+            //%T 被解析为子进程名称，考虑了NULL情况
             subprogram_name = get_subprogram_name();
             if (subprogram_name[0]) {
                 ds_put_format(s, "(%s)", subprogram_name);
             }
             break;
         default:
+            //其它的原样输出
             ds_put_char(s, p[-1]);
             break;
         }
+        //处理对齐及padding相关事项
         used = s->length - length;
         if (used < field) {
             size_t n_pad = field - used;
@@ -1107,13 +1139,17 @@ void
 vlog_valist(const struct vlog_module *module, enum vlog_level level,
             const char *message, va_list args)
 {
+    //日志是否可以输出到console口
     bool log_to_console = module->levels[VLF_CONSOLE] >= level;
+    //日志是否可以输出到syslog
     bool log_to_syslog = module->levels[VLF_SYSLOG] >= level;
     bool log_to_file;
 
     ovs_mutex_lock(&log_file_mutex);
+    //日志是否可以输出到file
     log_to_file = module->levels[VLF_FILE] >= level && log_fd >= 0;
     ovs_mutex_unlock(&log_file_mutex);
+    //任意一种方式可输出，则进入
     if (log_to_console || log_to_syslog || log_to_file) {
         int save_errno = errno;
         struct ds s;
@@ -1126,6 +1162,7 @@ vlog_valist(const struct vlog_module *module, enum vlog_level level,
 
         ovs_rwlock_rdlock(&pattern_rwlock);
         if (log_to_console) {
+            //输出到console口
             format_log_message(module, level,
                                destinations[VLF_CONSOLE].pattern, message,
                                args, &s);
@@ -1134,6 +1171,7 @@ vlog_valist(const struct vlog_module *module, enum vlog_level level,
         }
 
         if (log_to_syslog) {
+            //输出到syslog
             int syslog_level = syslog_levels[level];
             char *save_ptr = NULL;
             char *line;
@@ -1158,6 +1196,7 @@ vlog_valist(const struct vlog_module *module, enum vlog_level level,
         }
 
         if (log_to_file) {
+            //输出到文件
             format_log_message(module, level, destinations[VLF_FILE].pattern,
                                message, args, &s);
             ds_put_char(&s, '\n');
@@ -1184,8 +1223,8 @@ vlog_valist(const struct vlog_module *module, enum vlog_level level,
 
 //日志输出
 void
-vlog(const struct vlog_module *module, enum vlog_level level,
-     const char *message, ...)
+vlog(const struct vlog_module *module/*日志所属模块*/, enum vlog_level level/*日志级别*/,
+     const char *message/*格式化参数*/, ...)
 {
     va_list args;
 

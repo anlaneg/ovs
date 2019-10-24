@@ -88,6 +88,7 @@ enum vlog_destination vlog_get_destination_val(const char *name);
 struct vlog_module {
     struct ovs_list list;
     const char *name;             /* User-visible name. */
+    //各输出目的地的日志级别
     int levels[VLF_N_DESTINATIONS]; /* Minimum log level for each
                                        destination. */
     int min_level;                /* Minimum log level for any destination. */
@@ -282,11 +283,12 @@ void vlog_rate_limit(const struct vlog_module *, enum vlog_level,
 void vlog_usage(void);
 
 /* Implementation details. */
+//普通日志输出
 #define VLOG(LEVEL, ...)                                \
     do {                                                \
         enum vlog_level level__ = LEVEL;                \
         if (this_module.min_level >= level__) {         \
-        	/*模块日志开启*/\
+        	/*当当模块日志开启级别大于level,日志可以输出*/\
             vlog(&this_module, level__, __VA_ARGS__);   \
         }                                               \
     } while (0)

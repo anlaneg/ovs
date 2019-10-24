@@ -3431,7 +3431,7 @@ format_ipv6_label(struct ds *ds, const char *name, ovs_be32 key,
 }
 
 static void
-format_u8x(struct ds *ds, const char *name, uint8_t key,
+format_u8x(struct ds *ds, const char *name, uint8_t key/*字段名称*/,
            const uint8_t *mask, bool verbose)
 {
     bool mask_empty = mask && !*mask;
@@ -3441,6 +3441,7 @@ format_u8x(struct ds *ds, const char *name, uint8_t key,
 
         ds_put_format(ds, "%s=%#"PRIx8, name, key);
         if (!mask_full) { /* Partially masked. */
+            //非全码输出时，输出mask的值
             ds_put_format(ds, "/%#"PRIx8, *mask);
         }
         ds_put_char(ds, ',');
@@ -4208,6 +4209,7 @@ format_odp_key_attr__(const struct nlattr *a, const struct nlattr *ma,
         format_ipv4(ds, "dst", key->ipv4_dst, MASK(mask, ipv4_dst), verbose);
         format_u8u(ds, "proto", key->ipv4_proto, MASK(mask, ipv4_proto),
                       verbose);
+        //格式化tos信息
         format_u8x(ds, "tos", key->ipv4_tos, MASK(mask, ipv4_tos), verbose);
         format_u8u(ds, "ttl", key->ipv4_ttl, MASK(mask, ipv4_ttl), verbose);
         format_frag(ds, "frag", key->ipv4_frag, MASK(mask, ipv4_frag),
@@ -4463,7 +4465,7 @@ odp_format_ufid(const ovs_u128 *ufid, struct ds *ds)
  * non-null, translates odp port number to its name. */
 //格式化flow
 void
-odp_flow_format(const struct nlattr *key, size_t key_len,
+odp_flow_format(const struct nlattr *key, size_t key_len/*match字段长度*/,
                 const struct nlattr *mask, size_t mask_len,
                 const struct hmap *portno_names, struct ds *ds, bool verbose)
 {
@@ -4491,8 +4493,10 @@ odp_flow_format(const struct nlattr *key, size_t key_len,
             bool is_wildcard = false;
 
             if (attr_type == OVS_KEY_ATTR_ETHERTYPE) {
+                //有ETHERTYPE
                 has_ethtype_key = true;
             } else if (attr_type == OVS_KEY_ATTR_PACKET_TYPE) {
+                //有PACKET_TYPE
                 has_packet_type_key = true;
             }
 
@@ -4554,6 +4558,7 @@ odp_flow_format(const struct nlattr *key, size_t key_len,
         if (left) {
             int i;
 
+            //key的值为0
             if (left == key_len) {
                 ds_put_cstr(ds, "<empty>");
             }
@@ -7868,6 +7873,7 @@ commit_set_ipv4_action(const struct flow *flow/*最终状态*/, struct flow *bas
     mask.ipv4_proto = 0;        /* Not writeable. */ //不容许改proto
     mask.ipv4_frag = 0;         /* Not writable. */  //不容许改分片
 
+    //有tunnel标记，且ENC未变更，tos的mask上去掉ENC标记
     if (flow_tnl_dst_is_set(&base_flow->tunnel) &&
         ((base_flow->nw_tos ^ flow->nw_tos) & IP_ECN_MASK) == 0) {
         mask.ipv4_tos &= ~IP_ECN_MASK;

@@ -1794,30 +1794,38 @@ should_log_flow_message(const struct vlog_module *module, int error)
 void
 log_flow_message(const struct dpif *dpif, int error,
                  const struct vlog_module *module,
-                 const char *operation,
+                 const char *operation/*操作字符串*/,
                  const struct nlattr *key, size_t key_len,
                  const struct nlattr *mask, size_t mask_len,
                  const ovs_u128 *ufid, const struct dpif_flow_stats *stats,
                  const struct nlattr *actions, size_t actions_len)
 {
     struct ds ds = DS_EMPTY_INITIALIZER;
+    //存放datapath的名称，例如system@ovs-system
     ds_put_format(&ds, "%s: ", dpif_name(dpif));
     if (error) {
         ds_put_cstr(&ds, "failed to ");
     }
+    //存入字符串，例如 put[create]
     ds_put_format(&ds, "%s ", operation);
     if (error) {
         ds_put_format(&ds, "(%s) ", ovs_strerror(error));
     }
+
+    //如果有ufid,则输出ufid的值
     if (ufid) {
         odp_format_ufid(ufid, &ds);
         ds_put_cstr(&ds, " ");
     }
+
+    //格式化flow中的key字段
     odp_flow_format(key, key_len, mask, mask_len, NULL, &ds, true);
     if (stats) {
         ds_put_cstr(&ds, ", ");
         dpif_flow_stats_format(stats, &ds);
     }
+
+    //格式化flow中的actions字段
     if (actions || actions_len) {
         ds_put_cstr(&ds, ", actions:");
         format_odp_actions(&ds, actions, actions_len, NULL);
@@ -1826,6 +1834,7 @@ log_flow_message(const struct dpif *dpif, int error,
     ds_destroy(&ds);
 }
 
+//将flow的日志信息格式化到ds中，并输出到日志
 void
 log_flow_put_message(const struct dpif *dpif,
                      const struct vlog_module *module,
@@ -1837,6 +1846,7 @@ log_flow_put_message(const struct dpif *dpif,
         struct ds s;
 
         ds_init(&s);
+        //要put的flow的操作
         ds_put_cstr(&s, "put");
         if (put->flags & DPIF_FP_CREATE) {
             ds_put_cstr(&s, "[create]");
@@ -1847,6 +1857,7 @@ log_flow_put_message(const struct dpif *dpif,
         if (put->flags & DPIF_FP_ZERO_STATS) {
             ds_put_cstr(&s, "[zero]");
         }
+        //记录flow
         log_flow_message(dpif, error, module, ds_cstr(&s),
                          put->key, put->key_len, put->mask, put->mask_len,
                          put->ufid, put->stats, put->actions,
