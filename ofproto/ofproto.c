@@ -2517,22 +2517,26 @@ ofport_install(struct ofproto *p,
         goto error;
     }
     ofport->ofproto = p;
-    ofport->netdev = netdev;//port对应的netdev
+    //port对应的netdev
+    ofport->netdev = netdev;
     ofport->change_seq = netdev_get_change_seq(netdev);
     ofport->pp = *pp;
     ofport->ofp_port = pp->port_no;
-    ofport->created = time_msec();//port创建的时间
+    //port创建的时间
+    ofport->created = time_msec();
     ofport->may_enable = false;
 
     /* Add port to 'p'. */
+    //将port加入
     hmap_insert(&p->ports, &ofport->hmap_node,
-                hash_ofp_port(ofport->ofp_port));//将port加入
+                hash_ofp_port(ofport->ofp_port));
     shash_add(&p->port_by_name, netdev_name, ofport);
 
     update_mtu(p, ofport);
 
     /* Let the ofproto_class initialize its private data. */
-    error = p->ofproto_class->port_construct(ofport);//调用port的构造函数
+    //调用port的构造函数
+    error = p->ofproto_class->port_construct(ofport);
     if (error) {
         goto error;
     }
