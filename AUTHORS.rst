@@ -154,6 +154,7 @@ Geoffrey Wossum                    gwossum@acm.org
 Gianluca Merlo                     gianluca.merlo@gmail.com
 Giuseppe Lettieri                  g.lettieri@iet.unipi.it
 Glen Gibb                          grg@stanford.edu
+Gowrishankar Muthukrishnan         gmuthukr@redhat.com
 Guoshuai Li                        ligs@dtdream.com
 Guolin Yang                        gyang@vmware.com
 Guru Chaitanya Perakam             gperakam@Brocade.com
@@ -370,6 +371,7 @@ Timo Puha                          timox.puha@intel.com
 Timothy Redaelli                   tredaelli@redhat.com
 Todd Deshane                       deshantm@gmail.com
 Tom Everman                        teverman@google.com
+Tomasz Konieczny                   tomaszx.konieczny@intel.com
 Toms Atteka                        cpp.code.lv@gmail.com
 Torgny Lindberg                    torgny.lindberg@ericsson.com
 Tsvi Slonim                        tsvi@toroki.com

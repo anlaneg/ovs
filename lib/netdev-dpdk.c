@@ -41,6 +41,7 @@
 #include <rte_vhost.h>
 
 #include "cmap.h"
+#include "coverage.h"
 #include "dirs.h"
 #include "dp-packet.h"
 #include "dpdk.h"
@@ -71,6 +72,8 @@ enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 
 VLOG_DEFINE_THIS_MODULE(netdev_dpdk);
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
+
+COVERAGE_DEFINE(vhost_tx_contention);
 
 #define DPDK_PORT_WATCHDOG_INTERVAL 5
 
@@ -1809,58 +1812,35 @@ netdev_request_reconfigure(netdev);
 
 static int
 netdev_dpdk_set_config(struct netdev *netdev, const struct smap *args,
-	       char **errp)
+                       char **errp)
 {
-struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-bool rx_fc_en, tx_fc_en, autoneg, lsc_interrupt_mode;
-enum rte_eth_fc_mode fc_mode;
-static const enum rte_eth_fc_mode fc_mode_set[2][2] = {
-{RTE_FC_NONE,     RTE_FC_TX_PAUSE},
-{RTE_FC_RX_PAUSE, RTE_FC_FULL    }
-};
-const char *new_devargs;
-int err = 0;
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    bool rx_fc_en, tx_fc_en, autoneg, lsc_interrupt_mode;
+    bool flow_control_requested = true;
+    enum rte_eth_fc_mode fc_mode;
+    static const enum rte_eth_fc_mode fc_mode_set[2][2] = {
+        {RTE_FC_NONE,     RTE_FC_TX_PAUSE},
+        {RTE_FC_RX_PAUSE, RTE_FC_FULL    }
+    };
+    const char *new_devargs;
+    int err = 0;
 
-ovs_mutex_lock(&dpdk_mutex);
-ovs_mutex_lock(&dev->mutex);
+    ovs_mutex_lock(&dpdk_mutex);
+    ovs_mutex_lock(&dev->mutex);
 
-//收队列数量
-dpdk_set_rxq_config(dev, args);
+    //收队列数量
+    dpdk_set_rxq_config(dev, args);
 
-//收队列描述符数量
-dpdk_process_queue_size(netdev, args, "n_rxq_desc",
-		    NIC_PORT_DEFAULT_RXQ_SIZE,
-		    &dev->requested_rxq_size);
-//发队列描述符数量
-dpdk_process_queue_size(netdev, args, "n_txq_desc",
-		    NIC_PORT_DEFAULT_TXQ_SIZE,
-		    &dev->requested_txq_size);
+    //收队列描述符数量
+    dpdk_process_queue_size(netdev, args, "n_rxq_desc",
+                            NIC_PORT_DEFAULT_RXQ_SIZE,
+                            &dev->requested_rxq_size);
+    //发队列描述符数量
+    dpdk_process_queue_size(netdev, args, "n_txq_desc",
+                            NIC_PORT_DEFAULT_TXQ_SIZE,
+                            &dev->requested_txq_size);
 
-new_devargs = smap_get(args, "dpdk-devargs");
-
-if (dev->devargs && strcmp(new_devargs, dev->devargs)) {
-/* The user requested a new device.  If we return error, the caller
- * will delete this netdev and try to recreate it. */
-err = EAGAIN;
-goto out;
-}
-
-/* dpdk-devargs is required for device configuration */
-if (new_devargs && new_devargs[0]) {
-/* Don't process dpdk-devargs if value is unchanged and port id
- * is valid */
-if (!(dev->devargs && !strcmp(dev->devargs, new_devargs)
-       && rte_eth_dev_is_valid_port(dev->port_id))) {
-    dpdk_port_t new_port_id = netdev_dpdk_process_devargs(dev,
-							  new_devargs,
-							  errp);
-    if (!rte_eth_dev_is_valid_port(new_port_id)) {
-	err = EINVAL;
-    } else if (new_port_id == dev->port_id) {
-	/* Already configured, do not reconfigure again */
-	err = 0;
-    } else {
-	struct netdev_dpdk *dup_dev;
+    new_devargs = smap_get(args, "dpdk-devargs");
 
 	dup_dev = netdev_dpdk_lookup_by_port_id(new_port_id);
 	if (dup_dev) {
@@ -1902,18 +1882,37 @@ rx_fc_en = smap_get_bool(args, "rx-flow-ctrl", false);
 tx_fc_en = smap_get_bool(args, "tx-flow-ctrl", false);
 autoneg = smap_get_bool(args, "flow-ctrl-autoneg", false);
 
-fc_mode = fc_mode_set[tx_fc_en][rx_fc_en];
-if (dev->fc_conf.mode != fc_mode || autoneg != dev->fc_conf.autoneg) {
-dev->fc_conf.mode = fc_mode;
-dev->fc_conf.autoneg = autoneg;
-/* Get the Flow control configuration for DPDK-ETH */
-err = rte_eth_dev_flow_ctrl_get(dev->port_id, &dev->fc_conf);
-if (err) {
-    VLOG_WARN("Cannot get flow control parameters on port "
-	DPDK_PORT_ID_FMT", err=%d", dev->port_id, err);
-}
-dpdk_eth_flow_ctrl_setup(dev);
-}
+    fc_mode = fc_mode_set[tx_fc_en][rx_fc_en];
+
+    if (!smap_get(args, "rx-flow-ctrl") && !smap_get(args, "tx-flow-ctrl")
+        && !smap_get(args, "flow-ctrl-autoneg")) {
+        /* FIXME: User didn't ask for flow control configuration.
+         *        For now we'll not print a warning if flow control is not
+         *        supported by the DPDK port. */
+        flow_control_requested = false;
+    }
+
+    /* Get the Flow control configuration. */
+    err = -rte_eth_dev_flow_ctrl_get(dev->port_id, &dev->fc_conf);
+    if (err) {
+        if (err == ENOTSUP) {
+            if (flow_control_requested) {
+                VLOG_WARN("%s: Flow control is not supported.",
+                          netdev_get_name(netdev));
+            }
+            err = 0; /* Not fatal. */
+        } else {
+            VLOG_WARN("%s: Cannot get flow control parameters: %s",
+                      netdev_get_name(netdev), rte_strerror(err));
+        }
+        goto out;
+    }
+
+    if (dev->fc_conf.mode != fc_mode || autoneg != dev->fc_conf.autoneg) {
+        dev->fc_conf.mode = fc_mode;
+        dev->fc_conf.autoneg = autoneg;
+        dpdk_eth_flow_ctrl_setup(dev);
+    }
 
 out:
 ovs_mutex_unlock(&dev->mutex);
@@ -2412,7 +2411,10 @@ __netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
         goto out;
     }
 
-    rte_spinlock_lock(&dev->tx_q[qid].tx_lock);
+    if (OVS_UNLIKELY(!rte_spinlock_trylock(&dev->tx_q[qid].tx_lock))) {
+        COVERAGE_INC(vhost_tx_contention);
+        rte_spinlock_lock(&dev->tx_q[qid].tx_lock);
+    }
 
     //如果要发送的报文超过dev容许的最大长度，则丢包（不想分片）
     cnt = netdev_dpdk_filter_packet_len(dev, cur_pkts, cnt);

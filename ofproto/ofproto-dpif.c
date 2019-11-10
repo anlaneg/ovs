@@ -2450,24 +2450,24 @@ set_lldp(struct ofport *ofport_,
          const struct smap *cfg)
 {
     struct ofport_dpif *ofport = ofport_dpif_cast(ofport_);
+    struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofport->up.ofproto);
     int error = 0;
 
     if (cfg) {
         if (!ofport->lldp) {
-            struct ofproto_dpif *ofproto;
-
-            ofproto = ofproto_dpif_cast(ofport->up.ofproto);
             ofproto->backer->need_revalidate = REV_RECONFIGURE;
             ofport->lldp = lldp_create(ofport->up.netdev, ofport_->mtu, cfg);
         }
 
         if (!lldp_configure(ofport->lldp, cfg)) {
+            lldp_unref(ofport->lldp);
+            ofport->lldp = NULL;
             error = EINVAL;
         }
-    }
-    if (error) {
+    } else if (ofport->lldp) {
         lldp_unref(ofport->lldp);
         ofport->lldp = NULL;
+        ofproto->backer->need_revalidate = REV_RECONFIGURE;
     }
 
     ofproto_dpif_monitor_port_update(ofport,
@@ -3498,7 +3498,11 @@ send_pdu_cb(void *port_, const void *pdu, size_t pdu_size)
                                  pdu_size);
         memcpy(packet_pdu, pdu, pdu_size);
 
-        ofproto_dpif_send_packet(port, false, &packet);
+        error = ofproto_dpif_send_packet(port, false, &packet);
+        if (error) {
+            VLOG_WARN_RL(&rl, "port %s: cannot transmit LACP PDU (%s).",
+                         port->bundle->name, ovs_strerror(error));
+        }
         dp_packet_uninit(&packet);
     } else {
         static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(1, 10);

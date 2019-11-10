@@ -20,6 +20,8 @@ addons:
       - libjemalloc1
       - libjemalloc-dev
       - libnuma-dev
+      - libpcap-dev
+      - python3-openssl
       - python3-sphinx
       - libelf-dev
       - selinux-policy-dev

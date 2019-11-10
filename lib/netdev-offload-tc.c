@@ -620,6 +620,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
     if (flower->tunnel) {
         if (flower->mask.tunnel.id) {
             match_set_tun_id(match, flower->key.tunnel.id);
+            match->flow.tunnel.flags |= FLOW_TNL_F_KEY;
         }
         if (flower->key.tunnel.ipv4.ipv4_dst) {
             match_set_tun_src(match, flower->key.tunnel.ipv4.ipv4_src);
@@ -1190,7 +1191,7 @@ static int
 netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match *match/*规则匹配字段*/,
                    struct nlattr *actions/*规则对应的action信息*/, size_t actions_len,
                    const ovs_u128 *ufid/*规则标识符*/, struct offload_info *info,
-                   struct dpif_flow_stats *stats OVS_UNUSED)
+                   struct dpif_flow_stats *stats)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
     //获得设备对应的规则hook点
@@ -1530,6 +1531,9 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
     //通过netlink的tc接口向下发送flow的增删
     err = tc_replace_flower(ifindex, prio, handle, &flower, block_id, hook);
     if (!err) {
+        if (stats) {
+            memset(stats, 0, sizeof *stats);
+        }
     	//缓存已下发的tc规则
         add_ufid_tc_mapping(ufid, flower.prio, flower.handle, netdev, ifindex);
     }
