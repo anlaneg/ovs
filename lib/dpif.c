@@ -1390,7 +1390,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
              enum dpif_offload_type offload_type)
 {
     if (offload_type == DPIF_OFFLOAD_ALWAYS && !netdev_is_flow_api_enabled()) {
-    	//offload_type为always且flow_api未开启，则直接失败
+        //offload_type为always且flow_api未开启，则直接失败
         size_t i;
         for (i = 0; i < n_ops; i++) {
             struct dpif_op *op = ops[i];

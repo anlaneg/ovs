@@ -656,6 +656,7 @@ netdev_set_flow_api_enabled(const struct smap *ovs_other_config)
                                        TC_POLICY_DEFAULT));
 #endif
 
+            //是否开启offload-rebalance功能，帮助硬件解决cache不足问题
             if (smap_get_bool(ovs_other_config, "offload-rebalance", false)) {
                 netdev_offload_rebalance_policy = true;
             }

@@ -2156,6 +2156,8 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
                 /* Not a 'tunnel' flow */
                 oor_netdev = dev;
             }
+
+            //指定设备处于oor状态
             netdev_set_hw_info(oor_netdev, HW_INFO_TYPE_OOR, true);
         }
 

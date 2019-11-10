@@ -197,6 +197,7 @@ struct udpif {
                                           conns[n_conns-1] was stored. */
     size_t n_conns;                    /* Number of connections waiting. */
 
+    //上次offload rebalance的时间
     long long int offload_rebalance_time;  /* Time of last offload rebalance */
 };
 
@@ -339,6 +340,7 @@ struct udpif_key {
 
 #define OFFL_REBAL_INTVL_MSEC  3000	/* dynamic offload rebalance freq */
     struct netdev *in_netdev;		/* in_odp_port's netdev */
+    //指明此条流是否被offload
     bool offloaded;			/* True if flow is offloaded */
     uint64_t flow_pps_rate;		/* Packets-Per-Second rate */
     long long int flow_time;		/* last pps update time */
@@ -943,9 +945,11 @@ udpif_run_flow_rebalance(struct udpif *udpif)
     /* Don't rebalance if OFFL_REBAL_INTVL_MSEC have not elapsed */
     now = time_msec();
     if (now < udpif->offload_rebalance_time + OFFL_REBAL_INTVL_MSEC) {
+    		//跟上次rebalance时间过短，本次不执行
         return;
     }
 
+    //检查netdev是否有处于oor状态
     if (!netdev_any_oor()) {
         return;
     }
@@ -1055,7 +1059,6 @@ udpif_revalidator(void *arg)
             seq_change(udpif->dump_seq);
 
             //如果offload的rebalance policy开启，则执行rebalance
-            //没有深入分析，待继续分析
             if (netdev_is_offload_rebalance_policy_enabled()) {
                 udpif_run_flow_rebalance(udpif);
             }
@@ -2868,6 +2871,7 @@ revalidate(struct revalidator *revalidator)
 
             if (netdev_is_offload_rebalance_policy_enabled() &&
                 result != UKEY_DELETE) {
+            		//计算flow的pps
                 udpif_update_flow_pps(udpif, ukey, f);
             }
 
@@ -3227,9 +3231,9 @@ flow_compare_rebalance(const void *elem1, const void *elem2)
 
 /* Insert flows from pending array during rebalancing */
 static int
-rebalance_insert_pending(struct udpif *udpif, struct udpif_key **pending_flows,
-                         int pending_count, int insert_count,
-                         uint64_t rate_threshold)
+rebalance_insert_pending(struct udpif *udpif, struct udpif_key **pending_flows/*要加入到硬件中的流*/,
+                         int pending_count/*pending_flows大*/, int insert_count/*最多加入的条数*/,
+                         uint64_t rate_threshold/*pps的门限值*/)
 {
     int count = 0;
 
@@ -3241,11 +3245,13 @@ rebalance_insert_pending(struct udpif *udpif, struct udpif_key **pending_flows,
          * reached and the flow rate is less than the threshold
          */
         if (count >= insert_count && flow->flow_pps_rate < rate_threshold) {
+        			//超过要插入的流数，且pps速率低于threshold
                 break;
         }
 
         /* Offload the flow to netdev */
-        err = udpif_flow_program(udpif, flow, DPIF_OFFLOAD_ALWAYS);
+        //创建此流到硬件
+        err = udpif_flow_program(udpif, flow, DPIF_OFFLOAD_ALWAYS/*明确仅offload到硬件*/);
 
         if (err == ENOSPC) {
             /* Stop if we are out of resources */
@@ -3257,13 +3263,15 @@ rebalance_insert_pending(struct udpif *udpif, struct udpif_key **pending_flows,
         }
 
         /* Offload succeeded; delete it from the kernel datapath */
-        udpif_flow_unprogram(udpif, flow, DPIF_OFFLOAD_NEVER);
+        //指定自kernel datapath中删除此条流
+        udpif_flow_unprogram(udpif, flow, DPIF_OFFLOAD_NEVER/*明确不offload到硬件*/);
 
         /* Change the state of the flow, adjust dpif counters */
+        //指明此流已被offload
         flow->offloaded = true;
 
         udpif_set_ukey_backlog_packets(flow);
-        count++;
+        count++;//已处理的流数
     }
 
     return count;
