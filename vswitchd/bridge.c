@@ -825,8 +825,9 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
     //设置全局变量，如果未提供配置，则使用默认值
     ofproto_set_flow_limit(smap_get_int(&ovs_cfg->other_config, "flow-limit",
                                         OFPROTO_FLOW_LIMIT_DEFAULT));
+    //流规则对应的idle时间
     ofproto_set_max_idle(smap_get_int(&ovs_cfg->other_config, "max-idle",
-                                      OFPROTO_MAX_IDLE_DEFAULT));
+                                      OFPROTO_MAX_IDLE_DEFAULT/*默认10S*/));
     ofproto_set_max_revalidator(smap_get_int(&ovs_cfg->other_config,
                                              "max-revalidator",
                                              OFPROTO_MAX_REVALIDATOR_DEFAULT));

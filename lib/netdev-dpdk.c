@@ -177,6 +177,20 @@ static const struct vhost_device_ops virtio_net_device_ops =
     .destroy_connection = destroy_connection,
 };
 
+/* Custom software stats for dpdk ports */
+struct netdev_dpdk_sw_stats {
+    /* No. of retries when unable to transmit. */
+    uint64_t tx_retries;
+    /* Packet drops when unable to transmit; Probably Tx queue is full. */
+    uint64_t tx_failure_drops;
+    /* Packet length greater than device MTU. */
+    uint64_t tx_mtu_exceeded_drops;
+    /* Packet drops in egress policer processing. */
+    uint64_t tx_qos_drops;
+    /* Packet drops in ingress policer processing. */
+    uint64_t rx_qos_drops;
+};
+
 enum { DPDK_RING_SIZE = 256 };
 BUILD_ASSERT_DECL(IS_POW2(DPDK_RING_SIZE));
 enum { DRAIN_TSC = 200000ULL };
@@ -420,11 +434,10 @@ struct netdev_dpdk {
 
     PADDED_MEMBERS(CACHE_LINE_SIZE,
         struct netdev_stats stats;
-        /* Custom stat for retries when unable to transmit. */
-        uint64_t tx_retries;
+        struct netdev_dpdk_sw_stats *sw_stats;
         /* Protects stats */
         rte_spinlock_t stats_lock;
-        /* 4 pad bytes here. */
+        /* 36 pad bytes here. */
     );
 
     PADDED_MEMBERS(CACHE_LINE_SIZE,
@@ -478,6 +491,8 @@ dpdk_port_t port_id;
 static void netdev_dpdk_destruct(struct netdev *netdev);
 static void netdev_dpdk_vhost_destruct(struct netdev *netdev);
 
+static int netdev_dpdk_get_sw_custom_stats(const struct netdev *,
+                                           struct netdev_custom_stats *);
 static void netdev_dpdk_clear_xstats(struct netdev_dpdk *dev);
 
 int netdev_dpdk_get_vid(const struct netdev_dpdk *dev);
@@ -1190,7 +1205,8 @@ dev->rte_xstats_names_size = 0;
 dev->rte_xstats_ids = NULL;
 dev->rte_xstats_ids_size = 0;
 
-    dev->tx_retries = 0;
+    dev->sw_stats = xzalloc(sizeof *dev->sw_stats);
+    dev->sw_stats->tx_retries = (dev->type == DPDK_DEV_VHOST) ? 0 : UINT64_MAX;
 
     return 0;
 }
@@ -1390,10 +1406,11 @@ OVS_EXCLUDED(dev->mutex)
 rte_free(dev->tx_q);
 dpdk_mp_put(dev->dpdk_mp);
 
-ovs_list_remove(&dev->list_node);
-free(ovsrcu_get_protected(struct ingress_policer *,
-		      &dev->ingress_policer));
-ovs_mutex_destroy(&dev->mutex);
+    ovs_list_remove(&dev->list_node);
+    free(ovsrcu_get_protected(struct ingress_policer *,
+                              &dev->ingress_policer));
+    free(dev->sw_stats);
+    ovs_mutex_destroy(&dev->mutex);
 }
 
 static void
@@ -2175,16 +2192,18 @@ netdev_dpdk_vhost_update_rx_size_counters(struct netdev_stats *stats,
 }
 
 static inline void
-netdev_dpdk_vhost_update_rx_counters(struct netdev_stats *stats,
+netdev_dpdk_vhost_update_rx_counters(struct netdev_dpdk *dev,
                                      struct dp_packet **packets, int count,
-                                     int dropped)
+                                     int qos_drops)
 {
-    int i;
-    unsigned int packet_size;
+    struct netdev_dpdk_sw_stats *sw_stats = dev->sw_stats;
+    struct netdev_stats *stats = &dev->stats;
     struct dp_packet *packet;
+    unsigned int packet_size;
+    int i;
 
     stats->rx_packets += count;
-    stats->rx_dropped += dropped;
+    stats->rx_dropped += qos_drops;
     for (i = 0; i < count; i++) {
         packet = packets[i];
         packet_size = dp_packet_size(packet);
@@ -2207,6 +2226,8 @@ netdev_dpdk_vhost_update_rx_counters(struct netdev_stats *stats,
 
         stats->rx_bytes += packet_size;
     }
+
+    sw_stats->rx_qos_drops += qos_drops;
 }
 
 /*
@@ -2220,7 +2241,7 @@ netdev_dpdk_vhost_rxq_recv(struct netdev_rxq *rxq,
     struct netdev_dpdk *dev = netdev_dpdk_cast(rxq->netdev);
     struct ingress_policer *policer = netdev_dpdk_get_ingress_policer(dev);
     uint16_t nb_rx = 0;
-    uint16_t dropped = 0;
+    uint16_t qos_drops = 0;
     int qid = rxq->queue_id * VIRTIO_QNUM + VIRTIO_TXQ;
     int vid = netdev_dpdk_get_vid(dev);
 
@@ -2249,17 +2270,17 @@ netdev_dpdk_vhost_rxq_recv(struct netdev_rxq *rxq,
 
     //处理入口qos
     if (policer) {
-        dropped = nb_rx;
+        qos_drops = nb_rx;
         nb_rx = ingress_policer_run(policer,
                                     (struct rte_mbuf **) batch->packets,
                                     nb_rx, true);
-        dropped -= nb_rx;
+        qos_drops -= nb_rx;
     }
 
     rte_spinlock_lock(&dev->stats_lock);
     //更新统计计数
-    netdev_dpdk_vhost_update_rx_counters(&dev->stats, batch->packets,
-                                         nb_rx, dropped);
+    netdev_dpdk_vhost_update_rx_counters(dev, batch->packets,
+                                         nb_rx, qos_drops);
     rte_spinlock_unlock(&dev->stats_lock);
 
     batch->count = nb_rx;
@@ -2311,6 +2332,7 @@ netdev_dpdk_rxq_recv(struct netdev_rxq *rxq, struct dp_packet_batch *batch,
     if (OVS_UNLIKELY(dropped)) {
         rte_spinlock_lock(&dev->stats_lock);
         dev->stats.rx_dropped += dropped;
+        dev->sw_stats->rx_qos_drops += dropped;
         rte_spinlock_unlock(&dev->stats_lock);
     }
 
@@ -2371,13 +2393,18 @@ netdev_dpdk_filter_packet_len(struct netdev_dpdk *dev, struct rte_mbuf **pkts,
 }
 
 static inline void
-netdev_dpdk_vhost_update_tx_counters(struct netdev_stats *stats,
+netdev_dpdk_vhost_update_tx_counters(struct netdev_dpdk *dev,
                                      struct dp_packet **packets,
                                      int attempted,
-                                     int dropped)
+                                     struct netdev_dpdk_sw_stats *sw_stats_add)
 {
-    int i;
+    struct netdev_dpdk_sw_stats *sw_stats = dev->sw_stats;
+    int dropped = sw_stats_add->tx_mtu_exceeded_drops +
+                  sw_stats_add->tx_qos_drops +
+                  sw_stats_add->tx_failure_drops;
+    struct netdev_stats *stats = &dev->stats;
     int sent = attempted - dropped;
+    int i;
 
     stats->tx_packets += sent;
     stats->tx_dropped += dropped;
@@ -2385,6 +2412,11 @@ netdev_dpdk_vhost_update_tx_counters(struct netdev_stats *stats,
     for (i = 0; i < sent; i++) {
         stats->tx_bytes += dp_packet_size(packets[i]);
     }
+
+    sw_stats->tx_retries            += sw_stats_add->tx_retries;
+    sw_stats->tx_failure_drops      += sw_stats_add->tx_failure_drops;
+    sw_stats->tx_mtu_exceeded_drops += sw_stats_add->tx_mtu_exceeded_drops;
+    sw_stats->tx_qos_drops          += sw_stats_add->tx_qos_drops;
 }
 
 //ovs向qid队列发送报文
@@ -2394,8 +2426,9 @@ __netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
     struct rte_mbuf **cur_pkts = (struct rte_mbuf **) pkts;
-    unsigned int total_pkts = cnt;
-    unsigned int dropped = 0;
+    struct netdev_dpdk_sw_stats sw_stats_add;
+    unsigned int n_packets_to_free = cnt;
+    unsigned int total_packets = cnt;
     int i, retries = 0;
     int max_retries = VHOST_ENQ_RETRY_MIN;
     int vid = netdev_dpdk_get_vid(dev);
@@ -2418,10 +2451,15 @@ __netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
 
     //如果要发送的报文超过dev容许的最大长度，则丢包（不想分片）
     cnt = netdev_dpdk_filter_packet_len(dev, cur_pkts, cnt);
+    sw_stats_add.tx_mtu_exceeded_drops = total_packets - cnt;
+
     /* Check has QoS has been configured for the netdev */
+    sw_stats_add.tx_qos_drops = cnt;
     //出口qos处理
     cnt = netdev_dpdk_qos_run(dev, cur_pkts, cnt, true);
-    dropped = total_pkts - cnt;
+    sw_stats_add.tx_qos_drops -= cnt;
+
+    n_packets_to_free = cnt;
 
     do {
         int vhost_qid = qid * VIRTIO_QNUM + VIRTIO_RXQ;
@@ -2450,15 +2488,18 @@ __netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
 
     rte_spinlock_unlock(&dev->tx_q[qid].tx_lock);
 
+    sw_stats_add.tx_failure_drops = cnt;
+    sw_stats_add.tx_retries = MIN(retries, max_retries);
+
     rte_spinlock_lock(&dev->stats_lock);
-    netdev_dpdk_vhost_update_tx_counters(&dev->stats, pkts, total_pkts,
-                                         cnt + dropped);//将没有发送去的报文计在dropped中
-    dev->tx_retries += MIN(retries, max_retries);
+    //将没有发送去的报文计在dropped中
+    netdev_dpdk_vhost_update_tx_counters(dev, pkts, total_packets,
+                                         &sw_stats_add);
     rte_spinlock_unlock(&dev->stats_lock);
 
 out:
-	//将没有发出去的报文扔掉（这里没有log）
-    for (i = 0; i < total_pkts - dropped; i++) {
+    //将没有发出去的报文扔掉（这里没有log）
+    for (i = 0; i < n_packets_to_free; i++) {
         dp_packet_delete(pkts[i]);
     }
 }
@@ -2477,14 +2518,18 @@ dpdk_do_tx_copy(struct netdev *netdev, int qid, struct dp_packet_batch *batch)
 #endif
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
     struct rte_mbuf *pkts[PKT_ARRAY_SIZE];
+    struct netdev_dpdk_sw_stats *sw_stats = dev->sw_stats;
     uint32_t cnt = batch_cnt;
     uint32_t dropped = 0;
+    uint32_t tx_failure = 0;
+    uint32_t mtu_drops = 0;
+    uint32_t qos_drops = 0;
 
     if (dev->type != DPDK_DEV_VHOST) {
         /* Check if QoS has been configured for this netdev. */
         cnt = netdev_dpdk_qos_run(dev, (struct rte_mbuf **) batch->packets,
                                   batch_cnt, false);
-        dropped += batch_cnt - cnt;
+        qos_drops = batch_cnt - cnt;
     }
 
     uint32_t txcnt = 0;
@@ -2497,13 +2542,13 @@ dpdk_do_tx_copy(struct netdev *netdev, int qid, struct dp_packet_batch *batch)
             VLOG_WARN_RL(&rl, "Too big size %u max_packet_len %d",
                          size, dev->max_packet_len);
 
-            dropped++;
+            mtu_drops++;
             continue;
         }
 
         pkts[txcnt] = rte_pktmbuf_alloc(dev->dpdk_mp->mp);
         if (OVS_UNLIKELY(!pkts[txcnt])) {
-            dropped += cnt - i;
+            dropped = cnt - i;
             break;
         }
 
@@ -2520,13 +2565,17 @@ dpdk_do_tx_copy(struct netdev *netdev, int qid, struct dp_packet_batch *batch)
             __netdev_dpdk_vhost_send(netdev, qid, (struct dp_packet **) pkts,
                                      txcnt);
         } else {
-            dropped += netdev_dpdk_eth_tx_burst(dev, qid, pkts, txcnt);
+            tx_failure = netdev_dpdk_eth_tx_burst(dev, qid, pkts, txcnt);
         }
     }
 
+    dropped += qos_drops + mtu_drops + tx_failure;
     if (OVS_UNLIKELY(dropped)) {
         rte_spinlock_lock(&dev->stats_lock);
         dev->stats.tx_dropped += dropped;
+        sw_stats->tx_failure_drops += tx_failure;
+        sw_stats->tx_mtu_exceeded_drops += mtu_drops;
+        sw_stats->tx_qos_drops += qos_drops;
         rte_spinlock_unlock(&dev->stats_lock);
     }
 }
@@ -2569,18 +2618,27 @@ netdev_dpdk_send__(struct netdev_dpdk *dev, int qid,
         dpdk_do_tx_copy(netdev, qid, batch);
         dp_packet_delete_batch(batch, true);
     } else {
+        struct netdev_dpdk_sw_stats *sw_stats = dev->sw_stats;
         int tx_cnt, dropped;
+        int tx_failure, mtu_drops, qos_drops;
         int batch_cnt = dp_packet_batch_size(batch);
         struct rte_mbuf **pkts = (struct rte_mbuf **) batch->packets;
 
         tx_cnt = netdev_dpdk_filter_packet_len(dev, pkts, batch_cnt);
+        mtu_drops = batch_cnt - tx_cnt;
+        qos_drops = tx_cnt;
         tx_cnt = netdev_dpdk_qos_run(dev, pkts, tx_cnt, true);
-        dropped = batch_cnt - tx_cnt;
+        qos_drops -= tx_cnt;
 
-        dropped += netdev_dpdk_eth_tx_burst(dev, qid, pkts, tx_cnt);//报文发送
+        tx_failure = netdev_dpdk_eth_tx_burst(dev, qid, pkts, tx_cnt);//报文发送
+
+        dropped = tx_failure + mtu_drops + qos_drops;
         if (OVS_UNLIKELY(dropped)) {
             rte_spinlock_lock(&dev->stats_lock);
             dev->stats.tx_dropped += dropped;
+            sw_stats->tx_failure_drops += tx_failure;
+            sw_stats->tx_mtu_exceeded_drops += mtu_drops;
+            sw_stats->tx_qos_drops += qos_drops;
             rte_spinlock_unlock(&dev->stats_lock);
         }
     }
@@ -2838,7 +2896,9 @@ netdev_dpdk_get_custom_stats(const struct netdev *netdev,
 
     uint32_t i;
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-    int rte_xstats_ret;
+    int rte_xstats_ret, sw_stats_size;
+
+    netdev_dpdk_get_sw_custom_stats(netdev, custom_stats);
 
     ovs_mutex_lock(&dev->mutex);
 
@@ -2853,23 +2913,22 @@ netdev_dpdk_get_custom_stats(const struct netdev *netdev,
         if (rte_xstats_ret > 0 &&
             rte_xstats_ret <= dev->rte_xstats_ids_size) {
 
-            custom_stats->size = rte_xstats_ret;
-            custom_stats->counters =
-                    (struct netdev_custom_counter *) xcalloc(rte_xstats_ret,
-                            sizeof(struct netdev_custom_counter));
+            sw_stats_size = custom_stats->size;
+            custom_stats->size += rte_xstats_ret;
+            custom_stats->counters = xrealloc(custom_stats->counters,
+                                              custom_stats->size *
+                                              sizeof *custom_stats->counters);
 
             for (i = 0; i < rte_xstats_ret; i++) {
-                ovs_strlcpy(custom_stats->counters[i].name,
+                ovs_strlcpy(custom_stats->counters[sw_stats_size + i].name,
                             netdev_dpdk_get_xstat_name(dev,
                                                        dev->rte_xstats_ids[i]),
                             NETDEV_CUSTOM_STATS_NAME_SIZE);
-                custom_stats->counters[i].value = values[i];
+                custom_stats->counters[sw_stats_size + i].value = values[i];
             }
         } else {
             VLOG_WARN("Cannot get XSTATS values for port: "DPDK_PORT_ID_FMT,
                       dev->port_id);
-            custom_stats->counters = NULL;
-            custom_stats->size = 0;
             /* Let's clear statistics cache, so it will be
              * reconfigured */
             netdev_dpdk_clear_xstats(dev);
@@ -2884,39 +2943,51 @@ netdev_dpdk_get_custom_stats(const struct netdev *netdev,
 }
 
 static int
-netdev_dpdk_vhost_get_custom_stats(const struct netdev *netdev,
-                                   struct netdev_custom_stats *custom_stats)
+netdev_dpdk_get_sw_custom_stats(const struct netdev *netdev,
+                                struct netdev_custom_stats *custom_stats)
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-    int i;
+    int i, n;
 
-#define VHOST_CSTATS \
-    VHOST_CSTAT(tx_retries)
+#define SW_CSTATS                    \
+    SW_CSTAT(tx_retries)             \
+    SW_CSTAT(tx_failure_drops)       \
+    SW_CSTAT(tx_mtu_exceeded_drops)  \
+    SW_CSTAT(tx_qos_drops)           \
+    SW_CSTAT(rx_qos_drops)
 
-#define VHOST_CSTAT(NAME) + 1
-    custom_stats->size = VHOST_CSTATS;
-#undef VHOST_CSTAT
+#define SW_CSTAT(NAME) + 1
+    custom_stats->size = SW_CSTATS;
+#undef SW_CSTAT
     custom_stats->counters = xcalloc(custom_stats->size,
                                      sizeof *custom_stats->counters);
-    i = 0;
-#define VHOST_CSTAT(NAME) \
-    ovs_strlcpy(custom_stats->counters[i++].name, #NAME, \
-                NETDEV_CUSTOM_STATS_NAME_SIZE);
-    VHOST_CSTATS;
-#undef VHOST_CSTAT
 
     ovs_mutex_lock(&dev->mutex);
 
     rte_spinlock_lock(&dev->stats_lock);
     i = 0;
-#define VHOST_CSTAT(NAME) \
-    custom_stats->counters[i++].value = dev->NAME;
-    VHOST_CSTATS;
-#undef VHOST_CSTAT
+#define SW_CSTAT(NAME) \
+    custom_stats->counters[i++].value = dev->sw_stats->NAME;
+    SW_CSTATS;
+#undef SW_CSTAT
     rte_spinlock_unlock(&dev->stats_lock);
 
     ovs_mutex_unlock(&dev->mutex);
 
+    i = 0;
+    n = 0;
+#define SW_CSTAT(NAME) \
+    if (custom_stats->counters[i].value != UINT64_MAX) {                   \
+        ovs_strlcpy(custom_stats->counters[n].name,                        \
+                    "ovs_"#NAME, NETDEV_CUSTOM_STATS_NAME_SIZE);           \
+        custom_stats->counters[n].value = custom_stats->counters[i].value; \
+        n++;                                                               \
+    }                                                                      \
+    i++;
+    SW_CSTATS;
+#undef SW_CSTAT
+
+    custom_stats->size = n;
     return 0;
 }
 
@@ -4506,7 +4577,7 @@ static const struct netdev_class dpdk_vhost_class = {
     .send = netdev_dpdk_vhost_send,
     .get_carrier = netdev_dpdk_vhost_get_carrier,
     .get_stats = netdev_dpdk_vhost_get_stats,
-    .get_custom_stats = netdev_dpdk_vhost_get_custom_stats,
+    .get_custom_stats = netdev_dpdk_get_sw_custom_stats,
     .get_status = netdev_dpdk_vhost_user_get_status,
     .reconfigure = netdev_dpdk_vhost_reconfigure,
     .rxq_recv = netdev_dpdk_vhost_rxq_recv,
@@ -4522,7 +4593,7 @@ static const struct netdev_class dpdk_vhost_client_class = {
     .send = netdev_dpdk_vhost_send,
     .get_carrier = netdev_dpdk_vhost_get_carrier,
     .get_stats = netdev_dpdk_vhost_get_stats,
-    .get_custom_stats = netdev_dpdk_vhost_get_custom_stats,
+    .get_custom_stats = netdev_dpdk_get_sw_custom_stats,
     .get_status = netdev_dpdk_vhost_user_get_status,
     .reconfigure = netdev_dpdk_vhost_client_reconfigure,
     .rxq_recv = netdev_dpdk_vhost_rxq_recv,
