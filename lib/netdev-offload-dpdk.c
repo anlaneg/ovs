@@ -49,6 +49,7 @@ VLOG_DEFINE_THIS_MODULE(netdev_offload_dpdk);
 /*
  * A mapping from ufid to dpdk rte_flow.
  */
+//hashtable，采用ufid查找rte_flow
 static struct cmap ufid_to_rte_flow = CMAP_INITIALIZER;
 
 struct ufid_to_rte_flow_data {
@@ -64,6 +65,7 @@ ufid_to_rte_flow_find(const ovs_u128 *ufid)
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct ufid_to_rte_flow_data *data;
 
+    //通过ufid查找rte_flow
     CMAP_FOR_EACH_WITH_HASH (data, node, hash, &ufid_to_rte_flow) {
         if (ovs_u128_equals(*ufid, data->ufid)) {
             return data->rte_flow;
@@ -694,6 +696,7 @@ netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
     int ret = netdev_dpdk_rte_flow_destroy(netdev, rte_flow, &error);
 
     if (ret == 0) {
+        //移除ufid与rte_flow之间的映射
         ufid_to_rte_flow_disassociate(ufid);
         VLOG_DBG("%s: removed rte flow %p associated with ufid " UUID_FMT "\n",
                  netdev_get_name(netdev), rte_flow,
@@ -706,6 +709,7 @@ netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
     return ret;
 }
 
+//dpdk offload添加
 static int
 netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
                              struct nlattr *actions, size_t actions_len,
@@ -721,6 +725,7 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
      */
     rte_flow = ufid_to_rte_flow_find(ufid);
     if (rte_flow) {
+        //流已存在，先删除查询出来的rte_flow
         ret = netdev_offload_dpdk_destroy_flow(netdev, ufid, rte_flow);
         if (ret < 0) {
             return ret;

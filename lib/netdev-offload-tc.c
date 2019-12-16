@@ -45,6 +45,7 @@ static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(60, 5);
 
 static struct hmap ufid_tc = HMAP_INITIALIZER(&ufid_tc);
 static bool multi_mask_per_prio = false;
+//是否支持dev block(
 static bool block_support = false;
 
 struct netlink_field {
@@ -360,6 +361,7 @@ static uint32_t
 get_block_id_from_netdev(struct netdev *netdev)
 {
     if (block_support) {
+        /*支持block,获取netdev对应的block_id*/
         return netdev_get_block_id(netdev);
     }
 
@@ -1600,7 +1602,7 @@ netdev_tc_flow_get(struct netdev *netdev OVS_UNUSED,
 static int
 netdev_tc_flow_del(struct netdev *netdev OVS_UNUSED,
                    const ovs_u128 *ufid,
-                   struct dpif_flow_stats *stats)
+                   struct dpif_flow_stats *stats/*出参，规则的统计信息*/)
 {
     struct tc_flower flower;
     enum tc_qdisc_hook hook;
@@ -1611,6 +1613,7 @@ netdev_tc_flow_del(struct netdev *netdev OVS_UNUSED,
     int handle;
     int error;
 
+    //通过ufid获取prio,handle
     handle = get_ufid_tc_mapping(ufid, &prio, &dev);
     if (!handle) {
         return ENOENT;
@@ -1618,6 +1621,7 @@ netdev_tc_flow_del(struct netdev *netdev OVS_UNUSED,
 
     hook = get_tc_qdisc_hook(dev);
 
+    //取设备对应的ifindex
     ifindex = netdev_get_ifindex(dev);
     if (ifindex < 0) {
         VLOG_ERR_RL(&error_rl, "flow_del: failed to get ifindex for %s: %s",
@@ -1626,9 +1630,11 @@ netdev_tc_flow_del(struct netdev *netdev OVS_UNUSED,
         return -ifindex;
     }
 
+    //取设备对应的block
     block_id = get_block_id_from_netdev(dev);
 
     if (stats) {
+        /*获取规则对应的flower，自flower上取得统计信息*/
         memset(stats, 0, sizeof *stats);
         if (!tc_get_flower(ifindex, prio, handle, &flower, block_id, hook)) {
             stats->n_packets = get_32aligned_u64(&flower.stats.n_packets);
@@ -1703,6 +1709,7 @@ probe_tc_block_support(int ifindex)
     uint32_t block_id = 1;
     int error;
 
+    /*为ingress添加block_id=1*/
     error = tc_add_del_qdisc(ifindex, true, block_id, TC_INGRESS);
     if (error) {
         return;
@@ -1715,11 +1722,14 @@ probe_tc_block_support(int ifindex)
     memset(&flower.key.dst_mac, 0x11, sizeof flower.key.dst_mac);
     memset(&flower.mask.dst_mac, 0xff, sizeof flower.mask.dst_mac);
 
+    //在这个block上添加一个flower规则
     error = tc_replace_flower(ifindex, 1, 1, &flower, block_id, TC_INGRESS);
 
+    //移除掉ingress
     tc_add_del_qdisc(ifindex, false, block_id, TC_INGRESS);
 
     if (!error) {
+        /*没有错误发生，支持block*/
         block_support = true;
         VLOG_INFO("probe tc: block offload is supported.");
     }

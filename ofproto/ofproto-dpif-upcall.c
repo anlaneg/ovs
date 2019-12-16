@@ -945,7 +945,8 @@ udpif_run_flow_rebalance(struct udpif *udpif)
     /* Don't rebalance if OFFL_REBAL_INTVL_MSEC have not elapsed */
     now = time_msec();
     if (now < udpif->offload_rebalance_time + OFFL_REBAL_INTVL_MSEC) {
-    		//跟上次rebalance时间过短，本次不执行
+	//跟上次rebalance时间过短，本次不执行
+        //rebalance间隔不能过短
         return;
     }
 

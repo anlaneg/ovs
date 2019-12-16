@@ -64,6 +64,7 @@ enum tc_offload_policy {
     TC_POLICY_SKIP_HW
 };
 
+/*设置规则的offload策略*/
 static enum tc_offload_policy tc_policy = TC_POLICY_NONE;
 
 struct tc_pedit_key_ex {
@@ -190,6 +191,7 @@ tc_make_request(int ifindex, int type, unsigned int flags,
     nl_msg_put_nlmsghdr(request, sizeof *tcmsg, type, NLM_F_REQUEST | flags);
     tcmsg = ofpbuf_put_zeros(request, sizeof *tcmsg);
     tcmsg->tcm_family = AF_UNSPEC;
+    //接口ifindex
     tcmsg->tcm_ifindex = ifindex;
     /* Caller should fill in tcmsg->tcm_handle. */
     /* Caller should fill in tcmsg->tcm_parent. */
@@ -258,7 +260,7 @@ tc_add_del_qdisc(int ifindex, bool add/*true为添加，false为删除*/, uint32
 
     nl_msg_put_unspec(&request, TCA_OPTIONS, NULL, 0);
     if (hook == TC_INGRESS && block_id) {
-    	//存入block_id
+    	//ingress时存入block_id
         nl_msg_put_u32(&request, TCA_INGRESS_BLOCK, block_id);
     }
 
@@ -1637,6 +1639,7 @@ tc_del_filter(int ifindex, int prio, int handle, uint32_t block_id,
     tcmsg->tcm_info = tc_make_handle(prio, 0);
     tcmsg->tcm_handle = handle;
 
+    /*通过handle删除规则*/
     error = tc_transact(&request, &reply);
     if (!error) {
         ofpbuf_delete(reply);

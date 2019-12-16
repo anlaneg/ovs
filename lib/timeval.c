@@ -284,7 +284,7 @@ time_alarm(unsigned int secs)
  *
  * Stores the number of milliseconds elapsed during poll in '*elapsed'. */
 int
-time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
+time_poll(struct pollfd *pollfds/*需要poll的fd*/, int n_pollfds/*需要poll的fd数目*/, HANDLE *handles OVS_UNUSED,
           long long int timeout_when/*poll的超时时间*/, int *elapsed/*出参，poll实际占用了多长时间*/)
 {
 	//取当前线程上次wakeup的时间
@@ -370,7 +370,7 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
         }
     }
 
-    //记录wakeup时间
+    //记录本次wakeup时间
     *last_wakeup = time_msec();
     refresh_rusage();
     *elapsed = *last_wakeup - start;
@@ -649,11 +649,14 @@ log_poll_interval(long long int last_wakeup)
     long long int interval = time_msec() - last_wakeup;
 
     if (interval >= 1000 && !is_warped(&monotonic_clock)) {
+        //取线程上次用量统计
         const struct rusage *last_rusage = get_recent_rusage();
         struct rusage rusage;
 
+        //取线程本次用量统计(如果获取成功，则进入if)
         if (!getrusage_thread(&rusage)) {
-        	//poll间隔为interval,并显示这段时间花在uer,sys的时间
+
+        	//上次到本次poll间隔为interval,显示这段时间花在usr,sys的时间
             VLOG_WARN("Unreasonably long %lldms poll interval"
                       " (%lldms user, %lldms system)",
                       interval,
@@ -662,18 +665,25 @@ log_poll_interval(long long int last_wakeup)
                       timeval_diff_msec(&rusage.ru_stime,
                                         &last_rusage->ru_stime));
 
+            //打出用量统计，辅助定位，系统卡在哪个位置
+
+            //缺页统计
             if (rusage.ru_minflt > last_rusage->ru_minflt
                 || rusage.ru_majflt > last_rusage->ru_majflt) {
                 VLOG_WARN("faults: %ld minor, %ld major",
                           rusage.ru_minflt - last_rusage->ru_minflt,
                           rusage.ru_majflt - last_rusage->ru_majflt);
             }
+
+            //磁盘读写统计
             if (rusage.ru_inblock > last_rusage->ru_inblock
                 || rusage.ru_oublock > last_rusage->ru_oublock) {
                 VLOG_WARN("disk: %ld reads, %ld writes",
                           rusage.ru_inblock - last_rusage->ru_inblock,
                           rusage.ru_oublock - last_rusage->ru_oublock);
             }
+
+            //上下文切换统计（主动，被动）
             if (rusage.ru_nvcsw > last_rusage->ru_nvcsw
                 || rusage.ru_nivcsw > last_rusage->ru_nivcsw) {
                 VLOG_WARN("context switches: %ld voluntary, %ld involuntary",
@@ -681,6 +691,7 @@ log_poll_interval(long long int last_wakeup)
                           rusage.ru_nivcsw - last_rusage->ru_nivcsw);
             }
         } else {
+            //无法获取线程用量，打此句
             VLOG_WARN("Unreasonably long %lldms poll interval", interval);
         }
         coverage_log();

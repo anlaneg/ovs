@@ -4487,6 +4487,7 @@ out:
     return ret;
 }
 
+//删除指定rte_flow
 int
 netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
                              struct rte_flow *rte_flow,
@@ -4501,6 +4502,7 @@ netdev_dpdk_rte_flow_destroy(struct netdev *netdev,
     return ret;
 }
 
+//添加rte flow
 struct rte_flow *
 netdev_dpdk_rte_flow_create(struct netdev *netdev,
                             const struct rte_flow_attr *attr,

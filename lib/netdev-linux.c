@@ -3069,6 +3069,7 @@ netdev_internal_get_status(const struct netdev *netdev OVS_UNUSED,
     return 0;
 }
 
+/*只有lag时，block使用netdev->ifindex,其它均使用0*/
 static uint32_t
 netdev_linux_get_block_id(struct netdev *netdev_)
 {

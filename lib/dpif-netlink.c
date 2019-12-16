@@ -4714,6 +4714,7 @@ report_loss(struct dpif_netlink *dpif, struct dpif_channel *ch, uint32_t ch_idx,
                       time_msec() - ch->last_poll);
     }
 
+    //指明在哪个handler的哪个channel上有丢包
     VLOG_WARN("%s: lost packet on port channel %u of handler %u",
               dpif_name(&dpif->dpif), ch_idx, handler_id);
     ds_destroy(&s);

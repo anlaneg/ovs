@@ -409,7 +409,7 @@ enum {
 struct dp_flow_offload_item {
     struct dp_netdev_pmd_thread *pmd;
     struct dp_netdev_flow *flow;
-    int op;
+    int op;/*flow的操作*/
     struct match match;
     struct nlattr *actions;
     size_t actions_len;
@@ -2569,7 +2569,7 @@ queue_netdev_flow_put(struct dp_netdev_pmd_thread *pmd,
     //如果offload_thread未创建，则创建对应的offload_thread
     if (ovsthread_once_start(&offload_thread_once)) {
         xpthread_cond_init(&dp_flow_offload.cond, NULL);
-        //创建线程，执行流的下发
+        //创建线程，执行netdev datapath的流的下发
         ovs_thread_create("dp_netdev_flow_offload",
                           dp_netdev_flow_offload_main, NULL);
         ovsthread_once_done(&offload_thread_once);

@@ -343,6 +343,7 @@ poll_block(void)
     }
 
     timewarp_run();
+
     //申请足够数量的poolfd
     pollfds = xmalloc(hmap_count(&loop->poll_nodes) * sizeof *pollfds);
 
@@ -351,6 +352,7 @@ poll_block(void)
 #endif
 
     /* Populate with all the fds and events. */
+    //遍历挂接在loop上的所有node
     i = 0;
     HMAP_FOR_EACH (node, hmap_node, &loop->poll_nodes) {
     	//填充这些pollfd到pollfds数组
@@ -419,12 +421,14 @@ poll_loop(void)
     struct poll_loop *loop;
 
     if (ovsthread_once_start(&once)) {
+        //创建key并设置key对应的释放函数
         xpthread_key_create(&key, free_poll_loop);
         ovsthread_once_done(&once);
     }
 
     loop = pthread_getspecific(key);
     if (!loop) {
+        //如果key对应的loop没有创建，则创建它，并指定超时时间为无限
         loop = xzalloc(sizeof *loop);
         loop->timeout_when = LLONG_MAX;
         hmap_init(&loop->poll_nodes);

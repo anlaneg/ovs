@@ -40,7 +40,9 @@
 #define TC_H_MIN_EGRESS       0xFFF3U
 #endif
 
+//ingress
 #define TC_INGRESS_PARENT TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS)
+//egress
 #define TC_EGRESS_PARENT TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_EGRESS)
 
 #define TC_POLICY_DEFAULT "none"
