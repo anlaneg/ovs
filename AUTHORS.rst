@@ -219,6 +219,7 @@ Krishna Kondaka                    kkondaka@vmware.com
 Kyle Mestery                       mestery@mestery.com
 Kyle Simpson                       kyleandrew.simpson@gmail.com
 Kyle Upton                         kupton@baymicrosystems.com
+Lance Yang                         lance.yang@arm.com
 Lance Richardson                   lrichard@redhat.com
 Lars Kellogg-Stedman               lars@redhat.com
 Lei Huang                          huang.f.lei@gmail.com
@@ -384,6 +385,7 @@ Venkata Anil Kommaddi              vkommadi@redhat.com
 Vishal Deep Ajmera                 vishal.deep.ajmera@ericsson.com
 Vivien Bernet-Rollande             vbr@soprive.net
 wangqianyu                         wang.qianyu@zte.com.cn
+Wang Li                            wangli39@baidu.com
 Wang Sheng-Hui                     shhuiw@gmail.com
 Wang Zhike                         wangzhike@jd.com
 Wei Li                             liw@dtdream.com
@@ -396,6 +398,7 @@ xu rong                            xu.rong@zte.com.cn
 YAMAMOTO Takashi                   yamamoto@midokura.com
 Yanqin Wei                         Yanqin.Wei@arm.com
 Yasuhito Takamiya                  yasuhito@gmail.com
+Yi Yang                            yangyi01@inspur.com
 Yi-Hung Wei                        yihung.wei@gmail.com
 Yifeng Sun                         pkusunyifeng@gmail.com
 Yin Lin                            linyi@vmware.com

@@ -500,6 +500,18 @@ struct dpif_flow_stats {
     uint16_t tcp_flags;//tcp标志位
 };
 
+/* more statistics info for offloaded packets and bytes */
+struct dpif_flow_detailed_stats {
+    uint64_t n_packets;
+    uint64_t n_bytes;
+    /* n_offload_packets are a subset of n_packets */
+    uint64_t n_offload_packets;
+    /* n_offload_bytes are a subset of n_bytes */
+    uint64_t n_offload_bytes;
+    long long int used;
+    uint16_t tcp_flags;
+};
+
 struct dpif_flow_attrs {
     bool offloaded;         /* True if flow is offloaded to HW. */
     const char *dp_layer;   /* DP layer the flow is handled in. */
@@ -724,6 +736,7 @@ struct dpif_execute {
     bool probe;                     /* Suppress error messages. */
     unsigned int mtu;               /* Maximum transmission unit to fragment.
                                        0 if not a fragmented packet */
+    uint64_t hash;
     const struct flow *flow;         /* Flow extracted from 'packet'. */
 
     /* Input, but possibly modified as a side effect of execution. */
@@ -818,6 +831,7 @@ struct dpif_upcall {
     //通过key hash计算而来
     ovs_u128 ufid;              /* Unique flow identifier for 'key'. */
     struct nlattr *mru;         /* Maximum receive unit. */
+    struct nlattr *hash;        /* Packet hash. */
     struct nlattr *cutlen;      /* Number of bytes shrink from the end. */
 
     /* DPIF_UC_ACTION only. */

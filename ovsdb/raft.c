@@ -849,7 +849,7 @@ raft_read_header(struct raft *raft)
     } else {
         raft_entry_clone(&raft->snap, &h.snap);
         raft->log_start = raft->log_end = h.snap_index + 1;
-        raft->commit_index = h.snap_index;
+        raft->log_synced = raft->commit_index = h.snap_index;
         raft->last_applied = h.snap_index - 1;
     }
 
@@ -3257,7 +3257,7 @@ raft_send_install_snapshot_request(struct raft *raft,
             .last_servers = raft->snap.servers,
             .last_eid = raft->snap.eid,
             .data = raft->snap.data,
-            .election_timer = raft->election_timer,
+            .election_timer = raft->election_timer, /* use latest value */
         }
     };
     raft_send(raft, &rpc);

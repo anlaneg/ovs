@@ -47,6 +47,7 @@
 #include "dpdk.h"
 #include "dpif-netdev.h"
 #include "fatal-signal.h"
+#include "if-notifier.h"
 #include "netdev-provider.h"
 #include "netdev-vport.h"
 #include "odp-util.h"
@@ -74,6 +75,7 @@ VLOG_DEFINE_THIS_MODULE(netdev_dpdk);
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
 
 COVERAGE_DEFINE(vhost_tx_contention);
+COVERAGE_DEFINE(vhost_notification);
 
 #define DPDK_PORT_WATCHDOG_INTERVAL 5
 
@@ -81,17 +83,18 @@ COVERAGE_DEFINE(vhost_tx_contention);
 #define OVS_VPORT_DPDK "ovs_dpdk"
 
 /*
-* need to reserve tons of extra space in the mbufs so we can align the
-* DMA addresses to 4KB.
-* The minimum mbuf size is limited to avoid scatter behaviour and drop in
-* performance for standard Ethernet MTU.
-*/
-#define ETHER_HDR_MAX_LEN           (ETHER_HDR_LEN + ETHER_CRC_LEN \
-			     + (2 * VLAN_HEADER_LEN))
-#define MTU_TO_FRAME_LEN(mtu)       ((mtu) + ETHER_HDR_LEN + ETHER_CRC_LEN)
+ * need to reserve tons of extra space in the mbufs so we can align the
+ * DMA addresses to 4KB.
+ * The minimum mbuf size is limited to avoid scatter behaviour and drop in
+ * performance for standard Ethernet MTU.
+ */
+#define ETHER_HDR_MAX_LEN           (RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN \
+                                     + (2 * VLAN_HEADER_LEN))
+#define MTU_TO_FRAME_LEN(mtu)       ((mtu) + RTE_ETHER_HDR_LEN + \
+                                     RTE_ETHER_CRC_LEN)
 #define MTU_TO_MAX_FRAME_LEN(mtu)   ((mtu) + ETHER_HDR_MAX_LEN)
 #define FRAME_LEN_TO_MTU(frame_len) ((frame_len)                    \
-			     - ETHER_HDR_LEN - ETHER_CRC_LEN)
+                                     - RTE_ETHER_HDR_LEN - RTE_ETHER_CRC_LEN)
 #define NETDEV_DPDK_MBUF_ALIGN      1024
 #define NETDEV_DPDK_MAX_PKT_LEN     9728
 
@@ -167,6 +170,8 @@ static int new_device(int vid);
 static void destroy_device(int vid);
 static int vring_state_changed(int vid, uint16_t queue_id, int enable);
 static void destroy_connection(int vid);
+static void vhost_guest_notified(int vid);
+
 static const struct vhost_device_ops virtio_net_device_ops =
 {
     .new_device =  new_device,
@@ -175,6 +180,7 @@ static const struct vhost_device_ops virtio_net_device_ops =
     .features_changed = NULL,
     .new_connection = NULL,
     .destroy_connection = destroy_connection,
+    .guest_notified = vhost_guest_notified,
 };
 
 /* Custom software stats for dpdk ports */
@@ -383,6 +389,8 @@ struct netdev_dpdk {
         bool attached;
         /* If true, rte_eth_dev_start() was successfully called */
         bool started;
+        bool reset_needed;
+        /* 1 pad byte here. */
         struct eth_addr hwaddr;
         int mtu;
         int socket_id;
@@ -596,32 +604,32 @@ dpdk_calculate_mbufs(struct netdev_dpdk *dev, int mtu, bool per_port_mp)
 {
 uint32_t n_mbufs;
 
-if (!per_port_mp) {
-/* Shared memory are being used.
- * XXX: this is a really rough method of provisioning memory.
- * It's impossible to determine what the exact memory requirements are
- * when the number of ports and rxqs that utilize a particular mempool
- * can change dynamically at runtime. For now, use this rough
- * heurisitic.
- */
-if (mtu >= ETHER_MTU) {
-    n_mbufs = MAX_NB_MBUF;
-} else {
-    n_mbufs = MIN_NB_MBUF;
-}
-} else {
-/* Per port memory is being used.
- * XXX: rough estimation of number of mbufs required for this port:
- * <packets required to fill the device rxqs>
- * + <packets that could be stuck on other ports txqs>
- * + <packets in the pmd threads>
- * + <additional memory for corner cases>
- */
-n_mbufs = dev->requested_n_rxq * dev->requested_rxq_size
-	  + dev->requested_n_txq * dev->requested_txq_size
-	  + MIN(RTE_MAX_LCORE, dev->requested_n_rxq) * NETDEV_MAX_BURST
-	  + MIN_NB_MBUF;
-}
+    if (!per_port_mp) {
+        /* Shared memory are being used.
+         * XXX: this is a really rough method of provisioning memory.
+         * It's impossible to determine what the exact memory requirements are
+         * when the number of ports and rxqs that utilize a particular mempool
+         * can change dynamically at runtime. For now, use this rough
+         * heurisitic.
+         */
+        if (mtu >= RTE_ETHER_MTU) {
+            n_mbufs = MAX_NB_MBUF;
+        } else {
+            n_mbufs = MIN_NB_MBUF;
+        }
+    } else {
+        /* Per port memory is being used.
+         * XXX: rough estimation of number of mbufs required for this port:
+         * <packets required to fill the device rxqs>
+         * + <packets that could be stuck on other ports txqs>
+         * + <packets in the pmd threads>
+         * + <additional memory for corner cases>
+         */
+        n_mbufs = dev->requested_n_rxq * dev->requested_rxq_size
+                  + dev->requested_n_txq * dev->requested_txq_size
+                  + MIN(RTE_MAX_LCORE, dev->requested_n_rxq) * NETDEV_MAX_BURST
+                  + MIN_NB_MBUF;
+    }
 
 return n_mbufs;
 }
@@ -911,11 +919,23 @@ return NULL;
 static int
 dpdk_eth_dev_port_config(struct netdev_dpdk *dev, int n_rxq, int n_txq)
 {
-int diag = 0;
-int i;
-struct rte_eth_conf conf = port_conf;
-struct rte_eth_dev_info info;
-uint16_t conf_mtu;
+    int diag = 0;
+    int i;
+    struct rte_eth_conf conf = port_conf;
+    struct rte_eth_dev_info info;
+    uint16_t conf_mtu;
+
+    rte_eth_dev_info_get(dev->port_id, &info);
+
+    /* As of DPDK 17.11.1 a few PMDs require to explicitly enable
+     * scatter to support jumbo RX.
+     * Setting scatter for the device is done after checking for
+     * scatter support in the device capabilites. */
+    if (dev->mtu > RTE_ETHER_MTU) {
+        if (dev->hw_ol_features & NETDEV_RX_HW_SCATTER) {
+            conf.rxmode.offloads |= DEV_RX_OFFLOAD_SCATTER;
+        }
+    }
 
 rte_eth_dev_info_get(dev->port_id, &info);
 
@@ -1036,14 +1056,14 @@ static int
 dpdk_eth_dev_init(struct netdev_dpdk *dev)
 OVS_REQUIRES(dev->mutex)
 {
-struct rte_pktmbuf_pool_private *mbp_priv;
-struct rte_eth_dev_info info;
-struct ether_addr eth_addr;
-int diag;
-int n_rxq, n_txq;
-uint32_t rx_chksm_offload_capa = DEV_RX_OFFLOAD_UDP_CKSUM |
-			     DEV_RX_OFFLOAD_TCP_CKSUM |
-			     DEV_RX_OFFLOAD_IPV4_CKSUM;
+    struct rte_pktmbuf_pool_private *mbp_priv;
+    struct rte_eth_dev_info info;
+    struct rte_ether_addr eth_addr;
+    int diag;
+    int n_rxq, n_txq;
+    uint32_t rx_chksm_offload_capa = DEV_RX_OFFLOAD_UDP_CKSUM |
+                                     DEV_RX_OFFLOAD_TCP_CKSUM |
+                                     DEV_RX_OFFLOAD_IPV4_CKSUM;
 
 rte_eth_dev_info_get(dev->port_id, &info);
 
@@ -1158,20 +1178,22 @@ ovs_mutex_init(&dev->mutex);
 
 rte_spinlock_init(&dev->stats_lock);
 
-/* If the 'sid' is negative, it means that the kernel fails
-* to obtain the pci numa info.  In that situation, always
-* use 'SOCKET0'. */
-dev->socket_id = socket_id < 0 ? SOCKET0 : socket_id;//如果socket_id参数无效，则采用socket0
-dev->requested_socket_id = dev->socket_id;
-dev->port_id = port_no;
-dev->type = type;//指明设备类型（物理设备，还是vhost设备）
-dev->flags = 0;
-dev->requested_mtu = ETHER_MTU;
-dev->max_packet_len = MTU_TO_FRAME_LEN(dev->mtu);
-dev->requested_lsc_interrupt_mode = 0;
-ovsrcu_index_init(&dev->vid, -1);
-dev->vhost_reconfigured = false;
-dev->attached = false;
+    /* If the 'sid' is negative, it means that the kernel fails
+     * to obtain the pci numa info.  In that situation, always
+     * use 'SOCKET0'. */
+    dev->socket_id = socket_id < 0 ? SOCKET0 : socket_id;//如果socket_id参数无效，则采用socket0
+    dev->requested_socket_id = dev->socket_id;
+    dev->port_id = port_no;
+    dev->type = type;//指明设备类型（物理设备，还是vhost设备）
+    dev->flags = 0;
+    dev->requested_mtu = RTE_ETHER_MTU;
+    dev->max_packet_len = MTU_TO_FRAME_LEN(dev->mtu);
+    dev->requested_lsc_interrupt_mode = 0;
+    ovsrcu_index_init(&dev->vid, -1);
+    dev->vhost_reconfigured = false;
+    dev->attached = false;
+    dev->started = false;
+    dev->reset_needed = false;
 
 ovsrcu_init(&dev->qos_conf, NULL);
 
@@ -1720,8 +1742,8 @@ VLOG_ERR("invalid mac: %s", mac_str);
 return DPDK_ETH_PORT_ID_INVALID;
 }
 
-RTE_ETH_FOREACH_DEV (port_id) {
-struct ether_addr ea;
+    RTE_ETH_FOREACH_DEV (port_id) {
+        struct rte_ether_addr ea;
 
 rte_eth_macaddr_get(port_id, &ea);
 memcpy(port_mac.ea, ea.addr_bytes, ETH_ADDR_LEN);
@@ -1794,6 +1816,34 @@ VLOG_WARN_BUF(errp, "Error attaching device '%s' to DPDK", devargs);
 }
 
 return new_port_id;
+}
+
+static int
+dpdk_eth_event_callback(dpdk_port_t port_id, enum rte_eth_event_type type,
+                        void *param OVS_UNUSED, void *ret_param OVS_UNUSED)
+{
+    struct netdev_dpdk *dev;
+
+    switch ((int) type) {
+    case RTE_ETH_EVENT_INTR_RESET:
+        ovs_mutex_lock(&dpdk_mutex);
+        dev = netdev_dpdk_lookup_by_port_id(port_id);
+        if (dev) {
+            ovs_mutex_lock(&dev->mutex);
+            dev->reset_needed = true;
+            netdev_request_reconfigure(&dev->up);
+            VLOG_DBG_RL(&rl, "%s: Device reset requested.",
+                        netdev_get_name(&dev->up));
+            ovs_mutex_unlock(&dev->mutex);
+        }
+        ovs_mutex_unlock(&dpdk_mutex);
+        break;
+
+    default:
+        /* Ignore all other types. */
+        break;
+   }
+   return 0;
 }
 
 //设置队列数
@@ -2107,10 +2157,10 @@ netdev_dpdk_policer_pkt_handle(struct rte_meter_srtcm *meter,
 		       struct rte_meter_srtcm_profile *profile,
 		       struct rte_mbuf *pkt, uint64_t time)
 {
-uint32_t pkt_len = rte_pktmbuf_pkt_len(pkt) - sizeof(struct ether_hdr);
+    uint32_t pkt_len = rte_pktmbuf_pkt_len(pkt) - sizeof(struct rte_ether_hdr);
 
-return rte_meter_srtcm_color_blind_check(meter, profile, time, pkt_len) ==
-				     e_RTE_METER_GREEN;
+    return rte_meter_srtcm_color_blind_check(meter, profile, time, pkt_len) ==
+                                             RTE_COLOR_GREEN;
 }
 
 static int
@@ -2196,7 +2246,6 @@ netdev_dpdk_vhost_update_rx_counters(struct netdev_dpdk *dev,
                                      struct dp_packet **packets, int count,
                                      int qos_drops)
 {
-    struct netdev_dpdk_sw_stats *sw_stats = dev->sw_stats;
     struct netdev_stats *stats = &dev->stats;
     struct dp_packet *packet;
     unsigned int packet_size;
@@ -2227,7 +2276,9 @@ netdev_dpdk_vhost_update_rx_counters(struct netdev_dpdk *dev,
         stats->rx_bytes += packet_size;
     }
 
-    sw_stats->rx_qos_drops += qos_drops;
+    if (OVS_UNLIKELY(qos_drops)) {
+        dev->sw_stats->rx_qos_drops += qos_drops;
+    }
 }
 
 /*
@@ -2398,7 +2449,6 @@ netdev_dpdk_vhost_update_tx_counters(struct netdev_dpdk *dev,
                                      int attempted,
                                      struct netdev_dpdk_sw_stats *sw_stats_add)
 {
-    struct netdev_dpdk_sw_stats *sw_stats = dev->sw_stats;
     int dropped = sw_stats_add->tx_mtu_exceeded_drops +
                   sw_stats_add->tx_qos_drops +
                   sw_stats_add->tx_failure_drops;
@@ -2413,10 +2463,14 @@ netdev_dpdk_vhost_update_tx_counters(struct netdev_dpdk *dev,
         stats->tx_bytes += dp_packet_size(packets[i]);
     }
 
-    sw_stats->tx_retries            += sw_stats_add->tx_retries;
-    sw_stats->tx_failure_drops      += sw_stats_add->tx_failure_drops;
-    sw_stats->tx_mtu_exceeded_drops += sw_stats_add->tx_mtu_exceeded_drops;
-    sw_stats->tx_qos_drops          += sw_stats_add->tx_qos_drops;
+    if (OVS_UNLIKELY(dropped || sw_stats_add->tx_retries)) {
+        struct netdev_dpdk_sw_stats *sw_stats = dev->sw_stats;
+
+        sw_stats->tx_retries            += sw_stats_add->tx_retries;
+        sw_stats->tx_failure_drops      += sw_stats_add->tx_failure_drops;
+        sw_stats->tx_mtu_exceeded_drops += sw_stats_add->tx_mtu_exceeded_drops;
+        sw_stats->tx_qos_drops          += sw_stats_add->tx_qos_drops;
+    }
 }
 
 //ovs向qid队列发送报文
@@ -2714,7 +2768,7 @@ netdev_dpdk_set_mtu(struct netdev *netdev, int mtu)
      * a method to retrieve the upper bound MTU for a given device.
      */
     if (MTU_TO_MAX_FRAME_LEN(mtu) > NETDEV_DPDK_MAX_PKT_LEN
-        || mtu < ETHER_MIN_MTU) {
+        || mtu < RTE_ETHER_MIN_MTU) {
         VLOG_WARN("%s: unsupported MTU %d\n", dev->up.name, mtu);
         return EINVAL;
     }
@@ -3883,6 +3937,12 @@ destroy_connection(int vid)
     }
 }
 
+static
+void vhost_guest_notified(int vid OVS_UNUSED)
+{
+    COVERAGE_INC(vhost_notification);
+}
+
 /*
  * Retrieve the DPDK virtio device ID (vid) associated with a vhostuser
  * or vhostuserclient netdev.
@@ -3916,6 +3976,8 @@ netdev_dpdk_class_init(void)//模块载入时处理
     /* This function can be called for different classes.  The initialization
      * needs to be done only once */
     if (ovsthread_once_start(&once)) {
+        int ret;
+
         ovs_thread_create("dpdk_watchdog", dpdk_watchdog, NULL);
         //注册控制接口状态变化的命令
         unixctl_command_register("netdev-dpdk/set-admin-state",
@@ -3929,6 +3991,14 @@ netdev_dpdk_class_init(void)//模块载入时处理
         unixctl_command_register("netdev-dpdk/get-mempool-info",
                                  "[netdev]", 0, 1,
                                  netdev_dpdk_get_mempool_info, NULL);
+
+        ret = rte_eth_dev_callback_register(RTE_ETH_ALL,
+                                            RTE_ETH_EVENT_INTR_RESET,
+                                            dpdk_eth_event_callback, NULL);
+        if (ret != 0) {
+            VLOG_ERR("Ethernet device callback register error: %s",
+                     rte_strerror(-ret));
+        }
 
         ovsthread_once_done(&once);
     }
@@ -4042,6 +4112,10 @@ netdev_dpdk_ring_construct(struct netdev *netdev)
 {
     dpdk_port_t port_no = 0;
     int err = 0;
+
+    VLOG_WARN_ONCE("dpdkr a.k.a. ring ports are considered deprecated.  "
+                   "Please migrate to virtio-based interfaces, e.g. "
+                   "dpdkvhostuserclient ports, net_virtio_user DPDK vdev.");
 
     ovs_mutex_lock(&dpdk_mutex);
 
@@ -4293,13 +4367,20 @@ netdev_dpdk_reconfigure(struct netdev *netdev)
         && dev->rxq_size == dev->requested_rxq_size
         && dev->txq_size == dev->requested_txq_size
         && dev->socket_id == dev->requested_socket_id
-        && dev->started) {
+        && dev->started && !dev->reset_needed) {
         /* Reconfiguration is unnecessary */
 
         goto out;
     }
 
-    rte_eth_dev_stop(dev->port_id);
+    if (dev->reset_needed) {
+        rte_eth_dev_reset(dev->port_id);
+        if_notifier_manual_report();
+        dev->reset_needed = false;
+    } else {
+        rte_eth_dev_stop(dev->port_id);
+    }
+
     dev->started = false;
 
     //mempool创建，释放

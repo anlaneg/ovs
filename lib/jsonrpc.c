@@ -43,7 +43,7 @@ struct jsonrpc {
 
     /* Input. */
     struct byteq input;//用于访问buffer
-    uint8_t input_buffer[512];//rpc内置buffer
+    uint8_t input_buffer[4096];//rpc内置buffer
     struct json_parser *parser;
 
     /* Output. */

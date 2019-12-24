@@ -233,6 +233,44 @@ done
 OVS_WAIT_UNTIL([ovs-appctl -t "`pwd`"/s1 cluster/status $schema_name | grep "Election timer: 4000"])
 OVS_WAIT_UNTIL([ovs-appctl -t "`pwd`"/s2 cluster/status $schema_name | grep "Election timer: 4000"])
 
+# Wait until cluster is ready
+for i in `seq $n`; do
+    OVS_WAIT_WHILE([ovs-appctl -t "`pwd`"/s$i cluster/status $schema_name | grep "Leader: unknown"])
+done
+
+# Latest timer should be restored after DB compact and restart.
+# This is to test the install_snapshot RPC.
+
+# Compact online
+for i in `seq $n`; do
+    AT_CHECK([ovs-appctl -t "`pwd`"/s$i ovsdb-server/compact])
+done
+
+for i in `seq $n`; do
+    printf "\ns$i: stopping\n"
+    OVS_APP_EXIT_AND_WAIT_BY_TARGET([`pwd`/s$i], [s$i.pid])
+done
+for i in `seq $n`; do
+    AT_CHECK([ovsdb-server -v -vconsole:off -vsyslog:off --detach --no-chdir --log-file=s$i.log --pidfile=s$i.pid --unixctl=s$i --remote=punix:s$i.ovsdb s$i.db])
+done
+for i in `seq $n`; do
+    OVS_WAIT_UNTIL([ovs-appctl -t "`pwd`"/s$i cluster/status $schema_name | grep "Election timer: 4000"])
+done
+
+# Wait until cluster is ready
+for i in `seq $n`; do
+    OVS_WAIT_WHILE([ovs-appctl -t "`pwd`"/s$i cluster/status $schema_name | grep "Leader: unknown"])
+done
+
+# Newly joined member should use latest timer value
+AT_CHECK([ovsdb-tool join-cluster s4.db $schema_name unix:s4.raft unix:s1.raft])
+AT_CHECK([ovsdb-server -v -vconsole:off -vsyslog:off --detach --no-chdir --log-file=s4.log --pidfile=s4.pid --unixctl=s4 --remote=punix:s4.ovsdb s4.db])
+OVS_WAIT_UNTIL([ovs-appctl -t "`pwd`"/s4 cluster/status $schema_name | grep "Election timer: 4000"])
+# for i in `seq 10`; do
+#     ovs-appctl -t "`pwd`"/s4 cluster/status $schema_name
+#     sleep 1
+# done
+
 AT_CLEANUP
 
 

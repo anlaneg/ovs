@@ -1831,7 +1831,6 @@ static int
 port_create(const char *devname, const char *type,
             odp_port_t port_no, struct dp_netdev_port **portp)
 {
-    struct netdev_saved_flags *sf;
     struct dp_netdev_port *port;
     enum netdev_flags flags;
     struct netdev *netdev;
@@ -1855,18 +1854,11 @@ port_create(const char *devname, const char *type,
         goto out;
     }
 
-    //将其设置为混杂模式
-    error = netdev_turn_flags_on(netdev, NETDEV_PROMISC, &sf);
-    if (error) {
-        VLOG_ERR("%s: cannot set promisc flag", devname);
-        goto out;
-    }
-
     port = xzalloc(sizeof *port);
     port->port_no = port_no;
     port->netdev = netdev;
     port->type = xstrdup(type);
-    port->sf = sf;//保存的flags
+    port->sf = NULL;
     port->emc_enabled = true;
     port->need_reconfigure = true;
     ovs_mutex_init(&port->txq_used_mutex);
@@ -1886,6 +1878,7 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
             odp_port_t port_no)
     OVS_REQUIRES(dp->port_mutex)
 {
+    struct netdev_saved_flags *sf;
     struct dp_netdev_port *port;
     int error;
 
@@ -1908,7 +1901,24 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
     reconfigure_datapath(dp);
 
     /* Check that port was successfully configured. */
-    return dp_netdev_lookup_port(dp, port_no) ? 0 : EINVAL;
+    if (!dp_netdev_lookup_port(dp, port_no)) {
+        return EINVAL;
+    }
+
+    /* Updating device flags triggers an if_notifier, which triggers a bridge
+     * reconfiguration and another attempt to add this port, leading to an
+     * infinite loop if the device is configured incorrectly and cannot be
+     * added.  Setting the promisc mode after a successful reconfiguration,
+     * since we already know that the device is somehow properly configured. */
+    error = netdev_turn_flags_on(port->netdev, NETDEV_PROMISC, &sf);
+    if (error) {
+        VLOG_ERR("%s: cannot set promisc flag", devname);
+        do_del_port(dp, port);
+        return error;
+    }
+    port->sf = sf;
+
+    return 0;
 }
 
 static int
@@ -2309,15 +2319,18 @@ mark_to_flow_disassociate(struct dp_netdev_pmd_thread *pmd,
      * remove the flow from hardware and free the mark.
      */
     if (flow_mark_has_no_ref(mark)) {
-        struct dp_netdev_port *port;
+        struct netdev *port;
         odp_port_t in_port = flow->flow.in_port.odp_port;
 
-        ovs_mutex_lock(&pmd->dp->port_mutex);
-        port = dp_netdev_lookup_port(pmd->dp, in_port);
+        port = netdev_ports_get(in_port, pmd->dp->class);
         if (port) {
-            ret = netdev_flow_del(port->netdev, &flow->mega_ufid, NULL);
+            /* Taking a global 'port_mutex' to fulfill thread safety
+             * restrictions for the netdev-offload-dpdk module. */
+            ovs_mutex_lock(&pmd->dp->port_mutex);
+            ret = netdev_flow_del(port, &flow->mega_ufid, NULL);
+            ovs_mutex_unlock(&pmd->dp->port_mutex);
+            netdev_close(port);
         }
-        ovs_mutex_unlock(&pmd->dp->port_mutex);
 
         flow_mark_free(mark);
         VLOG_DBG("Freed flow mark %u\n", mark);
@@ -2417,12 +2430,12 @@ dp_netdev_flow_offload_del(struct dp_flow_offload_item *offload)
 static int
 dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
 {
-    struct dp_netdev_port *port;
     struct dp_netdev_pmd_thread *pmd = offload->pmd;
     struct dp_netdev_flow *flow = offload->flow;
     odp_port_t in_port = flow->flow.in_port.odp_port;
     bool modification = offload->op == DP_NETDEV_FLOW_OFFLOAD_OP_MOD;
     struct offload_info info;
+    struct netdev *port;
     uint32_t mark;
     int ret;
 
@@ -2456,17 +2469,20 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
     }
     info.flow_mark = mark;
 
-    ovs_mutex_lock(&pmd->dp->port_mutex);
-    port = dp_netdev_lookup_port(pmd->dp, in_port);
-    if (!port || netdev_vport_is_vport_class(port->netdev->netdev_class)) {
-        ovs_mutex_unlock(&pmd->dp->port_mutex);
+    port = netdev_ports_get(in_port, pmd->dp->class);
+    if (!port || netdev_vport_is_vport_class(port->netdev_class)) {
+        netdev_close(port);
         goto err_free;
     }
-    ret = netdev_flow_put(port->netdev, &offload->match,
+    /* Taking a global 'port_mutex' to fulfill thread safety restrictions for
+     * the netdev-offload-dpdk module. */
+    ovs_mutex_lock(&pmd->dp->port_mutex);
+    ret = netdev_flow_put(port, &offload->match,
                           CONST_CAST(struct nlattr *, offload->actions),
                           offload->actions_len, &flow->mega_ufid, &info,
                           NULL);
     ovs_mutex_unlock(&pmd->dp->port_mutex);
+    netdev_close(port);
 
     if (ret) {
         goto err_free;
@@ -4697,6 +4713,10 @@ rxq_scheduling(struct dp_netdev *dp, bool pinned) OVS_REQUIRES(dp->port_mutex)
                 } else {
                     q->pmd = pmd;
                     pmd->isolated = true;//指明独占（配置明确指明在此core上，不再接受自动配置）
+                    VLOG_INFO("Core %d on numa node %d assigned port \'%s\' "
+                              "rx queue %d.", pmd->core_id, pmd->numa_id,
+                              netdev_rxq_get_name(q->rx),
+                              netdev_rxq_get_queue_id(q->rx));
                     dp_netdev_pmd_unref(pmd);
                 }
             } else if (!pinned && q->core_id == OVS_CORE_UNSPEC) {
@@ -7759,6 +7779,88 @@ dpif_netdev_ct_get_tcp_seq_chk(struct dpif *dpif, bool *enabled)
 }
 
 static int
+dpif_netdev_ct_set_limits(struct dpif *dpif OVS_UNUSED,
+                           const uint32_t *default_limits,
+                           const struct ovs_list *zone_limits)
+{
+    int err = 0;
+    struct dp_netdev *dp = get_dp_netdev(dpif);
+    if (default_limits) {
+        err = zone_limit_update(dp->conntrack, DEFAULT_ZONE, *default_limits);
+        if (err != 0) {
+            return err;
+        }
+    }
+
+    struct ct_dpif_zone_limit *zone_limit;
+    LIST_FOR_EACH (zone_limit, node, zone_limits) {
+        err = zone_limit_update(dp->conntrack, zone_limit->zone,
+                                zone_limit->limit);
+        if (err != 0) {
+            break;
+        }
+    }
+    return err;
+}
+
+static int
+dpif_netdev_ct_get_limits(struct dpif *dpif OVS_UNUSED,
+                           uint32_t *default_limit,
+                           const struct ovs_list *zone_limits_request,
+                           struct ovs_list *zone_limits_reply)
+{
+    struct dp_netdev *dp = get_dp_netdev(dpif);
+    struct conntrack_zone_limit czl;
+
+    czl = zone_limit_get(dp->conntrack, DEFAULT_ZONE);
+    if (czl.zone == DEFAULT_ZONE) {
+        *default_limit = czl.limit;
+    } else {
+        return EINVAL;
+    }
+
+    if (!ovs_list_is_empty(zone_limits_request)) {
+        struct ct_dpif_zone_limit *zone_limit;
+        LIST_FOR_EACH (zone_limit, node, zone_limits_request) {
+            czl = zone_limit_get(dp->conntrack, zone_limit->zone);
+            if (czl.zone == zone_limit->zone || czl.zone == DEFAULT_ZONE) {
+                ct_dpif_push_zone_limit(zone_limits_reply, zone_limit->zone,
+                                        czl.limit, czl.count);
+            } else {
+                return EINVAL;
+            }
+        }
+    } else {
+        for (int z = MIN_ZONE; z <= MAX_ZONE; z++) {
+            czl = zone_limit_get(dp->conntrack, z);
+            if (czl.zone == z) {
+                ct_dpif_push_zone_limit(zone_limits_reply, z, czl.limit,
+                                        czl.count);
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int
+dpif_netdev_ct_del_limits(struct dpif *dpif OVS_UNUSED,
+                           const struct ovs_list *zone_limits)
+{
+    int err = 0;
+    struct dp_netdev *dp = get_dp_netdev(dpif);
+    struct ct_dpif_zone_limit *zone_limit;
+    LIST_FOR_EACH (zone_limit, node, zone_limits) {
+        err = zone_limit_delete(dp->conntrack, zone_limit->zone);
+        if (err != 0) {
+            break;
+        }
+    }
+
+    return err;
+}
+
+static int
 dpif_netdev_ipf_set_enabled(struct dpif *dpif, bool v6, bool enable)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
@@ -7867,9 +7969,9 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_ct_get_nconns,
     dpif_netdev_ct_set_tcp_seq_chk,
     dpif_netdev_ct_get_tcp_seq_chk,
-    NULL,                       /* ct_set_limits */
-    NULL,                       /* ct_get_limits */
-    NULL,                       /* ct_del_limits */
+    dpif_netdev_ct_set_limits,
+    dpif_netdev_ct_get_limits,
+    dpif_netdev_ct_del_limits,
     NULL,                       /* ct_set_timeout_policy */
     NULL,                       /* ct_get_timeout_policy */
     NULL,                       /* ct_del_timeout_policy */

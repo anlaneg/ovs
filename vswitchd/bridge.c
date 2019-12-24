@@ -173,6 +173,7 @@ struct datapath {
     struct hmap ct_zones;       /* Map of 'struct ct_zone' elements, indexed
                                  * by 'zone'. */
     struct hmap_node node;      /* Node in 'all_datapaths' hmap. */
+    struct smap caps;           /* Capabilities. */
     unsigned int last_used;     /* The last idl_seqno that this 'datapath'
                                  * used in OVSDB. This number is used for
                                  * garbage collection. */
@@ -529,8 +530,8 @@ bridge_init(const char *remote)
                              qos_unixctl_show_types, NULL);
     unixctl_command_register("qos/show", "interface", 1, 1,
                              qos_unixctl_show, NULL);
-    unixctl_command_register("bridge/dump-flows", "bridge", 1, 1,
-                             bridge_unixctl_dump_flows, NULL);
+    unixctl_command_register("bridge/dump-flows", "[--offload-stats] bridge",
+                             1, 2, bridge_unixctl_dump_flows, NULL);
     unixctl_command_register("bridge/reconnect", "[bridge]", 0, 1,
                              bridge_unixctl_reconnect, NULL);
     lacp_init();
@@ -546,11 +547,13 @@ bridge_init(const char *remote)
     last_ifaces_changed = seq_read(ifaces_changed);
     //接口发生变化时，更改ifaces_changed值
     ifnotifier = if_notifier_create(if_change_cb, NULL);
+    if_notifier_manual_set_cb(if_change_cb);
 }
 
 void
 bridge_exit(bool delete_datapath)
 {
+    if_notifier_manual_set_cb(NULL);
     if_notifier_destroy(ifnotifier);
     seq_destroy(ifaces_changed);
 
@@ -726,6 +729,7 @@ datapath_create(const char *type)
     dp->type = xstrdup(type);
     hmap_init(&dp->ct_zones);
     hmap_insert(&all_datapaths, &dp->node, hash_string(type, 0));
+    smap_init(&dp->caps);
     return dp;
 }
 
@@ -742,6 +746,7 @@ datapath_destroy(struct datapath *dp)
         hmap_remove(&all_datapaths, &dp->node);
         hmap_destroy(&dp->ct_zones);
         free(dp->type);
+        smap_destroy(&dp->caps);
         free(dp);
     }
 }
@@ -785,6 +790,23 @@ ct_zones_reconfigure(struct datapath *dp, struct ovsrec_datapath *dp_cfg)
 }
 
 static void
+dp_capability_reconfigure(struct datapath *dp,
+                          struct ovsrec_datapath *dp_cfg)
+{
+    struct smap_node *node;
+    struct smap cap;
+
+    smap_init(&cap);
+    ofproto_get_datapath_cap(dp->type, &cap);
+
+    SMAP_FOR_EACH (node, &cap) {
+        ovsrec_datapath_update_capabilities_setkey(dp_cfg, node->key,
+                                                   node->value);
+    }
+    smap_destroy(&cap);
+}
+
+static void
 datapath_reconfigure(const struct ovsrec_open_vswitch *cfg)
 {
     struct datapath *dp, *next;
@@ -798,6 +820,7 @@ datapath_reconfigure(const struct ovsrec_open_vswitch *cfg)
         if (!dp) {
             //创建不存在的datapath
             dp = datapath_create(dp_name);
+            dp_capability_reconfigure(dp, dp_cfg);
         }
         dp->last_used = idl_seqno;
         ct_zones_reconfigure(dp, dp_cfg);
@@ -3714,20 +3737,27 @@ bridge_lookup(const char *name)
 /* Handle requests for a listing of all flows known by the OpenFlow
  * stack, including those normally hidden. */
 static void
-bridge_unixctl_dump_flows(struct unixctl_conn *conn, int argc OVS_UNUSED,
+bridge_unixctl_dump_flows(struct unixctl_conn *conn, int argc,
                           const char *argv[], void *aux OVS_UNUSED)
 {
     struct bridge *br;
     struct ds results;
 
-    br = bridge_lookup(argv[1]);
+    br = bridge_lookup(argv[argc - 1]);
     if (!br) {
         unixctl_command_reply_error(conn, "Unknown bridge");
         return;
     }
 
+    bool offload_stats = false;
+    for (int i = 1; i < argc - 1; i++) {
+        if (!strcmp(argv[i], "--offload-stats")) {
+            offload_stats = true;
+        }
+    }
+
     ds_init(&results);
-    ofproto_get_all_flows(br->ofproto, &results);
+    ofproto_get_all_flows(br->ofproto, &results, offload_stats);
 
     unixctl_command_reply(conn, ds_cstr(&results));
     ds_destroy(&results);

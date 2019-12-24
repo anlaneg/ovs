@@ -237,6 +237,7 @@ struct upcall {
     ofp_port_t ofp_in_port;        /* OpenFlow in port, or OFPP_NONE. */
     uint16_t mru;                  /* If !0, Maximum receive unit of
                                       fragmented IP packet */
+    uint64_t hash;
 
     enum upcall_type type;         /* Type of the upcall. */
     const struct nlattr *actions;  /* Flow actions in DPIF_UC_ACTION Upcalls. */
@@ -849,7 +850,7 @@ recv_upcalls(struct handler *handler)
         struct dpif_upcall *dupcall = &dupcalls[n_upcalls];
         struct upcall *upcall = &upcalls[n_upcalls];
         struct flow *flow = &flows[n_upcalls];
-        unsigned int mru;
+        unsigned int mru = 0;
         int error;
 
         //为recv_buf准备内存，初始化
@@ -872,8 +873,10 @@ recv_upcalls(struct handler *handler)
 
         if (dupcall->mru) {
             mru = nl_attr_get_u16(dupcall->mru);
-        } else {
-            mru = 0;
+        }
+
+        if (dupcall->hash) {
+            upcall->hash = nl_attr_get_u64(dupcall->hash);
         }
 
         //upcall 初始化（依据flow确定对应的datapath,in_port)，指明pmd为NULL
@@ -1739,6 +1742,7 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
             op->dop.execute.needs_help = (upcall->xout.slow & SLOW_ACTION) != 0;
             op->dop.execute.probe = false;
             op->dop.execute.mtu = upcall->mru;
+            op->dop.execute.hash = upcall->hash;
         }
     }
 
@@ -1948,7 +1952,7 @@ ukey_create_from_dpif_flow(const struct udpif *udpif,
 
     //创建ukey
     reval_seq = seq_read(udpif->reval_seq) - 1; /* Ensure revalidation. */
-    ofpbuf_use_const(&actions, &flow->actions, flow->actions_len);
+    ofpbuf_use_const(&actions, flow->actions, flow->actions_len);
     *ukey = ukey_create__(flow->key, flow->key_len,
                           flow->mask, flow->mask_len, flow->ufid_present,
                           &flow->ufid, flow->pmd_id, &actions,
@@ -2426,7 +2430,7 @@ static enum reval_result
 revalidate_ukey(struct udpif *udpif, struct udpif_key *ukey,
                 const struct dpif_flow_stats *stats,
                 struct ofpbuf *odp_actions, uint64_t reval_seq,
-                struct recirc_refs *recircs)
+                struct recirc_refs *recircs, bool offloaded)
     OVS_REQUIRES(ukey->mutex)
 {
 	//如果上一次reval的seq与本次不相同，则需要revalidate
@@ -2462,7 +2466,7 @@ revalidate_ukey(struct udpif *udpif, struct udpif_key *ukey,
 
     /* Stats for deleted flows will be attributed upon flow deletion. Skip. */
     if (result != UKEY_DELETE) {
-        xlate_push_stats(ukey->xcache, &push);
+        xlate_push_stats(ukey->xcache, &push, offloaded);
         ukey->stats = *stats;
         ukey->reval_seq = reval_seq;
     }
@@ -2575,7 +2579,7 @@ push_dp_ops(struct udpif *udpif, struct ukey_op *ops, size_t n_ops)
             if (op->ukey) {
                 ovs_mutex_lock(&op->ukey->mutex);
                 if (op->ukey->xcache) {
-                    xlate_push_stats(op->ukey->xcache, push);
+                    xlate_push_stats(op->ukey->xcache, push, false);
                     ovs_mutex_unlock(&op->ukey->mutex);
                     continue;
                 }
@@ -2866,7 +2870,8 @@ revalidate(struct revalidator *revalidator)
                 result = UKEY_DELETE;
             } else {
                 result = revalidate_ukey(udpif, ukey, &f->stats, &odp_actions,
-                                         reval_seq/*reval时的seq*/, &recircs);
+                                         reval_seq/*reval时的seq*/, &recircs,
+                                         f->attrs.offloaded);
             }
             ukey->dump_seq = dump_seq;
 
@@ -2958,7 +2963,7 @@ revalidator_sweep__(struct revalidator *revalidator, bool purge)
                     COVERAGE_INC(revalidate_missed_dp_flow);
                     memset(&stats, 0, sizeof stats);
                     result = revalidate_ukey(udpif, ukey, &stats, &odp_actions,
-                                             reval_seq, &recircs);
+                                             reval_seq, &recircs, false);
                 }
                 if (result != UKEY_KEEP) {
                     /* Clears 'recircs' if filled by revalidate_ukey(). */

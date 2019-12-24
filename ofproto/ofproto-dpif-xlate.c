@@ -3183,6 +3183,13 @@ xlate_normal(struct xlate_ctx *ctx)
         //这样这里的转发就能将报文送到三层去。
         if (mac_port) {
             struct xbundle *mac_xbundle = xbundle_lookup(ctx->xcfg, mac_port);
+
+            if (mac_xbundle && xbundle_mirror_out(ctx->xbridge, mac_xbundle)) {
+                xlate_report(ctx, OFT_WARN,
+                             "learned port is a mirror port, dropping");
+                return;
+            }
+
             if (mac_xbundle
                 && mac_xbundle != in_xbundle
                 && mac_xbundle->ofbundle != in_xbundle->ofbundle) {
@@ -3784,7 +3791,7 @@ native_tunnel_output(struct xlate_ctx *ctx, const struct xport *xport,
          */
         if (backup_resubmit_stats) {
             struct dpif_flow_stats stats = *backup_resubmit_stats;
-            xlate_push_stats(ctx->xin->xcache, &stats);
+            xlate_push_stats(ctx->xin->xcache, &stats, false);
         }
         xlate_cache_steal_entries(backup_xcache, ctx->xin->xcache);
 
@@ -4372,7 +4379,7 @@ xlate_recursively(struct xlate_ctx *ctx, struct rule_dpif *rule,
     const struct rule_actions *actions;
 
     if (ctx->xin->resubmit_stats) {
-        rule_dpif_credit_stats(rule, ctx->xin->resubmit_stats);
+        rule_dpif_credit_stats(rule, ctx->xin->resubmit_stats, false);
     }
 
     ctx->resubmits++;
@@ -4483,6 +4490,7 @@ xlate_table_action(struct xlate_ctx *ctx, ofp_port_t in_port, uint8_t table_id,
                 !is_ip_any(&ctx->xin->flow)) {
                 xlate_report_error(ctx,
                                    "resubmit(ct) with non-tracked or non-IP packet!");
+                ctx->table_id = old_table_id;
                 return;
             }
             tuple_swap(&ctx->xin->flow, ctx->wc);
@@ -4587,11 +4595,11 @@ xlate_group_bucket(struct xlate_ctx *ctx, struct ofputil_bucket *bucket,
      *
      * Note that group buckets are action sets, hence they cannot modify the
      * main action set.  Also any stack actions are ignored when executing an
-     * action set, so group buckets cannot change the stack either.
+     * action set, so group buckets cannot directly change the stack either.
      * However, we do allow resubmit actions in group buckets, which could
-     * break the above assumptions.  It is up to the controller to not mess up
-     * with the action_set and stack in the tables resubmitted to from
-     * group buckets. */
+     * recursively execute actions that do modify the action set or change the
+     * stack.  The controller must be careful about what it does to the
+     * action_set and stack in the tables resubmitted to from group buckets. */
     ctx->xin->flow = old_flow;//还原flow
 
     /* The group bucket popping MPLS should have no effect after bucket
@@ -7805,7 +7813,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
             ctx.xin->resubmit_stats, &ctx.table_id,
             flow->in_port.ofp_port, true, true, ctx.xin->xcache);
         if (ctx.xin->resubmit_stats) {
-            rule_dpif_credit_stats(ctx.rule, ctx.xin->resubmit_stats);
+            rule_dpif_credit_stats(ctx.rule, ctx.xin->resubmit_stats, false);
         }
 
         //记录查询到的规则

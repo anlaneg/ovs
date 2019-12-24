@@ -68,7 +68,7 @@ struct netdev {
      * Minimally, the sequence number is required to change whenever
      * 'netdev''s flags, features, ethernet address, or carrier changes. */
     //netdev的变更序号，用于指定设备变更
-    uint64_t change_seq;
+    atomic_uint64_t change_seq;
 
     /* A netdev provider might be unable to change some of the device's
      * parameter (n_rxq, mtu) when the device is in use.  In this case
@@ -100,13 +100,18 @@ struct netdev {
 static inline void
 netdev_change_seq_changed(const struct netdev *netdev_)
 {
+    uint64_t change_seq;
     struct netdev *netdev = CONST_CAST(struct netdev *, netdev_);
     seq_change(connectivity_seq_get());
-    netdev->change_seq++;
-    if (!netdev->change_seq) {
-    		//跳过0
-        netdev->change_seq++;
+
+    atomic_read_relaxed(&netdev->change_seq, &change_seq);
+    change_seq++;
+    if (OVS_UNLIKELY(!change_seq)) {
+    	//跳过0
+        change_seq++;
     }
+    atomic_store_explicit(&netdev->change_seq, change_seq,
+                          memory_order_release);
 }
 
 static inline void
