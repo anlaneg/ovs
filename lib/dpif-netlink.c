@@ -111,6 +111,8 @@ static int dpif_netlink_dp_transact(const struct dpif_netlink_dp *request,
 static int dpif_netlink_dp_get(const struct dpif *,
                                struct dpif_netlink_dp *reply,
                                struct ofpbuf **bufp);
+static int
+dpif_netlink_set_features(struct dpif *dpif_, uint32_t new_features);
 
 struct dpif_netlink_flow {
     /* Generic Netlink header. */
@@ -202,6 +204,7 @@ struct dpif_handler {
 struct dpif_netlink {
     struct dpif dpif;//基类
     int dp_ifindex;//datapath对应的ifindex
+    uint32_t user_features;
 
     /* Upcall messages. */
     struct fat_rwlock upcall_lock;//用于upcall互斥，配置加写锁，转发加读锁
@@ -349,17 +352,28 @@ dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name/*�
 
     /* Create or look up datapath. */
     dpif_netlink_dp_init(&dp_request);
+    upcall_pid = 0;
+    dp_request.upcall_pid = &upcall_pid;
+    dp_request.name = name;
+
     if (create) {
     		//发送datapath创建命令
         dp_request.cmd = OVS_DP_CMD_NEW;
-        upcall_pid = 0;
-        dp_request.upcall_pid = &upcall_pid;
     } else {
-    		//发送datapath更新命令
+        dp_request.cmd = OVS_DP_CMD_GET;
+
+        error = dpif_netlink_dp_transact(&dp_request, &dp, &buf);
+        if (error) {
+            return error;
+        }
+        dp_request.user_features = dp.user_features;
+        ofpbuf_delete(buf);
+
+	//发送datapath更新命令
         /* Use OVS_DP_CMD_SET to report user features */
         dp_request.cmd = OVS_DP_CMD_SET;
     }
-    dp_request.name = name;
+
     dp_request.user_features |= OVS_DP_F_UNALIGNED;
     dp_request.user_features |= OVS_DP_F_VPORT_PIDS;
     error = dpif_netlink_dp_transact(&dp_request, &dp, &buf);
@@ -369,7 +383,9 @@ dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name/*�
 
     //向kernel发送创建datapath成功，构造dpifp
     error = open_dpif(&dp, dpifp);
+    dpif_netlink_set_features(*dpifp, OVS_DP_F_TC_RECIRC_SHARING);
     ofpbuf_delete(buf);
+
     return error;
 }
 
@@ -386,6 +402,7 @@ open_dpif(const struct dpif_netlink_dp *dp, struct dpif **dpifp)
               dp->dp_ifindex, dp->dp_ifindex);
 
     dpif->dp_ifindex = dp->dp_ifindex;
+    dpif->user_features = dp->user_features;
     *dpifp = &dpif->dpif;
 
     return 0;
@@ -681,6 +698,31 @@ dpif_netlink_get_stats(const struct dpif *dpif_, struct dpif_dp_stats *stats)
         }
         ofpbuf_delete(buf);
     }
+    return error;
+}
+
+static int
+dpif_netlink_set_features(struct dpif *dpif_, uint32_t new_features)
+{
+    struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
+    struct dpif_netlink_dp request, reply;
+    struct ofpbuf *bufp;
+    int error;
+
+    dpif_netlink_dp_init(&request);
+    request.cmd = OVS_DP_CMD_SET;
+    request.dp_ifindex = dpif->dp_ifindex;
+    request.user_features = dpif->user_features | new_features;
+
+    error = dpif_netlink_dp_transact(&request, &reply, &bufp);
+    if (!error) {
+        dpif->user_features = reply.user_features;
+        ofpbuf_delete(bufp);
+        if (!(dpif->user_features & new_features)) {
+            return -EOPNOTSUPP;
+        }
+    }
+
     return error;
 }
 
@@ -1660,6 +1702,11 @@ dpif_netlink_netdev_match_to_dpif_flow(struct match *match,
         .mask = &match->wc.masks,
         .support = {
             .max_vlan_headers = 2,
+            .recirc = true,
+            .ct_state = true,
+            .ct_zone = true,
+            .ct_mark = true,
+            .ct_label = true,
         },
     };
     size_t offset;
@@ -2117,7 +2164,8 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
     info.dpif_class = dpif_class;
     info.tp_dst_port = dst_port;
     info.tunnel_csum_on = csum_on;
-
+    info.recirc_id_shared_with_tc = (dpif->user_features
+                                     & OVS_DP_F_TC_RECIRC_SHARING);
     //向硬件下发flow
     err = netdev_flow_put(dev, &match,
                           CONST_CAST(struct nlattr *, put->actions),
@@ -4001,6 +4049,7 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_run,
     NULL,                       /* wait */
     dpif_netlink_get_stats,
+    dpif_netlink_set_features,
     dpif_netlink_port_add,//接口创建
     dpif_netlink_port_del,
     NULL,                       /* port_set_config */
@@ -4329,6 +4378,9 @@ dpif_netlink_dp_from_ofpbuf(struct dpif_netlink_dp *dp/*出参，解析buf获得
         [OVS_DP_ATTR_MEGAFLOW_STATS] = {
                         NL_POLICY_FOR(struct ovs_dp_megaflow_stats),
                         .optional = true },
+        [OVS_DP_ATTR_USER_FEATURES] = {
+                        .type = NL_A_U32,
+                        .optional = true },
     };
 
     //清空dp,准备填充
@@ -4359,6 +4411,10 @@ dpif_netlink_dp_from_ofpbuf(struct dpif_netlink_dp *dp/*出参，解析buf获得
 
     if (a[OVS_DP_ATTR_MEGAFLOW_STATS]) {
         dp->megaflow_stats = nl_attr_get(a[OVS_DP_ATTR_MEGAFLOW_STATS]);
+    }
+
+    if (a[OVS_DP_ATTR_USER_FEATURES]) {
+        dp->user_features = nl_attr_get_u32(a[OVS_DP_ATTR_USER_FEATURES]);
     }
 
     return 0;

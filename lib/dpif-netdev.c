@@ -7928,6 +7928,7 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_run,//netdev类型的周期性工作(run函数）
     dpif_netdev_wait,
     dpif_netdev_get_stats,
+    NULL,                      /* set_features */
     dpif_netdev_port_add,//netdev类的port添加
     dpif_netdev_port_del,
     dpif_netdev_port_set_config,
