@@ -3569,6 +3569,7 @@ dpif_netdev_flow_put(struct dpif *dpif, const struct dpif_flow_put *put)
     return error;
 }
 
+//自pmd上删除指定flow
 static int
 flow_del_on_pmd(struct dp_netdev_pmd_thread *pmd,
                 struct dpif_flow_stats *stats,

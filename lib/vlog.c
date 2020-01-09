@@ -1341,6 +1341,7 @@ vlog_should_drop(const struct vlog_module *module, enum vlog_level level,
         rl->n_dropped = 0;
         ovs_mutex_unlock(&rl->mutex);
 
+        //指明下面的日志丢包好多次
         vlog(module, level,
              "Dropped %u log messages in last %u seconds (most recently, "
              "%u seconds ago) due to excessive rate",

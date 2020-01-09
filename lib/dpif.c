@@ -1137,6 +1137,7 @@ struct dpif_flow_dump *
 dpif_flow_dump_create(const struct dpif *dpif, bool terse,
                       struct dpif_flow_dump_types *types)
 {
+    //创建flow_dump对象
     return dpif->dpif_class->flow_dump_create(dpif, terse, types);
 }
 
@@ -1195,8 +1196,10 @@ dpif_flow_dump_next(struct dpif_flow_dump_thread *thread,
     int n;
 
     ovs_assert(max_flows > 0);
+    /*dump最多max_flows条flow*/
     n = dpif->dpif_class->flow_dump_next(thread, flows, max_flows);
     if (n > 0) {
+        /*获得n条flow*/
         struct dpif_flow *f;
 
         for (f = flows; f < &flows[n]

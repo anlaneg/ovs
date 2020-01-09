@@ -54,10 +54,10 @@ enum hw_info_type {
 };
 
 struct netdev_flow_dump {
-    struct netdev *netdev;
-    odp_port_t port;
+    struct netdev *netdev;//dump对应的netdev设备
+    odp_port_t port;//dump对应的port
     bool terse;
-    struct nl_dump *nl_dump;
+    struct nl_dump *nl_dump;/*netlink dump上下文*/
 };
 
 /* Flow offloading. */

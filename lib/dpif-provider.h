@@ -56,13 +56,14 @@ static inline void dpif_assert_class(const struct dpif *dpif,
 }
 
 struct dpif_flow_dump {
-    struct dpif *dpif;
+    struct dpif *dpif;/*对应的datapath interface*/
     bool terse;         /* If true, key/mask/actions may be omitted. */
 };
 
 static inline void
 dpif_flow_dump_init(struct dpif_flow_dump *dump, const struct dpif *dpif)
 {
+    /*设置datapath interface*/
     dump->dpif = CONST_CAST(struct dpif *, dpif);
 }
 

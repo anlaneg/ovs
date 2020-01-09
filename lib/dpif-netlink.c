@@ -1465,7 +1465,9 @@ struct dpif_netlink_flow_dump {
     struct dpif_flow_dump up;
     struct nl_dump nl_dump;
     atomic_int status;
+    //针对每个port创建一组netdev的dumps
     struct netdev_flow_dump **netdev_dumps;
+    //指出netdev_dumps指针数组大小
     int netdev_dumps_num;                    /* Number of netdev_flow_dumps */
     struct ovs_mutex netdev_lock;            /* Guards the following. */
     int netdev_current_dump OVS_GUARDED;     /* Shared current dump */
@@ -1503,7 +1505,7 @@ dpif_netlink_populate_flow_dump_types(struct dpif_netlink_flow_dump *dump,
                                       struct dpif_flow_dump_types *types)
 {
     if (!types) {
-    		//如果未指定type,则全为true
+    	//如果未指定type,则全为true
         dump->types.ovs_flows = true;
         dump->types.netdev_flows = true;
     } else {
@@ -1511,11 +1513,12 @@ dpif_netlink_populate_flow_dump_types(struct dpif_netlink_flow_dump *dump,
     }
 }
 
-//创建flow dump全局上下文
+//创建kernel datapath flow dump全局上下文
 static struct dpif_flow_dump *
 dpif_netlink_flow_dump_create(const struct dpif *dpif_, bool terse,
                               struct dpif_flow_dump_types *types)
 {
+    //取kernel datapath接口
     const struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
     struct dpif_netlink_flow_dump *dump;
     struct dpif_netlink_flow request;
@@ -1527,7 +1530,7 @@ dpif_netlink_flow_dump_create(const struct dpif *dpif_, bool terse,
     dpif_netlink_populate_flow_dump_types(dump, types);
 
     if (dump->types.ovs_flows) {
-    		//执行kernel datapath流表dump请求
+    	//执行kernel datapath流表dump请求
         dpif_netlink_flow_init(&request);
         request.cmd = OVS_FLOW_CMD_GET;
         //datapath对应的ifindex
@@ -1747,7 +1750,7 @@ dpif_netlink_netdev_match_to_dpif_flow(struct match *match,
 //获取下一组flow
 static int
 dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
-                            struct dpif_flow *flows, int max_flows)
+                            struct dpif_flow *flows/*可填充的buffer*/, int max_flows/*最大的flows*/)
 {
     struct dpif_netlink_flow_dump_thread *thread
         = dpif_netlink_flow_dump_thread_cast(thread_);
@@ -4063,7 +4066,7 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_port_poll,
     dpif_netlink_port_poll_wait,
     dpif_netlink_flow_flush,
-	//datapath流dump
+	//kernel datapath流dump
     dpif_netlink_flow_dump_create,
     dpif_netlink_flow_dump_destroy,
     dpif_netlink_flow_dump_thread_create,

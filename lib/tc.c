@@ -202,7 +202,7 @@ tc_make_request(int ifindex, int type, unsigned int flags,
 }
 
 static void request_from_tcf_id(struct tcf_id *id, uint16_t eth_type,
-                                int type, unsigned int flags,
+                                int type/*tc消息类型*/, unsigned int flags,
                                 struct ofpbuf *request)
 {
     int ifindex = id->block_id ? TCM_IFINDEX_MAGIC_BLOCK : id->ifindex;
@@ -1791,11 +1791,13 @@ parse_netlink_to_tc_flower(struct ofpbuf *reply, struct tcf_id *id,
     return nl_parse_flower_options(ta[TCA_OPTIONS], flower);
 }
 
+//构造tfilter dump请求，并向kernel发送
 int
 tc_dump_flower_start(struct tcf_id *id, struct nl_dump *dump)
 {
     struct ofpbuf request;
 
+    //构造filter dump请求
     request_from_tcf_id(id, 0, RTM_GETTFILTER, NLM_F_DUMP, &request);
     nl_dump_start(dump, NETLINK_ROUTE, &request);
     ofpbuf_uninit(&request);
@@ -1808,6 +1810,7 @@ tc_del_filter(struct tcf_id *id)
 {
     struct ofpbuf request;
 
+    //构造filter删除消息头
     request_from_tcf_id(id, 0, RTM_DELTFILTER, NLM_F_ACK, &request);
     return tc_transact(&request, NULL);
 }

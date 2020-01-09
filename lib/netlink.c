@@ -564,6 +564,7 @@ nl_msg_next(struct ofpbuf *buffer, struct ofpbuf *msg)
     if (buffer->size >= sizeof(struct nlmsghdr)) {
         struct nlmsghdr *nlmsghdr = nl_msg_nlmsghdr(buffer);
         size_t len = nlmsghdr->nlmsg_len;
+        /*校验len，只有有效，则返回nlmsghdr*/
         if (len >= sizeof *nlmsghdr && len <= buffer->size) {
             ofpbuf_use_const(msg, nlmsghdr, len);
             ofpbuf_pull(buffer, len);

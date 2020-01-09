@@ -1038,8 +1038,11 @@ dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 
     ds_init(&ds);
     memset(&f, 0, sizeof f);
+    /*创建flow dump*/
     flow_dump = dpif_flow_dump_create(dpif, false, &dpif_dump_types);
+    /*创建当前线程的flow_dump*/
     flow_dump_thread = dpif_flow_dump_thread_create(flow_dump);
+    /*获取一个flow*/
     while (dpif_flow_dump_next(flow_dump_thread, &f, 1)) {
         if (filter) {
             struct flow flow;

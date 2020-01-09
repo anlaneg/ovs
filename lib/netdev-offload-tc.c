@@ -388,6 +388,7 @@ netdev_tc_flow_dump_create(struct netdev *netdev,
     int prio = 0;
     int ifindex;
 
+    //取此netdev对应的ifindex
     ifindex = netdev_get_ifindex(netdev);
     if (ifindex < 0) {
         VLOG_ERR_RL(&error_rl, "dump_create: failed to get ifindex for %s: %s",
@@ -400,6 +401,7 @@ netdev_tc_flow_dump_create(struct netdev *netdev,
     dump->nl_dump = xzalloc(sizeof *dump->nl_dump);
     dump->netdev = netdev_ref(netdev);
 
+    //构造tc filter的id
     id = tc_make_tcf_id(ifindex, block_id, prio, hook);
     tc_dump_flower_start(&id, dump->nl_dump);
 
@@ -915,6 +917,7 @@ netdev_tc_flow_dump_next(struct netdev_flow_dump *dump,
                         0, /* prio */
                         get_tc_qdisc_hook(netdev));
 
+    //自netlink中获得dump中的nl_flow
     while (nl_dump_next(dump->nl_dump, &nl_flow, rbuffer)) {
         struct tc_flower flower;
 

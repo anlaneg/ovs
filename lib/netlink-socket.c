@@ -1190,6 +1190,7 @@ nl_dump_start(struct nl_dump *dump, int protocol, const struct ofpbuf *request)
 
     ovs_mutex_init(&dump->mutex);
     ovs_mutex_lock(&dump->mutex);
+    //创建或者取protocol对应的socket
     dump->status = nl_pool_alloc(protocol, &dump->sock);
     if (!dump->status) {
         dump->status = nl_sock_send__(dump->sock, request,

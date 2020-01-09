@@ -429,8 +429,9 @@ netdev_ports_flow_flush(const struct dpif_class *dpif_class)
     ovs_rwlock_unlock(&netdev_hmap_rwlock);
 }
 
+//针对每个port创建一组dump,并返回（port需要为dpif_class类型）
 struct netdev_flow_dump **
-netdev_ports_flow_dump_create(const struct dpif_class *dpif_class, int *ports)
+netdev_ports_flow_dump_create(const struct dpif_class *dpif_class, int *ports/*出参，dumps数组长度（与port数相等）*/)
 {
     struct port_to_netdev_data *data;
     struct netdev_flow_dump **dumps;
@@ -438,14 +439,17 @@ netdev_ports_flow_dump_create(const struct dpif_class *dpif_class, int *ports)
     int i = 0;
 
     ovs_rwlock_rdlock(&netdev_hmap_rwlock);
+    //计算有多少个port(需要为指定的datapath)
     HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
         if (data->dpif_class == dpif_class) {
             count++;
         }
     }
 
+    //针对每个port申请一个dumps
     dumps = count ? xzalloc(sizeof *dumps * count) : NULL;
 
+    //针对每个port创建一个dump
     HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
         if (data->dpif_class == dpif_class) {
             if (netdev_flow_dump_create(data->netdev, &dumps[i])) {

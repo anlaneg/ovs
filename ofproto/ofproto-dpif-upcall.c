@@ -1071,19 +1071,21 @@ udpif_revalidator(void *arg)
             duration = MAX(time_msec() - start_time, 1);
             udpif->dump_duration = duration;
 
-            //更新flow_limit（没看懂？？？）
             if (duration > 2000) {
+                //如果执行完，用时超过2S,则flow_limit更新为大约1S可执行完的量
                 flow_limit /= duration / 1000;
             } else if (duration > 1300) {
+                //如果执行完，用时超过1.3S,则flow_limit更新为大约1S可执行的量
                 flow_limit = flow_limit * 3 / 4;
             } else if (duration < 1000 &&
                        flow_limit < n_flows * 1000 / duration) {
+                //如果执行完,用时小于1S,且flow_limit小于每秒理论值
                 flow_limit += 1000;
             }
             flow_limit = MIN(ofproto_flow_limit, MAX(flow_limit, 1000));
             atomic_store_relaxed(&udpif->flow_limit, flow_limit);
 
-            //dump flow时间大于2S，告警
+            //dump flow时间大于2S，告警，此时需要增加revalidtor线程数量
             if (duration > 2000) {
                 VLOG_INFO("Spent an unreasonably long %lldms dumping flows",
                           duration);
@@ -2813,7 +2815,7 @@ revalidate(struct revalidator *revalidator)
 
         udpif->dpif->current_ms = time_msec();
         for (f = flows; f < &flows[n_dumped]; f++) {
-        		//流的上次使用时间
+        	//流的上次使用时间
             long long int used = f->stats.used;
             struct recirc_refs recircs = RECIRC_REFS_EMPTY_INITIALIZER;
             enum reval_result result;
@@ -2862,11 +2864,12 @@ revalidate(struct revalidator *revalidator)
             }
 
             if (!used) {
-            		//流创建的时间
+            	//流创建的时间
                 used = ukey->created;
             }
+
             if (kill_them_all || (used && used < now - max_idle)) {
-            		//删除所有流或者上次使用已超过max_idle,则删除
+            	//删除所有流或者上次使用已超过max_idle,则删除
                 result = UKEY_DELETE;
             } else {
                 result = revalidate_ukey(udpif, ukey, &f->stats, &odp_actions,
@@ -2877,7 +2880,7 @@ revalidate(struct revalidator *revalidator)
 
             if (netdev_is_offload_rebalance_policy_enabled() &&
                 result != UKEY_DELETE) {
-            		//计算flow的pps
+            	//计算flow的pps
                 udpif_update_flow_pps(udpif, ukey, f);
             }
 
