@@ -378,14 +378,14 @@ AC_DEFUN([OVS_CHECK_DPDK], [
 
     AC_CHECK_DECL([RTE_LIBRTE_MLX5_PMD], [dnl found
       OVS_FIND_DEPENDENCY([mnl_attr_put], [mnl], [libmnl])
-      AC_CHECK_DECL([RTE_LIBRTE_MLX5_DLOPEN_DEPS], [], [dnl not found
+      AC_CHECK_DECL([RTE_IBVERBS_LINK_DLOPEN], [], [dnl not found
         OVS_FIND_DEPENDENCY([mlx5dv_create_wq], [mlx5], [libmlx5])
         OVS_FIND_DEPENDENCY([verbs_init_cq], [ibverbs], [libibverbs])
       ], [[#include <rte_config.h>]])
     ], [], [[#include <rte_config.h>]])
 
     AC_CHECK_DECL([RTE_LIBRTE_MLX4_PMD], [dnl found
-      AC_CHECK_DECL([RTE_LIBRTE_MLX4_DLOPEN_DEPS], [], [dnl not found
+      AC_CHECK_DECL([RTE_IBVERBS_LINK_DLOPEN], [], [dnl not found
         OVS_FIND_DEPENDENCY([mlx4dv_init_obj], [mlx4], [libmlx4])
         OVS_FIND_DEPENDENCY([verbs_init_cq], [ibverbs], [libibverbs])
       ], [[#include <rte_config.h>]])
@@ -1065,6 +1065,8 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
                   [OVS_DEFINE([HAVE_IP_GRE_CALC_HLEN])])
   OVS_GREP_IFELSE([$KSRC/include/linux/rbtree.h], [rb_link_node_rcu],
                   [OVS_DEFINE([HAVE_RBTREE_RB_LINK_NODE_RCU])])
+  OVS_GREP_IFELSE([$KSRC/include/net/dst_ops.h], [bool confirm_neigh],
+                  [OVS_DEFINE([HAVE_DST_OPS_CONFIRM_NEIGH])])
 
   if cmp -s datapath/linux/kcompat.h.new \
             datapath/linux/kcompat.h >/dev/null 2>&1; then

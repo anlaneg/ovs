@@ -851,6 +851,7 @@ recv_upcalls(struct handler *handler)
         struct upcall *upcall = &upcalls[n_upcalls];
         struct flow *flow = &flows[n_upcalls];
         unsigned int mru = 0;
+        uint64_t hash = 0;
         int error;
 
         //为recv_buf准备内存，初始化
@@ -876,7 +877,7 @@ recv_upcalls(struct handler *handler)
         }
 
         if (dupcall->hash) {
-            upcall->hash = nl_attr_get_u64(dupcall->hash);
+            hash = nl_attr_get_u64(dupcall->hash);
         }
 
         //upcall 初始化（依据flow确定对应的datapath,in_port)，指明pmd为NULL
@@ -901,6 +902,7 @@ recv_upcalls(struct handler *handler)
         upcall->key = dupcall->key;
         upcall->key_len = dupcall->key_len;
         upcall->ufid = &dupcall->ufid;//这句是多余的
+        upcall->hash = hash;
 
         upcall->out_tun_key = dupcall->out_tun_key;
         upcall->actions = dupcall->actions;

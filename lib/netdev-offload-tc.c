@@ -1409,10 +1409,10 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
     const struct flow_tnl *tnl = &match->flow.tunnel;
     const struct flow_tnl *tnl_mask = &mask->tunnel;
     struct tc_action *action;
+    bool recirc_act = false;
     uint32_t block_id = 0;
     struct nlattr *nla;
     struct tcf_id id;
-    bool recirc_act;
     uint32_t chain;
     size_t left;
     int prio = 0;
@@ -1701,6 +1701,10 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
             odp_port_t port = nl_attr_get_odp_port(nla);
             struct netdev *outdev = netdev_ports_get(port, info->dpif_class);
 
+            if (!outdev) {
+                VLOG_DBG_RL(&rl, "Can't find netdev for output port %d", port);
+                return ENODEV;
+            }
             //生成action
             action->out.ifindex_out = netdev_get_ifindex(outdev);
             action->out.ingress = is_internal_port(netdev_get_type(outdev));

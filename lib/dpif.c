@@ -961,23 +961,6 @@ dpif_flow_stats_format(const struct dpif_flow_stats *stats, struct ds *s)
     }
 }
 
-/* Places the hash of the 'key_len' bytes starting at 'key' into '*hash'. */
-//依key计算为hash值
-void
-dpif_flow_hash(const struct dpif *dpif OVS_UNUSED,
-               const void *key, size_t key_len, ovs_u128 *hash)
-{
-    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
-    static uint32_t secret;//安全码
-
-    if (ovsthread_once_start(&once)) {
-        secret = random_uint32();
-        ovsthread_once_done(&once);
-    }
-    hash_bytes128(key, key_len, secret, hash);//取key的hash
-    uuid_set_bits_v4((struct uuid *)hash);//指明此值为uuid
-}
-
 /* Deletes all flows from 'dpif'.  Returns 0 if successful, otherwise a
  * positive errno value.  */
 int
@@ -1340,6 +1323,7 @@ dpif_execute_helper_cb(void *aux_, struct dp_packet_batch *packets_,
     case OVS_ACTION_ATTR_CT_CLEAR:
     case OVS_ACTION_ATTR_UNSPEC:
     case OVS_ACTION_ATTR_CHECK_PKT_LEN:
+    case OVS_ACTION_ATTR_DROP:
     case __OVS_ACTION_ATTR_MAX:
         OVS_NOT_REACHED();
     }
@@ -1966,6 +1950,12 @@ log_flow_get_message(const struct dpif *dpif,
 
 bool
 dpif_supports_tnl_push_pop(const struct dpif *dpif)
+{
+    return dpif_is_netdev(dpif);
+}
+
+bool
+dpif_supports_explicit_drop_action(const struct dpif *dpif)
 {
     return dpif_is_netdev(dpif);
 }
