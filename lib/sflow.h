@@ -305,7 +305,7 @@ enum SFLFlow_type_tag {
 
 typedef union _SFLFlow_type {
     SFLSampled_header header;
-    SFLSampled_ethernet ethernet;
+    SFLSampled_ethernet ethernet;//以太头信息
     SFLSampled_ipv4 ipv4;
     SFLSampled_ipv6 ipv6;
     SFLExtended_switch sw;
@@ -369,6 +369,7 @@ typedef struct _SFLFlow_sample {
 				       an unknown number of
 				       interfaces greater than 1.*/
     u_int32_t num_elements;
+    //要采样的tag
     SFLFlow_sample_element *elements;
 } SFLFlow_sample;
 

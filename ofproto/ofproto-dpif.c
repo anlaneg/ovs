@@ -1903,6 +1903,8 @@ run(struct ofproto *ofproto_)
     if (ofproto->netflow) {
         netflow_run(ofproto->netflow);
     }
+
+    //sflow运行
     if (ofproto->sflow) {
         dpif_sflow_run(ofproto->sflow);
     }

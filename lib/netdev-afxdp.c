@@ -141,10 +141,10 @@ static struct ovs_list unused_pools OVS_GUARDED_BY(unused_pools_mutex) =
     OVS_LIST_INITIALIZER(&unused_pools);
 
 struct xsk_umem_info {
-    struct umem_pool mpool;
-    struct xpacket_pool xpool;
-    struct xsk_ring_prod fq;
-    struct xsk_ring_cons cq;
+    struct umem_pool mpool;/*buffer池*/
+    struct xpacket_pool xpool;/*buffer对应的metadata池*/
+    struct xsk_ring_prod fq;/*fill队列*/
+    struct xsk_ring_cons cq;/*complete队列*/
     struct xsk_umem *umem;
     void *buffer;
 };
@@ -266,11 +266,14 @@ xsk_configure_umem(void *buffer, uint64_t size)
     umem = xzalloc(sizeof *umem);
 
     memset(&uconfig, 0, sizeof uconfig);
+    /*队列长度*/
     uconfig.fill_size = PROD_NUM_DESCS;
     uconfig.comp_size = CONS_NUM_DESCS;
+    /*帧大小*/
     uconfig.frame_size = FRAME_SIZE;
     uconfig.frame_headroom = OVS_XDP_HEADROOM;
 
+    /*注册umem,创建fill队列，complete队列*/
     ret = xsk_umem__create(&umem->umem, buffer, size, &umem->fq, &umem->cq,
                            &uconfig);
     if (ret) {
@@ -291,6 +294,7 @@ xsk_configure_umem(void *buffer, uint64_t size)
         return NULL;
     }
 
+    /*将umem中的每个buffer入队到mpool中*/
     for (i = NUM_FRAMES - 1; i >= 0; i--) {
         void *elem;
 
@@ -314,6 +318,7 @@ xsk_configure_umem(void *buffer, uint64_t size)
               (char *)umem->xpool.array +
               NUM_FRAMES * sizeof(struct dp_packet_afxdp));
 
+    //初始化xpacket(元数据）
     for (i = NUM_FRAMES - 1; i >= 0; i--) {
         struct dp_packet_afxdp *xpacket;
         struct dp_packet *packet;
@@ -354,6 +359,7 @@ xsk_configure_socket(struct xsk_umem_info *umem, uint32_t ifindex,
     }
 #endif
 
+    //取接口名称
     if (if_indextoname(ifindex, devname) == NULL) {
         VLOG_ERR("ifindex %d to devname failed (%s)",
                  ifindex, ovs_strerror(errno));
@@ -419,6 +425,7 @@ xsk_configure(int ifindex, int xdp_queue_id, enum afxdp_mode mode,
     netdev_afxdp_sweep_unused_pools(NULL);
 
     /* Umem memory region. */
+    /*申请NUM_FRAMES个frame,内存按page对齐*/
     bufs = xmalloc_pagealign(NUM_FRAMES * FRAME_SIZE);
     memset(bufs, 0, NUM_FRAMES * FRAME_SIZE);
 
@@ -479,11 +486,13 @@ xsk_configure_all(struct netdev *netdev)
     int i, ifindex, n_rxq, n_txq;
     int qid = 0;
 
+    //取此netdev设备对应的ifindex
     ifindex = linux_get_ifindex(netdev_get_name(netdev));
 
     ovs_assert(dev->xsks == NULL);
     ovs_assert(dev->tx_locks == NULL);
 
+    /*每个rx队列对应一个xsks*/
     n_rxq = netdev_n_rxq(netdev);
     dev->xsks = xcalloc(n_rxq, sizeof *dev->xsks);
 
@@ -519,6 +528,7 @@ xsk_configure_all(struct netdev *netdev)
         }
     }
 
+    /*每个tx队列对应一个netdev_afxdp_tx_lock结构*/
     n_txq = netdev_n_txq(netdev);
     dev->tx_locks = xzalloc_cacheline(n_txq * sizeof *dev->tx_locks);
 
@@ -603,14 +613,17 @@ netdev_afxdp_set_config(struct netdev *netdev, const struct smap *args,
     int new_n_rxq;
 
     ovs_mutex_lock(&dev->mutex);
+    /*收队列数目*/
     new_n_rxq = MAX(smap_get_int(args, "n_rxq", NR_QUEUE), 1);
     if (new_n_rxq > MAX_XSKQ) {
+        /*不容许收队列数大于16*/
         ovs_mutex_unlock(&dev->mutex);
         VLOG_ERR("%s: Too big 'n_rxq' (%d > %d).",
                  netdev_get_name(netdev), new_n_rxq, MAX_XSKQ);
         return EINVAL;
     }
 
+    /*xdp模式*/
     str_xdp_mode = smap_get_def(args, "xdp-mode", "best-effort");
     for (xdp_mode = OVS_AF_XDP_MODE_BEST_EFFORT;
          xdp_mode < OVS_AF_XDP_MODE_MAX;
@@ -619,6 +632,7 @@ netdev_afxdp_set_config(struct netdev *netdev, const struct smap *args,
             break;
         }
     }
+
     if (xdp_mode == OVS_AF_XDP_MODE_MAX) {
         VLOG_ERR("%s: Incorrect xdp-mode (%s).",
                  netdev_get_name(netdev), str_xdp_mode);
@@ -634,6 +648,7 @@ netdev_afxdp_set_config(struct netdev *netdev, const struct smap *args,
     }
 #endif
 
+    /*请求对此接口进行配置*/
     if (dev->requested_n_rxq != new_n_rxq
         || dev->requested_xdp_mode != xdp_mode
         || dev->requested_need_wakeup != need_wakeup) {
@@ -675,6 +690,7 @@ netdev_afxdp_reconfigure(struct netdev *netdev)
         && dev->xdp_mode == dev->requested_xdp_mode
         && dev->use_need_wakeup == dev->requested_need_wakeup
         && dev->xsks) {
+        /*配置已完成，直接退出*/
         goto out;
     }
 
@@ -692,6 +708,7 @@ netdev_afxdp_reconfigure(struct netdev *netdev)
     }
     dev->use_need_wakeup = dev->requested_need_wakeup;
 
+    //配置此netdev
     err = xsk_configure_all(netdev);
     if (err) {
         VLOG_ERR("%s: AF_XDP device reconfiguration failed.",
@@ -807,6 +824,7 @@ netdev_afxdp_rxq_recv(struct netdev_rxq *rxq_, struct dp_packet_batch *batch,
     int qid = rxq_->queue_id;
     unsigned int rcvd, i;
 
+    /*通过qid查找到对应的xsk_info*/
     xsk_info = dev->xsks[qid];
     if (!xsk_info || !xsk_info->xsk) {
         return EAGAIN;
@@ -817,6 +835,7 @@ netdev_afxdp_rxq_recv(struct netdev_rxq *rxq_, struct dp_packet_batch *batch,
     umem = xsk_info->umem;
     rx->fd = xsk_socket__fd(xsk_info->xsk);
 
+    //查看rx队列有多少报文
     rcvd = xsk_ring_cons__peek(&xsk_info->rx, BATCH_SIZE, &idx_rx);
     if (!rcvd) {
         xsk_rx_wakeup_if_needed(umem, netdev, rx->fd);
@@ -833,14 +852,17 @@ netdev_afxdp_rxq_recv(struct netdev_rxq *rxq_, struct dp_packet_batch *batch,
         char *pkt;
 
         desc = xsk_ring_cons__rx_desc(&xsk_info->rx, idx_rx);
-        addr = desc->addr;
+        addr = desc->addr;/*报文index*/
         len = desc->len;
 
+        //自umem->buffer中取出对应的packet
         pkt = xsk_umem__get_data(umem->buffer, addr);
         index = addr >> FRAME_SHIFT;
+        //取报文对应的元数据
         xpacket = &umem->xpool.array[index];
         packet = &xpacket->packet;
 
+        //初始化packet,并报收到的packet加入到batch中
         /* Initialize the struct dp_packet. */
         dp_packet_use_afxdp(packet, pkt,
                             FRAME_SIZE - FRAME_HEADROOM,

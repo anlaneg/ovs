@@ -156,6 +156,7 @@ netdev_initialize(void)
 
         netdev_register_flow_api_provider(&netdev_offload_tc);
 #ifdef HAVE_AF_XDP
+        //注册afxdp类型的netdev
         netdev_register_provider(&netdev_afxdp_class);
 #endif
 #endif
@@ -761,6 +762,7 @@ netdev_rxq_recv(struct netdev_rxq *rx, struct dp_packet_batch *batch,
 {
     int retval;
 
+    //通过回调，自rx队列中收取一组报文
     retval = rx->netdev->netdev_class->rxq_recv(rx, batch, qfill);
     if (!retval) {
         COVERAGE_INC(netdev_received);

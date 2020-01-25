@@ -159,6 +159,7 @@ sflow_agent_send_packet_cb(void *ds_, SFLAgent *agent OVS_UNUSED,
     collectors_send(ds->collectors, pkt, pktLen);
 }
 
+/*取odp_port对应的dpif_sflow_port*/
 static struct dpif_sflow_port *
 dpif_sflow_find_port(const struct dpif_sflow *ds, odp_port_t odp_port)
     OVS_REQUIRES(mutex)
@@ -1106,7 +1107,7 @@ dpif_sflow_capture_input_mpls(const struct flow *flow,
 void
 dpif_sflow_read_actions(const struct flow *flow,
                         const struct nlattr *actions, size_t actions_len,
-                        struct dpif_sflow_actions *sflow_actions,
+                        struct dpif_sflow_actions *sflow_actions/*出参，填充sflow对应的动作*/,
                         bool capture_mpls)
 {
     const struct nlattr *a;
@@ -1128,9 +1129,11 @@ dpif_sflow_read_actions(const struct flow *flow,
          */
     }
 
+    //遍历所有指定的actions
     NL_ATTR_FOR_EACH (a, left, actions, actions_len) {
         enum ovs_action_attr type = nl_attr_type(a);
         switch (type) {
+        //指定sflow的输出口
         case OVS_ACTION_ATTR_OUTPUT:
             /* Capture the output port in case we need it
              * to get the output tunnel type.
@@ -1166,6 +1169,7 @@ dpif_sflow_read_actions(const struct flow *flow,
              * result in a packet with two layers of encap?
              */
             if (++sflow_actions->encap_depth > 1) {
+                //封装隧道深度增加，隧道push失败
                 /* Do not handle multi-encap for now. */
                 sflow_actions->tunnel_err = true;
             } else {
@@ -1272,11 +1276,12 @@ dpif_sflow_cookie_num_outputs(const struct user_action_cookie *cookie)
     return 0;
 }
 
+//sflow报文入口
 void
 dpif_sflow_received(struct dpif_sflow *ds, const struct dp_packet *packet,
                     const struct flow *flow, odp_port_t odp_in_port,
                     const struct user_action_cookie *cookie,
-                    const struct dpif_sflow_actions *sflow_actions)
+                    const struct dpif_sflow_actions *sflow_actions/*sflow上送过来的actions*/)
     OVS_EXCLUDED(mutex)
 {
     SFL_FLOW_SAMPLE_TYPE fs;

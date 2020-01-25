@@ -85,8 +85,8 @@ struct netdev {
     /* The core netdev code initializes these at netdev construction and only
      * provide read-only access to its client.  Netdev implementations may
      * modify them. */
-    int n_txq;//收队列数
-    int n_rxq;//发队列数
+    int n_txq;//发队列数
+    int n_rxq;//收队列数
     //在netdev_shash中保存的结点
     //保存netdev的flags发生变化的序列，以及变化后的值。（实际就是个增量串）
     struct shash_node *node;            /* Pointer to element in global map. */
@@ -136,7 +136,7 @@ struct netdev **netdev_get_vports(size_t *size);
  * None of these members change during the lifetime of a struct netdev_rxq. */
 struct netdev_rxq {
     struct netdev *netdev;      /* Owns a reference to the netdev. */
-    int queue_id;
+    int queue_id;//队列id
 };
 
 struct netdev *netdev_rxq_get_netdev(const struct netdev_rxq *);

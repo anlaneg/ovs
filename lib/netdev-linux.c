@@ -3357,20 +3357,25 @@ const struct netdev_class netdev_internal_class = {
 const struct netdev_class netdev_afxdp_class = {
     NETDEV_LINUX_CLASS_COMMON,
     .type = "afxdp",
-    .is_pmd = true,
+    .is_pmd = true,/*xdp属于pmd类型的接口*/
     .init = netdev_afxdp_init,
     .construct = netdev_afxdp_construct,
     .destruct = netdev_afxdp_destruct,
     .get_stats = netdev_afxdp_get_stats,
     .get_custom_stats = netdev_afxdp_get_custom_stats,
     .get_status = netdev_linux_get_status,
+    //afxdp设备配置检查
     .set_config = netdev_afxdp_set_config,
     .get_config = netdev_afxdp_get_config,
+    //执行afxdp设备配置
     .reconfigure = netdev_afxdp_reconfigure,
+    //设备对应的numa id
     .get_numa_id = netdev_afxdp_get_numa_id,
+    //报文发送
     .send = netdev_afxdp_batch_send,
     .rxq_construct = netdev_afxdp_rxq_construct,
     .rxq_destruct = netdev_afxdp_rxq_destruct,
+    //报文收取
     .rxq_recv = netdev_afxdp_rxq_recv,
 };
 #endif

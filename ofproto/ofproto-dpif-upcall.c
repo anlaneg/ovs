@@ -1489,7 +1489,7 @@ out:
 
 static size_t
 dpif_get_actions(struct udpif *udpif, struct upcall *upcall,
-                 const struct nlattr **actions)
+                 const struct nlattr **actions/*出参，upcall的actions*/)
 {
     size_t actions_len = 0;
 
@@ -1500,6 +1500,7 @@ dpif_get_actions(struct udpif *udpif, struct upcall *upcall,
     }
 
     if (actions_len == 0) {
+        /*如果未指明action长度，获取userspace上的actions*/
         /* Lookup actions in userspace cache. */
         struct udpif_key *ukey = ukey_lookup(udpif, upcall->ufid,
                                              upcall->pmd_id);
@@ -1514,9 +1515,10 @@ dpif_get_actions(struct udpif *udpif, struct upcall *upcall,
 static size_t
 dpif_read_actions(struct udpif *udpif, struct upcall *upcall,
                   const struct flow *flow, enum upcall_type type,
-                  void *upcall_data)
+                  void *upcall_data/*upcall的动作*/)
 {
     const struct nlattr *actions = NULL;
+    /*取action及其length*/
     size_t actions_len = dpif_get_actions(udpif, upcall, &actions);
 
     if (!actions || !actions_len) {
@@ -1525,7 +1527,8 @@ dpif_read_actions(struct udpif *udpif, struct upcall *upcall,
 
     switch (type) {
     case SFLOW_UPCALL:
-        dpif_sflow_read_actions(flow, actions, actions_len, upcall_data, true);
+        /*sflow动作处理*/
+        dpif_sflow_read_actions(flow, actions, actions_len, upcall_data/*sflow对应的动作*/, true);
         break;
     case FLOW_SAMPLE_UPCALL:
     case IPFIX_UPCALL:
@@ -1557,6 +1560,7 @@ process_upcall(struct udpif *udpif, struct upcall *upcall,
         return 0;
 
     case SFLOW_UPCALL:
+        //遇到sflow upcall
         if (upcall->sflow) {
             struct dpif_sflow_actions sflow_actions;
 
@@ -1566,7 +1570,7 @@ process_upcall(struct udpif *udpif, struct upcall *upcall,
                                             upcall->type, &sflow_actions);
             dpif_sflow_received(upcall->sflow, packet, flow,
                                 flow->in_port.odp_port, &upcall->cookie,
-                                actions_len > 0 ? &sflow_actions : NULL);
+                                actions_len > 0 ? &sflow_actions/*sflow对应的动作*/ : NULL);
         }
         break;
 

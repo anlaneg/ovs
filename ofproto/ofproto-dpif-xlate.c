@@ -3290,14 +3290,17 @@ compose_sflow_action(struct xlate_ctx *ctx)
 {
     struct dpif_sflow *sflow = ctx->xbridge->sflow;
     if (!sflow || ctx->xin->flow.in_port.ofp_port == OFPP_NONE) {
+        //sflow未开启或者flow的in_port不空，则返回
         return 0;
     }
 
     struct user_action_cookie cookie;
 
     memset(&cookie, 0, sizeof cookie);
-    cookie.type = USER_ACTION_COOKIE_SFLOW;
+    cookie.type = USER_ACTION_COOKIE_SFLOW;//指定sflow类型
+    //报文入接口
     cookie.ofp_in_port = ctx->xin->flow.in_port.ofp_port;
+    //所属桥信息
     cookie.ofproto_uuid = ctx->xbridge->ofproto->uuid;
 
     return compose_sample_action(ctx, dpif_sflow_get_probability(sflow),

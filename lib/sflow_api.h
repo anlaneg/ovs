@@ -85,6 +85,7 @@ typedef struct _SFLDataSource_instance {
 
 typedef struct _SFLSampleCollector {
     u_int32_t data[(SFL_MAX_DATAGRAM_SIZE + SFL_DATA_PAD) / sizeof(u_int32_t)];
+    //指向待构造的报文
     u_int32_t *datap; /* packet fill pointer */
     u_int32_t pktlen; /* accumulated size */
     u_int32_t packetSeqNo;

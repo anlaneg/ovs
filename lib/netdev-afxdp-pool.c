@@ -108,6 +108,7 @@ umem_elem_pop(struct umem_pool *umemp)
     return ptr;
 }
 
+/*创建buf池*/
 static void **
 umem_pool_alloc__(unsigned int size)
 {
@@ -119,6 +120,7 @@ umem_pool_alloc__(unsigned int size)
     return bufs;
 }
 
+//初始化umem_pool
 int
 umem_pool_init(struct umem_pool *umemp, unsigned int size)
 {

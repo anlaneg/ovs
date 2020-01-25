@@ -34,11 +34,13 @@ struct ofport;
  * the sFlow export are extracted.
  */
 struct dpif_sflow_actions {
+    //输出到指定口
     odp_port_t out_port;     /* ODP output port. */
 
     uint32_t encap_depth;    /* Count layers of tunnel-encap. */
     struct flow_tnl tunnel;  /* Egress tunnel push/set. */
     uint8_t tunnel_ipproto;  /* Tunnel push action can set ipproto. */
+    //指定是否隧道失败
     bool tunnel_err;         /* Tunnel actions parse failure. */
     
     /* Using host-byte order for the mpls stack here

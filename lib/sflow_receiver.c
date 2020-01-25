@@ -162,6 +162,7 @@ inline static void put32(SFLReceiver *receiver, u_int32_t val)
     *receiver->sampleCollector.datap++ = val;
 }
 
+//存放网络序的val到datap
 inline static void putNet32(SFLReceiver *receiver, u_int32_t val)
 {
     *receiver->sampleCollector.datap++ = htonl(val);
@@ -441,6 +442,7 @@ static int computeFlowSampleSize(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs
 #endif
 
     fs->num_elements = 0; /* we're going to count them again even if this was set by the client */
+    //遍历所有tag,并计算各tag要占用的elemSiz
     for(; elem != NULL; elem = elem->nxt) {
 	u_int elemSiz = 0;
 	fs->num_elements++;
@@ -508,6 +510,7 @@ int sfl_receiver_writeFlowSample(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs
     // if the sample pkt is full enough so that this sample might put
     // it over the limit, then we should send it now before going on.
     if((receiver->sampleCollector.pktlen + packedSize) >= receiver->sFlowRcvrMaximumDatagramSize)
+        /*已收集的报文与待收集的报文size较大，则直接先发送*/
 	sendSample(receiver);
 
     receiver->sampleCollector.numSamples++;
@@ -515,6 +518,7 @@ int sfl_receiver_writeFlowSample(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs
 #ifdef SFL_USE_32BIT_INDEX
     putNet32(receiver, SFLFLOW_SAMPLE_EXPANDED);
 #else
+    //指明sflow_sample
     putNet32(receiver, SFLFLOW_SAMPLE);
 #endif
 
@@ -542,9 +546,11 @@ int sfl_receiver_writeFlowSample(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs
     putNet32(receiver, fs->output);
 #endif
 
+    //存放elements数目
     putNet32(receiver, fs->num_elements);
 
     {
+        //按各tag收集
 	SFLFlow_sample_element *elem = fs->elements;
 	for(; elem != NULL; elem = elem->nxt) {
 
@@ -563,6 +569,7 @@ int sfl_receiver_writeFlowSample(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs
 		receiver->sampleCollector.datap += ((elem->flowType.header.header_length + 3) / 4);
 		break;
 	    case SFLFLOW_ETHERNET:
+	        //以太头信息收集
 		putNet32(receiver, elem->flowType.ethernet.eth_len);
 		putMACAddress(receiver, elem->flowType.ethernet.src_mac);
 		putMACAddress(receiver, elem->flowType.ethernet.dst_mac);
@@ -571,6 +578,7 @@ int sfl_receiver_writeFlowSample(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs
 	    case SFLFLOW_IPV4:
 	    case SFLFLOW_EX_IPV4_TUNNEL_EGRESS:
 	    case SFLFLOW_EX_IPV4_TUNNEL_INGRESS:
+	        //收集ipv4头部信息
 		putNet32(receiver, elem->flowType.ipv4.length);
 		putNet32(receiver, elem->flowType.ipv4.protocol);
 		put32(receiver, elem->flowType.ipv4.src_ip.addr);
@@ -581,6 +589,7 @@ int sfl_receiver_writeFlowSample(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs
 		putNet32(receiver, elem->flowType.ipv4.tos);
 		break;
 	    case SFLFLOW_IPV6:
+	        //收集ipv6头部信息
 		putNet32(receiver, elem->flowType.ipv6.length);
 		putNet32(receiver, elem->flowType.ipv6.protocol);
 		put128(receiver, elem->flowType.ipv6.src_ip.addr);

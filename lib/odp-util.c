@@ -7502,6 +7502,7 @@ odp_put_userspace_action(uint32_t pid,
     size_t userdata_ofs;
     size_t offset;
 
+    //指明送userspace
     offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_USERSPACE);
     nl_msg_put_u32(odp_actions, OVS_USERSPACE_ATTR_PID, pid);
     if (userdata) {

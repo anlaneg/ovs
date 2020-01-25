@@ -118,6 +118,7 @@ out_of_memory(void)
 void *
 xcalloc(size_t count, size_t size)
 {
+    /*申请count个size大小的内存*/
     void *p = count && size ? calloc(count, size) : malloc(1);
     COVERAGE_INC(util_xalloc);
     if (p == NULL) {
@@ -228,6 +229,7 @@ xmalloc_size_align(size_t size, size_t alignment)
     int error;
 
     COVERAGE_INC(util_xalloc);
+    /*申请按alignment对齐的内存*/
     error = posix_memalign(&p, alignment, size ? size : 1);
     if (error != 0) {
         out_of_memory();
@@ -326,6 +328,7 @@ free_cacheline(void *p)
 void *
 xmalloc_pagealign(size_t size)
 {
+    /*申请按页对齐的内存size字节*/
     return xmalloc_size_align(size, get_page_size());
 }
 
@@ -630,6 +633,7 @@ set_subprogram_name(const char *subprogram_name)
 #endif
 }
 
+//取内存页大小
 unsigned int
 get_page_size(void)
 {
@@ -637,6 +641,7 @@ get_page_size(void)
 
     if (!cached) {
 #ifndef _WIN32
+        //取系统页大小
         long int value = sysconf(_SC_PAGESIZE);
 #else
         long int value;
@@ -645,6 +650,7 @@ get_page_size(void)
         value = sysinfo.dwPageSize;
 #endif
         if (value >= 0) {
+            /*将页大小缓存起来，备查*/
             cached = value;
         }
     }
