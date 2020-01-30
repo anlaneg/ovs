@@ -79,6 +79,7 @@ str_to_u32(const char *str, uint32_t *valuep)
     }
 
     errno = 0;
+    /*字符串转数字*/
     value = strtoul(str, &tail, 0);
     if (errno == EINVAL || errno == ERANGE || *tail) {
         return xasprintf("invalid numeric format %s", str);

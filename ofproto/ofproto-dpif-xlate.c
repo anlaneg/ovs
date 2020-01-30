@@ -1880,6 +1880,7 @@ ofp_port_to_odp_port(const struct xbridge *xbridge, ofp_port_t ofp_port)
 static bool
 odp_port_is_alive(const struct xlate_ctx *ctx, ofp_port_t ofp_port)
 {
+	/*port存在且port被使能*/
     struct xport *xport = get_ofp_port(ctx->xbridge, ofp_port);
     return xport && xport->may_enable;
 }
@@ -1888,6 +1889,7 @@ static struct ofputil_bucket *
 group_first_live_bucket(const struct xlate_ctx *, const struct group_dpif *,
                         int depth);
 
+/*如果group中有live的bucket，则认为group存活*/
 static bool
 group_is_alive(const struct xlate_ctx *ctx, uint32_t group_id, int depth)
 {
@@ -1969,6 +1971,7 @@ group_best_live_bucket(const struct xlate_ctx *ctx,
     uint32_t best_score = 0;
 
     struct ofputil_bucket *bucket;
+    //遍历group中所有buckets,通过权重获得best_bucket
     LIST_FOR_EACH (bucket, list_node, &group->up.buckets) {
         if (bucket_is_alive(ctx, bucket, 0)) {
             uint32_t score =
@@ -4410,13 +4413,15 @@ static bool
 xlate_resubmit_resource_check(struct xlate_ctx *ctx)
 {
     if (ctx->depth >= MAX_DEPTH) {
-    	//堆栈过深
+    		//堆栈过深
         xlate_report_error(ctx, "over max translation depth %d", MAX_DEPTH);
         ctx->error = XLATE_RECURSION_TOO_DEEP;
     } else if (ctx->resubmits >= MAX_RESUBMITS) {
+    		//重查次数超限
         xlate_report_error(ctx, "over %d resubmit actions", MAX_RESUBMITS);
         ctx->error = XLATE_TOO_MANY_RESUBMITS;
     } else if (ctx->odp_actions->size > UINT16_MAX) {
+    		//action动作超限
         xlate_report_error(ctx, "resubmits yielded over 64 kB of actions");
         /* NOT an error, as we'll be slow-pathing the flow in this case? */
         ctx->exit = true; /* XXX: translation still terminated! */
@@ -4576,11 +4581,11 @@ xlate_group_bucket(struct xlate_ctx *ctx, struct ofputil_bucket *bucket,
 
     uint64_t action_list_stub[1024 / 8];
     struct ofpbuf action_list = OFPBUF_STUB_INITIALIZER(action_list_stub);
+    //将action_set初始化为bucket对应的actions
     struct ofpbuf action_set = ofpbuf_const_initializer(bucket->ofpacts,
                                                         bucket->ofpacts_len);
     struct flow old_flow = ctx->xin->flow;//先保存
     bool old_was_mpls = ctx->was_mpls;
-
     ofpacts_execute_action_set(&action_list, &action_set);//用action_set填充action_list
     ctx->depth++;
     //做group的转换
@@ -4640,9 +4645,11 @@ xlate_group_bucket(struct xlate_ctx *ctx, struct ofputil_bucket *bucket,
     ctx->xin->trace = old_trace;
 }
 
+//按照ff方式选择bucket
 static struct ofputil_bucket *
 pick_ff_group(struct xlate_ctx *ctx, struct group_dpif *group)
 {
+	//返回第一个可用的bucket
     return group_first_live_bucket(ctx, group, 0);
 }
 
@@ -4651,10 +4658,12 @@ pick_default_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
 {
     flow_mask_hash_fields(&ctx->xin->flow, ctx->wc,
                           NX_HASH_FIELDS_SYMMETRIC_L4);
+    //通过常用字段计算hashcode并选择bucket
     return group_best_live_bucket(ctx, group,
                                   flow_hash_symmetric_l4(&ctx->xin->flow, 0));
 }
 
+//通过fields字段选择group中的bucket(需遍历所有buckets)
 static struct ofputil_bucket *
 pick_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
 {
@@ -4663,6 +4672,7 @@ pick_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     uint32_t basis = hash_uint64(group->up.props.selection_method_param);
 
     size_t i;
+    //遍历使用的所有field
     BITMAP_FOR_EACH_1 (i, MFF_N_IDS, fields->used.bm) {
         const struct mf_field *mf = mf_from_id(i);
 
@@ -4676,12 +4686,16 @@ pick_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
         union mf_value value;
         union mf_value mask;
 
+        //取flow中mf字段对应的值，填充到value中
         mf_get_value(mf, &ctx->xin->flow, &value);
+
         /* Mask the value. */
         for (int j = 0; j < mf->n_bytes; j++) {
             mask.b[j] = *mask_values++;
             value.b[j] &= mask.b[j];
         }
+
+        //计算hash值
         basis = hash_bytes(&value, mf->n_bytes, basis);
 
         /* For tunnels, hash in whether the field is present. */
@@ -4692,6 +4706,7 @@ pick_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
         mf_mask_field_masked(mf, &mask, ctx->wc);
     }
 
+    //采用计算出来的hash获得group中的一个live bucket
     return group_best_live_bucket(ctx, group, basis);
 }
 
@@ -4705,9 +4720,11 @@ pick_dp_hash_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
      * compare to zero can be used to decide if the dp_hash value is valid
      * without masking the dp_hash field. */
     if (!dp_hash) {
+    		/*报文中未包含dp_hash*/
         enum ovs_hash_alg hash_alg = group->hash_alg;
         if (hash_alg > ctx->xbridge->support.max_hash_alg) {
             /* Algorithm supported by all datapaths. */
+        		//使用默认l4算法
             hash_alg = OVS_HASH_ALG_L4;
         }
         ctx_trigger_recirculate_with_hash(ctx, hash_alg, group->hash_basis);
@@ -4721,6 +4738,7 @@ pick_dp_hash_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
          * are quasi-randomly spread over the hash values, this maintains
          * a distribution according to bucket weights even when some buckets
          * are non-live. */
+        //利用hash获得一个bucket
         for (int i = 0; i <= hash_mask; i++) {
             struct ofputil_bucket *b =
                     group->hash_map[(dp_hash + i) & hash_mask];
@@ -4733,6 +4751,7 @@ pick_dp_hash_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     }
 }
 
+//按不同hashcode计算bucket
 static struct ofputil_bucket *
 pick_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
 {
@@ -4747,12 +4766,16 @@ pick_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     //按照指定的select算法，选择bucket
     switch (group->selection_method) {
     case SEL_METHOD_DEFAULT:
+    		//通过固定字段srcmac,dstmac,srcip,dstip,srcport,dstport等来计算hash,并执行bucket
+    		//选择。
         return pick_default_select_group(ctx, group);
         break;
     case SEL_METHOD_HASH:
+    		//通过指定openflow字段计算hash然后执行buckets选择
         return pick_hash_fields_select_group(ctx, group);
         break;
     case SEL_METHOD_DP_HASH:
+    		//使用flow->dp_hash做为hash,然后执行buckets选择
         return pick_dp_hash_select_group(ctx, group);
         break;
     default:
@@ -4763,13 +4786,16 @@ pick_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     return NULL;
 }
 
+//感觉：目前采用group来实现lb，只支持无状态。
 static void
 xlate_group_action__(struct xlate_ctx *ctx, struct group_dpif *group,
-                     bool is_last_action)
+                     bool is_last_action/*是否为最后一个action*/)
 {
     if (group->up.type == OFPGT11_ALL || group->up.type == OFPGT11_INDIRECT) {
+    		//取最后一个bucket
         struct ovs_list *last_bucket = group->up.buckets.prev;
         struct ofputil_bucket *bucket;
+        //遍历所有bucket，执行其对应的所有action
         LIST_FOR_EACH (bucket, list_node, &group->up.buckets) {
             bool is_last_bucket = &bucket->list_node == last_bucket;
             xlate_group_bucket(ctx, bucket, is_last_action && is_last_bucket);
@@ -4778,20 +4804,23 @@ xlate_group_action__(struct xlate_ctx *ctx, struct group_dpif *group,
     } else {
         struct ofputil_bucket *bucket;
         if (group->up.type == OFPGT11_SELECT) {
-        	//select型的group,选择一个bucket
+        		//select型的group,选择一个bucket
             bucket = pick_select_group(ctx, group);
         } else if (group->up.type == OFPGT11_FF) {
+        		//选择第一个可用的bucket
             bucket = pick_ff_group(ctx, group);
         } else {
             OVS_NOT_REACHED();
         }
 
         if (bucket) {
+        		//选择了合适的bucket,执行bucket对应的action
             xlate_report(ctx, OFT_DETAIL, "using bucket %"PRIu32,
                          bucket->bucket_id);
             xlate_group_bucket(ctx, bucket, is_last_action);
             xlate_group_stats(ctx, group, bucket);
         } else {
+        		//没有找到合适的bucket
             xlate_report(ctx, OFT_DETAIL, "no live bucket");
             if (ctx->xin->xcache) {
                 ofproto_group_unref(&group->up);
@@ -4800,11 +4829,13 @@ xlate_group_action__(struct xlate_ctx *ctx, struct group_dpif *group,
     }
 }
 
+//执行组动作转换
 static bool
-xlate_group_action(struct xlate_ctx *ctx, uint32_t group_id,
-                   bool is_last_action)//组动作
+xlate_group_action(struct xlate_ctx *ctx, uint32_t group_id/*要执行的group编号*/,
+                   bool is_last_action)
 {
     if (xlate_resubmit_resource_check(ctx)) {
+    		//资源检查通过，开始执行group转换
         struct group_dpif *group;
 
         /* Take ref only if xcache exists. */
@@ -5424,6 +5455,7 @@ xlate_output_trunc_action(struct xlate_ctx *ctx,
     }
 }
 
+//更改报文priority并自指定port输出（如果指定为in_port相等，则只更新priority)
 static void
 xlate_enqueue_action(struct xlate_ctx *ctx,
                      const struct ofpact_enqueue *enqueue,
@@ -5436,6 +5468,7 @@ xlate_enqueue_action(struct xlate_ctx *ctx,
     int error;
 
     /* Translate queue to priority. */
+    /*将queue_id转换为priority*/
     error = dpif_queue_to_priority(ctx->xbridge->dpif, queue_id, &priority);
     if (error) {
         /* Fall back to ordinary output action. */
@@ -5447,12 +5480,15 @@ xlate_enqueue_action(struct xlate_ctx *ctx,
 
     /* Check output port. */
     if (ofp_port == OFPP_IN_PORT) {
+    		/*指定为in_port,使用当前上来文对应的in_port*/
         ofp_port = ctx->xin->flow.in_port.ofp_port;
     } else if (ofp_port == ctx->xin->flow.in_port.ofp_port) {
+    		/*与in_port相等，直接返回*/
         return;
     }
 
     /* Add datapath actions. */
+    //先生成到ofp_port的output动作，再将priority还原
     flow_priority = ctx->xin->flow.skb_priority;
     ctx->xin->flow.skb_priority = priority;
     compose_output_action(ctx, ofp_port, NULL, is_last_action, false);
@@ -5515,11 +5551,11 @@ xlate_bundle_action(struct xlate_ctx *ctx,
     port = bundle_execute(bundle, &ctx->xin->flow, ctx->wc, slave_enabled_cb,
                           CONST_CAST(struct xbridge *, ctx->xbridge));
     if (bundle->dst.field) {
-    	//这段代码没有搞明白意义
+    		//将port加载到bundle->dst中
         nxm_reg_load(&bundle->dst, ofp_to_u16(port), &ctx->xin->flow, ctx->wc);
         xlate_report_subfield(ctx, &bundle->dst);
     } else {
-	//从选出的口扔出去（在选出的口进行转换）
+    		//执行port口的转换
         xlate_output_action(ctx, port, 0, false, is_last_action, false,
                             group_bucket_action);
     }
@@ -6830,7 +6866,7 @@ xlate_ofpact_unroll_xlate(struct xlate_ctx *ctx,
 static void
 do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpacts_len/*待处理的action长度*/,
                  struct xlate_ctx *ctx/*转换上下文*/, bool is_last_action,
-                 bool group_bucket_action)
+                 bool group_bucket_action/*当前是否在转换group_bcket的action*/)
 {
     struct flow_wildcards *wc = ctx->wc;
     //需要执行action的flow
@@ -6893,7 +6929,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_GROUP:
-        	//处理一组转换
+        		//要求报文发送给group,处理此组转换
             if (xlate_group_action(ctx, ofpact_get_GROUP(a)->group_id, last)) {
                 /* Group could not be found. */
 
@@ -6920,6 +6956,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_ENQUEUE:
+        		//遇到enqueue，将skb_priority置为0xff
             memset(&wc->masks.skb_priority, 0xff,
                    sizeof wc->masks.skb_priority);
             xlate_enqueue_action(ctx, ofpact_get_ENQUEUE(a), last,
@@ -6943,7 +6980,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_SET_VLAN_PCP:
-        	//只能设置最外层的vlan,故只设置外层wc
+        		//只能设置最外层的vlan,故只设置外层wc
             wc->masks.vlans[0].tci |= htons(VLAN_PCP_MASK | VLAN_CFI);
             if (flow->vlans[0].tci & htons(VLAN_CFI) ||
                 ofpact_get_SET_VLAN_PCP(a)->push_vlan_if_needed) {
@@ -7162,11 +7199,13 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_MULTIPATH:
+        		//按multipath指定的算法及字段计算hashcode,并计算出link将其存放在dst中
             multipath_execute(ofpact_get_MULTIPATH(a), flow, wc);
             xlate_report_subfield(ctx, &ofpact_get_MULTIPATH(a)->dst);
             break;
 
         case OFPACT_BUNDLE:
+        		//针对bundle口，选择出具体的port,并针对port生成action
             xlate_bundle_action(ctx, ofpact_get_BUNDLE(a), last,
                                 group_bucket_action);
             break;
@@ -7183,7 +7222,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_LEARN:
-        	//learn action process
+        	//生成学习到的规则，将其加入到openvswitch的规则表中。
             xlate_learn_action(ctx, ofpact_get_LEARN(a));
             break;
 

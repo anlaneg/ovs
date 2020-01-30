@@ -52,11 +52,14 @@ multipath_execute(const struct ofpact_multipath *mp, struct flow *flow,
                   struct flow_wildcards *wc)
 {
     /* Calculate value to store. */
+	//计算mp->fields hash指定字段的hashcode
     uint32_t hash = flow_hash_fields(flow, mp->fields, mp->basis);
     uint16_t link = multipath_algorithm(hash, mp->algorithm,
                                         mp->max_link + 1, mp->arg);
 
+    //为mp->fields指定字段加上匹配标记
     flow_mask_hash_fields(flow, wc, mp->fields);
+    //将lik填充到mp->dst中
     nxm_reg_load(&mp->dst, link, flow, wc);
 }
 
@@ -109,6 +112,7 @@ algorithm_iter_hash(uint32_t hash, unsigned int n_links, unsigned int modulo)
     return link;
 }
 
+//按不同算法，获得link值
 static uint16_t
 multipath_algorithm(uint32_t hash, enum nx_mp_algorithm algorithm,
                     unsigned int n_links, unsigned int arg)
