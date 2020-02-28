@@ -338,8 +338,8 @@ struct ofpact_controller {
 struct ofpact_enqueue {
     OFPACT_PADDED_MEMBERS(
         struct ofpact ofpact;
-        ofp_port_t port;
-        uint32_t queue;
+        ofp_port_t port;/*所属接口*/
+        uint32_t queue;/*所属队列*/
     );
 };
 
@@ -964,11 +964,12 @@ struct ofpact_multipath {
 
         /* Multipath link choice algorithm to apply to hash value. */
         enum nx_mp_algorithm algorithm;//采用哪种算法
+        //link总数
         uint16_t max_link;      /* Number of output links, minus 1. */
         uint32_t arg;           /* Algorithm-specific argument. */
 
         /* Where to store the result. */
-        struct mf_subfield dst;
+        struct mf_subfield dst;//保存最终结果
     );
 };
 

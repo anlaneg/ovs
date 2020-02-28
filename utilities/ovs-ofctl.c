@@ -3129,10 +3129,12 @@ ofctl_group_mod_file(int argc OVS_UNUSED, char *argv[], int command)
     free(gms);
 }
 
+//group修改
 static void
 ofctl_group_mod(int argc, char *argv[], uint16_t command)
 {
     if (argc > 2 && !strcmp(argv[2], "-")) {
+    		//自标准输入上加载group操作
         ofctl_group_mod_file(argc, argv, command);
     } else {
         enum ofputil_protocol usable_protocols;
@@ -3150,6 +3152,7 @@ ofctl_group_mod(int argc, char *argv[], uint16_t command)
     }
 }
 
+//实现group添加修改
 static void
 ofctl_add_group(struct ovs_cmdl_context *ctx)
 {
@@ -5056,6 +5059,7 @@ static const struct ovs_cmdl_command all_commands[] = {
     { "ofp-parse-pcap", "pcap",
       1, INT_MAX, ofctl_ofp_parse_pcap, OVS_RW },
 
+	  //group添加
     { "add-group", "switch group",
       1, 2, ofctl_add_group, OVS_RW },
     { "add-groups", "switch file",

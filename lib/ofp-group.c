@@ -677,6 +677,7 @@ parse_bucket_str(struct ofputil_bucket *bucket, char *str_,
             }
             *usable_protocols &= OFPUTIL_P_OF10_ANY | OFPUTIL_P_OF15_UP;
         } else if (!strcasecmp(key, "action") || !strcasecmp(key, "actions")) {
+        		//action及actions均可以
             ds_put_format(&actions, "%s,", value);
         } else {
             ds_put_format(&actions, "%s(%s),", key, value);
@@ -704,6 +705,7 @@ parse_bucket_str(struct ofputil_bucket *bucket, char *str_,
         .ofpacts = &ofpacts,
         .usable_protocols = usable_protocols,
     };
+    //action仍采用与其它action相同的解析函数
     error = ofpacts_parse_actions(ds_cstr(&actions), &pp);
     ds_destroy(&actions);
     if (error) {
@@ -801,6 +803,7 @@ parse_ofp_group_mod_str__(struct ofputil_group_mod *gm, int command,
         string += strspn(string, " \t\r\n");   /* Skip white space. */
         len = strcspn(string, ", \t\r\n"); /* Get length of the first token. */
 
+        //确定采用哪个命令
         if (!strncmp(string, "add", len)) {
             command = OFPGC11_ADD;
         } else if (!strncmp(string, "delete", len)) {
@@ -822,10 +825,12 @@ parse_ofp_group_mod_str__(struct ofputil_group_mod *gm, int command,
 
     switch (command) {
     case OFPGC11_ADD:
+    		//group添加
         fields = F_GROUP_TYPE | F_BUCKETS;
         break;
 
     case OFPGC11_DELETE:
+    		//group删除
         fields = 0;
         break;
 
@@ -867,9 +872,11 @@ parse_ofp_group_mod_str__(struct ofputil_group_mod *gm, int command,
     char *bkt_str = strstr(string, "bucket=");
     if (bkt_str) {
         if (!(fields & F_BUCKETS)) {
+        		/*不容许包含buckets字段*/
             error = xstrdup("bucket is not needed");
             goto out;
         }
+        /*将'bucket='中的b置为'\0'*/
         *bkt_str = '\0';
     }
 
@@ -878,6 +885,7 @@ parse_ofp_group_mod_str__(struct ofputil_group_mod *gm, int command,
     char *name, *value;
     while (ofputil_parse_key_value(&pos, &name, &value)) {
         if (!strcmp(name, "command_bucket_id")) {
+        	/*填充command_bucket_id*/
             if (!(fields & F_COMMAND_BUCKET_ID)) {
                 error = xstrdup("command bucket id is not needed");
                 goto out;
@@ -889,10 +897,12 @@ parse_ofp_group_mod_str__(struct ofputil_group_mod *gm, int command,
             } else if (!strcmp(value, "last")) {
                 gm->command_bucket_id = OFPG15_BUCKET_LAST;
             } else {
+            		/*解析数字做为command_bucket_id*/
                 error = str_to_u32(value, &gm->command_bucket_id);
                 if (error) {
                     goto out;
                 }
+                /*command_bucket_id必须小于OFPG15_BUCKET_MAX*/
                 if (gm->command_bucket_id > OFPG15_BUCKET_MAX
                     && (gm->command_bucket_id != OFPG15_BUCKET_FIRST
                         && gm->command_bucket_id != OFPG15_BUCKET_LAST
@@ -912,6 +922,7 @@ parse_ofp_group_mod_str__(struct ofputil_group_mod *gm, int command,
             if(!strcmp(value, "all")) {
                 gm->group_id = OFPG_ALL;
             } else {
+            		//转为group_id
                 error = str_to_u32(value, &gm->group_id);
                 if (error) {
                     goto out;
@@ -930,6 +941,7 @@ parse_ofp_group_mod_str__(struct ofputil_group_mod *gm, int command,
             if (!strcmp(value, "all")) {
                 gm->type = OFPGT11_ALL;
             } else if (!strcmp(value, "select")) {
+            		//指定使用select方式
                 gm->type = OFPGT11_SELECT;
             } else if (!strcmp(value, "indirect")) {
                 gm->type = OFPGT11_INDIRECT;
@@ -952,11 +964,13 @@ parse_ofp_group_mod_str__(struct ofputil_group_mod *gm, int command,
                                   NTR_MAX_SELECTION_METHOD_LEN - 1);
                 goto out;
             }
+            //填充select算法名称
             memset(gm->props.selection_method, '\0',
                    NTR_MAX_SELECTION_METHOD_LEN);
             strcpy(gm->props.selection_method, value);
             *usable_protocols &= OFPUTIL_P_OF10_ANY | OFPUTIL_P_OF15_UP;
         } else if (!strcmp(name, "selection_method_param")) {
+        		//select算法对应的参数是一个u64数值
             if (!(fields & F_GROUP_TYPE)) {
                 error = xstrdup("selection method param is not needed");
                 goto out;

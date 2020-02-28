@@ -2342,9 +2342,12 @@ flow_hash_symmetric_l4(const struct flow *flow, uint32_t basis)
     int i;
 
     memset(&fields, 0, sizeof fields);
+    //以源mac,目的mac计算hash
     for (i = 0; i < ARRAY_SIZE(fields.eth_addr.be16); i++) {
         fields.eth_addr.be16[i] = flow->dl_src.be16[i] ^ flow->dl_dst.be16[i];
     }
+
+    //以vlan计算hash
     for (i = 0; i < FLOW_MAX_VLAN_HEADERS; i++) {
         fields.vlan_tci ^= flow->vlans[i].tci & htons(VLAN_VID_MASK);
     }
@@ -2353,12 +2356,14 @@ flow_hash_symmetric_l4(const struct flow *flow, uint32_t basis)
     /* UDP source and destination port are not taken into account because they
      * will not necessarily be symmetric in a bidirectional flow. */
     if (fields.eth_type == htons(ETH_TYPE_IP)) {
+    		//ip报文hash计算
         fields.ipv4_addr = flow->nw_src ^ flow->nw_dst;
         fields.ip_proto = flow->nw_proto;
         if (fields.ip_proto == IPPROTO_TCP || fields.ip_proto == IPPROTO_SCTP) {
             fields.tp_port = flow->tp_src ^ flow->tp_dst;
         }
     } else if (fields.eth_type == htons(ETH_TYPE_IPV6)) {
+    		//ipv6 hash计算
         const uint8_t *a = &flow->ipv6_src.s6_addr[0];
         const uint8_t *b = &flow->ipv6_dst.s6_addr[0];
         uint8_t *ipv6_addr = &fields.ipv6_addr.s6_addr[0];
@@ -2371,6 +2376,7 @@ flow_hash_symmetric_l4(const struct flow *flow, uint32_t basis)
             fields.tp_port = flow->tp_src ^ flow->tp_dst;
         }
     }
+    //计算hash值
     return jhash_bytes(&fields, sizeof fields, basis);
 }
 

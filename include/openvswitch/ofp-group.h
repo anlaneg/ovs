@@ -90,6 +90,7 @@ void ofputil_group_properties_copy(struct ofputil_group_props *to,
                                    const struct ofputil_group_props *from);
 /* Protocol-independent group_mod. */
 struct ofputil_group_mod {
+	//group命令，添加，删除等
     uint16_t command;             /* One of OFPGC15_*. */
     uint8_t type;                 /* One of OFPGT11_*. */
     uint32_t group_id;            /* Group identifier. */

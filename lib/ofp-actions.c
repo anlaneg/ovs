@@ -734,6 +734,7 @@ encode_GROUP(const struct ofpact_group *group,
 static char * OVS_WARN_UNUSED_RESULT
 parse_GROUP(char *arg, const struct ofpact_parse_params *pp)
 {
+	//将arg转换为group_id
     return str_to_u32(arg, &ofpact_put_GROUP(pp->ofpacts)->group_id);
 }
 
@@ -741,6 +742,7 @@ static void
 format_GROUP(const struct ofpact_group *a,
              const struct ofpact_format_params *fp)
 {
+	//格式化group_id输出
     ds_put_format(fp->s, "%sgroup:%s%"PRIu32,
                   colors.special, colors.end, a->group_id);
 }
@@ -7939,7 +7941,9 @@ ofpacts_execute_action_set(struct ofpbuf *action_list,
     enum action_set_class final_class = 0;
 
     const struct ofpact *cursor;
+    //
     OFPACT_FOR_EACH (cursor, action_set->data, action_set->size) {
+    		//区分action类型
         int class = action_set_classify(cursor);
         if (class < N_ACTION_SLOTS) {
             slots[class] = cursor;
