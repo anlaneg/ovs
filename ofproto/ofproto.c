@@ -844,6 +844,13 @@ ofproto_set_dp_desc(struct ofproto *p, const char *dp_desc)
     p->dp_desc = nullable_xstrdup(dp_desc);
 }
 
+void
+ofproto_set_serial_desc(struct ofproto *p, const char *serial_desc)
+{
+    free(p->serial_desc);
+    p->serial_desc = nullable_xstrdup(serial_desc);
+}
+
 int
 ofproto_set_snoops(struct ofproto *ofproto, const struct sset *snoops)
 {
@@ -1633,13 +1640,13 @@ ofproto_rule_delete(struct ofproto *ofproto, struct rule *rule)
 }
 
 static void
-ofproto_flush__(struct ofproto *ofproto)
+ofproto_flush__(struct ofproto *ofproto, bool del)
     OVS_EXCLUDED(ofproto_mutex)
 {
     struct oftable *table;
 
     /* This will flush all datapath flows. */
-    if (ofproto->ofproto_class->flush) {
+    if (del && ofproto->ofproto_class->flush) {
         ofproto->ofproto_class->flush(ofproto);
     }
 
@@ -1742,7 +1749,7 @@ ofproto_destroy(struct ofproto *p, bool del)
         return;
     }
 
-    ofproto_flush__(p);
+    ofproto_flush__(p, del);
     //销毁ofproto上所有ofport
     HMAP_FOR_EACH_SAFE (ofport, next_ofport, hmap_node, &p->ports) {
         ofport_destroy(ofport, del);
@@ -2345,7 +2352,7 @@ void
 ofproto_flush_flows(struct ofproto *ofproto)
 {
     COVERAGE_INC(ofproto_flush);
-    ofproto_flush__(ofproto);
+    ofproto_flush__(ofproto, false);
     connmgr_flushed(ofproto->connmgr);
 }
 

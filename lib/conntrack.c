@@ -1152,6 +1152,9 @@ conn_update_state(struct conntrack *ct, struct dp_packet *pkt,
             ovs_mutex_unlock(&ct->ct_lock);
             create_new_conn = true;
             break;
+        case CT_UPDATE_VALID_NEW:
+            pkt->md.ct_state |= CS_NEW;
+            break;
         default:
             OVS_NOT_REACHED();
         }
@@ -2127,7 +2130,8 @@ conn_key_extract(struct conntrack *ct, struct dp_packet *pkt, ovs_be16 dl_type,
         if (hwol_bad_l3_csum) {
             ok = false;
         } else {
-            bool hwol_good_l3_csum = dp_packet_ip_checksum_valid(pkt);
+            bool hwol_good_l3_csum = dp_packet_ip_checksum_valid(pkt)
+                                     || dp_packet_hwol_is_ipv4(pkt);
             /* Validate the checksum only when hwol is not supported. */
             //分片报文返回false
             ok = extract_l3_ipv4(&ctx->key, l3, dp_packet_l3_size(pkt), NULL,
@@ -2142,7 +2146,8 @@ conn_key_extract(struct conntrack *ct, struct dp_packet *pkt, ovs_be16 dl_type,
     if (ok) {
         bool hwol_bad_l4_csum = dp_packet_l4_checksum_bad(pkt);
         if (!hwol_bad_l4_csum) {
-            bool  hwol_good_l4_csum = dp_packet_l4_checksum_valid(pkt);
+            bool  hwol_good_l4_csum = dp_packet_l4_checksum_valid(pkt)
+                                      || dp_packet_hwol_tx_l4_checksum(pkt);
             /* Validate the checksum only when hwol is not supported. */
             //如果解析成功，则开始解析l4
             if (extract_l4(&ctx->key, l4, dp_packet_l4_size(pkt),
@@ -3368,8 +3373,11 @@ handle_ftp_ctl(struct conntrack *ct, const struct conn_lookup_ctx *ctx,
                 }
                 if (seq_skew) {
                     ip_len = ntohs(l3_hdr->ip_tot_len) + seq_skew;
-                    l3_hdr->ip_csum = recalc_csum16(l3_hdr->ip_csum,
-                                          l3_hdr->ip_tot_len, htons(ip_len));
+                    if (!dp_packet_hwol_is_ipv4(pkt)) {
+                        l3_hdr->ip_csum = recalc_csum16(l3_hdr->ip_csum,
+                                                        l3_hdr->ip_tot_len,
+                                                        htons(ip_len));
+                    }
                     l3_hdr->ip_tot_len = htons(ip_len);
                 }
             }
@@ -3387,13 +3395,15 @@ handle_ftp_ctl(struct conntrack *ct, const struct conn_lookup_ctx *ctx,
     }
 
     th->tcp_csum = 0;
-    if (ctx->key.dl_type == htons(ETH_TYPE_IPV6)) {
-        th->tcp_csum = packet_csum_upperlayer6(nh6, th, ctx->key.nw_proto,
-                           dp_packet_l4_size(pkt));
-    } else {
-        uint32_t tcp_csum = packet_csum_pseudoheader(l3_hdr);
-        th->tcp_csum = csum_finish(
-             csum_continue(tcp_csum, th, dp_packet_l4_size(pkt)));
+    if (!dp_packet_hwol_tx_l4_checksum(pkt)) {
+        if (ctx->key.dl_type == htons(ETH_TYPE_IPV6)) {
+            th->tcp_csum = packet_csum_upperlayer6(nh6, th, ctx->key.nw_proto,
+                               dp_packet_l4_size(pkt));
+        } else {
+            uint32_t tcp_csum = packet_csum_pseudoheader(l3_hdr);
+            th->tcp_csum = csum_finish(
+                 csum_continue(tcp_csum, th, dp_packet_l4_size(pkt)));
+        }
     }
 
     if (seq_skew) {

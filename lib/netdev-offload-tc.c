@@ -893,6 +893,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
     attrs->offloaded = (flower->offloaded_state == TC_OFFLOADED_STATE_IN_HW)
                        || (flower->offloaded_state == TC_OFFLOADED_STATE_UNDEFINED);
     attrs->dp_layer = "tc";
+    attrs->dp_extra_info = NULL;
 
     return 0;
 }
@@ -1680,6 +1681,11 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
         flower.key.ct_label = key->ct_label;
         flower.mask.ct_label = mask->ct_label;
         mask->ct_label = OVS_U128_ZERO;
+    }
+
+    /* ignore exact match on skb_mark of 0. */
+    if (mask->pkt_mark == UINT32_MAX && !key->pkt_mark) {
+        mask->pkt_mark = 0;
     }
 
     //为不支持的流返回err

@@ -286,6 +286,8 @@ AC_DEFUN([OVS_CHECK_LINUX_AF_XDP], [
     AC_CHECK_FUNCS([pthread_spin_lock], [],
       [AC_MSG_ERROR([unable to find pthread_spin_lock for AF_XDP support])])
 
+    OVS_FIND_DEPENDENCY([numa_alloc_onnode], [numa], [libnuma])
+
     AC_DEFINE([HAVE_AF_XDP], [1],
               [Define to 1 if AF_XDP support is available and enabled.])
     LIBBPF_LDADD=" -lbpf -lelf"
@@ -828,8 +830,6 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [skb_nfct])
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [skb_put_zero])
 
-  OVS_GREP_IFELSE([$KSRC/include/linux/types.h], [bool],
-                  [OVS_DEFINE([HAVE_BOOL_TYPE])])
   OVS_GREP_IFELSE([$KSRC/include/linux/types.h], [__wsum],
                   [OVS_DEFINE([HAVE_CSUM_TYPES])])
   OVS_GREP_IFELSE([$KSRC/include/uapi/linux/types.h], [__wsum],

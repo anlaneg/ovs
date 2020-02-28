@@ -108,6 +108,14 @@ vSwitch with AF_XDP will require the following:
 
   * CONFIG_XDP_SOCKETS_DIAG=y (Debugging)
 
+- If you're building your own kernel, be sure that you're installing kernel
+  headers too.  For example, with the following command::
+
+    make headers_install INSTALL_HDR_PATH=/usr
+
+- If you're using kernel from the distribution, be sure that corresponding
+  kernel headers package installed.
+
 - Once your AF_XDP-enabled kernel is ready, if possible, run
   **./xdpsock -r -N -z -i <your device>** under linux/samples/bpf.
   This is an OVS independent benchmark tools for AF_XDP.
@@ -164,7 +172,7 @@ If a test case fails, check the log at::
 
 Setup AF_XDP netdev
 -------------------
-Before running OVS with AF_XDP, make sure the libbpf and libelf are
+Before running OVS with AF_XDP, make sure the libbpf, libelf, and libnuma are
 set-up right::
 
   ldd vswitchd/ovs-vswitchd
@@ -327,7 +335,6 @@ Below is a script using namespaces and veth peer::
 
 Limitations/Known Issues
 ------------------------
-#. Device's numa ID is always 0, need a way to find numa id from a netdev.
 #. No QoS support because AF_XDP netdev by-pass the Linux TC layer. A possible
    work-around is to use OpenFlow meter action.
 #. Most of the tests are done using i40e single port. Multiple ports and

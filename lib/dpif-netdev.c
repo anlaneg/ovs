@@ -563,7 +563,8 @@ struct dp_netdev_flow {
     struct packet_batch_per_flow *batch;//此flow对应的batch,用于指针此需要执行同一个flow的packets
 
     /* Packet classification. */
-    struct dpcls_rule cr;        /* In owning dp_netdev's 'cls'. */ //记录cls的规则
+    char *dp_extra_info;         /* String to return in a flow dump/get. */
+    struct dpcls_rule cr;        /* In owning dp_netdev's 'cls'. *///记录cls的规则
     /* 'cr' must be the last member. */
 };
 
@@ -1565,7 +1566,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     ovs_refcount_init(&dp->ref_cnt);
     atomic_flag_clear(&dp->destroyed);
 
-    ovs_mutex_init(&dp->port_mutex);
+    ovs_mutex_init_recursive(&dp->port_mutex);
     hmap_init(&dp->ports);
     dp->port_seq = seq_create();
     fat_rwlock_init(&dp->upcall_rwlock);
@@ -2135,6 +2136,7 @@ static void
 dp_netdev_flow_free(struct dp_netdev_flow *flow)
 {
     dp_netdev_actions_free(dp_netdev_flow_get_actions(flow));
+    free(flow->dp_extra_info);
     free(flow);
 }
 
@@ -2440,6 +2442,7 @@ static int
 dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
 {
     struct dp_netdev_pmd_thread *pmd = offload->pmd;
+    const struct dpif_class *dpif_class = pmd->dp->class;
     struct dp_netdev_flow *flow = offload->flow;
     odp_port_t in_port = flow->flow.in_port.odp_port;
     bool modification = offload->op == DP_NETDEV_FLOW_OFFLOAD_OP_MOD;
@@ -2477,6 +2480,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
         }
     }
     info.flow_mark = mark;
+    info.dpif_class = dpif_class;
 
     port = netdev_ports_get(in_port, pmd->dp->class);
     if (!port || netdev_vport_is_vport_class(port->netdev_class)) {
@@ -3096,10 +3100,51 @@ dp_netdev_pmd_find_flow(const struct dp_netdev_pmd_thread *pmd,
     return NULL;
 }
 
-static void
-get_dpif_flow_stats(const struct dp_netdev_flow *netdev_flow_,
-                    struct dpif_flow_stats *stats)
+static bool
+dpif_netdev_get_flow_offload_status(const struct dp_netdev *dp,
+                                    const struct dp_netdev_flow *netdev_flow,
+                                    struct dpif_flow_stats *stats,
+                                    struct dpif_flow_attrs *attrs)
 {
+    uint64_t act_buf[1024 / 8];
+    struct nlattr *actions;
+    struct netdev *netdev;
+    struct match match;
+    struct ofpbuf buf;
+
+    int ret = 0;
+
+    if (!netdev_is_flow_api_enabled()) {
+        return false;
+    }
+
+    netdev = netdev_ports_get(netdev_flow->flow.in_port.odp_port, dp->class);
+    if (!netdev) {
+        return false;
+    }
+    ofpbuf_use_stack(&buf, &act_buf, sizeof act_buf);
+    /* Taking a global 'port_mutex' to fulfill thread safety
+     * restrictions for the netdev-offload-dpdk module. */
+    ovs_mutex_lock(&dp->port_mutex);
+    ret = netdev_flow_get(netdev, &match, &actions, &netdev_flow->mega_ufid,
+                          stats, attrs, &buf);
+    ovs_mutex_unlock(&dp->port_mutex);
+    netdev_close(netdev);
+    if (ret) {
+        return false;
+    }
+
+    return true;
+}
+
+static void
+get_dpif_flow_status(const struct dp_netdev *dp,
+                     const struct dp_netdev_flow *netdev_flow_,
+                     struct dpif_flow_stats *stats,
+                     struct dpif_flow_attrs *attrs)
+{
+    struct dpif_flow_stats offload_stats;
+    struct dpif_flow_attrs offload_attrs;
     struct dp_netdev_flow *netdev_flow;
     unsigned long long n;
     long long used;
@@ -3115,6 +3160,21 @@ get_dpif_flow_stats(const struct dp_netdev_flow *netdev_flow_,
     stats->used = used;
     atomic_read_relaxed(&netdev_flow->stats.tcp_flags, &flags);
     stats->tcp_flags = flags;
+
+    if (dpif_netdev_get_flow_offload_status(dp, netdev_flow,
+                                            &offload_stats, &offload_attrs)) {
+        stats->n_packets += offload_stats.n_packets;
+        stats->n_bytes += offload_stats.n_bytes;
+        stats->used = MAX(stats->used, offload_stats.used);
+        stats->tcp_flags |= offload_stats.tcp_flags;
+        if (attrs) {
+            attrs->offloaded = offload_attrs.offloaded;
+            attrs->dp_layer = offload_attrs.dp_layer;
+        }
+    } else if (attrs) {
+        attrs->offloaded = false;
+        attrs->dp_layer = "ovs";
+    }
 }
 
 /* Converts to the dpif_flow format, using 'key_buf' and 'mask_buf' for
@@ -3122,7 +3182,8 @@ get_dpif_flow_stats(const struct dp_netdev_flow *netdev_flow_,
  * 'mask_buf'. Actions will be returned without copying, by relying on RCU to
  * protect them. */
 static void
-dp_netdev_flow_to_dpif_flow(const struct dp_netdev_flow *netdev_flow,
+dp_netdev_flow_to_dpif_flow(const struct dp_netdev *dp,
+                            const struct dp_netdev_flow *netdev_flow,
                             struct ofpbuf *key_buf, struct ofpbuf *mask_buf,
                             struct dpif_flow *flow, bool terse)
 {
@@ -3165,10 +3226,9 @@ dp_netdev_flow_to_dpif_flow(const struct dp_netdev_flow *netdev_flow,
     flow->ufid = netdev_flow->ufid;
     flow->ufid_present = true;
     flow->pmd_id = netdev_flow->pmd_id;
-    get_dpif_flow_stats(netdev_flow, &flow->stats);
 
-    flow->attrs.offloaded = false;
-    flow->attrs.dp_layer = "ovs";
+    get_dpif_flow_status(dp, netdev_flow, &flow->stats, &flow->attrs);
+    flow->attrs.dp_extra_info = netdev_flow->dp_extra_info;
 }
 
 static int
@@ -3275,8 +3335,8 @@ dpif_netdev_flow_get(const struct dpif *dpif, const struct dpif_flow_get *get)
         netdev_flow = dp_netdev_pmd_find_flow(pmd, get->ufid, get->key,
                                               get->key_len);
         if (netdev_flow) {
-            dp_netdev_flow_to_dpif_flow(netdev_flow, get->buffer, get->buffer,
-                                        get->flow, false);
+            dp_netdev_flow_to_dpif_flow(dp, netdev_flow, get->buffer,
+                                        get->buffer, get->flow, false);
             error = 0;
             break;
         } else {
@@ -3313,9 +3373,11 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
                    const struct nlattr *actions, size_t actions_len)
     OVS_REQUIRES(pmd->flow_mutex)
 {
+    struct ds extra_info = DS_EMPTY_INITIALIZER;
     struct dp_netdev_flow *flow;
     struct netdev_flow_key mask;
     struct dpcls *cls;
+    size_t unit;
 
     /* Make sure in_port is exact matched before we read it. */
     ovs_assert(match->wc.masks.in_port.odp_port == ODPP_NONE);
@@ -3357,6 +3419,18 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     //如果这个in_port不存在，则创建对应dpcls
     cls = dp_netdev_pmd_find_dpcls(pmd, in_port);
     dpcls_insert(cls, &flow->cr, &mask);
+
+    ds_put_cstr(&extra_info, "miniflow_bits(");
+    FLOWMAP_FOR_EACH_UNIT (unit) {
+        if (unit) {
+            ds_put_char(&extra_info, ',');
+        }
+        ds_put_format(&extra_info, "%d",
+                      count_1bits(flow->cr.mask->mf.map.bits[unit]));
+    }
+    ds_put_char(&extra_info, ')');
+    flow->dp_extra_info = ds_steal_cstr(&extra_info);
+    ds_destroy(&extra_info);
 
     //将flow加入到flow_table表中，flow_table为l2表
     cmap_insert(&pmd->flow_table, CONST_CAST(struct cmap_node *, &flow->node),
@@ -3462,7 +3536,7 @@ flow_put_on_pmd(struct dp_netdev_pmd_thread *pmd,//要下发到哪个pmd上
                                   put->actions, put->actions_len);
 
             if (stats) {
-                get_dpif_flow_stats(netdev_flow, stats);
+                get_dpif_flow_status(pmd->dp, netdev_flow, stats, NULL);
             }
             if (put->flags & DPIF_FP_ZERO_STATS) {
                 /* XXX: The userspace datapath uses thread local statistics
@@ -3592,7 +3666,7 @@ flow_del_on_pmd(struct dp_netdev_pmd_thread *pmd,
                                           del->key_len);
     if (netdev_flow) {
         if (stats) {
-            get_dpif_flow_stats(netdev_flow, stats);
+            get_dpif_flow_status(pmd->dp, netdev_flow, stats, NULL);
         }
         dp_netdev_pmd_remove_flow(pmd, netdev_flow);
     } else {
@@ -3726,13 +3800,13 @@ dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         = dpif_netdev_flow_dump_thread_cast(thread_);
     struct dpif_netdev_flow_dump *dump = thread->dump;
     struct dp_netdev_flow *netdev_flows[FLOW_DUMP_MAX_BATCH];
+    struct dpif_netdev *dpif = dpif_netdev_cast(thread->up.dpif);
+    struct dp_netdev *dp = get_dp_netdev(&dpif->dpif);
     int n_flows = 0;
     int i;
 
     ovs_mutex_lock(&dump->mutex);
     if (!dump->status) {
-        struct dpif_netdev *dpif = dpif_netdev_cast(thread->up.dpif);
-        struct dp_netdev *dp = get_dp_netdev(&dpif->dpif);
         struct dp_netdev_pmd_thread *pmd = dump->cur_pmd;
         int flow_limit = MIN(max_flows, FLOW_DUMP_MAX_BATCH);
 
@@ -3789,7 +3863,7 @@ dpif_netdev_flow_dump_next(struct dpif_flow_dump_thread *thread_,
 
         ofpbuf_use_stack(&key, keybuf, sizeof *keybuf);
         ofpbuf_use_stack(&mask, maskbuf, sizeof *maskbuf);
-        dp_netdev_flow_to_dpif_flow(netdev_flow, &key, &mask, f,
+        dp_netdev_flow_to_dpif_flow(dp, netdev_flow, &key, &mask, f,
                                     dump->up.terse);
     }
 

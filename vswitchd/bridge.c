@@ -65,6 +65,7 @@
 #include "system-stats.h"
 #include "timeval.h"
 #include "tnl-ports.h"
+#include "userspace-tso.h"
 #include "util.h"
 #include "unixctl.h"
 #include "lib/vswitch-idl.h"
@@ -290,6 +291,7 @@ static void bridge_configure_ipfix(struct bridge *);
 static void bridge_configure_spanning_tree(struct bridge *);
 static void bridge_configure_tables(struct bridge *);
 static void bridge_configure_dp_desc(struct bridge *);
+static void bridge_configure_serial_desc(struct bridge *);
 static void bridge_configure_aa(struct bridge *);
 static void bridge_aa_refresh_queued(struct bridge *);
 static bool bridge_aa_need_refresh(struct bridge *);
@@ -990,6 +992,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
         //表属性配置
         bridge_configure_tables(br);
         bridge_configure_dp_desc(br);
+        bridge_configure_serial_desc(br);
         bridge_configure_aa(br);
     }
     free(managers);
@@ -3411,6 +3414,7 @@ bridge_run(void)
         netdev_set_flow_api_enabled(&cfg->other_config);
     	//dpdk配置（取出数据库中的other_config)
         dpdk_init(&cfg->other_config);
+        userspace_tso_init(&cfg->other_config);
     }
 
     /* Initialize the ofproto library.  This only needs to run once, but
@@ -4289,6 +4293,13 @@ bridge_configure_dp_desc(struct bridge *br)
 {
     ofproto_set_dp_desc(br->ofproto,
                         smap_get(&br->cfg->other_config, "dp-desc"));
+}
+
+static void
+bridge_configure_serial_desc(struct bridge *br)
+{
+    ofproto_set_serial_desc(br->ofproto,
+                        smap_get(&br->cfg->other_config, "dp-sn"));
 }
 
 static struct aa_mapping *

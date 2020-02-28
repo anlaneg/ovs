@@ -66,6 +66,8 @@ COVERAGE_DEFINE(netdev_received);
 COVERAGE_DEFINE(netdev_sent);
 COVERAGE_DEFINE(netdev_add_router);
 COVERAGE_DEFINE(netdev_get_stats);
+COVERAGE_DEFINE(netdev_send_prepare_drops);
+COVERAGE_DEFINE(netdev_push_header_drops);
 
 struct netdev_saved_flags {
     struct netdev *netdev;
@@ -825,6 +827,54 @@ netdev_get_pt_mode(const struct netdev *netdev)
             : NETDEV_PT_LEGACY_L2);
 }
 
+/* Check if a 'packet' is compatible with 'netdev_flags'.
+ * If a packet is incompatible, return 'false' with the 'errormsg'
+ * pointing to a reason. */
+static bool
+netdev_send_prepare_packet(const uint64_t netdev_flags,
+                           struct dp_packet *packet, char **errormsg)
+{
+    if (dp_packet_hwol_is_tso(packet)
+        && !(netdev_flags & NETDEV_TX_OFFLOAD_TCP_TSO)) {
+            /* Fall back to GSO in software. */
+            VLOG_ERR_BUF(errormsg, "No TSO support");
+            return false;
+    }
+
+    if (dp_packet_hwol_l4_mask(packet)
+        && !(netdev_flags & NETDEV_TX_OFFLOAD_TCP_CKSUM)) {
+            /* Fall back to L4 csum in software. */
+            VLOG_ERR_BUF(errormsg, "No L4 checksum support");
+            return false;
+    }
+
+    return true;
+}
+
+/* Check if each packet in 'batch' is compatible with 'netdev' features,
+ * otherwise either fall back to software implementation or drop it. */
+static void
+netdev_send_prepare_batch(const struct netdev *netdev,
+                          struct dp_packet_batch *batch)
+{
+    struct dp_packet *packet;
+    size_t i, size = dp_packet_batch_size(batch);
+
+    DP_PACKET_BATCH_REFILL_FOR_EACH (i, size, packet, batch) {
+        char *errormsg = NULL;
+
+        if (netdev_send_prepare_packet(netdev->ol_flags, packet, &errormsg)) {
+            dp_packet_batch_refill(batch, packet, i);
+        } else {
+            dp_packet_delete(packet);
+            COVERAGE_INC(netdev_send_prepare_drops);
+            VLOG_WARN_RL(&rl, "%s: Packet dropped: %s",
+                         netdev_get_name(netdev), errormsg);
+            free(errormsg);
+        }
+    }
+}
+
 /* Sends 'batch' on 'netdev'.  Returns 0 if successful (for every packet),
  * otherwise a positive errno value.  Returns EAGAIN without blocking if
  * at least one the packets cannot be queued immediately.  Returns EMSGSIZE
@@ -855,8 +905,14 @@ netdev_send(struct netdev *netdev, int qid, struct dp_packet_batch *batch,//报�
             bool concurrent_txq)//concurrent_txq为true时，需要加锁，非独占
 
 {
-    int error = netdev->netdev_class->send(netdev, qid, batch,
-                                           concurrent_txq);
+    int error;
+
+    netdev_send_prepare_batch(netdev, batch);
+    if (OVS_UNLIKELY(dp_packet_batch_is_empty(batch))) {
+        return 0;
+    }
+
+    error = netdev->netdev_class->send(netdev, qid, batch, concurrent_txq);
     if (!error) {
         COVERAGE_INC(netdev_sent);
     }
@@ -928,11 +984,23 @@ netdev_push_header(const struct netdev *netdev,
                    const struct ovs_action_push_tnl *data)
 {
     struct dp_packet *packet;
-    DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
-        //封装隧道头到报文中
-        netdev->netdev_class->push_header(netdev, packet, data);
-        //改入接口
-        pkt_metadata_init(&packet->md, data->out_port);
+    size_t i, size = dp_packet_batch_size(batch);
+
+    DP_PACKET_BATCH_REFILL_FOR_EACH (i, size, packet, batch) {
+        if (OVS_UNLIKELY(dp_packet_hwol_is_tso(packet)
+                         || dp_packet_hwol_l4_mask(packet))) {
+            COVERAGE_INC(netdev_push_header_drops);
+            dp_packet_delete(packet);
+            VLOG_WARN_RL(&rl, "%s: Tunneling packets with HW offload flags is "
+                         "not supported: packet dropped",
+                         netdev_get_name(netdev));
+        } else {
+            //封装隧道头到报文中
+            netdev->netdev_class->push_header(netdev, packet, data);
+            //改入接口
+            pkt_metadata_init(&packet->md, data->out_port);
+            dp_packet_batch_refill(batch, packet, i);
+        }
     }
 
     return 0;
