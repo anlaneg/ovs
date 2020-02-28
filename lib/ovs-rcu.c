@@ -51,6 +51,7 @@ struct ovsrcu_perthread {
     char name[16];              /* This thread's name. */
 };
 
+//全局的seq对象
 static struct seq *global_seqno;
 
 //存储ovsrcu-thread的pthread-key
@@ -85,10 +86,12 @@ ovsrcu_perthread_get(void)
 
     perthread = pthread_getspecific(perthread_key);
     if (!perthread) {
+        //当前线程的ovsrcu-perthead不存在，创建它
         const char *name = get_subprogram_name();
 
         perthread = xmalloc(sizeof *perthread);
         ovs_mutex_init(&perthread->mutex);
+        /*取全局seq中的序号*/
         perthread->seqno = seq_read(global_seqno);
         perthread->cbset = NULL;
         ovs_strlcpy(perthread->name, name[0] ? name : "main",
@@ -100,6 +103,8 @@ ovsrcu_perthread_get(void)
 
         pthread_setspecific(perthread_key, perthread);
     }
+
+    /*如果已存在，则直接返回*/
     return perthread;
 }
 
@@ -128,7 +133,7 @@ ovsrcu_quiesced(void)
         if (ovsthread_once_start(&once)) {
             latch_init(&postpone_exit);
             ovs_barrier_init(&postpone_barrier, 2);
-            //创建urcu线程，负责回调执行
+            //创建urcu线程，负责rcu回调执行
             ovs_thread_create("urcu", ovsrcu_postpone_thread, NULL);
             ovsthread_once_done(&once);
         }
@@ -137,8 +142,9 @@ ovsrcu_quiesced(void)
 
 /* Indicates the beginning of a quiescent state.  See "Details" near the top of
  * ovs-rcu.h. */
-//如果自已有cbset,则将自已的cbset放入到flushed_cbset中，并将自身销毁
-//单线程尝试执行，多线程确保rcu回调线程存在
+//指明rcu空闲开始（即不会有人使用rcu回调对应的内存)
+//此时如果自已有cbset,则会将自已的cbset放入到flushed_cbset中，并将自身内容销毁（此时没有人使用rcu)
+//针对回调执行，单线程则直接执行，多线程则确保rcu回调线程存在
 void
 ovsrcu_quiesce_start(void)
 {
@@ -147,7 +153,7 @@ ovsrcu_quiesce_start(void)
     ovsrcu_init_module();
     perthread = pthread_getspecific(perthread_key);
     if (perthread) {
-    	//提取rcu私有数据，执行注册的相应回调
+    	//当前线程有rcu私有key,将私有key移除掉，执行注册的相应回调
         pthread_setspecific(perthread_key, NULL);
         ovsrcu_unregister__(perthread);
     }
@@ -160,26 +166,30 @@ ovsrcu_quiesce_start(void)
  *
  * Provides a full memory barrier via seq_change().
  */
-//更新当前perthread的序号，如果有cbset存在，则flush它
-//更新global_seqno
+//更新当前thread的seqno，如果当前线程有cbset存在，则flush它到全局cbset,并唤醒waiter进行执行
+//另外更新系统全局的seq: global_seqno
 void
 ovsrcu_quiesce(void)
 {
     struct ovsrcu_perthread *perthread;
 
     perthread = ovsrcu_perthread_get();
-    //系统变更seqno处（１）
+    //变更本线程的seqno
     perthread->seqno = seq_read(global_seqno);
+
+    //如果本线程有cbset，则提交cbset给waiter进行执行
     if (perthread->cbset) {
         ovsrcu_flush_cbset(perthread);
     }
+
+    //变更系统全局seqno处（１）
     seq_change(global_seqno);
 
     ovsrcu_quiesced();
 }
 
-//尝试加锁，并更新perthread->seqno,将perthread->cbset刷入到flushed_cbsets
-//更新global_seqno
+//尝试加锁，如果加锁成功，则更新perthread->seqno,并将perthread->cbset刷入到flushed_cbsets，
+//通知waiter准备处理回调函数，并更新global_seqno
 int
 ovsrcu_try_quiesce(void)
 {
@@ -189,14 +199,17 @@ ovsrcu_try_quiesce(void)
     ovs_assert(!single_threaded());
     perthread = ovsrcu_perthread_get();
     if (!seq_try_lock()) {
-        //系统变更seqno处（１）
+        //更新当前系统seqno
         perthread->seqno = seq_read_protected(global_seqno);
         if (perthread->cbset) {
         	//如果有回调集，就将其刷入到flushed_cbsets
             ovsrcu_flush_cbset__(perthread, true);
         }
+
+        //变更系统全局seqno处（2）
         seq_change_protected(global_seqno);
         seq_unlock();
+        //如果是多线程，则什么也不做（初始化urcu线程只做一次）
         ovsrcu_quiesced();
         ret = 0;
     }
@@ -224,8 +237,9 @@ ovsrcu_synchronize(void)
         return;
     }
 
+    /*系统当前的全局seq*/
     target_seqno = seq_read(global_seqno);
-    //将当前线程刷入，并销毁当前线程的记录
+    //将当前线程cbset刷入全局cbset通知waiter干活，并销毁当前线程的记录
     ovsrcu_quiesce_start();
     start = time_msec();
 
@@ -263,7 +277,7 @@ ovsrcu_synchronize(void)
         //设置此线程的建意到期时间为当前时间+warning_threshold
         poll_timer_wait_until(start + warning_threshold);
 
-        //添加seq waiter
+        //添加seq waiter，如果global_seqno变更再醒过来
         seq_wait(global_seqno, cur_seqno);
 
         //阻塞等待事件触发
@@ -286,6 +300,7 @@ ovsrcu_synchronize(void)
 void
 ovsrcu_exit(void)
 {
+    //指明urcu线程退出
     /* Stop the postpone thread and wait for it to exit.  Otherwise, there's no
      * way to wait for that thread to finish calling callbacks itself. */
     if (!single_threaded()) {
@@ -334,7 +349,7 @@ ovsrcu_exit(void)
  * This function is more conveniently called through the ovsrcu_postpone()
  * macro, which provides a type-safe way to allow 'function''s parameter to be
  * any pointer type. */
-//向里面添加cbset
+//为当前进程添加rcu的cbset回调函数及参数
 void
 ovsrcu_postpone__(void (*function)(void *aux), void *aux)
 {
@@ -358,7 +373,7 @@ ovsrcu_postpone__(void (*function)(void *aux), void *aux)
     }
 }
 
-//执行flushed_cbsets上所有回调集
+//等待一个rcu周期，然后执行flushed_cbsets上所有回调集
 static bool
 ovsrcu_call_postponed(void)
 {
@@ -374,7 +389,7 @@ ovsrcu_call_postponed(void)
     //rcu同步，等待所有线程均过了global_seq变换
     ovsrcu_synchronize();
 
-    //执行所有回调集
+    //执行cbsets上所有回调集
     LIST_FOR_EACH_POP (cbset, list_node, &cbsets) {
         struct ovsrcu_cb *cb;
 
@@ -386,7 +401,7 @@ ovsrcu_call_postponed(void)
 
     return true;
 }
-//线程函数，监控flushed_cbsets_seq,如果其发生变化，则执行相应回调
+//线程函数，监控flushed_cbsets_seq,如果其发生变化，则执行flushed_cbsets_seq所有回调
 static void *
 ovsrcu_postpone_thread(void *arg OVS_UNUSED)
 {
@@ -408,18 +423,20 @@ ovsrcu_postpone_thread(void *arg OVS_UNUSED)
     return NULL;
 }
 
+//将各线程的cbset提交给全局的flushed_cbsets，唤醒flushed_cbsets_seq上的waiter
 static void
 ovsrcu_flush_cbset__(struct ovsrcu_perthread *perthread, bool protected)
 {
     struct ovsrcu_cbset *cbset = perthread->cbset;
 
     if (cbset) {
-    	//各线程将由mutex保护下，向flushed_cbsets中提交自已的cbset
+    	//各线程将由mutex保护下，向flushed_cbsets中提交自已的cbset（将各线程的cb提交给全局cbset）
         guarded_list_push_back(&flushed_cbsets, &cbset->list_node, SIZE_MAX);
         perthread->cbset = NULL;
 
-        //如果seq已被保护，则不需要再加锁（通知waiter需要调用的回调准备好了）
+        //变更flushed_cbsets_seq,并唤醒（通知）waiter需要调用的回调已准备好了
         if (protected) {
+            //protected为True，则不需要再加锁
             seq_change_protected(flushed_cbsets_seq);
         } else {
             seq_change(flushed_cbsets_seq);
@@ -427,19 +444,19 @@ ovsrcu_flush_cbset__(struct ovsrcu_perthread *perthread, bool protected)
     }
 }
 
-//知会执行回调集合的waiter，使其可被wakeup，然后工作(flushed_cbsets_seq未保护）
+//提交线程对应的cb到全局cb,并知会执行回调集合的waiter，使其开始工作
 static void
 ovsrcu_flush_cbset(struct ovsrcu_perthread *perthread)
 {
-    ovsrcu_flush_cbset__(perthread, false);
+    ovsrcu_flush_cbset__(perthread, false/*上文已加锁，不需要另外加锁*/);
 }
 
-//释放perthread
+//提交cbset 释放rcu的私有数据
 static void
 ovsrcu_unregister__(struct ovsrcu_perthread *perthread)
 {
     if (perthread->cbset) {
-    	//本线程有回调集合，挂在链上，通知waiter准备干活。
+    	//本rcu线程有cbset，提交给全局cb,并通知waiter准备干活。
         ovsrcu_flush_cbset(perthread);
     }
 
@@ -474,7 +491,7 @@ ovsrcu_cancel_thread_exit_cb(void *aux OVS_UNUSED)
     pthread_setspecific(perthread_key, NULL);
 }
 
-//模块初始化
+//ovsrcu模块初始化
 static void
 ovsrcu_init_module(void)
 {

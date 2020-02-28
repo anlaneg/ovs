@@ -236,7 +236,7 @@ static inline void ovsrcu_set__(struct ovsrcu_pointer *pointer,
 /* Calls FUNCTION passing ARG as its pointer-type argument following the next
  * grace period.  See "Usage" above for an example. */
 void ovsrcu_postpone__(void (*function)(void *aux), void *aux);
-//添加rcu变更函数
+//添加rcu变更回调函数
 #define ovsrcu_postpone(FUNCTION, ARG)                          \
     (/* Verify that ARG is appropriate for FUNCTION. */         \
      (void) sizeof((FUNCTION)(ARG), 1),                         \

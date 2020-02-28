@@ -379,6 +379,7 @@ ovsthread_wrapper(void *aux_)
     struct ovsthread_aux aux;
     unsigned int id;
 
+    /*分配线程id号*/
     id = ovsthread_id_init();
 
     aux = *auxp;
@@ -386,6 +387,7 @@ ovsthread_wrapper(void *aux_)
 
     /* The order of the following calls is important, because
      * ovsrcu_quiesce_end() saves a copy of the thread name. */
+    //设置subprogram_name
     char *subprogram_name = xasprintf("%s%u", aux.name, id);
     //设置线程名称
     set_subprogram_name(subprogram_name);

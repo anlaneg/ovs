@@ -32,7 +32,9 @@ COVERAGE_DEFINE(seq_change);
 
 /* A sequence number object. */
 struct seq {
+    //seq序列
     uint64_t value OVS_GUARDED;
+    //seq的等待队列
     struct hmap waiters OVS_GUARDED; /* Contains 'struct seq_waiter's. */
 };
 
@@ -60,7 +62,7 @@ static struct ovs_mutex seq_mutex = OVS_MUTEX_INITIALIZER;
 
 static uint64_t seq_next OVS_GUARDED_BY(seq_mutex) = 1;//用于产生序列
 
-static pthread_key_t seq_thread_key;
+static pthread_key_t seq_thread_key;/*seq线程对应的key*/
 
 static void seq_init(void);
 static struct seq_thread *seq_thread_get(void) OVS_REQUIRES(seq_mutex);
@@ -70,6 +72,7 @@ static void seq_waiter_destroy(struct seq_waiter *) OVS_REQUIRES(seq_mutex);
 static void seq_wake_waiters(struct seq *) OVS_REQUIRES(seq_mutex);
 
 /* Creates and returns a new 'seq' object. */
+//创建一个seq对象
 struct seq * OVS_EXCLUDED(seq_mutex)
 seq_create(void)
 {
@@ -83,9 +86,9 @@ seq_create(void)
     COVERAGE_INC(seq_change);
 
     ovs_mutex_lock(&seq_mutex);
-    //给seq赋初始值
+    //加锁，产生seq_next,给seq赋初始值
     seq->value = seq_next++;
-    //初始化其对应的等待队列
+    //初始化seq对应的等待队列
     hmap_init(&seq->waiters);
     ovs_mutex_unlock(&seq_mutex);
 
