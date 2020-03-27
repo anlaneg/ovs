@@ -39,7 +39,7 @@ struct mf_field;
  * function can be used to restore this invariant after adding wildcards.) */
 struct match {
     struct flow flow;//报文中提取出来的数据
-    struct flow_wildcards wc;
+    struct flow_wildcards wc;//掩码
     struct tun_metadata_allocation tun_md;
 };
 

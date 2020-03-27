@@ -1217,6 +1217,7 @@ flow_zero_wildcards(struct flow *flow, const struct flow_wildcards *wildcards)
     const uint64_t *wc_u64 = (const uint64_t *) &wildcards->masks;
     size_t i;
 
+    //将mask不关心的字段置为0
     for (i = 0; i < FLOW_U64S; i++) {
         flow_u64[i] &= wc_u64[i];
     }

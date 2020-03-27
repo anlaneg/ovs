@@ -55,7 +55,7 @@ static struct cmap ufid_to_rte_flow = CMAP_INITIALIZER;
 
 struct ufid_to_rte_flow_data {
     struct cmap_node node;
-    ovs_u128 ufid;
+    ovs_u128 ufid;/*rte_flow对应的id*/
     struct rte_flow *rte_flow;
     bool actions_offloaded;
     struct dpif_flow_stats stats;
@@ -482,12 +482,14 @@ netdev_offload_dpdk_flow_create(struct netdev *netdev,
     return flow;
 }
 
+//添加type类型的匹配项到patterns中
 static void
-add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type,
-                 const void *spec, const void *mask)
+add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type/*匹配类型*/,
+                 const void *spec/*匹配的value*/, const void *mask/*匹配的mask*/)
 {
     int cnt = patterns->cnt;
 
+    //patterns空间扩充
     if (cnt == 0) {
         patterns->current_max = 8;
         patterns->items = xcalloc(patterns->current_max,
@@ -498,13 +500,14 @@ add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type,
                                    sizeof *patterns->items);
     }
 
-    patterns->items[cnt].type = type;
-    patterns->items[cnt].spec = spec;
-    patterns->items[cnt].mask = mask;
+    patterns->items[cnt].type = type;/*要匹配的类型*/
+    patterns->items[cnt].spec = spec;/*要匹配的flow*/
+    patterns->items[cnt].mask = mask;/*要匹配的mask*/
     patterns->items[cnt].last = NULL;
     patterns->cnt++;
 }
 
+//添加指定类型dpdk action及其对应配置
 static void
 add_flow_action(struct flow_actions *actions, enum rte_flow_action_type type,
                 const void *conf)
@@ -559,6 +562,7 @@ free_flow_actions(struct flow_actions *actions)
     actions->cnt = 0;
 }
 
+//构造匹配字段
 static int
 parse_flow_match(struct flow_patterns *patterns,
                  const struct match *match)
@@ -569,6 +573,7 @@ parse_flow_match(struct flow_patterns *patterns,
     /* Eth */
     if (!eth_addr_is_zero(match->wc.masks.dl_src) ||
         !eth_addr_is_zero(match->wc.masks.dl_dst)) {
+        //需要匹配srcmac,dstmac
         struct rte_flow_item_eth *spec, *mask;
 
         spec = xzalloc(sizeof *spec);
@@ -582,8 +587,10 @@ parse_flow_match(struct flow_patterns *patterns,
         memcpy(&mask->src, &match->wc.masks.dl_src, sizeof mask->src);
         mask->type = match->wc.masks.dl_type;
 
+        //转换ether header的match
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, spec, mask);
     } else {
+        //以太头全匹配
         /*
          * If user specifies a flow (like UDP flow) without L2 patterns,
          * OVS will at least set the dl_type. Normally, it's enough to
@@ -596,6 +603,7 @@ parse_flow_match(struct flow_patterns *patterns,
 
     /* VLAN */
     if (match->wc.masks.vlans[0].tci && match->flow.vlans[0].tci) {
+        //需要匹配vlan
         struct rte_flow_item_vlan *spec, *mask;
 
         spec = xzalloc(sizeof *spec);
@@ -629,6 +637,7 @@ parse_flow_match(struct flow_patterns *patterns,
         mask->hdr.src_addr        = match->wc.masks.nw_src;
         mask->hdr.dst_addr        = match->wc.masks.nw_dst;
 
+        //ipv4匹配
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, spec, mask);
 
         /* Save proto for L4 protocol setup. */
@@ -807,6 +816,7 @@ add_count_action(struct flow_actions *actions)
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_COUNT, count);
 }
 
+//添加port_id action(对应ovs的output)
 static int
 add_port_id_action(struct flow_actions *actions,
                    struct netdev *outdev)
@@ -824,6 +834,7 @@ add_port_id_action(struct flow_actions *actions,
     return 0;
 }
 
+//dpdk转换output action
 static int
 add_output_action(struct netdev *netdev,
                   struct flow_actions *actions,
@@ -837,11 +848,14 @@ add_output_action(struct netdev *netdev,
     port = nl_attr_get_odp_port(nla);
     outdev = netdev_ports_get(port, info->dpif_class);
     if (outdev == NULL) {
+        /*outdev必须存在*/
         VLOG_DBG_RL(&rl, "Cannot find netdev for odp port %"PRIu32, port);
         return -1;
     }
+
+    //？？？？
     if (!netdev_flow_api_equals(netdev, outdev) ||
-        add_port_id_action(actions, outdev)) {
+        add_port_id_action(actions, outdev)/*转换output action*/) {
         VLOG_DBG_RL(&rl, "%s: Output to port \'%s\' cannot be offloaded.",
                     netdev_get_name(netdev), netdev_get_name(outdev));
         ret = -1;
@@ -851,13 +865,14 @@ add_output_action(struct netdev *netdev,
 }
 
 static int
-add_set_flow_action__(struct flow_actions *actions,
-                      const void *value, void *mask,
-                      const size_t size, const int attr)
+add_set_flow_action__(struct flow_actions *actions/*保存转换后的action*/,
+                      const void *value/*要设置的值*/, void *mask/*value对应的mask*/,
+                      const size_t size/*value对应的长度*/, const int attr/*action类型*/)
 {
     void *spec;
 
     if (mask) {
+        //dpdk仅支持全匹配或者不匹配两种（不支持半匹配）
         /* DPDK does not support partially masked set actions. In such
          * case, fail the offload.
          */
@@ -870,6 +885,7 @@ add_set_flow_action__(struct flow_actions *actions,
         }
     }
 
+    //添加action
     spec = xzalloc(size);
     memcpy(spec, value, size);
     add_flow_action(actions, attr, spec);
@@ -902,20 +918,21 @@ BUILD_ASSERT_DECL(sizeof(struct rte_flow_action_set_tp) ==
 
 static int
 parse_set_actions(struct flow_actions *actions,
-                  const struct nlattr *set_actions,
-                  const size_t set_actions_len,
-                  bool masked)
+                  const struct nlattr *set_actions/*ovs格式action*/,
+                  const size_t set_actions_len/*action长度*/,
+                  bool masked/*是否操作mask*/)
 {
     const struct nlattr *sa;
     unsigned int sleft;
 
-#define add_set_flow_action(field, type)                                      \
+#define add_set_flow_action(field/*key对应的字段名称*/, type/*dpdk对应的action type*/)                                      \
     if (add_set_flow_action__(actions, &key->field,                           \
                               mask ? CONST_CAST(void *, &mask->field) : NULL, \
                               sizeof key->field, type)) {                     \
         return -1;                                                            \
     }
 
+    //按字段类型，分别设置其分成员的set
     NL_ATTR_FOR_EACH_UNSAFE (sa, sleft, set_actions, set_actions_len) {
         if (nl_attr_type(sa) == OVS_KEY_ATTR_ETHERNET) {
             const struct ovs_key_ethernet *key = nl_attr_get(sa);
@@ -972,6 +989,7 @@ parse_set_actions(struct flow_actions *actions,
     return 0;
 }
 
+//dpdk方式转换action字段
 static int
 parse_flow_actions(struct netdev *netdev,
                    struct flow_actions *actions,
@@ -989,13 +1007,16 @@ parse_flow_actions(struct netdev *netdev,
                 return -1;
             }
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_DROP) {
+            //drop action转换
             add_flow_action(actions, RTE_FLOW_ACTION_TYPE_DROP, NULL);
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_SET ||
                    nl_attr_type(nla) == OVS_ACTION_ATTR_SET_MASKED) {
+            //set及set masked actionl转换
             const struct nlattr *set_actions = nl_attr_get(nla);
             const size_t set_actions_len = nl_attr_get_size(nla);
             bool masked = nl_attr_type(nla) == OVS_ACTION_ATTR_SET_MASKED;
 
+            //设置set字段的转换（不支持部分设置）
             if (parse_set_actions(actions, set_actions, set_actions_len,
                                   masked)) {
                 return -1;
@@ -1011,6 +1032,7 @@ parse_flow_actions(struct netdev *netdev,
         return -1;
     }
 
+    //指明action结束
     add_flow_action(actions, RTE_FLOW_ACTION_TYPE_END, NULL);
     return 0;
 }
@@ -1028,6 +1050,7 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
     struct rte_flow_error error;
     int ret;
 
+    //action转换
     ret = parse_flow_actions(netdev, &actions, nl_actions, actions_len, info);
     if (ret) {
         goto out;
@@ -1039,6 +1062,7 @@ out:
     return flow;
 }
 
+//dpdk添加offload规则
 static int
 netdev_offload_dpdk_add_flow(struct netdev *netdev,
                              const struct match *match,
@@ -1047,31 +1071,37 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
                              const ovs_u128 *ufid,
                              struct offload_info *info)
 {
+    //保存flow的match
     struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
     bool actions_offloaded = true;
     struct rte_flow *flow;
     int ret = 0;
 
+    //转换match字段
     ret = parse_flow_match(&patterns, match);
     if (ret) {
         goto out;
     }
 
+    //尝试offload规则
     flow = netdev_offload_dpdk_actions(netdev, &patterns, nl_actions,
                                        actions_len, info);
     if (!flow) {
         /* If we failed to offload the rule actions fallback to MARK+RSS
          * actions.
          */
+        //offload失败，回退到mark+rss方式
         flow = netdev_offload_dpdk_mark_rss(&patterns, netdev,
                                             info->flow_mark);
         actions_offloaded = false;
     }
 
     if (!flow) {
+        /*mark+rss方式下发失败，退出*/
         ret = -1;
         goto out;
     }
+    /*下发成功，完成关联*/
     ufid_to_rte_flow_associate(ufid, flow, actions_offloaded);
     VLOG_DBG("%s: installed flow %p by ufid "UUID_FMT"\n",
              netdev_get_name(netdev), flow, UUID_ARGS((struct uuid *)ufid));
@@ -1084,6 +1114,7 @@ out:
 /*
  * Check if any unsupported flow patterns are specified.
  */
+//校验dpdk不支持的offload flow
 static int
 netdev_offload_dpdk_validate_flow(const struct match *match)
 {
@@ -1093,21 +1124,25 @@ netdev_offload_dpdk_validate_flow(const struct match *match)
     /* Create a wc-zeroed version of flow. */
     match_init(&match_zero_wc, &match->flow, &match->wc);
 
+    //不支持tunnel
     if (!is_all_zeros(&match_zero_wc.flow.tunnel,
                       sizeof match_zero_wc.flow.tunnel)) {
         goto err;
     }
 
+    //不支持如下mask
     if (masks->metadata || masks->skb_priority ||
         masks->pkt_mark || masks->dp_hash) {
         goto err;
     }
 
     /* recirc id must be zero. */
+    //不支持recirc
     if (match_zero_wc.flow.recirc_id) {
         goto err;
     }
 
+    //不支持ct
     if (masks->ct_state || masks->ct_nw_proto ||
         masks->ct_zone  || masks->ct_mark     ||
         !ovs_u128_is_zero(masks->ct_label)) {
@@ -1119,6 +1154,7 @@ netdev_offload_dpdk_validate_flow(const struct match *match)
     }
 
     /* Unsupported L2. */
+    //不支持mips
     if (!is_all_zeros(masks->mpls_lse, sizeof masks->mpls_lse)) {
         goto err;
     }
@@ -1137,6 +1173,7 @@ netdev_offload_dpdk_validate_flow(const struct match *match)
     }
 
     /* If fragmented, then don't HW accelerate - for now. */
+    //不支持分片
     if (match_zero_wc.flow.nw_frag) {
         goto err;
     }
@@ -1175,11 +1212,11 @@ netdev_offload_dpdk_destroy_flow(struct netdev *netdev,
     return ret;
 }
 
-//dpdk offload添加
+//dpdk offload规则添加
 static int
 netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
                              struct nlattr *actions, size_t actions_len,
-                             const ovs_u128 *ufid, struct offload_info *info,
+                             const ovs_u128 *ufid/*规则对应的id*/, struct offload_info *info,
                              struct dpif_flow_stats *stats)
 {
     struct ufid_to_rte_flow_data *rte_flow_data;
@@ -1199,6 +1236,7 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
         }
     }
 
+    //检查能否offload
     ret = netdev_offload_dpdk_validate_flow(match);
     if (ret < 0) {
         return ret;
@@ -1207,6 +1245,8 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
     if (stats) {
         memset(stats, 0, sizeof *stats);
     }
+
+    //dpdk offload流添加
     return netdev_offload_dpdk_add_flow(netdev, match, actions,
                                         actions_len, ufid, info);
 }
@@ -1281,6 +1321,7 @@ out:
     return ret;
 }
 
+//dpdk流表下发
 const struct netdev_flow_api netdev_offload_dpdk = {
     .type = "dpdk_flow_api",
     .flow_put = netdev_offload_dpdk_flow_put,

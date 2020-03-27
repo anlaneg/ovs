@@ -5391,6 +5391,7 @@ netdev_dpdk_rte_flow_create(struct netdev *netdev,
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
 
     ovs_mutex_lock(&dev->mutex);
+    /*指定设备dev->port_id创建相应flow*/
     flow = rte_flow_create(dev->port_id, attr, items, actions, error);
     ovs_mutex_unlock(&dev->mutex);
     return flow;

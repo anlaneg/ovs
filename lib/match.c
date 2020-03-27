@@ -35,7 +35,9 @@ match_init(struct match *match,
 {
     match->flow = *flow;
     match->wc = *wc;
+    //清除掉match->flow中的0 mask字段
     match_zero_wildcarded_fields(match);
+    //tunnel matadata置为0
     memset(&match->tun_md, 0, sizeof match->tun_md);
 }
 
