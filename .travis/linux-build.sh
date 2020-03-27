@@ -6,7 +6,6 @@ set -x
 CFLAGS_FOR_OVS="-g -O2"
 SPARSE_FLAGS=""
 EXTRA_OPTS="--enable-Werror"
-TARGET="x86_64-native-linuxapp-gcc"
 
 function install_kernel()
 {
@@ -87,6 +86,16 @@ function install_dpdk()
     local DPDK_VER=$1
     local VERSION_FILE="dpdk-dir/travis-dpdk-cache-version"
 
+    if [ -z "$TRAVIS_ARCH" ] ||
+       [ "$TRAVIS_ARCH" == "amd64" ]; then
+        TARGET="x86_64-native-linuxapp-gcc"
+    elif [ "$TRAVIS_ARCH" == "aarch64" ]; then
+        TARGET="arm64-armv8a-linuxapp-gcc"
+    else
+        echo "Target is unknown"
+        exit 1
+    fi
+
     if [ "${DPDK_VER##refs/*/}" != "${DPDK_VER}" ]; then
         # Avoid using cache for git tree build.
         rm -rf dpdk-dir
@@ -123,10 +132,6 @@ function install_dpdk()
     # Disable building DPDK kernel modules. Not needed for OVS build or tests.
     sed -i '/CONFIG_RTE_EAL_IGB_UIO=y/s/=y/=n/' build/.config
     sed -i '/CONFIG_RTE_KNI_KMOD=y/s/=y/=n/' build/.config
-
-    # Enable pdump support in DPDK.
-    sed -i '/CONFIG_RTE_LIBRTE_PMD_PCAP=n/s/=n/=y/' build/.config
-    sed -i '/CONFIG_RTE_LIBRTE_PDUMP=n/s/=n/=y/' build/.config
 
     make -j4 CC=gcc EXTRA_CFLAGS='-fPIC'
     EXTRA_OPTS="$EXTRA_OPTS --with-dpdk=$(pwd)/build"
@@ -168,8 +173,6 @@ if [ "$DPDK" ] || [ "$DPDK_SHARED" ]; then
         DPDK_VER="19.11"
     fi
     install_dpdk $DPDK_VER
-    # Enable pdump support in OVS.
-    EXTRA_OPTS="${EXTRA_OPTS} --enable-dpdk-pdump"
     if [ "$CC" = "clang" ]; then
         # Disregard cast alignment errors until DPDK is fixed
         CFLAGS_FOR_OVS="${CFLAGS_FOR_OVS} -Wno-cast-align"
@@ -183,7 +186,7 @@ elif [ "$M32" ]; then
     # Adding m32 flag directly to CC to avoid any posiible issues with API/ABI
     # difference on 'configure' and 'make' stages.
     export CC="$CC -m32"
-else
+elif [ "$TRAVIS_ARCH" != "aarch64" ]; then
     OPTS="--enable-sparse"
     if [ "$AFXDP" ]; then
         # netdev-afxdp uses memset for 64M for umem initialization.

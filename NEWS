@@ -4,6 +4,12 @@ Post-v2.13.0
    - OpenFlow:
      * The OpenFlow ofp_desc/serial_num may now be configured by setting the
        value of other-config:dp-sn in the Bridge table.
+     * Added support to watch CONTROLLER port status in fast failover group.
+   - DPDK:
+     * Deprecated DPDK pdump packet capture support removed.
+     * Deprecated DPDK ring ports (dpdkr) are no longer supported.
+   - Linux datapath:
+     * Support for kernel versions up to 5.5.x.
 
 
 v2.13.0 - 14 Feb 2020
@@ -51,6 +57,9 @@ v2.13.0 - 14 Feb 2020
    - 'ovs-appctl dpctl/dump-flows' can now show offloaded=partial for
      partially offloaded flows, dp:dpdk for fully offloaded by dpdk, and
      type filter supports new filters: "dpdk" and "partially-offloaded".
+   - GTP-U Tunnel Protocol
+     * Add two new fields: tun_gtpu_flags, tun_gtpu_msgtype.
+     * Only support for userspace datapath.
 
 v2.12.0 - 03 Sep 2019
 ---------------------

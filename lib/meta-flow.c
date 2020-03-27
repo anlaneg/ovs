@@ -392,6 +392,10 @@ mf_is_all_wild(const struct mf_field *mf, const struct flow_wildcards *wc)
     case MFF_NSH_C3:
     case MFF_NSH_C4:
         return !wc->masks.nsh.context[mf->id - MFF_NSH_C1];
+    case MFF_TUN_GTPU_FLAGS:
+        return !wc->masks.tunnel.gtpu_flags;
+    case MFF_TUN_GTPU_MSGTYPE:
+        return !wc->masks.tunnel.gtpu_msgtype;
 
     case MFF_N_IDS:
     default:
@@ -531,6 +535,8 @@ mf_is_value_valid(const struct mf_field *mf, const union mf_value *value)
     case MFF_TUN_ERSPAN_VER:
     case MFF_TUN_ERSPAN_DIR:
     case MFF_TUN_ERSPAN_HWID:
+    case MFF_TUN_GTPU_FLAGS:
+    case MFF_TUN_GTPU_MSGTYPE:
     CASE_MFF_TUN_METADATA:
     case MFF_METADATA:
     case MFF_IN_PORT:
@@ -711,6 +717,12 @@ mf_get_value(const struct mf_field *mf, const struct flow *flow,
         break;
     case MFF_TUN_ERSPAN_HWID:
         value->u8 = flow->tunnel.erspan_hwid;
+        break;
+    case MFF_TUN_GTPU_FLAGS:
+        value->u8 = flow->tunnel.gtpu_flags;
+        break;
+    case MFF_TUN_GTPU_MSGTYPE:
+        value->u8 = flow->tunnel.gtpu_msgtype;
         break;
     CASE_MFF_TUN_METADATA:
         tun_metadata_read(&flow->tunnel, mf, value);
@@ -1042,6 +1054,12 @@ mf_set_value(const struct mf_field *mf,
         break;
     case MFF_TUN_ERSPAN_HWID:
         match_set_tun_erspan_hwid(match, value->u8);
+        break;
+    case MFF_TUN_GTPU_FLAGS:
+        match_set_tun_gtpu_flags(match, value->u8);
+        break;
+    case MFF_TUN_GTPU_MSGTYPE:
+        match_set_tun_gtpu_msgtype(match, value->u8);
         break;
     CASE_MFF_TUN_METADATA:
         tun_metadata_set_match(mf, value, NULL, match, err_str);
@@ -1460,6 +1478,12 @@ mf_set_flow_value(const struct mf_field *mf,
     case MFF_TUN_ERSPAN_HWID:
         flow->tunnel.erspan_hwid = value->u8;
         break;
+    case MFF_TUN_GTPU_FLAGS:
+        flow->tunnel.gtpu_flags = value->u8;
+        break;
+    case MFF_TUN_GTPU_MSGTYPE:
+        flow->tunnel.gtpu_msgtype = value->u8;
+        break;
     CASE_MFF_TUN_METADATA:
         tun_metadata_write(&flow->tunnel, mf, value);
         break;
@@ -1781,6 +1805,8 @@ mf_is_pipeline_field(const struct mf_field *mf)
     case MFF_TUN_ERSPAN_IDX:
     case MFF_TUN_ERSPAN_DIR:
     case MFF_TUN_ERSPAN_HWID:
+    case MFF_TUN_GTPU_FLAGS:
+    case MFF_TUN_GTPU_MSGTYPE:
     CASE_MFF_TUN_METADATA:
     case MFF_METADATA:
     case MFF_IN_PORT:
@@ -1970,6 +1996,12 @@ mf_set_wild(const struct mf_field *mf, struct match *match, char **err_str)
         break;
     case MFF_TUN_ERSPAN_HWID:
         match_set_tun_erspan_hwid_masked(match, 0, 0);
+        break;
+    case MFF_TUN_GTPU_FLAGS:
+        match_set_tun_gtpu_flags_masked(match, 0, 0);
+        break;
+    case MFF_TUN_GTPU_MSGTYPE:
+        match_set_tun_gtpu_msgtype_masked(match, 0, 0);
         break;
     CASE_MFF_TUN_METADATA:
         tun_metadata_set_match(mf, NULL, NULL, match, err_str);
@@ -2378,6 +2410,12 @@ mf_set(const struct mf_field *mf,
         break;
     case MFF_TUN_ERSPAN_HWID:
         match_set_tun_erspan_hwid_masked(match, value->u8, mask->u8);
+        break;
+    case MFF_TUN_GTPU_FLAGS:
+        match_set_tun_gtpu_flags_masked(match, value->u8, mask->u8);
+        break;
+    case MFF_TUN_GTPU_MSGTYPE:
+        match_set_tun_gtpu_msgtype_masked(match, value->u8, mask->u8);
         break;
     CASE_MFF_TUN_METADATA:
         tun_metadata_set_match(mf, value, mask, match, err_str);

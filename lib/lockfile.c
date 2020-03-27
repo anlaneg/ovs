@@ -61,9 +61,9 @@ static struct hmap *const lock_table OVS_GUARDED_BY(lock_table_mutex)
 static void lockfile_unhash(struct lockfile *);
 static int lockfile_try_lock(const char *name, pid_t *pidp,
                              struct lockfile **lockfilep)
-    OVS_REQUIRES(&lock_table_mutex);
+    OVS_REQUIRES(lock_table_mutex);
 static void lockfile_do_unlock(struct lockfile * lockfile)
-    OVS_REQUIRES(&lock_table_mutex);
+    OVS_REQUIRES(lock_table_mutex);
 
 /* Returns the name of the lockfile that would be created for locking a file
  * named 'filename_'.  The caller is responsible for freeing the returned name,
@@ -190,7 +190,7 @@ lockfile_hash(dev_t device, ino_t inode)
 }
 
 static struct lockfile *
-lockfile_find(dev_t device, ino_t inode) OVS_REQUIRES(&lock_table_mutex)
+lockfile_find(dev_t device, ino_t inode) OVS_REQUIRES(lock_table_mutex)
 {
     struct lockfile *lockfile;
 
@@ -204,7 +204,7 @@ lockfile_find(dev_t device, ino_t inode) OVS_REQUIRES(&lock_table_mutex)
 }
 
 static void
-lockfile_unhash(struct lockfile *lockfile) OVS_REQUIRES(&lock_table_mutex)
+lockfile_unhash(struct lockfile *lockfile) OVS_REQUIRES(lock_table_mutex)
 {
     if (lockfile->fd >= 0) {
         close(lockfile->fd);
@@ -215,7 +215,7 @@ lockfile_unhash(struct lockfile *lockfile) OVS_REQUIRES(&lock_table_mutex)
 
 static struct lockfile *
 lockfile_register(const char *name, dev_t device, ino_t inode, int fd)
-    OVS_REQUIRES(&lock_table_mutex)
+    OVS_REQUIRES(lock_table_mutex)
 {
     struct lockfile *lockfile;
 
@@ -238,7 +238,7 @@ lockfile_register(const char *name, dev_t device, ino_t inode, int fd)
 #ifdef _WIN32
 static void
 lockfile_do_unlock(struct lockfile *lockfile)
-    OVS_REQUIRES(&lock_table_mutex)
+    OVS_REQUIRES(lock_table_mutex)
 {
     if (lockfile->fd >= 0) {
         OVERLAPPED overl;
@@ -254,7 +254,7 @@ lockfile_do_unlock(struct lockfile *lockfile)
 
 static int
 lockfile_try_lock(const char *name, pid_t *pidp, struct lockfile **lockfilep)
-    OVS_REQUIRES(&lock_table_mutex)
+    OVS_REQUIRES(lock_table_mutex)
 {
     HANDLE lock_handle;
     BOOL retval;
@@ -309,7 +309,7 @@ lockfile_do_unlock(struct lockfile *lockfile)
 //尝试着加文件锁
 static int
 lockfile_try_lock(const char *name, pid_t *pidp, struct lockfile **lockfilep)
-    OVS_REQUIRES(&lock_table_mutex)
+    OVS_REQUIRES(lock_table_mutex)
 {
     struct flock l;
     struct stat s;

@@ -243,7 +243,7 @@ struct tc_action {
                     } ipv6;
                 };
 
-                union {
+                struct {
                     ovs_be16 min;
                     ovs_be16 max;
                 } port;

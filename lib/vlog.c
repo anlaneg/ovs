@@ -265,7 +265,7 @@ vlog_get_level(const struct vlog_module *module,
 }
 
 static void
-update_min_level(struct vlog_module *module) OVS_REQUIRES(&log_file_mutex)
+update_min_level(struct vlog_module *module) OVS_REQUIRES(log_file_mutex)
 {
     enum vlog_destination destination;
 
@@ -633,6 +633,21 @@ vlog_set_syslog_target(const char *target)
     }
     syslog_fd = new_fd;
     ovs_rwlock_unlock(&pattern_rwlock);
+}
+
+/*
+ * This function writes directly to log file without using async writer or
+ * taking a lock.  Caller must hold 'log_file_mutex' or be sure that it's
+ * not necessary.  Could be used in exceptional cases like dumping of backtrace
+ * on fatal signals.
+ */
+void
+vlog_direct_write_to_log_file_unsafe(const char *s)
+    OVS_NO_THREAD_SAFETY_ANALYSIS
+{
+    if (log_fd >= 0) {
+        ignore(write(log_fd, s, strlen(s)));
+    }
 }
 
 /* Returns 'false' if 'facility' is not a valid string. If 'facility'

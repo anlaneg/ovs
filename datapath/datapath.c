@@ -666,7 +666,9 @@ static struct genl_ops dp_packet_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = packet_policy,
+#endif
 	  .doit = ovs_packet_cmd_execute
 	}
 };
@@ -676,6 +678,9 @@ static struct genl_family dp_packet_genl_family __ro_after_init = {
 	.name = OVS_PACKET_FAMILY,
 	.version = OVS_PACKET_VERSION,
 	.maxattr = OVS_PACKET_ATTR_MAX,
+#ifndef HAVE_GENL_OPS_POLICY
+	.policy = packet_policy,
+#endif
 	.netnsok = true,
 	.parallel_ops = true,
 	.ops = dp_packet_genl_ops,
@@ -1405,8 +1410,8 @@ static int ovs_flow_cmd_dump(struct sk_buff *skb, struct netlink_callback *cb)
 	u32 ufid_flags;
 	int err;
 
-	err = genlmsg_parse(cb->nlh, &dp_flow_genl_family, a,
-			    OVS_FLOW_ATTR_MAX, flow_policy, NULL);
+	err = genlmsg_parse_deprecated(cb->nlh, &dp_flow_genl_family, a,
+				       OVS_FLOW_ATTR_MAX, flow_policy, NULL);
 	if (err)
 		return err;
 	ufid_flags = ovs_nla_get_ufid_flags(a[OVS_FLOW_ATTR_UFID_FLAGS]);
@@ -1458,7 +1463,9 @@ static const struct genl_ops dp_flow_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = flow_policy,
+#endif
 	  .doit = ovs_flow_cmd_new
 	},
 	{ .cmd = OVS_FLOW_CMD_DEL,
@@ -1466,7 +1473,9 @@ static const struct genl_ops dp_flow_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = flow_policy,
+#endif
 	  .doit = ovs_flow_cmd_del
 	},
 	{ .cmd = OVS_FLOW_CMD_GET,
@@ -1474,7 +1483,9 @@ static const struct genl_ops dp_flow_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = 0,		    /* OK for unprivileged users. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = flow_policy,
+#endif
 	  .doit = ovs_flow_cmd_get,
 	  .dumpit = ovs_flow_cmd_dump
 	},
@@ -1483,7 +1494,9 @@ static const struct genl_ops dp_flow_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = flow_policy,
+#endif
 	  .doit = ovs_flow_cmd_set,
 	},
 };
@@ -1493,6 +1506,9 @@ static struct genl_family dp_flow_genl_family __ro_after_init = {
 	.name = OVS_FLOW_FAMILY,
 	.version = OVS_FLOW_VERSION,
 	.maxattr = OVS_FLOW_ATTR_MAX,
+#ifndef HAVE_GENL_OPS_POLICY
+	.policy = flow_policy,
+#endif
 	.netnsok = true,
 	.parallel_ops = true,
 	.ops = dp_flow_genl_ops,
@@ -1862,7 +1878,9 @@ static const struct genl_ops dp_datapath_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = datapath_policy,
+#endif
 	  .doit = ovs_dp_cmd_new//注册OVS_DP_CMD_NEW netlink消息处理回调
 	},
 	{ .cmd = OVS_DP_CMD_DEL,
@@ -1870,7 +1888,9 @@ static const struct genl_ops dp_datapath_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = datapath_policy,
+#endif
 	  .doit = ovs_dp_cmd_del
 	},
 	{ .cmd = OVS_DP_CMD_GET,
@@ -1878,7 +1898,9 @@ static const struct genl_ops dp_datapath_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = 0,		    /* OK for unprivileged users. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = datapath_policy,
+#endif
 	  .doit = ovs_dp_cmd_get,
 	  .dumpit = ovs_dp_cmd_dump
 	},
@@ -1887,7 +1909,9 @@ static const struct genl_ops dp_datapath_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = datapath_policy,
+#endif
 	  .doit = ovs_dp_cmd_set,
 	},
 };
@@ -1897,6 +1921,9 @@ static struct genl_family dp_datapath_genl_family __ro_after_init = {
 	.name = OVS_DATAPATH_FAMILY,
 	.version = OVS_DATAPATH_VERSION,
 	.maxattr = OVS_DP_ATTR_MAX,
+#ifndef HAVE_GENL_OPS_POLICY
+	.policy = datapath_policy,
+#endif
 	.netnsok = true,
 	.parallel_ops = true,
 	.ops = dp_datapath_genl_ops,
@@ -2320,7 +2347,9 @@ static const struct genl_ops dp_vport_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = vport_policy,
+#endif
 	  .doit = ovs_vport_cmd_new
 	},
 	{ .cmd = OVS_VPORT_CMD_DEL,
@@ -2328,7 +2357,9 @@ static const struct genl_ops dp_vport_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = vport_policy,
+#endif
 	  .doit = ovs_vport_cmd_del
 	},
 	{ .cmd = OVS_VPORT_CMD_GET,
@@ -2336,7 +2367,9 @@ static const struct genl_ops dp_vport_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = 0,		    /* OK for unprivileged users. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = vport_policy,
+#endif
 	  .doit = ovs_vport_cmd_get,
 	  .dumpit = ovs_vport_cmd_dump
 	},
@@ -2345,7 +2378,9 @@ static const struct genl_ops dp_vport_genl_ops[] = {
 	  .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 #endif
 	  .flags = GENL_UNS_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+#ifdef HAVE_GENL_OPS_POLICY
 	  .policy = vport_policy,
+#endif
 	  .doit = ovs_vport_cmd_set,
 	},
 };
@@ -2355,6 +2390,9 @@ struct genl_family dp_vport_genl_family __ro_after_init = {
 	.name = OVS_VPORT_FAMILY,
 	.version = OVS_VPORT_VERSION,
 	.maxattr = OVS_VPORT_ATTR_MAX,
+#ifndef HAVE_GENL_OPS_POLICY
+	.policy = vport_policy,
+#endif
 	.netnsok = true,
 	.parallel_ops = true,
 	.ops = dp_vport_genl_ops,
@@ -2487,7 +2525,7 @@ static int __init dp_init(void)
 {
 	int err;
 
-	BUILD_BUG_ON(sizeof(struct ovs_skb_cb) > FIELD_SIZEOF(struct sk_buff, cb));
+	BUILD_BUG_ON(sizeof(struct ovs_skb_cb) > sizeof_field(struct sk_buff, cb));
 
 	pr_info("Open vSwitch switching datapath %s\n", VERSION);
 

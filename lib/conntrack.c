@@ -1334,6 +1334,11 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             const struct nat_action_info_t *nat_action_info,
             ovs_be16 tp_src, ovs_be16 tp_dst, const char *helper)
 {
+    /* Reset ct_state whenever entering a new zone. */
+    if (pkt->md.ct_state && pkt->md.ct_zone != zone) {
+        pkt->md.ct_state = 0;
+    }
+
     bool create_new_conn = false;
     //查找此流对应的连接
     conn_key_lookup(ct, &ctx->key, ctx->hash, now, &ctx->conn, &ctx->reply);
@@ -1367,9 +1372,10 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
 
             if (!conn) {
                 //连接置为无效
-                pkt->md.ct_state |= CS_TRACKED | CS_INVALID;
+                pkt->md.ct_state |= CS_INVALID;
+                write_ct_md(pkt, zone, NULL, NULL, NULL);
                 char *log_msg = xasprintf("Missing master conn %p", rev_conn);
-                ct_print_conn_info(conn, log_msg, VLL_INFO, true, true);
+                ct_print_conn_info(rev_conn, log_msg, VLL_INFO, true, true);
                 free(log_msg);
                 return;
             }

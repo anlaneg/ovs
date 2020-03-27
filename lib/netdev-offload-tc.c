@@ -1800,7 +1800,7 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
     if (get_ufid_tc_mapping(ufid, &id) == 0) {
         VLOG_DBG_RL(&rl, "updating old handle: %d prio: %d",
                     id.handle, id.prio);
-        del_filter_and_ufid_mapping(&id, ufid);
+        info->tc_modify_flow_deleted = !del_filter_and_ufid_mapping(&id, ufid);
     }
 
     prio = get_prio_for_tc_flower(&flower);
@@ -1997,6 +1997,7 @@ netdev_tc_init_flow_api(struct netdev *netdev)
     static struct ovsthread_once block_once = OVSTHREAD_ONCE_INITIALIZER;
     enum tc_qdisc_hook hook = get_tc_qdisc_hook(netdev);
     uint32_t block_id = 0;
+    struct tcf_id id;
     int ifindex;
     int error;
 
@@ -2007,6 +2008,15 @@ netdev_tc_init_flow_api(struct netdev *netdev)
                   netdev_get_name(netdev), ovs_strerror(-ifindex));
         return -ifindex;
     }
+
+    //添加ingress队列
+    block_id = get_block_id_from_netdev(netdev);
+
+    /* Flush rules explicitly needed when we work with ingress_block,
+     * so we will not fail with reattaching block to bond iface, for ex.
+     */
+    id = tc_make_tcf_id(ifindex, block_id, 0, hook);
+    tc_del_filter(&id);
 
     /* make sure there is no ingress/egress qdisc */
     //删除ingress队列
@@ -2023,8 +2033,6 @@ netdev_tc_init_flow_api(struct netdev *netdev)
         ovsthread_once_done(&multi_mask_once);
     }
 
-    //添加ingress队列
-    block_id = get_block_id_from_netdev(netdev);
     error = tc_add_del_qdisc(ifindex, true, block_id, hook);
 
     if (error && error != EEXIST) {
