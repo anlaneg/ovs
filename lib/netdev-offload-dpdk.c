@@ -445,6 +445,7 @@ dump_flow(struct ds *s,
     return s;
 }
 
+//向设备netdev下发rte_flow,完成规则offload
 static struct rte_flow *
 netdev_offload_dpdk_flow_create(struct netdev *netdev,
                                 const struct rte_flow_attr *attr,
@@ -465,6 +466,7 @@ netdev_offload_dpdk_flow_create(struct netdev *netdev,
             ds_destroy(&s);
         }
     } else {
+        /*显示flow创建失败*/
         enum vlog_level level = VLL_WARN;
 
         if (error->type == RTE_FLOW_ERROR_TYPE_ACTION) {
@@ -573,7 +575,7 @@ parse_flow_match(struct flow_patterns *patterns,
     /* Eth */
     if (!eth_addr_is_zero(match->wc.masks.dl_src) ||
         !eth_addr_is_zero(match->wc.masks.dl_dst)) {
-        //需要匹配srcmac,dstmac
+        //需要匹配srcmac或dstmac
         struct rte_flow_item_eth *spec, *mask;
 
         spec = xzalloc(sizeof *spec);
@@ -590,7 +592,7 @@ parse_flow_match(struct flow_patterns *patterns,
         //转换ether header的match
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, spec, mask);
     } else {
-        //以太头全匹配
+        //以太头全匹配类似0.0.0.0/0
         /*
          * If user specifies a flow (like UDP flow) without L2 patterns,
          * OVS will at least set the dl_type. Normally, it's enough to
@@ -808,6 +810,7 @@ netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
     return flow;
 }
 
+//添加计数action
 static void
 add_count_action(struct flow_actions *actions)
 {
@@ -853,7 +856,7 @@ add_output_action(struct netdev *netdev,
         return -1;
     }
 
-    //？？？？
+    //转换为output对应的rte_flow可理解的port_id
     if (!netdev_flow_api_equals(netdev, outdev) ||
         add_port_id_action(actions, outdev)/*转换output action*/) {
         VLOG_DBG_RL(&rl, "%s: Output to port \'%s\' cannot be offloaded.",
@@ -935,6 +938,7 @@ parse_set_actions(struct flow_actions *actions,
     //按字段类型，分别设置其分成员的set
     NL_ATTR_FOR_EACH_UNSAFE (sa, sleft, set_actions, set_actions_len) {
         if (nl_attr_type(sa) == OVS_KEY_ATTR_ETHERNET) {
+            //以太头修改
             const struct ovs_key_ethernet *key = nl_attr_get(sa);
             const struct ovs_key_ethernet *mask = masked ? key + 1 : NULL;
 
@@ -946,6 +950,7 @@ parse_set_actions(struct flow_actions *actions,
                 return -1;
             }
         } else if (nl_attr_type(sa) == OVS_KEY_ATTR_IPV4) {
+            //ipv4头修改
             const struct ovs_key_ipv4 *key = nl_attr_get(sa);
             const struct ovs_key_ipv4 *mask = masked ? key + 1 : NULL;
 
@@ -958,6 +963,7 @@ parse_set_actions(struct flow_actions *actions,
                 return -1;
             }
         } else if (nl_attr_type(sa) == OVS_KEY_ATTR_TCP) {
+            //tcp头部修改
             const struct ovs_key_tcp *key = nl_attr_get(sa);
             const struct ovs_key_tcp *mask = masked ? key + 1 : NULL;
 
@@ -969,6 +975,7 @@ parse_set_actions(struct flow_actions *actions,
                 return -1;
             }
         } else if (nl_attr_type(sa) == OVS_KEY_ATTR_UDP) {
+            //udp头部修改
             const struct ovs_key_udp *key = nl_attr_get(sa);
             const struct ovs_key_udp *mask = masked ? key + 1 : NULL;
 
@@ -989,7 +996,7 @@ parse_set_actions(struct flow_actions *actions,
     return 0;
 }
 
-//dpdk方式转换action字段
+//将netlin格式的action转换为dpdk方式action字段
 static int
 parse_flow_actions(struct netdev *netdev,
                    struct flow_actions *actions,
@@ -1000,9 +1007,13 @@ parse_flow_actions(struct netdev *netdev,
     struct nlattr *nla;
     size_t left;
 
+    //增加count action完成统计计数
     add_count_action(actions);
+
+    //遍历所有action
     NL_ATTR_FOR_EACH_UNSAFE (nla, left, nl_actions, nl_actions_len) {
         if (nl_attr_type(nla) == OVS_ACTION_ATTR_OUTPUT) {
+            //output action的转换
             if (add_output_action(netdev, actions, nla, info)) {
                 return -1;
             }
@@ -1039,9 +1050,9 @@ parse_flow_actions(struct netdev *netdev,
 
 static struct rte_flow *
 netdev_offload_dpdk_actions(struct netdev *netdev,
-                            struct flow_patterns *patterns,
-                            struct nlattr *nl_actions,
-                            size_t actions_len,
+                            struct flow_patterns *patterns/*rte_flow对应的match项*/,
+                            struct nlattr *nl_actions/*action信息*/,
+                            size_t actions_len/*action长度*/,
                             struct offload_info *info)
 {
     const struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
@@ -1050,15 +1061,17 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
     struct rte_flow_error error;
     int ret;
 
-    //action转换
+    //将action转换成rte_flow对应的action
     ret = parse_flow_actions(netdev, &actions, nl_actions, actions_len, info);
     if (ret) {
         goto out;
     }
+    /*创建rte_flow*/
     flow = netdev_offload_dpdk_flow_create(netdev, &flow_attr, patterns->items,
                                            actions.actions, &error);
 out:
     free_flow_actions(&actions);
+    /*返回创建的rte_flow*/
     return flow;
 }
 
@@ -1077,13 +1090,13 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
     struct rte_flow *flow;
     int ret = 0;
 
-    //转换match字段
+    //解析match,并转换成rte_flow相关字段
     ret = parse_flow_match(&patterns, match);
     if (ret) {
         goto out;
     }
 
-    //尝试offload规则
+    //尝试offload方式offload规则
     flow = netdev_offload_dpdk_actions(netdev, &patterns, nl_actions,
                                        actions_len, info);
     if (!flow) {
@@ -1236,7 +1249,7 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
         }
     }
 
-    //检查能否offload
+    //检查是否可offload
     ret = netdev_offload_dpdk_validate_flow(match);
     if (ret < 0) {
         return ret;
@@ -1324,7 +1337,7 @@ out:
 //dpdk流表下发
 const struct netdev_flow_api netdev_offload_dpdk = {
     .type = "dpdk_flow_api",
-    .flow_put = netdev_offload_dpdk_flow_put,
+    .flow_put = netdev_offload_dpdk_flow_put,/*通过rte flow下发流表给设备*/
     .flow_del = netdev_offload_dpdk_flow_del,
     .init_flow_api = netdev_offload_dpdk_init_flow_api,
     .flow_get = netdev_offload_dpdk_flow_get,

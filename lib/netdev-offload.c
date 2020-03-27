@@ -241,7 +241,7 @@ netdev_flow_dump_next(struct netdev_flow_dump *dump, struct match *match,
 int
 netdev_flow_put(struct netdev *netdev, struct match *match/*下发的match字段*/,
                 struct nlattr *actions/*下发的actions字段*/, size_t act_len/*action大小*/,
-                const ovs_u128 *ufid, struct offload_info *info/*用于唯一标识规则*/,
+                const ovs_u128 *ufid/*用于唯一标识规则*/, struct offload_info *info/*卸载相关信息*/,
                 struct dpif_flow_stats *stats)
 {
     //交给各netdev->flow_api去实现(例如通过tc执行flow下发）

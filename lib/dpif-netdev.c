@@ -419,9 +419,12 @@ enum {
 struct dp_flow_offload_item {
     struct dp_netdev_pmd_thread *pmd;
     struct dp_netdev_flow *flow;
-    int op;/*flow的操作*/
+    /*flow的操作*/
+    int op;
+    /*offload对应的match*/
     struct match match;
     struct nlattr *actions;
+    //action长度
     size_t actions_len;
 
     struct ovs_list node;
@@ -433,7 +436,7 @@ struct dp_flow_offload {
     pthread_cond_t cond;
 };
 
-//记录需要offload的流
+//记录需要offload的规则
 static struct dp_flow_offload dp_flow_offload = {
     .mutex = OVS_MUTEX_INITIALIZER,
     .list  = OVS_LIST_INITIALIZER(&dp_flow_offload.list),
@@ -2490,6 +2493,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
     /* Taking a global 'port_mutex' to fulfill thread safety restrictions for
      * the netdev-offload-dpdk module. */
     ovs_mutex_lock(&pmd->dp->port_mutex);
+    /*netdev形式的flow下流过程*/
     ret = netdev_flow_put(port, &offload->match,
                           CONST_CAST(struct nlattr *, offload->actions),
                           offload->actions_len, &flow->mega_ufid, &info,
@@ -2516,6 +2520,7 @@ err_free:
     return -1;
 }
 
+//netdev flow offload处理主线程
 static void *
 dp_netdev_flow_offload_main(void *data OVS_UNUSED)
 {
@@ -2539,6 +2544,7 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
         offload = CONTAINER_OF(list, struct dp_flow_offload_item, node);
         ovs_mutex_unlock(&dp_flow_offload.mutex);
 
+        //针对每个offload item执行offload工作
         switch (offload->op) {
         case DP_NETDEV_FLOW_OFFLOAD_OP_ADD:
             op = "add";
