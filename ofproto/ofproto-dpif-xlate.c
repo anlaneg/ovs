@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2019 Nicira, Inc.
+/* Copyright (c) 2009-2017, 2019-2020 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -5324,6 +5324,21 @@ compose_dec_mpls_ttl_action(struct xlate_ctx *ctx)
     return true;
 }
 
+static void
+xlate_delete_field(struct xlate_ctx *ctx,
+                   struct flow *flow,
+                   const struct ofpact_delete_field *odf)
+{
+    struct ds s = DS_EMPTY_INITIALIZER;
+
+    /* Currently, only tun_metadata is allowed for delete_field action. */
+    tun_metadata_delete(&flow->tunnel, odf->field);
+
+    ds_put_format(&s, "delete %s", odf->field->name);
+    xlate_report(ctx, OFT_DETAIL, "%s", ds_cstr(&s));
+    ds_destroy(&s);
+}
+
 /* Emits an action that outputs to 'port', within 'ctx'.
  *
  * 'controller_len' affects only packets sent to an OpenFlow controller.  It
@@ -5870,6 +5885,7 @@ reversible_actions(const struct ofpact *ofpacts, size_t ofpacts_len)
         case OFPACT_WRITE_ACTIONS:
         case OFPACT_WRITE_METADATA:
         case OFPACT_CHECK_PKT_LARGER:
+        case OFPACT_DELETE_FIELD:
             break;
 
         case OFPACT_CT:
@@ -6181,6 +6197,7 @@ freeze_unroll_actions(const struct ofpact *a, const struct ofpact *end,
         case OFPACT_CT_CLEAR:
         case OFPACT_NAT:
         case OFPACT_CHECK_PKT_LARGER:
+        case OFPACT_DELETE_FIELD:
             /* These may not generate PACKET INs. */
             break;
 
@@ -6851,6 +6868,7 @@ recirc_for_mpls(const struct ofpact *a, struct xlate_ctx *ctx)
     case OFPACT_WRITE_METADATA:
     case OFPACT_GOTO_TABLE:
     case OFPACT_CHECK_PKT_LARGER:
+    case OFPACT_DELETE_FIELD:
     default:
         break;
     }
@@ -7272,6 +7290,10 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
         case OFPACT_FIN_TIMEOUT:
             memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);
             xlate_fin_timeout(ctx, ofpact_get_FIN_TIMEOUT(a));
+            break;
+
+        case OFPACT_DELETE_FIELD:
+            xlate_delete_field(ctx, flow, ofpact_get_DELETE_FIELD(a));
             break;
 
         case OFPACT_CLEAR_ACTIONS:
@@ -7798,7 +7820,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
         /* Restore pipeline metadata. May change flow's in_port and other
          * metadata to the values that existed when freezing was triggered. */
-        frozen_metadata_to_flow(&state->metadata, flow);
+        frozen_metadata_to_flow(&ctx.xbridge->ofproto->up,
+                                &state->metadata, flow);
 
         /* Restore stack, if any. */
         if (state->stack) {
@@ -7851,14 +7874,10 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
             ctx.error = XLATE_INVALID_TUNNEL_METADATA;
             goto exit;
         }
-    } else if (!flow->tunnel.metadata.tab || xin->frozen_state) {
+    } else if (!flow->tunnel.metadata.tab) {
         /* If the original flow did not come in on a tunnel, then it won't have
          * FLOW_TNL_F_UDPIF set. However, we still need to have a metadata
          * table in case we generate tunnel actions. */
-        /* If the translation is from a frozen state, we use the latest
-         * TLV map to avoid segmentation fault in case the old TLV map is
-         * replaced by a new one.
-         * XXX: It is better to abort translation if the table is changed. */
         flow->tunnel.metadata.tab = ofproto_get_tun_tab(
             &ctx.xbridge->ofproto->up);
     }

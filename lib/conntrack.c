@@ -25,6 +25,7 @@
 #include "bitmap.h"
 #include "conntrack.h"
 #include "conntrack-private.h"
+#include "conntrack-tp.h"
 #include "coverage.h"
 #include "csum.h"
 #include "ct-dpif.h"
@@ -44,6 +45,7 @@ VLOG_DEFINE_THIS_MODULE(conntrack);
 
 COVERAGE_DEFINE(conntrack_full);
 COVERAGE_DEFINE(conntrack_long_cleanup);
+COVERAGE_DEFINE(conntrack_l4csum_err);
 
 struct conn_lookup_ctx {
     struct conn_key key;//比对的key
@@ -88,7 +90,8 @@ static uint32_t conn_key_hash(const struct conn_key *, uint32_t basis);
 static void conn_key_reverse(struct conn_key *);
 static bool valid_new(struct dp_packet *pkt, struct conn_key *);
 static struct conn *new_conn(struct conntrack *ct, struct dp_packet *pkt,
-                             struct conn_key *, long long now);
+                             struct conn_key *, long long now,
+                             uint32_t tp_id);
 static void delete_conn_cmn(struct conn *);
 static void delete_conn(struct conn *);
 static void delete_conn_one(struct conn *conn);
@@ -174,13 +177,6 @@ static alg_helper alg_helpers[] = {
     [CT_ALG_CTL_NONE] = NULL,
     [CT_ALG_CTL_FTP] = handle_ftp_ctl,
     [CT_ALG_CTL_TFTP] = handle_tftp_ctl,
-};
-
-//依据不同的类型，设置不同的timeout值
-long long ct_timeout_val[] = {
-#define CT_TIMEOUT(NAME, VAL) [CT_TM_##NAME] = VAL,
-    CT_TIMEOUTS
-#undef CT_TIMEOUT
 };
 
 /* The maximum TCP or UDP port number. */
@@ -314,6 +310,7 @@ conntrack_init(void)
     }
     hmap_init(&ct->zone_limits);
     ct->zone_limit_seq = 0;
+    timeout_policy_init(ct);
     ovs_mutex_unlock(&ct->ct_lock);
 
     ct->hash_basis = random_uint32();
@@ -504,6 +501,12 @@ conntrack_destroy(struct conntrack *ct)
         free(zl);
     }
     hmap_destroy(&ct->zone_limits);
+
+    struct timeout_policy *tp;
+    HMAP_FOR_EACH_POP (tp, node, &ct->timeout_policies) {
+        free(tp);
+    }
+    hmap_destroy(&ct->timeout_policies);
 
     ovs_mutex_unlock(&ct->ct_lock);
     ovs_mutex_destroy(&ct->ct_lock);
@@ -977,7 +980,7 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
                struct conn_lookup_ctx *ctx, bool commit/*未给定commit时，不创建连接*/, long long now,
                const struct nat_action_info_t *nat_action_info/*nat信息*/,
                const char *helper, const struct alg_exp_node *alg_exp/*期待信息*/,
-               enum ct_alg_ctl_type ct_alg_ctl)
+               enum ct_alg_ctl_type ct_alg_ctl, uint32_t tp_id)
     OVS_REQUIRES(ct->ct_lock)
 {
     struct conn *nc = NULL;
@@ -1016,7 +1019,7 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
         }
 
         //在bucket桶位置创建一条新连接（正向连接）
-        nc = new_conn(ct, pkt, &ctx->key, now);
+        nc = new_conn(ct, pkt, &ctx->key, now, tp_id);
         memcpy(&nc->key, &ctx->key, sizeof nc->key);
 
         //设置rev_key(反向key),先给定正向key的值，再使其反转
@@ -1332,7 +1335,8 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             bool force, bool commit, long long now, const uint32_t *setmark,
             const struct ovs_key_ct_labels *setlabel,
             const struct nat_action_info_t *nat_action_info,
-            ovs_be16 tp_src, ovs_be16 tp_dst, const char *helper)
+            ovs_be16 tp_src, ovs_be16 tp_dst, const char *helper,
+            uint32_t tp_id)
 {
     /* Reset ct_state whenever entering a new zone. */
     if (pkt->md.ct_state && pkt->md.ct_zone != zone) {
@@ -1431,7 +1435,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
         if (!conn_lookup(ct, &ctx->key, now, NULL, NULL)) {
             //创建连接
             conn = conn_not_found(ct, pkt, ctx, commit, now, nat_action_info,
-                                  helper, alg_exp, ct_alg_ctl);
+                                  helper, alg_exp, ct_alg_ctl, tp_id);
         }
         ovs_mutex_unlock(&ct->ct_lock);
     }
@@ -1471,7 +1475,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
                   const struct ovs_key_ct_labels *setlabel,
                   ovs_be16 tp_src, ovs_be16 tp_dst, const char *helper,
                   const struct nat_action_info_t *nat_action_info,
-                  long long now)
+                  long long now, uint32_t tp_id)
 {
 	//分片重组
     ipf_preprocess_conntrack(ct->ipf, pkt_batch, now, dl_type, zone,
@@ -1496,7 +1500,8 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
             write_ct_md(packet, zone, NULL, NULL, NULL);
         } else {
             process_one(ct, packet, &ctx, zone, force, commit, now, setmark,
-                        setlabel, nat_action_info, tp_src, tp_dst, helper);
+                        setlabel, nat_action_info, tp_src, tp_dst, helper,
+                        tp_id);
         }
     }
 
@@ -1605,7 +1610,7 @@ conntrack_clean(struct conntrack *ct, long long now)
 
     size_t clean_max = n_conn_limit > 10 ? n_conn_limit / 10 : 1;
     long long min_exp = ct_sweep(ct, now, clean_max);
-    long long next_wakeup = MIN(min_exp, now + CT_TM_MIN);
+    long long next_wakeup = MIN(min_exp, now + CT_DPIF_NETDEV_TP_MIN);
 
     return next_wakeup;
 }
@@ -1751,6 +1756,7 @@ checksum_valid(const struct conn_key *key, const void *data, size_t size,
     } else if (key->dl_type == htons(ETH_TYPE_IPV6)) {
         return packet_csum_upperlayer6(l3, data, key->nw_proto, size) == 0;
     } else {
+        COVERAGE_INC(conntrack_l4csum_err);
         return false;
     }
 }
@@ -1797,7 +1803,12 @@ check_l4_udp(const struct conn_key *key, const void *data, size_t size,
 static inline bool
 check_l4_icmp(const void *data, size_t size, bool validate_checksum)
 {
-    return validate_checksum ? csum(data, size) == 0 : true;
+    if (validate_checksum && csum(data, size) != 0) {
+        COVERAGE_INC(conntrack_l4csum_err);
+        return false;
+    } else {
+        return true;
+    }
 }
 
 static inline bool
@@ -2475,10 +2486,10 @@ valid_new(struct dp_packet *pkt, struct conn_key *key)
 //新建连接
 static struct conn *
 new_conn(struct conntrack *ct, struct dp_packet *pkt, struct conn_key *key,
-         long long now)
+         long long now, uint32_t tp_id)
 {
     //设置正向key
-    return l4_protos[key->nw_proto]->new_conn(ct, pkt, now);
+    return l4_protos[key->nw_proto]->new_conn(ct, pkt, now, tp_id);
 }
 
 //释放内存

@@ -22,6 +22,7 @@
 #include <netinet/icmp6.h>
 
 #include "conntrack-private.h"
+#include "conntrack-tp.h"
 #include "dp-packet.h"
 
 enum OVS_PACKED_ENUM icmp_state {
@@ -50,9 +51,12 @@ icmp_conn_update(struct conntrack *ct, struct conn *conn_,
                  struct dp_packet *pkt OVS_UNUSED, bool reply, long long now)
 {
     struct conn_icmp *conn = conn_icmp_cast(conn_);
-    conn->state = reply ? ICMPS_REPLY : ICMPS_FIRST;
-    conn_update_expiration(ct, &conn->up, icmp_timeouts[conn->state], now);
 
+    if (reply && conn->state == ICMPS_FIRST) {
+       conn->state = ICMPS_REPLY;
+    }
+
+    conn_update_expiration(ct, &conn->up, icmp_timeouts[conn->state], now);
     return CT_UPDATE_VALID;
 }
 
@@ -76,12 +80,13 @@ icmp6_valid_new(struct dp_packet *pkt)
 
 static struct conn *
 icmp_new_conn(struct conntrack *ct, struct dp_packet *pkt OVS_UNUSED,
-              long long now)
+              long long now, uint32_t tp_id)
 {
     struct conn_icmp *conn = xzalloc(sizeof *conn);
     conn->state = ICMPS_FIRST;
-    conn_init_expiration(ct, &conn->up, icmp_timeouts[conn->state], now);
+    conn->up.tp_id = tp_id;
 
+    conn_init_expiration(ct, &conn->up, icmp_timeouts[conn->state], now);
     return &conn->up;
 }
 

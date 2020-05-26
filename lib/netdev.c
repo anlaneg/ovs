@@ -163,6 +163,7 @@ netdev_initialize(void)
 #ifdef HAVE_AF_XDP
         //注册afxdp类型的netdev
         netdev_register_provider(&netdev_afxdp_class);
+        netdev_register_provider(&netdev_afxdp_nonpmd_class);
 #endif
 #endif
 #if defined(__FreeBSD__) || defined(__NetBSD__)

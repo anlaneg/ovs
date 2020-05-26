@@ -39,6 +39,7 @@
 #include <config.h>
 
 #include "conntrack-private.h"
+#include "conntrack-tp.h"
 #include "coverage.h"
 #include "ct-dpif.h"
 #include "dp-packet.h"
@@ -483,7 +484,8 @@ tcp_valid_new(struct dp_packet *pkt)
 
 //tcp新创建连接跟踪回调
 static struct conn *
-tcp_new_conn(struct conntrack *ct, struct dp_packet *pkt, long long now)
+tcp_new_conn(struct conntrack *ct, struct dp_packet *pkt, long long now,
+             uint32_t tp_id)
 {
     struct conn_tcp* newconn = NULL;
     struct tcp_header *tcp = dp_packet_l4(pkt);
@@ -529,6 +531,7 @@ tcp_new_conn(struct conntrack *ct, struct dp_packet *pkt, long long now)
     src->state = CT_DPIF_TCPS_SYN_SENT;//进入syn_send状态（这个状态不是正确的，因为没有检查syn标记）
     dst->state = CT_DPIF_TCPS_CLOSED;//假设对方是closed状态
 
+    newconn->up.tp_id = tp_id;
     conn_init_expiration(ct, &newconn->up, CT_TM_TCP_FIRST_PACKET, now);
 
     return &newconn->up;

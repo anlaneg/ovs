@@ -614,7 +614,6 @@ ovsdb_idl_db_clear(struct ovsdb_idl_db *db)
         struct ovsdb_idl_table *table = &db->tables[i];
         struct ovsdb_idl_row *row, *next_row;
 
-        table->cond_changed = false;
         if (hmap_is_empty(&table->rows)) {
             continue;
         }
@@ -638,7 +637,6 @@ ovsdb_idl_db_clear(struct ovsdb_idl_db *db)
     }
     ovsdb_idl_row_destroy_postprocess(db);
 
-    db->cond_changed = false;
     db->cond_seqno = 0;
     ovsdb_idl_db_track_clear(db);
 
@@ -4546,7 +4544,8 @@ ovsdb_idl_txn_write__(const struct ovsdb_idl_row *row_,
      * transaction only does writes of existing values, without making any real
      * changes, we will drop the whole transaction later in
      * ovsdb_idl_txn_commit().) */
-    if (write_only && ovsdb_datum_equals(ovsdb_idl_read(row, column),
+    if (datum->keys && datum->values &&
+        write_only && ovsdb_datum_equals(ovsdb_idl_read(row, column),
                                          datum, &column->type)) {
         goto discard_datum;
     }
