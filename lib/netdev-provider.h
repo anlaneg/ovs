@@ -277,7 +277,7 @@ struct netdev_class {
     const char *type;//接口类型
 
     /* If 'true' then this netdev should be polled by PMD threads. */
-    bool is_pmd;
+    bool is_pmd;//接口是否使用pmd线程进行poll
 
 /* ## ------------------- ## */
 /* ## Top-Level Functions ## */
@@ -289,7 +289,7 @@ struct netdev_class {
      *
      * This function may be set to null if a network device class needs no
      * initialization at registration time. */
-    //模块注册时做初始化用
+    //设备类型注册时做初始化用
     int (*init)(void);
 
     /* Performs periodic work needed by netdevs of this class.  May be null if
@@ -315,9 +315,13 @@ struct netdev_class {
 
     /* Life-cycle functions for a netdev.  See the large comment above on
      * struct netdev_class. */
-    struct netdev *(*alloc)(void);//创建netdev对应的资源时调用
+    //创建netdev对应的资源时调用
+    struct netdev *(*alloc)(void);
+    //初始化netdev时调用
     int (*construct)(struct netdev *);
+    //销毁netdev时调用
     void (*destruct)(struct netdev *);
+    //释放netdev对应的资源时调用
     void (*dealloc)(struct netdev *);
 
     /* Fetches the device 'netdev''s configuration, storing it in 'args'.
@@ -325,6 +329,7 @@ struct netdev_class {
      *
      * If this netdev class does not have any configuration options, this may
      * be a null pointer. */
+    /*返回当前生效的配置情况*/
     int (*get_config)(const struct netdev *netdev, struct smap *args);
 
     /* Changes the device 'netdev''s configuration to 'args'.
@@ -335,8 +340,7 @@ struct netdev_class {
      * If the return value is not zero (meaning that an error occurred),
      * the provider can allocate a string with an error message in '*errp'.
      * The caller has to call free on it. */
-    //也负责tunnel的配置设置
-    //设置接口的配置，这个配置是当前全新的。
+    //设置接口的配置，这个配置是request状态的，也负责tunnel的配置设置
     int (*set_config)(struct netdev *netdev, const struct smap *args,
                       char **errp);
 
@@ -371,6 +375,7 @@ struct netdev_class {
 
     /* Returns the id of the numa node the 'netdev' is on.  If there is no
      * such info, returns NETDEV_NUMA_UNSPEC. */
+    //获取设备在哪个numa节点上
     int (*get_numa_id)(const struct netdev *netdev);
 
     /* Configures the number of tx queues of 'netdev'. Returns 0 if successful,
@@ -414,6 +419,7 @@ struct netdev_class {
      * network device from being usefully used by the netdev-based "userspace
      * datapath".  It will also prevent the OVS implementation of bonding from
      * working properly over 'netdev'.) */
+    //向netdev设备qid队列发送一批报文
     int (*send)(struct netdev *netdev, int qid, struct dp_packet_batch *batch,
                 bool concurrent_txq);
 
@@ -502,6 +508,7 @@ struct netdev_class {
      * A network device that supports some statistics but not others, it should
      * set the values of the unsupported statistics to all-1-bits
      * (UINT64_MAX). */
+    //取网络设备的统计信息
     int (*get_stats)(const struct netdev *netdev, struct netdev_stats *);
 
     /* Retrieves current device custom stats for 'netdev' into 'custom_stats'.
@@ -775,6 +782,7 @@ struct netdev_class {
      *
      * This function may be set to null if it would always return EOPNOTSUPP
      * anyhow. */
+    //返回设备的驱动信息
     int (*get_status)(const struct netdev *netdev, struct smap *smap);
 
     /* Looks up the ARP table entry for 'ip' on 'netdev' and stores the
@@ -816,10 +824,14 @@ struct netdev_class {
 
     /* Life-cycle functions for a netdev_rxq.  See the large comment above on
      * struct netdev_class. */
-    struct netdev_rxq *(*rxq_alloc)(void);//队列的内存申请
-    int (*rxq_construct)(struct netdev_rxq *);//队列的构造函数
-    void (*rxq_destruct)(struct netdev_rxq *);//队列的析构函数
-    void (*rxq_dealloc)(struct netdev_rxq *);//队列内存释放
+    //队列的内存申请
+    struct netdev_rxq *(*rxq_alloc)(void);
+    //队列的构造函数
+    int (*rxq_construct)(struct netdev_rxq *);
+    //队列的析构函数
+    void (*rxq_destruct)(struct netdev_rxq *);
+    //队列内存释放
+    void (*rxq_dealloc)(struct netdev_rxq *);
 
     /* Retrieves the current state of rx queue.  'false' means that queue won't
      * get traffic in a short term and could be not polled.
@@ -850,6 +862,7 @@ struct netdev_class {
      *
      * Returns EAGAIN immediately if no packet is ready to be received or
      * another positive errno value if an error was encountered. */
+    //自rx队列收取一组报文,qfill返回实际收取的数目
     int (*rxq_recv)(struct netdev_rxq *rx, struct dp_packet_batch *batch,
                     int *qfill);
 

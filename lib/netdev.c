@@ -112,20 +112,23 @@ void update_device_args(struct netdev *, const struct shash *args);
 void signal_remove_xdp(struct netdev *netdev);
 #endif
 
+//返回netdev的转发队列数
 int
-netdev_n_txq(const struct netdev *netdev)//netdev的转发队列数
+netdev_n_txq(const struct netdev *netdev)
 {
     return netdev->n_txq;
 }
 
+//返回netdev的请求队列数
 int
-netdev_n_rxq(const struct netdev *netdev)//netdev的请求队列数
+netdev_n_rxq(const struct netdev *netdev)
 {
     return netdev->n_rxq;
 }
 
+//检查此netdev是否为可轮询设备
 bool
-netdev_is_pmd(const struct netdev *netdev)//检查此netdev是否为可轮询设备
+netdev_is_pmd(const struct netdev *netdev)
 {
     return netdev->netdev_class->is_pmd;
 }
@@ -593,8 +596,9 @@ netdev_get_tunnel_config(const struct netdev *netdev)
 
 /* Returns the id of the numa node the 'netdev' is on.  If the function
  * is not implemented, returns NETDEV_NUMA_UNSPEC. */
+//通过get_numa_id获取netdev在哪个numa节点上
 int
-netdev_get_numa_id(const struct netdev *netdev)//通过get_numa_id获取netdev在哪个numa节点上
+netdev_get_numa_id(const struct netdev *netdev)
 {
     if (netdev->netdev_class->get_numa_id) {
         return netdev->netdev_class->get_numa_id(netdev);

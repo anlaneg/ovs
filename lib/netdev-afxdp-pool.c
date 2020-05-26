@@ -42,6 +42,7 @@ void umem_elem_push_n(struct umem_pool *umemp, int n, void **addrs)
     ovs_spin_unlock(&umemp->lock);
 }
 
+//将addr入栈到umemp->array
 static inline void
 umem_elem_push__(struct umem_pool *umemp, void *addr)
 {
@@ -50,6 +51,7 @@ umem_elem_push__(struct umem_pool *umemp, void *addr)
     umemp->array[umemp->index++] = addr;
 }
 
+//将addr入栈到umemp->array(加锁）
 void
 umem_elem_push(struct umem_pool *umemp, void *addr)
 {
@@ -108,7 +110,7 @@ umem_elem_pop(struct umem_pool *umemp)
     return ptr;
 }
 
-/*创建buf池*/
+/*创建buf池，申请size个void*指针*/
 static void **
 umem_pool_alloc__(unsigned int size)
 {

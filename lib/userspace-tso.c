@@ -27,6 +27,7 @@ VLOG_DEFINE_THIS_MODULE(userspace_tso);
 
 static bool userspace_tso = false;
 
+/*用户态初始化tso*/
 void
 userspace_tso_init(const struct smap *ovs_other_config)
 {
@@ -38,6 +39,7 @@ userspace_tso_init(const struct smap *ovs_other_config)
             VLOG_INFO("Userspace TCP Segmentation Offloading support enabled");
             userspace_tso = true;
 #else
+            //非dpdk情况下，不容许开启tso
             VLOG_WARN("Userspace TCP Segmentation Offloading can not be enabled"
                       "since OVS is built without DPDK support.");
 #endif
@@ -46,6 +48,7 @@ userspace_tso_init(const struct smap *ovs_other_config)
     }
 }
 
+/*是否开启tso*/
 bool
 userspace_tso_enabled(void)
 {

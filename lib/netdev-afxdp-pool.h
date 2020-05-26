@@ -28,10 +28,11 @@
 
 /* LIFO ptr_array. */
 struct umem_pool {
+    //指向栈顶
     int index;      /* Point to top. */
-    unsigned int size;//buffer池大小
+    unsigned int size;//array大小
     struct ovs_spin lock;
-    //指向buffer池
+    //指向buffer指针数组
     void **array;   /* A pointer array pointing to umem buf. */
 };
 

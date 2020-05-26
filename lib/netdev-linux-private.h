@@ -55,12 +55,14 @@ void netdev_linux_run(const struct netdev_class *);
 int get_stats_via_netlink(const struct netdev *netdev_,
                           struct netdev_stats *stats);
 
+/*linux网络设备*/
 struct netdev_linux {
     struct netdev up;
 
     /* Protects all members below. */
     struct ovs_mutex mutex;
 
+    //标明哪些缓存有效
     unsigned int cache_valid;
 
     bool miimon;                    /* Link status of last poll. */
@@ -73,7 +75,7 @@ struct netdev_linux {
     int ifindex;
     struct eth_addr etheraddr;
     int mtu;
-    unsigned int ifi_flags;
+    unsigned int ifi_flags;//接口flags(up/down等）
     long long int carrier_resets;
     uint32_t kbits_rate;        /* Policing data. */
     uint32_t kbits_burst;
@@ -91,6 +93,7 @@ struct netdev_linux {
     enum netdev_features advertised; /* Cached from ETHTOOL_GSET. */
     enum netdev_features supported;  /* Cached from ETHTOOL_GSET. */
 
+    //设备的驱动信息
     struct ethtool_drvinfo drvinfo;  /* Cached from ETHTOOL_GDRVINFO. */
     struct tc *tc;
 
@@ -107,16 +110,19 @@ struct netdev_linux {
 
 #ifdef HAVE_AF_XDP
     /* AF_XDP information. */
+    //数组，长度与rx队列相同，每个rx队列对应一个xsk_socket_info*
     struct xsk_socket_info **xsks;
     int requested_n_rxq;
 
-    enum afxdp_mode xdp_mode;               /* Configured AF_XDP mode. */
-    enum afxdp_mode requested_xdp_mode;     /* Requested  AF_XDP mode. */
-    enum afxdp_mode xdp_mode_in_use;        /* Effective  AF_XDP mode. */
+    /*afxdp模式相关*/
+    enum afxdp_mode xdp_mode;               /* Configured 配置的模式（配置的值）      AF_XDP mode. */
+    enum afxdp_mode requested_xdp_mode;     /* Requested  请求中的配置模式（未决配置） AF_XDP mode. */
+    enum afxdp_mode xdp_mode_in_use;        /* Effective  实际生效的配置模式         AF_XDP mode. */
 
     bool use_need_wakeup;
     bool requested_need_wakeup;
 
+    //每个tx队列对应一个netdev_afxdp_tx_lock结构
     struct netdev_afxdp_tx_lock *tx_locks;  /* Array of locks for TX queues. */
 #endif
 };
@@ -127,6 +133,7 @@ is_netdev_linux_class(const struct netdev_class *netdev_class)
     return netdev_class->run == netdev_linux_run;
 }
 
+//将netdev转换为netdev_linux
 static struct netdev_linux *
 netdev_linux_cast(const struct netdev *netdev)
 {

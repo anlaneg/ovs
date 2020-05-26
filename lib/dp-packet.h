@@ -100,8 +100,8 @@ struct dp_packet {
 
 #if HAVE_AF_XDP
 struct dp_packet_afxdp {
-    struct umem_pool *mpool;
-    struct dp_packet packet;
+    struct umem_pool *mpool;//所属pool
+    struct dp_packet packet;//报文元数据
 };
 #endif
 

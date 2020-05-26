@@ -2614,16 +2614,19 @@ nl_msg_put_flower_acts(struct ofpbuf *request, struct tc_flower *flower)
 }
 
 static void
-nl_msg_put_masked_value(struct ofpbuf *request, uint16_t type,
-                        uint16_t mask_type, const void *data,
-                        const void *mask_data, size_t len)
+nl_msg_put_masked_value(struct ofpbuf *request, uint16_t type/*value类型*/,
+                        uint16_t mask_type/*mask类型*/, const void *data/*value取值*/,
+                        const void *mask_data/*mask取值*/, size_t len/*类型长度*/)
 {
     if (mask_type != TCA_FLOWER_UNSPEC) {
+        /*如果value为0，则直接返回*/
         if (is_all_zeros(mask_data, len)) {
             return;
         }
+        //添加mask
         nl_msg_put_unspec(request, mask_type, mask_data, len);
     }
+    //添加value
     nl_msg_put_unspec(request, type, data, len);
 }
 
@@ -2701,6 +2704,7 @@ nl_msg_put_flower_tunnel(struct ofpbuf *request, struct tc_flower *flower)
                                   flower->mask.tunnel.metadata);
 }
 
+/*向request中添加mask,value*/
 #define FLOWER_PUT_MASKED_VALUE(member, type) \
     nl_msg_put_masked_value(request, type, type##_MASK, &flower->key.member, \
                             &flower->mask.member, sizeof flower->key.member)
@@ -2736,9 +2740,11 @@ nl_msg_put_flower_options(struct ofpbuf *request, struct tc_flower *flower)
         host_eth_type = ntohs(flower->key.encap_eth_type[0]);
     }
 
+    //目的mac,源mac的mask,value填充
     FLOWER_PUT_MASKED_VALUE(dst_mac, TCA_FLOWER_KEY_ETH_DST);
     FLOWER_PUT_MASKED_VALUE(src_mac, TCA_FLOWER_KEY_ETH_SRC);
 
+    //ipv4,ipv6处理
     if (host_eth_type == ETH_P_IP || host_eth_type == ETH_P_IPV6) {
         FLOWER_PUT_MASKED_VALUE(ip_ttl, TCA_FLOWER_KEY_IP_TTL);
         FLOWER_PUT_MASKED_VALUE(ip_tos, TCA_FLOWER_KEY_IP_TOS);
@@ -2767,6 +2773,7 @@ nl_msg_put_flower_options(struct ofpbuf *request, struct tc_flower *flower)
             FLOWER_PUT_MASKED_VALUE(sctp_dst, TCA_FLOWER_KEY_SCTP_DST);
         }
 
+        //添加ct相关的mask,value
         FLOWER_PUT_MASKED_VALUE(ct_state, TCA_FLOWER_KEY_CT_STATE);
         FLOWER_PUT_MASKED_VALUE(ct_zone, TCA_FLOWER_KEY_CT_ZONE);
         FLOWER_PUT_MASKED_VALUE(ct_mark, TCA_FLOWER_KEY_CT_MARK);

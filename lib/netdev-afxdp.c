@@ -101,6 +101,7 @@ static void xsk_destroy(struct xsk_socket_info *xsk);
 static int xsk_configure_all(struct netdev *netdev);
 static void xsk_destroy_all(struct netdev *netdev);
 
+//当前支持的xsk模式
 static struct {
     const char *name;
     uint32_t bind_flags;
@@ -149,13 +150,13 @@ struct xsk_umem_info {
     struct xsk_ring_prod fq;/*fill队列*/
     struct xsk_ring_cons cq;/*complete队列*/
     struct xsk_umem *umem;
-    void *buffer;
+    void *buffer;/*用户空间起始地址*/
 };
 
 struct xsk_socket_info {
     struct xsk_ring_cons rx;
     struct xsk_ring_prod tx;
-    struct xsk_umem_info *umem;
+    struct xsk_umem_info *umem;/*umem信息*/
     struct xsk_socket *xsk;
     uint32_t outstanding_tx; /* Number of descriptors filled in tx and cq. */
     uint32_t available_rx;   /* Number of descriptors filled in rx and fq. */
@@ -186,6 +187,7 @@ xsk_rx_wakeup_if_needed(struct xsk_umem_info *umem,
         pfd.fd = fd;
         pfd.events = POLLIN;
 
+        //采用poll等待报文触发
         ret = poll(&pfd, 1, 0);
         if (OVS_UNLIKELY(ret < 0)) {
             VLOG_WARN_RL(&rl, "%s: error polling rx fd: %s.",
@@ -239,6 +241,7 @@ netdev_afxdp_sweep_unused_pools(void *aux OVS_UNUSED)
     unsigned int count;
 
     ovs_mutex_lock(&unused_pools_mutex);
+    /*遍历unused_pools*/
     LIST_FOR_EACH_SAFE (pool, next, list_node, &unused_pools) {
 
         count = umem_pool_count(&pool->umem_info->mpool);
@@ -258,8 +261,9 @@ netdev_afxdp_sweep_unused_pools(void *aux OVS_UNUSED)
     ovs_mutex_unlock(&unused_pools_mutex);
 }
 
+/*配置xsk的umem*/
 static struct xsk_umem_info *
-xsk_configure_umem(void *buffer, uint64_t size)
+xsk_configure_umem(void *buffer, uint64_t size/*buffer大小*/)
 {
     struct xsk_umem_config uconfig;
     struct xsk_umem_info *umem;
@@ -306,6 +310,7 @@ xsk_configure_umem(void *buffer, uint64_t size)
     }
 
     /* Set-up metadata. */
+    /*元数组申请*/
     if (xpacket_pool_init(&umem->xpool, NUM_FRAMES) < 0) {
         VLOG_ERR("xpacket_pool_init failed");
         umem_pool_cleanup(&umem->mpool);
@@ -370,6 +375,7 @@ xsk_configure_socket(struct xsk_umem_info *umem, uint32_t ifindex,
         return NULL;
     }
 
+    //rx,tx ring创建
     ret = xsk_socket__create(&xsk->xsk, devname, queue_id, umem->umem,
                              &xsk->rx, &xsk->tx, &cfg);
     if (ret) {
@@ -418,7 +424,7 @@ xsk_configure_socket(struct xsk_umem_info *umem, uint32_t ifindex,
 }
 
 static struct xsk_socket_info *
-xsk_configure(int ifindex, int xdp_queue_id, enum afxdp_mode mode,
+xsk_configure(int ifindex/*接口索引*/, int xdp_queue_id/*队列id*/, enum afxdp_mode mode,
               bool use_need_wakeup, bool report_socket_failures)
 {
     struct xsk_socket_info *xsk;
@@ -457,7 +463,7 @@ xsk_configure(int ifindex, int xdp_queue_id, enum afxdp_mode mode,
 }
 
 static int
-xsk_configure_queue(struct netdev_linux *dev, int ifindex, int queue_id,
+xsk_configure_queue(struct netdev_linux *dev, int ifindex, int queue_id/*队列id*/,
                     enum afxdp_mode mode, bool report_socket_failures)
 {
     struct xsk_socket_info *xsk_info;
@@ -482,6 +488,7 @@ xsk_configure_queue(struct netdev_linux *dev, int ifindex, int queue_id,
 }
 
 
+//afxdp设备重配置
 static int
 xsk_configure_all(struct netdev *netdev)
 {
@@ -531,7 +538,7 @@ xsk_configure_all(struct netdev *netdev)
         }
     }
 
-    /*每个tx队列对应一个netdev_afxdp_tx_lock结构*/
+    /*每个tx队列对应一个netdev_afxdp_tx_lock结构，考虑cache影响*/
     n_txq = netdev_n_txq(netdev);
     dev->tx_locks = xzalloc_cacheline(n_txq * sizeof *dev->tx_locks);
 
@@ -546,6 +553,7 @@ err:
     return EINVAL;
 }
 
+//销毁单个xsk
 static void
 xsk_destroy(struct xsk_socket_info *xsk_info)
 {
@@ -573,12 +581,14 @@ xsk_destroy(struct xsk_socket_info *xsk_info)
     netdev_afxdp_sweep_unused_pools(NULL);
 }
 
+//销毁afxdp设备
 static void
 xsk_destroy_all(struct netdev *netdev)
 {
     struct netdev_linux *dev = netdev_linux_cast(netdev);
     int i, ifindex;
 
+    //销毁dev对应的所有xsk
     if (dev->xsks) {
         for (i = 0; i < netdev_n_rxq(netdev); i++) {
             if (dev->xsks[i]) {
@@ -596,6 +606,7 @@ xsk_destroy_all(struct netdev *netdev)
     ifindex = linux_get_ifindex(netdev_get_name(netdev));
     xsk_remove_xdp_program(ifindex, dev->xdp_mode_in_use);
 
+    //销毁tx队列对应的locks
     if (dev->tx_locks) {
         for (i = 0; i < netdev_n_txq(netdev); i++) {
             ovs_spin_destroy(&dev->tx_locks[i].lock);
@@ -605,8 +616,9 @@ xsk_destroy_all(struct netdev *netdev)
     }
 }
 
+//afxdp配置检查及配置请求设置
 int
-netdev_afxdp_set_config(struct netdev *netdev, const struct smap *args,
+netdev_afxdp_set_config(struct netdev *netdev, const struct smap *args/*要设置的参数*/,
                         char **errp OVS_UNUSED)
 {
     struct netdev_linux *dev = netdev_linux_cast(netdev);
@@ -626,16 +638,18 @@ netdev_afxdp_set_config(struct netdev *netdev, const struct smap *args,
         return EINVAL;
     }
 
-    /*xdp模式*/
+    /*xdp模式，默认为best-effort模式*/
     str_xdp_mode = smap_get_def(args, "xdp-mode", "best-effort");
     for (xdp_mode = OVS_AF_XDP_MODE_BEST_EFFORT;
          xdp_mode < OVS_AF_XDP_MODE_MAX;
          xdp_mode++) {
+        //检查配置值是否有效
         if (!strcasecmp(str_xdp_mode, xdp_modes[xdp_mode].name)) {
             break;
         }
     }
 
+    //xdp模式有误
     if (xdp_mode == OVS_AF_XDP_MODE_MAX) {
         VLOG_ERR("%s: Incorrect xdp-mode (%s).",
                  netdev_get_name(netdev), str_xdp_mode);
@@ -643,6 +657,7 @@ netdev_afxdp_set_config(struct netdev *netdev, const struct smap *args,
         return EINVAL;
     }
 
+    //use-need-wakeup模式检查
     need_wakeup = smap_get_bool(args, "use-need-wakeup", NEED_WAKEUP_DEFAULT);
 #ifndef HAVE_XDP_NEED_WAKEUP
     if (need_wakeup) {
@@ -655,6 +670,7 @@ netdev_afxdp_set_config(struct netdev *netdev, const struct smap *args,
     if (dev->requested_n_rxq != new_n_rxq
         || dev->requested_xdp_mode != xdp_mode
         || dev->requested_need_wakeup != need_wakeup) {
+        //设置请求的配置，并触发接口重配置
         dev->requested_n_rxq = new_n_rxq;
         dev->requested_xdp_mode = xdp_mode;
         dev->requested_need_wakeup = need_wakeup;
@@ -664,6 +680,7 @@ netdev_afxdp_set_config(struct netdev *netdev, const struct smap *args,
     return 0;
 }
 
+/*返回afxdp当前生效的配置情况*/
 int
 netdev_afxdp_get_config(const struct netdev *netdev, struct smap *args)
 {
@@ -691,6 +708,7 @@ netdev_afxdp_reconfigure(struct netdev *netdev)
 
     /* Allocate all the xsk related memory in the netdev's NUMA domain. */
     if (numa_available() != -1 && ovs_numa_get_n_numas() > 1) {
+        /*取设备对应的numa节点*/
         numa_id = netdev_get_numa_id(netdev);
         if (numa_id != NETDEV_NUMA_UNSPEC) {
             old_bm = numa_allocate_nodemask();
@@ -712,7 +730,7 @@ netdev_afxdp_reconfigure(struct netdev *netdev)
         && dev->xdp_mode == dev->requested_xdp_mode
         && dev->use_need_wakeup == dev->requested_need_wakeup
         && dev->xsks) {
-        /*配置已完成，直接退出*/
+        /*配置相同，直接退出*/
         goto out;
     }
 
@@ -730,7 +748,7 @@ netdev_afxdp_reconfigure(struct netdev *netdev)
     }
     dev->use_need_wakeup = dev->requested_need_wakeup;
 
-    //配置此netdev
+    //配置afxdp netdev
     err = xsk_configure_all(netdev);
     if (err) {
         VLOG_ERR("%s: AF_XDP device reconfiguration failed.",
@@ -752,6 +770,7 @@ out:
     return err;
 }
 
+//移除附加在此程序上的xdp程序
 static void
 xsk_remove_xdp_program(uint32_t ifindex, enum afxdp_mode mode)
 {
@@ -770,6 +789,7 @@ xsk_remove_xdp_program(uint32_t ifindex, enum afxdp_mode mode)
         return;
     }
 
+    //xdp程序被加载了，移除它
     bpf_set_link_xdp_fd(ifindex, -1, flags);
 }
 
@@ -832,6 +852,7 @@ prepare_fill_queue(struct xsk_socket_info *xsk_info)
     xsk_info->available_rx += BATCH_SIZE;
 }
 
+/*afxdp报文收取*/
 int
 netdev_afxdp_rxq_recv(struct netdev_rxq *rxq_, struct dp_packet_batch *batch,
                       int *qfill)
@@ -859,6 +880,7 @@ netdev_afxdp_rxq_recv(struct netdev_rxq *rxq_, struct dp_packet_batch *batch,
     //查看rx队列有多少报文
     rcvd = xsk_ring_cons__peek(&xsk_info->rx, BATCH_SIZE, &idx_rx);
     if (!rcvd) {
+        /*如果没有收到报文，如有必要，则尝试挂起*/
         xsk_rx_wakeup_if_needed(umem, netdev, rx->fd);
         return EAGAIN;
     }
@@ -926,6 +948,7 @@ kick_tx(struct xsk_socket_info *xsk_info, enum afxdp_mode mode,
               ? xsk_info->outstanding_tx / KERNEL_TX_BATCH_SIZE
               : 0;
 kick_retry:
+    //通过sendto系统调用，完成kernel收方向的事件触发
     /* This causes system call into kernel's xsk_sendmsg, and xsk_generic_xmit
      * (generic and native modes) or xsk_zc_xmit (native-with-zerocopy mode).
      */
@@ -1110,6 +1133,7 @@ __netdev_afxdp_batch_send(struct netdev *netdev, int qid,
         xsk_ring_prod__tx_desc(&xsk_info->tx, idx + i)->len
             = dp_packet_size(packet);
     }
+    //移动生产者拽针
     xsk_ring_prod__submit(&xsk_info->tx, dp_packet_batch_size(batch));
     xsk_info->outstanding_tx += dp_packet_batch_size(batch);
 
@@ -1129,6 +1153,7 @@ out:
     return error;
 }
 
+/*afxdp设备报文发送*/
 int
 netdev_afxdp_batch_send(struct netdev *netdev, int qid,
                         struct dp_packet_batch *batch,
@@ -1164,6 +1189,7 @@ netdev_afxdp_rxq_destruct(struct netdev_rxq *rxq_ OVS_UNUSED)
     /* Nothing. */
 }
 
+//通过level级别输出日志
 static int
 libbpf_print(enum libbpf_print_level level,
              const char *format, va_list args)
@@ -1178,12 +1204,15 @@ libbpf_print(enum libbpf_print_level level,
     return 0;
 }
 
+//afxdp类型netdev设备注册时调用
 int netdev_afxdp_init(void)
 {
+    /*注册libbpf的日志输出函数*/
     libbpf_set_print(libbpf_print);
     return 0;
 }
 
+//afxdp网络设备初始化
 int
 netdev_afxdp_construct(struct netdev *netdev)
 {
@@ -1209,16 +1238,19 @@ netdev_afxdp_construct(struct netdev *netdev)
     dev->xsks = NULL;
     dev->tx_locks = NULL;
 
+    //请求配置此netdev
     netdev_request_reconfigure(netdev);
     return 0;
 }
 
+//销毁afxdp网络设备
 void
 netdev_afxdp_destruct(struct netdev *netdev)
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
     struct netdev_linux *dev = netdev_linux_cast(netdev);
 
+    //注册信号终止时需要调用的回调
     if (ovsthread_once_start(&once)) {
         fatal_signal_add_hook(netdev_afxdp_sweep_unused_pools,
                               NULL, NULL, true);
@@ -1295,6 +1327,7 @@ netdev_afxdp_get_custom_stats(const struct netdev *netdev,
     return 0;
 }
 
+//取afxdp设备对应的统计信息
 int
 netdev_afxdp_get_stats(const struct netdev *netdev,
                        struct netdev_stats *stats)
@@ -1306,6 +1339,7 @@ netdev_afxdp_get_stats(const struct netdev *netdev,
 
     ovs_mutex_lock(&dev->mutex);
 
+    //取设备对应的统计信息
     error = get_stats_via_netlink(netdev, &dev_stats);
     if (error) {
         VLOG_WARN_RL(&rl, "%s: Error getting AF_XDP statistics.",
@@ -1336,6 +1370,7 @@ netdev_afxdp_get_stats(const struct netdev *netdev,
         stats->tx_window_errors    += dev_stats.tx_window_errors;
 
         /* Account the dropped in each xsk. */
+        //汇总各队列丢掉的报文数
         for (i = 0; i < netdev_n_rxq(netdev); i++) {
             xsk_info = dev->xsks[i];
             if (xsk_info) {

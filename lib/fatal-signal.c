@@ -328,8 +328,8 @@ fatal_signal_atexit_handler(void)//进程退出时执行
     call_hooks(0);
 }
 
-static void
 //调用回调，如果sig_nr不为0，则调用所有hooks的hook_cb，如果为0，则仅调用exit时可调用的回调
+static void
 call_hooks(int sig_nr)
 {
     static volatile sig_atomic_t recurse = 0;

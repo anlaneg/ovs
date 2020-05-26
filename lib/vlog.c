@@ -807,6 +807,7 @@ vlog_disable_rate_limit(struct unixctl_conn *conn, int argc,
 void
 vlog_init(void)
 {
+    //vlog子系统初始化
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 
     if (ovsthread_once_start(&once)) {
@@ -1150,8 +1151,9 @@ send_to_syslog_fd(const char *s, size_t length)
  * given 'module'.
  *
  * Guaranteed to preserve errno. */
+//通过level级别输出message
 void
-vlog_valist(const struct vlog_module *module, enum vlog_level level,
+vlog_valist(const struct vlog_module *module, enum vlog_level level/*日志级别*/,
             const char *message, va_list args)
 {
     //日志是否可以输出到console口
@@ -1164,6 +1166,7 @@ vlog_valist(const struct vlog_module *module, enum vlog_level level,
     //日志是否可以输出到file
     log_to_file = module->levels[VLF_FILE] >= level && log_fd >= 0;
     ovs_mutex_unlock(&log_file_mutex);
+
     //任意一种方式可输出，则进入
     if (log_to_console || log_to_syslog || log_to_file) {
         int save_errno = errno;
@@ -1173,6 +1176,7 @@ vlog_valist(const struct vlog_module *module, enum vlog_level level,
 
         ds_init(&s);
         ds_reserve(&s, 1024);
+        //增加消息id号
         ++*msg_num_get();
 
         ovs_rwlock_rdlock(&pattern_rwlock);

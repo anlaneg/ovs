@@ -459,6 +459,7 @@ static const struct tc_ops tc_ops_default;
 static const struct tc_ops tc_ops_noop;
 static const struct tc_ops tc_ops_other;
 
+/*linux当前支持的流控算法*/
 static const struct tc_ops *const tcs[] = {
     &tc_ops_htb,                /* Hierarchy token bucket (see tc-htb(8)). */
     &tc_ops_hfsc,               /* Hierarchical fair service curve. */
@@ -890,6 +891,7 @@ netdev_linux_update(struct netdev_linux *dev, int nsid,
     }
 }
 
+/*申请linux网络设备对象*/
 static struct netdev *
 netdev_linux_alloc(void)
 {
@@ -897,6 +899,7 @@ netdev_linux_alloc(void)
     return &netdev->up;
 }
 
+//linux 网络设备公共初始化
 static int
 netdev_linux_common_construct(struct netdev *netdev_)
 {
@@ -911,6 +914,7 @@ netdev_linux_common_construct(struct netdev *netdev_)
     struct netdev_linux *netdev = netdev_linux_cast(netdev_);
     const char *name = netdev_->name;
     if (!strcmp(name, "default") || !strcmp(name, "all")) {
+        /*不容许以上两个名称的设备*/
         static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(1, 1);
         VLOG_WARN_RL(&rll, "%s: Linux forbids network device with this name",
                      name);
@@ -921,6 +925,7 @@ netdev_linux_common_construct(struct netdev *netdev_)
     netnsid_unset(&netdev->netnsid);
     ovs_mutex_init(&netdev->mutex);
 
+    /*如果开启了tso,则添加offload标记*/
     if (userspace_tso_enabled()) {
         netdev_->ol_flags |= NETDEV_TX_OFFLOAD_TCP_TSO;
         netdev_->ol_flags |= NETDEV_TX_OFFLOAD_TCP_CKSUM;
@@ -933,6 +938,7 @@ netdev_linux_common_construct(struct netdev *netdev_)
 }
 
 /* Creates system and internal devices. */
+//linux 网络设备初始化
 int
 netdev_linux_construct(struct netdev *netdev_)
 {
@@ -942,9 +948,11 @@ netdev_linux_construct(struct netdev *netdev_)
         return error;
     }
 
+    //取接口标记位
     error = get_flags(&netdev->up, &netdev->ifi_flags);
     if (error == ENODEV) {
         if (netdev->up.netdev_class != &netdev_internal_class) {
+            //非internal类型设备必须存在
             /* The device does not exist, so don't allow it to be opened. */
             return ENODEV;
         } else {
@@ -1062,6 +1070,7 @@ netdev_linux_destruct(struct netdev *netdev_)
     ovs_mutex_destroy(&netdev->mutex);
 }
 
+/*linux netdev设备释放*/
 static void
 netdev_linux_dealloc(struct netdev *netdev_)
 {
@@ -1629,6 +1638,7 @@ netdev_linux_tap_batch_send(struct netdev *netdev_, bool tso, int mtu,
     return 0;
 }
 
+//取设备对应的numa节点
 static int
 netdev_linux_get_numa_id__(struct netdev_linux *netdev)
     OVS_REQUIRES(netdev->mutex)
@@ -1681,6 +1691,7 @@ netdev_linux_get_numa_id__(struct netdev_linux *netdev)
     return node_id;
 }
 
+/*取netdev对应的numa节点*/
 static int OVS_UNUSED
 netdev_linux_get_numa_id(const struct netdev *netdev_)
 {
@@ -1775,6 +1786,7 @@ netdev_linux_send_wait(struct netdev *netdev, int qid OVS_UNUSED)
 static int
 netdev_linux_set_etheraddr(struct netdev *netdev_, const struct eth_addr mac)
 {
+    /*设置网络设备mac地址*/
     struct netdev_linux *netdev = netdev_linux_cast(netdev_);
     enum netdev_flags old_flags = 0;
     int error;
@@ -2784,6 +2796,7 @@ netdev_linux_get_qos_types(const struct netdev *netdev OVS_UNUSED,
     return 0;
 }
 
+/*通过名称查找流控算法*/
 static const struct tc_ops *
 tc_lookup_ovs_name(const char *name)
 {
@@ -2872,9 +2885,10 @@ exit:
     return error;
 }
 
+/*linux netdev设置qos*/
 static int
 netdev_linux_set_qos(struct netdev *netdev_,
-                     const char *type, const struct smap *details)
+                     const char *type/*流控算法名称*/, const struct smap *details)
 {
     struct netdev_linux *netdev = netdev_linux_cast(netdev_);
     const struct tc_ops *new_ops;
@@ -3349,6 +3363,7 @@ netdev_linux_get_next_hop(const struct in_addr *host, struct in_addr *next_hop,
     return ENXIO;
 }
 
+//提取设备的驱动信息
 static int
 netdev_linux_get_status(const struct netdev *netdev_, struct smap *smap)
 {
@@ -3361,8 +3376,9 @@ netdev_linux_get_status(const struct netdev *netdev_, struct smap *smap)
 
         COVERAGE_INC(netdev_get_ethtool);
         memset(&netdev->drvinfo, 0, sizeof netdev->drvinfo);
+        //通过ethtool完成设备netdev的驱动信息获取
         error = netdev_linux_do_ethtool(netdev->up.name,
-                                        cmd,
+                                        cmd/*出参，驱动信息*/,
                                         ETHTOOL_GDRVINFO,
                                         "ETHTOOL_GDRVINFO");
         if (!error) {
@@ -3370,6 +3386,7 @@ netdev_linux_get_status(const struct netdev *netdev_, struct smap *smap)
         }
     }
 
+    /*获取/缓存成功，返回设备驱动,fw版本*/
     if (!error) {
         smap_add(smap, "driver_name", netdev->drvinfo.driver);
         smap_add(smap, "driver_version", netdev->drvinfo.version);
@@ -3523,12 +3540,14 @@ exit:
     return error;
 }
 
+/*linux netdev公共回调函数*/
 #define NETDEV_LINUX_CLASS_COMMON                               \
     .run = netdev_linux_run,                                    \
     .wait = netdev_linux_wait,                                  \
     .alloc = netdev_linux_alloc,                                \
     .dealloc = netdev_linux_dealloc,                            \
     .send_wait = netdev_linux_send_wait,                        \
+    /*设置网络设备mac地址*/\
     .set_etheraddr = netdev_linux_set_etheraddr,                \
     .get_etheraddr = netdev_linux_get_etheraddr,                \
     .get_mtu = netdev_linux_get_mtu,                            \
@@ -3542,6 +3561,7 @@ exit:
     .get_qos_types = netdev_linux_get_qos_types,                \
     .get_qos_capabilities = netdev_linux_get_qos_capabilities,  \
     .get_qos = netdev_linux_get_qos,                            \
+    /*执行流控配置*/\
     .set_qos = netdev_linux_set_qos,                            \
     .get_queue = netdev_linux_get_queue,                        \
     .set_queue = netdev_linux_set_queue,                        \
@@ -3611,6 +3631,7 @@ const struct netdev_class netdev_internal_class = {
 };
 
 #ifdef HAVE_AF_XDP
+//定义afxdp网络设备类型
 const struct netdev_class netdev_afxdp_class = {
     NETDEV_LINUX_CLASS_COMMON,
     .type = "afxdp",
@@ -3620,19 +3641,23 @@ const struct netdev_class netdev_afxdp_class = {
     .destruct = netdev_afxdp_destruct,
     .get_stats = netdev_afxdp_get_stats,
     .get_custom_stats = netdev_afxdp_get_custom_stats,
+    //取设备的驱动信息
     .get_status = netdev_linux_get_status,
-    //afxdp设备配置检查
+    //afxdp设备配置检查及设置配置未绝
     .set_config = netdev_afxdp_set_config,
+    /*返回afxdp当前生效的配置情况*/
     .get_config = netdev_afxdp_get_config,
     //执行afxdp设备配置
     .reconfigure = netdev_afxdp_reconfigure,
     //设备对应的numa id
     .get_numa_id = netdev_linux_get_numa_id,
-    //报文发送
+    //afxdp设备报文发送
     .send = netdev_afxdp_batch_send,
+    //afxdp设备队列构造
     .rxq_construct = netdev_afxdp_rxq_construct,
+    //afxdp设备队列销毁
     .rxq_destruct = netdev_afxdp_rxq_destruct,
-    //报文收取
+    //afxdp报文收取
     .rxq_recv = netdev_afxdp_rxq_recv,
 };
 #endif
@@ -4892,6 +4917,7 @@ htb_class_dump_stats(const struct netdev *netdev OVS_UNUSED,
     return 0;
 }
 
+//htb流控算法
 static const struct tc_ops tc_ops_htb = {
     .linux_name = "htb",
     .ovs_name = "linux-htb",
@@ -6212,6 +6238,7 @@ netdev_stats_from_rtnl_link_stats64(struct netdev_stats *dst,
     dst->tx_window_errors = src->tx_window_errors;
 }
 
+//通过netlink获取netdev对应的统计信息
 int
 get_stats_via_netlink(const struct netdev *netdev_, struct netdev_stats *stats)
 {
@@ -6259,6 +6286,7 @@ get_stats_via_netlink(const struct netdev *netdev_, struct netdev_stats *stats)
     return error;
 }
 
+//取dev设备对应的flags
 static int
 get_flags(const struct netdev *dev, unsigned int *flags)
 {
@@ -6440,6 +6468,7 @@ get_etheraddr(const char *netdev_name, struct eth_addr *ea)
     return 0;
 }
 
+/*为设备netdev_name设置mac地址*/
 static int
 set_etheraddr(const char *netdev_name, const struct eth_addr mac)
 {

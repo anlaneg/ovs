@@ -34,9 +34,12 @@ struct ds;
 /* Network device statistics.
  *
  * Values of unsupported statistics are set to all-1-bits (UINT64_MAX). */
+//网络设备的统计信息
 struct netdev_stats {
+    //总收包数
     uint64_t rx_packets;        /* Total packets received. */
     uint64_t tx_packets;        /* Total packets transmitted. */
+    //总收字节数
     uint64_t rx_bytes;          /* Total bytes received. */
     uint64_t tx_bytes;          /* Total bytes transmitted. */
     uint64_t rx_errors;         /* Bad packets received. */
