@@ -7611,18 +7611,19 @@ odp_key_fitness_to_string(enum odp_key_fitness fitness)
  * null, then the return value is not meaningful.) */
 size_t
 odp_put_userspace_action(uint32_t pid,
-                         const void *userdata, size_t userdata_size,
+                         const void *userdata, size_t userdata_size/*userdata数据大小*/,
                          odp_port_t tunnel_out_port,
-                         bool include_actions,
-                         struct ofpbuf *odp_actions)
+                         bool include_actions/*是否需要包含action*/,
+                         struct ofpbuf *odp_actions/*要包含的action*/)
 {
     size_t userdata_ofs;
     size_t offset;
 
-    //指明送userspace
+    //指明流量需要送userspace
     offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_USERSPACE);
     nl_msg_put_u32(odp_actions, OVS_USERSPACE_ATTR_PID, pid);
     if (userdata) {
+        /*userdata为上下文，由用户态传给kernel,kernel在upcall时再传回给用户态*/
         userdata_ofs = odp_actions->size + NLA_HDRLEN;
 
         /* The OVS kernel module before OVS 1.11 and the upstream Linux kernel
@@ -7642,10 +7643,12 @@ odp_put_userspace_action(uint32_t pid,
         userdata_ofs = 0;
     }
     if (tunnel_out_port != ODPP_NONE) {
+        //如有必要存入tunnel port
         nl_msg_put_odp_port(odp_actions, OVS_USERSPACE_ATTR_EGRESS_TUN_PORT,
                             tunnel_out_port);
     }
     if (include_actions) {
+        //如果要包含action,则加入userspace的actions
         nl_msg_put_flag(odp_actions, OVS_USERSPACE_ATTR_ACTIONS);
     }
     nl_msg_end_nested(odp_actions, offset);

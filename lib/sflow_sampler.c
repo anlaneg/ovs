@@ -59,8 +59,11 @@ static void reset(SFLSampler *sampler)
 u_int32_t sfl_sampler_get_sFlowFsReceiver(SFLSampler *sampler) {
     return sampler->sFlowFsReceiver;
 }
+
+/*为sampler设置receiver index,完成receiver设置*/
 void sfl_sampler_set_sFlowFsReceiver(SFLSampler *sampler, u_int32_t sFlowFsReceiver) {
     sampler->sFlowFsReceiver = sFlowFsReceiver;
+    /*如果为0，则重置sampler*/
     if(sFlowFsReceiver == 0) reset(sampler);
     else {
 	/* retrieve and cache a direct pointer to my receiver */
@@ -144,6 +147,7 @@ void sfl_sampler_writeFlowSample(SFLSampler *sampler, SFL_FLOW_SAMPLE_TYPE *fs)
     if(fs->sampling_rate == 0) fs->sampling_rate = sampler->sFlowFsPacketSamplingRate;
     /* the samplePool may be maintained upstream too. */
     if( fs->sample_pool == 0) fs->sample_pool = sampler->samplePool;
+    /*如果sampler有receiver,则写入到receiver*/
     /* sent to my receiver */
     if(sampler->myReceiver) sfl_receiver_writeFlowSample(sampler->myReceiver, fs);
 }

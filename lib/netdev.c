@@ -1313,9 +1313,10 @@ netdev_set_in4(struct netdev *netdev, struct in_addr addr, struct in_addr mask)/
             : EOPNOTSUPP);
 }
 
+//通过设备名称拿到设备ip地址
 static int
 netdev_get_addresses_by_name(const char *device_name,
-                             struct in6_addr **addrsp, int *n_addrsp)
+                             struct in6_addr **addrsp/*出参，设备ip地址*/, int *n_addrsp/*ip地址数目*/)
 {
     struct netdev *netdev;
     int error = netdev_open(device_name, NULL, &netdev);
@@ -1360,6 +1361,7 @@ netdev_get_in4_by_name(const char *device_name, struct in_addr *in4)//通过接�
 /* Obtains an IPv4 or IPv6 address from 'device_name' and save the address in
  * '*in6', representing IPv4 addresses as v6-mapped.  Returns 0 if successful,
  * otherwise a positive errno value. */
+//通过设备名称，获取设备对应的首个非link local地址
 int
 netdev_get_ip_by_name(const char *device_name, struct in6_addr *in6)
 {
@@ -1371,6 +1373,7 @@ netdev_get_ip_by_name(const char *device_name, struct in6_addr *in6)
     if (!error) {
         error = ENOENT;
         for (int i = 0; i < n; i++) {
+            //选择首个非link local地址
             if (!in6_is_lla(&addrs[i])) {
                 *in6 = addrs[i];
                 error = 0;

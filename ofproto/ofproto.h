@@ -63,12 +63,12 @@ struct ofproto_controller_info {
 };
 
 struct ofproto_sflow_options {
-    struct sset targets;
-    uint32_t sampling_rate;
-    uint32_t polling_interval;
+    struct sset targets;/*报文发送目标方*/
+    uint32_t sampling_rate;//采样速率
+    uint32_t polling_interval;/*polling的间隔*/
     uint32_t header_len;
     uint32_t sub_id;
-    char *agent_device;
+    char *agent_device;/*agent设备名称（可为空）*/
     char *control_ip;
 };
 

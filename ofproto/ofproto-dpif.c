@@ -2318,6 +2318,7 @@ port_reconfigured(struct ofport *port_, enum ofputil_port_config old_config)
     port_run(port);
 }
 
+//sflow规则配置
 static int
 set_sflow(struct ofproto *ofproto_,
           const struct ofproto_sflow_options *sflow_options)
@@ -2331,6 +2332,7 @@ set_sflow(struct ofproto *ofproto_,
             struct ofport_dpif *ofport;
 
             ds = ofproto->sflow = dpif_sflow_create();
+            //将所有接口均加入sflow中
             HMAP_FOR_EACH (ofport, up.hmap_node, &ofproto->up.ports) {
                 dpif_sflow_add_port(ds, &ofport->up, ofport->odp_port);
             }

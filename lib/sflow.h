@@ -15,6 +15,7 @@
 #include "openvswitch/types.h"
 
 typedef enum {
+    //指定接口ifindex
     SFL_DSCLASS_IFINDEX = 0,
     SFL_DSCLASS_VLAN = 1,
     SFL_DSCLASS_PHYSICAL_ENTITY = 2,
@@ -74,7 +75,9 @@ typedef struct _SFLSampled_header {
     u_int32_t header_protocol;            /* (enum SFLHeader_protocol) */
     u_int32_t frame_length;               /* Original length of packet before sampling */
     u_int32_t stripped;                   /* header/trailer bytes stripped by sender */
+    //采样头部长度
     u_int32_t header_length;              /* length of sampled header bytes to follow */
+    //报文内容
     u_int8_t *header_bytes;               /* Header bytes */
 } SFLSampled_header;
 
@@ -123,7 +126,9 @@ typedef struct _SFLSampled_ipv6 {
 /* Extended switch data */
 
 typedef struct _SFLExtended_switch {
+    //in方向vlan
     u_int32_t src_vlan;       /* The 802.1Q VLAN id of incomming frame */
+    //in方向vlan 优先级
     u_int32_t src_priority;   /* The 802.1p priority */
     u_int32_t dst_vlan;       /* The 802.1Q VLAN id of outgoing frame */
     u_int32_t dst_priority;   /* The 802.1p priority */
@@ -342,6 +347,7 @@ enum SFL_sample_tag {
 typedef struct _SFLFlow_sample {
     /* u_int32_t tag;    */         /* SFL_sample_tag -- enterprise = 0 : format = 1 */
     /* u_int32_t length; */
+    //采样序号
     u_int32_t sequence_number;      /* Incremented with each flow sample
 				       generated */
     u_int32_t source_id;            /* fsSourceId */
@@ -351,8 +357,10 @@ typedef struct _SFLFlow_sample {
 				       process + total number of samples) */
     u_int32_t drops;                /* Number of times a packet was dropped due to
 				       lack of resources */
+    //入接口ifindex
     u_int32_t input;                /* SNMP ifIndex of input interface.
 				       0 if interface is not known. */
+    //出接口ifindex
     u_int32_t output;               /* SNMP ifIndex of output interface,
 				       0 if interface is not known.
 				       Set most significant bit to indicate
@@ -369,7 +377,7 @@ typedef struct _SFLFlow_sample {
 				       an unknown number of
 				       interfaces greater than 1.*/
     u_int32_t num_elements;
-    //要采样的tag
+    //采样获得的tag（采用此链表串起来）
     SFLFlow_sample_element *elements;
 } SFLFlow_sample;
 
@@ -636,6 +644,7 @@ typedef struct _SFLCounters_sample_expanded {
     SFLCounters_sample_element *elements;
 } SFLCounters_sample_expanded;
 
+/*将element加入到_sm->elements链头部*/
 #define SFLADD_ELEMENT(_sm, _el) do { (_el)->nxt = (_sm)->elements; (_sm)->elements = (_el); } while(0)
 
 /* Format of a sample datagram */

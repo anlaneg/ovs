@@ -1402,6 +1402,7 @@ pre_cmd_set(struct ctl_context *ctx)
     const struct ovsdb_idl_table_class *table;
     int i;
 
+    /*获取table_name对应的table*/
     ctx->error = pre_get_table(ctx, table_name, &table);
     if (ctx->error) {
         return;
@@ -1417,8 +1418,9 @@ pre_cmd_set(struct ctl_context *ctx)
 static void
 cmd_set(struct ctl_context *ctx)
 {
+    //选项
     bool must_exist = !shash_find(&ctx->options, "--if-exists");
-    const char *table_name = ctx->argv[1];
+    const char *table_name = ctx->argv[1];/*表名称*/
     const char *record_id = ctx->argv[2];
     const struct ovsdb_idl_table_class *table;
     const struct ovsdb_idl_row *row;
@@ -1920,12 +1922,14 @@ parse_command(int argc, char *argv[], struct shash *local_options,
 
     shash_init(&command->options);
     shash_swap(local_options, &command->options);
-    //考虑处理选项及value
+
+    //先收集处理选项key及value，并加入到command->options中
     for (i = 0; i < argc; i++) {
         const char *option = argv[i];
         const char *equals;
         char *key, *value;
 
+        //遇到非选项，跳出
         if (option[0] != '-') {
             break;
         }
@@ -1944,7 +1948,7 @@ parse_command(int argc, char *argv[], struct shash *local_options,
         if (shash_find(&command->options, key)) {
             free(key);
             free(value);
-	    //选项出现多次，报错
+            //选项出现多次，报错
             error = xasprintf("'%s' option specified multiple times", argv[i]);
             goto error;
         }
@@ -1958,7 +1962,7 @@ parse_command(int argc, char *argv[], struct shash *local_options,
         goto error;
     }
 
-    //找到vs-ctl对应的命令处理
+    //通过命令符找到vs-ctl对应的命令处理（例如db_ctl_commands）
     p = shash_find_data(&all_commands, argv[i]);
     if (!p) {
         error = xasprintf("unknown command '%s'; use --help for help",
@@ -1972,7 +1976,7 @@ parse_command(int argc, char *argv[], struct shash *local_options,
         const char *s = strstr(p->options, node->name);
         int end = s ? s[strlen(node->name)] : EOF;//关键字的最后一个参数
 
-        //关键字后，只能跟'=',',',' '和'\0'
+        //关键字后，只能跟'=',',',' '和'\0'，用于说明参数情况
         if (!strchr("=,? ", end)) {
             error = xasprintf("'%s' command has no '%s' option",
                               argv[i], node->name);
@@ -2305,10 +2309,10 @@ ctl_add_cmd_options(struct option **options_p, size_t *n_options_p,
 //返回解析出来的命令
 char *
 ctl_parse_commands(int argc, char *argv[], struct shash *local_options,
-                   struct ctl_command **commandsp, size_t *n_commandsp)
+                   struct ctl_command **commandsp/*出参，解析的命令*/, size_t *n_commandsp/*命令数目*/)
 {
     struct ctl_command *commands;
-    size_t n_commands, allocated_commands;
+    size_t n_commands/*当前使用的command大小*/, allocated_commands/*已申请的commands数组大小*/;
     int i, start;
     char *error;
 
@@ -2318,10 +2322,17 @@ ctl_parse_commands(int argc, char *argv[], struct shash *local_options,
     *commandsp = NULL;
     *n_commandsp = 0;
 
+    /*例如：ovs-vsctl -- --id=@sflow create sflow agent=${AGENT_IP} \
+            target="\"${COLLECTOR_IP}:${COLLECTOR_PORT}\"" header=${HEADER_BYTES} \
+            sampling=${SAMPLING_N} polling=${POLLING_SECS} \
+              -- set bridge br0 sflow=@sflow
+              时，当前解析位置为 --id=@sflow
+    */
     for (start = i = 0; i <= argc; i++) {
     	//如果到达命令结尾或者遇到了'--'才开始分析（'--'之前的是命令）
     	//多个命令间采用‘--'进行分隔
         if (i == argc || !strcmp(argv[i], "--")) {
+            //进入此处时，则解析到'-- set bridge'位置
             if (i > start) {
             	//如果不足以存放command,则扩大commands数组
                 if (n_commands >= allocated_commands) {
@@ -2333,10 +2344,11 @@ ctl_parse_commands(int argc, char *argv[], struct shash *local_options,
                         shash_moved(&c->options);
                     }
                 }
-                //从start位置开i位置是commands区，现在我们解析command
+                //从start位置到i位置是commands区，现在我们解析command
                 error = parse_command(i - start, &argv[start], local_options,
                                       &commands[n_commands]);
                 if (error) {
+                    /*获取command失败，报错*/
                     struct ctl_command *c;
 
                     for (c = commands; c < &commands[n_commands]; c++) {
@@ -2495,6 +2507,7 @@ static const struct ctl_command_syntax db_ctl_commands[] = {
      "--if-exists,--columns=", RO},
     {"find", 1, INT_MAX, "TABLE [COLUMN[:KEY]=VALUE]...", pre_cmd_find,
      cmd_find, NULL, "--columns=", RO},
+     //ovs数据库set命令响应
     {"set", 3, INT_MAX, "TABLE RECORD COLUMN[:KEY]=VALUE...", pre_cmd_set,
      cmd_set, NULL, "--if-exists", RW},
     {"add", 4, INT_MAX, "TABLE RECORD COLUMN [KEY=]VALUE...", pre_cmd_add,
@@ -2545,6 +2558,7 @@ ctl_init__(const struct ovsdb_idl_class *idl_class_,
     ctl_classes = ctl_classes_;
     n_classes = idl_class->n_tables;
     ctl_exit_func = ctl_exit_func_;
+    //注册db对应的控制命令
     ctl_register_commands(db_ctl_commands);
 
     cmd_show_tables = cmd_show_tables_;

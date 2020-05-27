@@ -76,6 +76,7 @@ typedef struct _SFLDataSource_instance {
 #define SFL_DS_INSTANCE(dsi) (dsi).ds_instance
 #define SFL_DS_CLASS(dsi) (dsi).ds_class
 #define SFL_DS_INDEX(dsi) (dsi).ds_index
+/*设置dsi的成员给值*/
 #define SFL_DS_SET(dsi,clss,indx,inst)		\
     do {					\
 	(dsi).ds_class = (clss);		\
@@ -84,11 +85,15 @@ typedef struct _SFLDataSource_instance {
     } while(0)
 
 typedef struct _SFLSampleCollector {
+    //要发送的报文
     u_int32_t data[(SFL_MAX_DATAGRAM_SIZE + SFL_DATA_PAD) / sizeof(u_int32_t)];
     //指向待构造的报文
     u_int32_t *datap; /* packet fill pointer */
+    //实际的报文长度
     u_int32_t pktlen; /* accumulated size */
+    //报文seq编号
     u_int32_t packetSeqNo;
+    //采样报文数
     u_int32_t numSamples;
 } SFLSampleCollector;
 
@@ -97,13 +102,15 @@ struct _SFLAgent;  /* forward decl */
 typedef struct _SFLReceiver {
     struct _SFLReceiver *nxt;
     /* MIB fields */
-    char *sFlowRcvrOwner;
+    char *sFlowRcvrOwner;/*指明rcv的owner*/
     time_t sFlowRcvrTimeout;
+    //指明可接收的报文最大尺寸
     u_int32_t sFlowRcvrMaximumDatagramSize;
     SFLAddress sFlowRcvrAddress;
     u_int32_t sFlowRcvrPort;
     u_int32_t sFlowRcvrDatagramVersion;
     /* public fields */
+    //指定recver对应的agent
     struct _SFLAgent *agent;    /* pointer to my agent */
     /* private fields */
     SFLSampleCollector sampleCollector;
@@ -120,13 +127,15 @@ typedef struct _SFLSampler {
     struct _SFLSampler *hash_nxt;
     /* MIB fields */
     SFLDataSource_instance dsi;
+    //对应的receiver index
     u_int32_t sFlowFsReceiver;
     u_int32_t sFlowFsPacketSamplingRate;
-    u_int32_t sFlowFsMaximumHeaderSize;
+    u_int32_t sFlowFsMaximumHeaderSize;/*最大头部长度*/
     /* public fields */
+    //指向所属的agent
     struct _SFLAgent *agent; /* pointer to my agent */
     /* private fields */
-    SFLReceiver *myReceiver;
+    SFLReceiver *myReceiver;/*对应的receiver,由receiver index转换而来*/
     u_int32_t skip;
     u_int32_t samplePool;
     u_int32_t flowSampleSeqNo;
@@ -147,13 +156,18 @@ typedef struct _SFLPoller {
     /* for linked list */
     struct _SFLPoller *nxt;
     /* MIB fields */
+    //poller对应的dsi
     SFLDataSource_instance dsi;
     u_int32_t sFlowCpReceiver;
+    //polling间隔时间
     time_t sFlowCpInterval;
     /* public fields */
+    //poller所属的agent
     struct _SFLAgent *agent; /* pointer to my agent */
+    //getCountersFn的参数
     void *magic;             /* ptr to pass back in getCountersFn() */
     getCountersFn_t getCountersFn;
+    //poller接口在桥上的编号
     u_int32_t bridgePort; /* port number local to bridge */
     /* private fields */
     SFLReceiver *myReceiver;
@@ -187,16 +201,19 @@ typedef struct _SFLAgent {
     SFLSampler *jumpTable[SFL_HASHTABLE_SIZ]; /* fast lookup table for samplers (by ifIndex) */
     SFLSampler *samplers;   /* the list of samplers */
     SFLPoller  *pollers;    /* the list of samplers */
+    //agent对应的所有receivers
     SFLReceiver *receivers; /* the array of receivers */
     time_t bootTime;        /* time when we booted or started */
     time_t now;             /* time now */
+    //关注的agentip地址
     SFLAddress myIP;        /* IP address of this node */
     u_int32_t subId;        /* sub_agent_id */
+    /*私有数据，用于alloc,freefn,errorfn,sendfn函数*/
     void *magic;            /* ptr to pass back in logging and alloc fns */
-    allocFn_t allocFn;
-    freeFn_t freeFn;
-    errorFn_t errorFn;
-    sendFn_t sendFn;
+    allocFn_t allocFn;/*内存申请函数*/
+    freeFn_t freeFn;/*内存释放函数*/
+    errorFn_t errorFn;/*错误告警函数*/
+    sendFn_t sendFn;/*用于向collector发送报文*/
 #ifdef SFLOW_DO_SOCKET
     int receiverSocket4;
     int receiverSocket6;

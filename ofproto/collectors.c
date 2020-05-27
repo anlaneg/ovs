@@ -31,7 +31,9 @@
 VLOG_DEFINE_THIS_MODULE(collectors);
 
 struct collectors {
+    //各connect对应一个socket
     int *fds;                     /* Sockets. */
+    //fds数组大小
     size_t n_fds;                 /* Number of sockets. */
 };
 
@@ -48,10 +50,10 @@ struct collectors {
  * added.  Thus, even on a failure return, it is possible that '*collectorsp'
  * is nonnull, and even on a successful return, it is possible that
  * '*collectorsp' is null, if 'target's is an empty sset. */
-//创建udp报文对应的sockets
+//创建collector(当前采用udp连接对应的sockets)，并返回
 int
-collectors_create(const struct sset *targets, int default_port,
-                  struct collectors **collectorsp)
+collectors_create(const struct sset *targets, int default_port/*默认的端口号*/,
+                  struct collectors **collectorsp/*出参，与targets互联的fd信息*/)
 {
     struct collectors *c;
     const char *name;
@@ -60,14 +62,17 @@ collectors_create(const struct sset *targets, int default_port,
     c = xmalloc(sizeof *c);
     c->fds = xmalloc(sizeof *c->fds * sset_count(targets));
     c->n_fds = 0;
+    //遍历每个target
     SSET_FOR_EACH (name, targets) {
         int error;
         int fd;
 
+        //与其建立连接，并返回对应的fd
         error = inet_open_active(SOCK_DGRAM, name, default_port, NULL, &fd, 0);
         if (fd >= 0) {
             c->fds[c->n_fds++] = fd;
         } else {
+            //创建到对端的连接失败，报错
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
             VLOG_WARN_RL(&rl, "couldn't open connection to collector %s (%s)",
@@ -105,6 +110,7 @@ collectors_destroy(struct collectors *c)
 
 /* Sends the 'n'-byte 'payload' to each of the collectors in 'c'.
  * Return the number of IPFIX packets which were sent unsuccessfully*/
+//向所有collector发送n字节长度的payload
 size_t
 collectors_send(const struct collectors *c, const void *payload, size_t n)
 {
@@ -113,9 +119,11 @@ collectors_send(const struct collectors *c, const void *payload, size_t n)
     if (c) {
         size_t i;
 
+        //向所有collector对应的fd发送payload(payload长度为n)
         for (i = 0; i < c->n_fds; i++) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
             if (send(c->fds[i], payload, n, 0) == -1) {
+                //如果发送失败，则告警
                 char *s = describe_fd(c->fds[i]);
                 VLOG_WARN_RL(&rl, "%s: sending to collector failed (%s)",
                              s, ovs_strerror(errno));

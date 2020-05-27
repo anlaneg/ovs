@@ -878,10 +878,12 @@ int
 ofproto_set_sflow(struct ofproto *ofproto,
                   const struct ofproto_sflow_options *oso)
 {
+    /*如果target为空，则认为无sflow*/
     if (oso && sset_is_empty(&oso->targets)) {
         oso = NULL;
     }
 
+    //调用回调完成sflow设置
     if (ofproto->ofproto_class->set_sflow) {
         return ofproto->ofproto_class->set_sflow(ofproto, oso);
     } else {

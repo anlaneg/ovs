@@ -18,6 +18,7 @@ static void sfl_agent_jumpTableRemove(SFLAgent *agent, SFLSampler *sampler);
   ----------------__________________________------------------
 */
 
+//初始化sflow agent
 void sfl_agent_init(SFLAgent *agent,
 		    SFLAddress *myIP, /* IP address of this agent in net byte order */
 		    u_int32_t subId,  /* agent_sub_id */
@@ -99,6 +100,7 @@ void sfl_agent_release(SFLAgent *agent)
   -----------------___________________________------------------
 */
 
+//设置agent地址
 void sfl_agent_set_agentAddress(SFLAgent *agent, SFLAddress *addr)
 {
     if(addr && memcmp(addr, &agent->myIP, sizeof(agent->myIP)) != 0) {
@@ -144,6 +146,7 @@ void sfl_agent_tick(SFLAgent *agent, time_t now)
   -----------------___________________________------------------
 */
 
+//为agent添加receiver
 SFLReceiver *sfl_agent_addReceiver(SFLAgent *agent)
 {
     SFLReceiver *rcv = (SFLReceiver *)sflAlloc(agent, sizeof(SFLReceiver));
@@ -151,6 +154,7 @@ SFLReceiver *sfl_agent_addReceiver(SFLAgent *agent)
     /* add to end of list - to preserve the receiver index numbers for existing receivers */
     {
 	SFLReceiver *r, *prev = NULL;
+	/*遍历agent的所有receiver,将其加入到链表后面*/
 	for(r = agent->receivers; r != NULL; prev = r, r = r->nxt);
 	if(prev) prev->nxt = rcv;
 	else agent->receivers = rcv;
@@ -170,6 +174,7 @@ SFLReceiver *sfl_agent_addReceiver(SFLAgent *agent)
   ds_class == 0 means ifIndex, which is the oid "1.3.6.1.2.1.2.2.1"
 */
 
+//检查两个pdsi是否相等
 static inline int sfl_dsi_compare(SFLDataSource_instance *pdsi1, SFLDataSource_instance *pdsi2) {
     /* could have used just memcmp(),  but not sure if that would
        give the right answer on little-endian platforms. Safer to be explicit... */
@@ -187,6 +192,7 @@ static inline int sfl_dsi_compare(SFLDataSource_instance *pdsi1, SFLDataSource_i
 SFLSampler *sfl_agent_addSampler(SFLAgent *agent, SFLDataSource_instance *pdsi)
 {
     /* Keep the list sorted. */
+    //通过pdsi查找sampler,如果找到则直接返回
     SFLSampler *prev = NULL, *sm = agent->samplers;
     for(; sm != NULL; prev = sm, sm = sm->nxt) {
 	int64_t cmp = sfl_dsi_compare(pdsi, &sm->dsi);
@@ -196,6 +202,7 @@ SFLSampler *sfl_agent_addSampler(SFLAgent *agent, SFLDataSource_instance *pdsi)
     /* either we found the insert point, or reached the end of the list...*/
 
     {
+    //申请并初始化agent,并将其加入到合适的位置
 	SFLSampler *newsm = (SFLSampler *)sflAlloc(agent, sizeof(SFLSampler));
 	sfl_sampler_init(newsm, agent, pdsi);
 	if(prev) prev->nxt = newsm;
@@ -221,6 +228,7 @@ SFLSampler *sfl_agent_addSampler(SFLAgent *agent, SFLDataSource_instance *pdsi)
   -----------------___________________________------------------
 */
 
+//向agent中添加新的poller
 SFLPoller *sfl_agent_addPoller(SFLAgent *agent,
 			       SFLDataSource_instance *pdsi,
 			       void *magic,         /* ptr to pass back in getCountersFn() */
@@ -228,17 +236,20 @@ SFLPoller *sfl_agent_addPoller(SFLAgent *agent,
 {
     /* keep the list sorted */
     SFLPoller *prev = NULL, *pl = agent->pollers;
+    //遍历agent中每个poller，找出待插入位置，如果已存在，则直接返回
     for(; pl != NULL; prev = pl, pl = pl->nxt) {
 	int64_t cmp = sfl_dsi_compare(pdsi, &pl->dsi);
 	if(cmp == 0) return pl;  /* found - return existing one */
 	if(cmp < 0) break;       /* insert here */
     }
     /* either we found the insert point, or reached the end of the list... */
+    //构造poller,并将其加到pl的前面
     {
 	SFLPoller *newpl = (SFLPoller *)sflAlloc(agent, sizeof(SFLPoller));
 	sfl_poller_init(newpl, agent, pdsi, magic, getCountersFn);
+	//将其串入链内
 	if(prev) prev->nxt = newpl;
-	else agent->pollers = newpl;
+	else agent->pollers = newpl;/*newpl为首个poller*/
 	newpl->nxt = pl;
 	return newpl;
     }
@@ -356,6 +367,7 @@ SFLSampler *sfl_agent_getSampler(SFLAgent *agent, SFLDataSource_instance *pdsi)
   -----------------___________________________------------------
 */
 
+//通过pdsi获取poller
 SFLPoller *sfl_agent_getPoller(SFLAgent *agent, SFLDataSource_instance *pdsi)
 {
     /* find it and return it */
@@ -386,9 +398,11 @@ SFLPoller *sfl_agent_getPollerByBridgePort(SFLAgent *agent, uint32_t port_no)
   -----------------___________________________------------------
 */
 
+//返回agent的第receiverIndex号receiver
 SFLReceiver *sfl_agent_getReceiver(SFLAgent *agent, u_int32_t receiverIndex)
 {
     u_int32_t rcvIdx = 0;
+    /*遍历agent对应的所有receivers,取第index号receiver*/
     SFLReceiver *rcv = agent->receivers;
     for(;  rcv != NULL; rcv = rcv->nxt)
 	if(receiverIndex == ++rcvIdx) return rcv;
@@ -415,6 +429,7 @@ SFLSampler *sfl_agent_getNextSampler(SFLAgent *agent, SFLDataSource_instance *pd
   -----------------___________________________------------------
 */
 
+//通过pdsi获取其对应的poller的下一个poller
 SFLPoller *sfl_agent_getNextPoller(SFLAgent *agent, SFLDataSource_instance *pdsi)
 {
     /* return the one lexograpically just after it - assume they are sorted
@@ -502,12 +517,15 @@ void sfl_agent_sysError(SFLAgent *agent, char *modName, char *msg)
   -----------------___________________________------------------
 */
 
+//负责内存申请
 static void * sflAlloc(SFLAgent *agent, size_t bytes)
 {
+    /*内存申请函数*/
     if(agent->allocFn) return (*agent->allocFn)(agent->magic, agent, bytes);
     else return SFL_ALLOC(bytes);
 }
 
+//负责内存释放
 static void sflFree(SFLAgent *agent, void *obj)
 {
     if(agent->freeFn) (*agent->freeFn)(agent->magic, agent, obj);

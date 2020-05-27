@@ -1515,9 +1515,11 @@ bridge_configure_netflow(struct bridge *br)
 }
 
 /* Set sFlow configuration on 'br'. */
+//处理br上的sflow配置
 static void
 bridge_configure_sflow(struct bridge *br, int *sflow_bridge_number)
 {
+    //取bridge的sflow规则
     const struct ovsrec_sflow *cfg = br->cfg->sflow;
     struct ovsrec_controller **controllers;
     struct ofproto_sflow_options oso;
@@ -1525,6 +1527,7 @@ bridge_configure_sflow(struct bridge *br, int *sflow_bridge_number)
     size_t i;
 
     if (!cfg) {
+        /*sflow配置为空*/
         ofproto_set_sflow(br->ofproto, NULL);
         return;
     }

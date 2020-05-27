@@ -535,7 +535,7 @@ exit:
 //解析target表示的internet地址{格式见上面的注释，说的很明白}
 bool
 inet_parse_active(const char *target_, int default_port,
-                  struct sockaddr_storage *ss, bool resolve_host)
+                  struct sockaddr_storage *ss/*出参，target地址信息*/, bool resolve_host)
 {
     char *target = xstrdup(target_);
     char *port, *host;
@@ -583,21 +583,24 @@ inet_parse_active(const char *target_, int default_port,
  * 'dscp' becomes the DSCP bits in the IP headers for the new connection.  It
  * should be in the range [0, 63] and will automatically be shifted to the
  * appropriately place in the IP tos field. */
+//解析target，并主动连接到目标端，返回对应的socket
 int
 inet_open_active(int style, const char *target, int default_port,
-                 struct sockaddr_storage *ssp, int *fdp, uint8_t dscp)
+                 struct sockaddr_storage *ssp/*出参，target对应的目的地址信息*/, int *fdp/*出参，对应的fd*/, uint8_t dscp/*报文对应的dscp信息*/)
 {
     struct sockaddr_storage ss;
     int fd = -1;
     int error;
 
     /* Parse. */
+    //解析target，获得其指定的地址信息
     if (!inet_parse_active(target, default_port, &ss, true)) {
         error = EAFNOSUPPORT;
         goto exit;
     }
 
     /* Create non-blocking socket. */
+    //依据此地址信息创建socket
     fd = socket(ss.ss_family, style, 0);
     if (fd < 0) {
         error = sock_errno();
@@ -612,6 +615,7 @@ inet_open_active(int style, const char *target, int default_port,
     /* The dscp bits must be configured before connect() to ensure that the
      * TOS field is set during the connection establishment.  If set after
      * connect(), the handshake SYN frames will be sent with a TOS of 0. */
+    //设置此socket对应的tos值
     error = set_dscp(fd, ss.ss_family, dscp);
     if (error) {
         VLOG_ERR("%s: set_dscp: %s", target, sock_strerror(error));
@@ -619,6 +623,7 @@ inet_open_active(int style, const char *target, int default_port,
     }
 
     /* Connect. */
+    //连接到对端
     error = connect(fd, (struct sockaddr *) &ss, ss_length(&ss)) == 0
                     ? 0
                     : sock_errno();

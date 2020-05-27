@@ -802,6 +802,7 @@ void dpif_operate(struct dpif *, struct dpif_op **ops, size_t n_ops,
 
 enum dpif_upcall_type {
     DPIF_UC_MISS,               /* Miss in flow table. */
+    //kernel按action要求送报文给用户态
     DPIF_UC_ACTION,             /* OVS_ACTION_ATTR_USERSPACE action. */
     DPIF_N_UC_TYPES
 };
@@ -836,9 +837,10 @@ struct dpif_upcall {
     struct nlattr *cutlen;      /* Number of bytes shrink from the end. */
 
     /* DPIF_UC_ACTION only. */
-    //kernel上传上来的userrdata,action等
+    //datapath upcall时上传的数据，此数据对kernel来说是黑盒，用于向用户态标记上下文。
     struct nlattr *userdata;    /* Argument to OVS_ACTION_ATTR_USERSPACE. */
     struct nlattr *out_tun_key;    /* Output tunnel key. */
+    //datapath upcall时带上来的action
     struct nlattr *actions;    /* Argument to OVS_ACTION_ATTR_USERSPACE. */
 };
 

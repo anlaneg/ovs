@@ -70,6 +70,7 @@ u_int32_t sfl_poller_get_sFlowCpInterval(SFLPoller *poller) {
     return poller->sFlowCpInterval;
 }
 
+//设置poller的间隔时间
 void sfl_poller_set_sFlowCpInterval(SFLPoller *poller, u_int32_t sFlowCpInterval) {
     poller->sFlowCpInterval = sFlowCpInterval;
     if(sFlowCpInterval) {
@@ -103,7 +104,7 @@ void sfl_poller_set_sFlowCpInterval(SFLPoller *poller, u_int32_t sFlowCpInterval
   May need a separate number to reference the local bridge port
   to get counters if it is not the same as the global ifIndex.
 */
-
+//设置poller在桥上的编号
 void sfl_poller_set_bridgePort(SFLPoller *poller, u_int32_t port_no) {
     poller->bridgePort = port_no;
 }

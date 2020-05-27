@@ -66,19 +66,24 @@ enum dpif_sflow_tunnel_type {
 
 struct dpif_sflow_port {
     struct hmap_node hmap_node; /* In struct dpif_sflow's "ports" hmap. */
+    //数据源信息
     SFLDataSource_instance dsi; /* sFlow library's notion of port number. */
+    //接口ofport
     struct ofport *ofport;      /* To retrive port stats. */
-    odp_port_t odp_port;
-    enum dpif_sflow_tunnel_type tunnel_type;
+    odp_port_t odp_port;//接口id
+    enum dpif_sflow_tunnel_type tunnel_type;//隧道类型
 };
 
 struct dpif_sflow {
+    //用户指定的所有target
     struct collectors *collectors;
     SFLAgent *sflow_agent;
     struct ofproto_sflow_options *options;
     time_t next_tick;
     size_t n_flood, n_all;
+    //存储sflow_port
     struct hmap ports;          /* Contains "struct dpif_sflow_port"s. */
+    //由MAX(1, UINT32_MAX / ds->options->sampling_rate)计算而来，为比率
     uint32_t probability;
     struct ovs_refcount ref_cnt;
 };
@@ -90,6 +95,7 @@ static void dpif_sflow_del_port__(struct dpif_sflow *,
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
+//检查sflow选项a,b是否相等
 static bool
 ofproto_sflow_options_equal(const struct ofproto_sflow_options *a,
                          const struct ofproto_sflow_options *b)
@@ -150,6 +156,7 @@ sflow_agent_error_cb(void *magic OVS_UNUSED, SFLAgent *agent OVS_UNUSED,
 }
 
 /* sFlow library callback to send datagram. */
+//向所有collector发送sflow pkt,pkt长度为pktlen
 static void
 sflow_agent_send_packet_cb(void *ds_, SFLAgent *agent OVS_UNUSED,
                            SFLReceiver *receiver OVS_UNUSED, u_char *pkt,
@@ -159,7 +166,7 @@ sflow_agent_send_packet_cb(void *ds_, SFLAgent *agent OVS_UNUSED,
     collectors_send(ds->collectors, pkt, pktLen);
 }
 
-/*取odp_port对应的dpif_sflow_port*/
+/*通过odp_port查找对应的dpif_sflow_port*/
 static struct dpif_sflow_port *
 dpif_sflow_find_port(const struct dpif_sflow *ds, odp_port_t odp_port)
     OVS_REQUIRES(mutex)
@@ -455,11 +462,13 @@ sflow_choose_agent_address(const char *agent_device,
     if (agent_device) {
         /* If 'agent_device' is the name of a network device, use its IP
          * address. */
+        //尝试通过设备名称获取agent地址
         if (!netdev_get_ip_by_name(agent_device, &ip)) {
             goto success;
         }
 
         /* If 'agent_device' is itself an IP address, use it. */
+        //通过字符串解析agent地址（ip地址格式）
         struct sockaddr_storage ss;
         if (inet_parse_address(agent_device, &ss)) {
             ip = ss_get_address(&ss);
@@ -469,6 +478,7 @@ sflow_choose_agent_address(const char *agent_device,
 
     /* Otherwise, use an appropriate local IP address for one of the
      * collectors' remote IP addresses. */
+    //通过target查路由确定本端需使用的ip地址
     const char *target;
     SSET_FOR_EACH (target, targets) {
         struct sockaddr_storage ss;
@@ -487,12 +497,14 @@ sflow_choose_agent_address(const char *agent_device,
         }
     }
 
+    //使用control_ip
     struct sockaddr_storage ss;
     if (control_ip && inet_parse_address(control_ip, &ss)) {
         ip = ss_get_address(&ss);
         goto success;
     }
 
+    //确定ip地址失败
     VLOG_ERR("could not determine IP address for sFlow agent");
     return false;
 
@@ -547,6 +559,7 @@ dpif_sflow_is_enabled(const struct dpif_sflow *ds) OVS_EXCLUDED(mutex)
     return enabled;
 }
 
+//创建dpif_sflow
 struct dpif_sflow *
 dpif_sflow_create(void)
 {
@@ -585,7 +598,7 @@ dpif_sflow_get_probability(const struct dpif_sflow *ds) OVS_EXCLUDED(mutex)
 {
     uint32_t probability;
     ovs_mutex_lock(&mutex);
-    probability = ds->probability;
+    probability = ds->probability;/*使用ds的采样率*/
     ovs_mutex_unlock(&mutex);
     return probability;
 }
@@ -605,6 +618,7 @@ dpif_sflow_unref(struct dpif_sflow *ds) OVS_EXCLUDED(mutex)
     }
 }
 
+//将sflow接口dsp加入到poller
 static void
 dpif_sflow_add_poller(struct dpif_sflow *ds, struct dpif_sflow_port *dsp)
     OVS_REQUIRES(mutex)
@@ -616,6 +630,7 @@ dpif_sflow_add_poller(struct dpif_sflow *ds, struct dpif_sflow_port *dsp)
     sfl_poller_set_bridgePort(poller, odp_to_u32(dsp->odp_port));
 }
 
+//返回各隧道口中对应的sflow tunnel type
 static enum dpif_sflow_tunnel_type
 dpif_sflow_tunnel_type(struct ofport *ofport) {
     const char *type = netdev_get_type(ofport->netdev);
@@ -664,6 +679,7 @@ dpif_sflow_add_port(struct dpif_sflow *ds, struct ofport *ofport,
     enum dpif_sflow_tunnel_type tunnel_type;
 
     ovs_mutex_lock(&mutex);
+    //先移除掉odp_port对应的sflow_port
     dpif_sflow_del_port(ds, odp_port);
 
     tunnel_type = dpif_sflow_tunnel_type(ofport);
@@ -712,6 +728,7 @@ dpif_sflow_del_port__(struct dpif_sflow *ds, struct dpif_sflow_port *dsp)
     free(dsp);
 }
 
+//移除掉指定的sflow_port
 void
 dpif_sflow_del_port(struct dpif_sflow *ds, odp_port_t odp_port)
     OVS_EXCLUDED(mutex)
@@ -721,6 +738,7 @@ dpif_sflow_del_port(struct dpif_sflow *ds, odp_port_t odp_port)
     ovs_mutex_lock(&mutex);
     dsp = dpif_sflow_find_port(ds, odp_port);
     if (dsp) {
+        //如果此port已存在，则将其移除掉
         dpif_sflow_del_port__(ds, dsp);
     }
     ovs_mutex_unlock(&mutex);
@@ -742,6 +760,7 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
     SFLPoller *poller;
 
     ovs_mutex_lock(&mutex);
+    //未指定targets或者未指定采样速率，则退出
     if (sset_is_empty(&options->targets) || !options->sampling_rate) {
         /* No point in doing any work if there are no targets or nothing to
          * sample. */
@@ -749,6 +768,7 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
         goto out;
     }
 
+    //检查选项是否有变更
     options_changed = (!ds->options
                        || !ofproto_sflow_options_equal(options, ds->options));
 
@@ -757,7 +777,9 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
      * collectors failed, so that we should retry). */
     if (options_changed
         || collectors_count(ds->collectors) < sset_count(&options->targets)) {
+        //选项有变更，并且targets数量有减少，则先移除掉旧的collectors,再创建现有的。
         collectors_destroy(ds->collectors);
+        /*重新创建collectors*/
         collectors_create(&options->targets, SFL_DEFAULT_COLLECTOR_PORT,
                           &ds->collectors);
         if (ds->collectors == NULL) {
@@ -769,6 +791,7 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
     }
 
     /* Choose agent IP address and agent device (if not yet setup) */
+    //确定需要统计的agentip地址
     if (!sflow_choose_agent_address(options->agent_device,
                                     &options->targets,
                                     options->control_ip, &agentIP)) {
@@ -784,6 +807,7 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
     ds->options = ofproto_sflow_options_clone(options);
 
     /* Create agent. */
+    /*创建agent*/
     VLOG_INFO("creating sFlow agent %d", options->sub_id);
     if (ds->sflow_agent) {
         sflow_global_counters_subid_clear(ds->sflow_agent->subId);
@@ -791,8 +815,9 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
     }
     ds->sflow_agent = xcalloc(1, sizeof *ds->sflow_agent);
     now = time_wall();
+    //初始化agent
     sfl_agent_init(ds->sflow_agent,
-                   &agentIP,
+                   &agentIP,/*指定agent地址*/
                    options->sub_id,
                    now,         /* Boot time. */
                    now,         /* Current time. */
@@ -802,6 +827,7 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
                    sflow_agent_error_cb,
                    sflow_agent_send_packet_cb);
 
+    //为此agent添加1个receiver
     receiver = sfl_agent_addReceiver(ds->sflow_agent);
     sfl_receiver_set_sFlowRcvrOwner(receiver, "Open vSwitch sFlow");
     sfl_receiver_set_sFlowRcvrTimeout(receiver, 0xffffffff);
@@ -818,6 +844,7 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
     sampler = sfl_agent_addSampler(ds->sflow_agent, &dsi);
     sfl_sampler_set_sFlowFsPacketSamplingRate(sampler, ds->options->sampling_rate);
     sfl_sampler_set_sFlowFsMaximumHeaderSize(sampler, ds->options->header_len);
+    /*指定sampler使用指定receiver*/
     sfl_sampler_set_sFlowFsReceiver(sampler, RECEIVER_INDEX);
 
     /* Add a counter poller for the bridge so we can use it to send
@@ -839,6 +866,7 @@ out:
     ovs_mutex_unlock(&mutex);
 }
 
+//给定odp_port，返回其对应的ifindex
 int
 dpif_sflow_odp_port_to_ifindex(const struct dpif_sflow *ds,
                                odp_port_t odp_port) OVS_EXCLUDED(mutex)
@@ -1276,10 +1304,10 @@ dpif_sflow_cookie_num_outputs(const struct user_action_cookie *cookie)
     return 0;
 }
 
-//sflow报文入口
+//sflow upcall报文入口
 void
-dpif_sflow_received(struct dpif_sflow *ds, const struct dp_packet *packet,
-                    const struct flow *flow, odp_port_t odp_in_port,
+dpif_sflow_received(struct dpif_sflow *ds, const struct dp_packet *packet/*采样到的packet*/,
+                    const struct flow *flow, odp_port_t odp_in_port/*入接口*/,
                     const struct user_action_cookie *cookie,
                     const struct dpif_sflow_actions *sflow_actions/*sflow上送过来的actions*/)
     OVS_EXCLUDED(mutex)
@@ -1299,6 +1327,7 @@ dpif_sflow_received(struct dpif_sflow *ds, const struct dp_packet *packet,
     ovs_be16 vlan_tci;
 
     ovs_mutex_lock(&mutex);
+    //如果没有sampler，则直接退出
     sampler = ds->sflow_agent->samplers;
     if (!sampler) {
         goto out;
@@ -1311,6 +1340,7 @@ dpif_sflow_received(struct dpif_sflow *ds, const struct dp_packet *packet,
      * leave it as 0 (meaning 'unknown') and continue. */
     in_dsp = dpif_sflow_find_port(ds, odp_in_port);
     if (in_dsp) {
+        //填充入接口ifindex
         fs.input = SFL_DS_INDEX(in_dsp->dsi);
     }
 
@@ -1320,6 +1350,7 @@ dpif_sflow_received(struct dpif_sflow *ds, const struct dp_packet *packet,
     sampler->samplePool += sfl_sampler_get_sFlowFsPacketSamplingRate(sampler);
 
     /* Sampled header. */
+    //添加hdr element标签
     memset(&hdrElem, 0, sizeof hdrElem);
     hdrElem.tag = SFLFLOW_HEADER;
     header = &hdrElem.flowType.header;
@@ -1329,17 +1360,20 @@ dpif_sflow_received(struct dpif_sflow *ds, const struct dp_packet *packet,
     header->frame_length = dp_packet_size(packet) + 4;
     /* Ethernet FCS stripped off. */
     header->stripped = 4;
+    //确定报文内容及报文长度
     header->header_length = MIN(dp_packet_size(packet),
                                 sampler->sFlowFsMaximumHeaderSize);
     header->header_bytes = dp_packet_data(packet);
 
     /* Add extended switch element. */
+    //添加switch element
     memset(&switchElem, 0, sizeof(switchElem));
     switchElem.tag = SFLFLOW_EX_SWITCH;
     switchElem.flowType.sw.src_vlan = vlan_tci_to_vid(flow->vlans[0].tci);
     switchElem.flowType.sw.src_priority = vlan_tci_to_pcp(flow->vlans[0].tci);
 
     /* Retrieve data from user_action_cookie. */
+    //利用cookie信息填充dst方向
     vlan_tci = cookie->sflow.vlan_tci;
     switchElem.flowType.sw.dst_vlan = vlan_tci_to_vid(vlan_tci);
     switchElem.flowType.sw.dst_priority = vlan_tci_to_pcp(vlan_tci);
@@ -1348,6 +1382,7 @@ dpif_sflow_received(struct dpif_sflow *ds, const struct dp_packet *packet,
 
     /* Input tunnel. */
     if (flow->tunnel.ip_dst) {
+        /*入方向为tunnel,则利用tunnel填充ipv4地址*/
         memset(&tnlInElem, 0, sizeof(tnlInElem));
         tnlInElem.tag = SFLFLOW_EX_IPV4_TUNNEL_INGRESS;
         tnlInProto = in_dsp ? dpif_sflow_tunnel_proto(in_dsp->tunnel_type) : 0;
@@ -1356,6 +1391,7 @@ dpif_sflow_received(struct dpif_sflow *ds, const struct dp_packet *packet,
                              &tnlInElem.flowType.ipv4);
         SFLADD_ELEMENT(&fs, &tnlInElem);
         if (flow->tunnel.tun_id) {
+            //填充tunnel id
             memset(&vniInElem, 0, sizeof(vniInElem));
             vniInElem.tag = SFLFLOW_EX_VNI_INGRESS;
             vniInElem.flowType.tunnel_vni.vni
@@ -1365,6 +1401,7 @@ dpif_sflow_received(struct dpif_sflow *ds, const struct dp_packet *packet,
     }
 
     /* Output tunnel. */
+    //出方向tunnel时，利用外层tunnel填充ipv4地址
     if (sflow_actions
         && sflow_actions->encap_depth == 1
         && !sflow_actions->tunnel_err

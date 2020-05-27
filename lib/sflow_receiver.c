@@ -95,6 +95,8 @@ static void initSocket(SFLReceiver *receiver) {
 char * sfl_receiver_get_sFlowRcvrOwner(SFLReceiver *receiver) {
     return receiver->sFlowRcvrOwner;
 }
+
+//指定recv的owner
 void sfl_receiver_set_sFlowRcvrOwner(SFLReceiver *receiver, char *sFlowRcvrOwner) {
     receiver->sFlowRcvrOwner = sFlowRcvrOwner;
     if(sFlowRcvrOwner == NULL || sFlowRcvrOwner[0] == '\0') {
@@ -111,6 +113,8 @@ void sfl_receiver_set_sFlowRcvrTimeout(SFLReceiver *receiver, time_t sFlowRcvrTi
 u_int32_t sfl_receiver_get_sFlowRcvrMaximumDatagramSize(SFLReceiver *receiver) {
     return receiver->sFlowRcvrMaximumDatagramSize;
 }
+
+/*设置最大可接收报文尺寸*/
 void sfl_receiver_set_sFlowRcvrMaximumDatagramSize(SFLReceiver *receiver, u_int32_t sFlowRcvrMaximumDatagramSize) {
     u_int32_t mdz = sFlowRcvrMaximumDatagramSize;
     if(mdz < SFL_MIN_DATAGRAM_SIZE) mdz = SFL_MIN_DATAGRAM_SIZE;
@@ -144,6 +148,7 @@ void sfl_receiver_set_sFlowRcvrPort(SFLReceiver *receiver, u_int32_t sFlowRcvrPo
 void sfl_receiver_tick(SFLReceiver *receiver, time_t now)
 {
     // if there are any samples to send, flush them now
+    //存在未发送的报文，则将其发送
     if(receiver->sampleCollector.numSamples > 0) sendSample(receiver);
     // check the timeout
     if(receiver->sFlowRcvrTimeout && (u_int32_t)receiver->sFlowRcvrTimeout != 0xFFFFFFFF) {
@@ -218,6 +223,7 @@ inline static void putAddress(SFLReceiver *receiver, SFLAddress *addr)
 	put32(receiver, 0);
     }
     else {
+    //存入agent地址
 	putNet32(receiver, addr->type);
 	if(addr->type == SFLADDRESSTYPE_IP_V4) put32(receiver, addr->address.ip_v4.addr);
 	else put128(receiver, addr->address.ip_v6.addr);
@@ -430,6 +436,7 @@ inline static void putGenericCounters(SFLReceiver *receiver, SFLIf_counters *cou
   -----------------_____________________________------------------
 */
 
+/*遍历当前所有sample_element,计算sample报文存放大小*/
 static int computeFlowSampleSize(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs)
 {
     SFLFlow_sample_element *elem = fs->elements;
@@ -503,6 +510,7 @@ int sfl_receiver_writeFlowSample(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs
     // in fact - if it is even half as big then we should ditch it. Very
     // important to avoid overruning the packet buffer.
     if(packedSize > (int)(receiver->sFlowRcvrMaximumDatagramSize / 2)) {
+        //报文过大，告警退出
 	sflError(receiver, "flow sample too big for datagram");
 	return -1;
     }
@@ -513,7 +521,7 @@ int sfl_receiver_writeFlowSample(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs
         /*已收集的报文与待收集的报文size较大，则直接先发送*/
 	sendSample(receiver);
 
-    receiver->sampleCollector.numSamples++;
+    receiver->sampleCollector.numSamples++;/*增加记录的报文数*/
 
 #ifdef SFL_USE_32BIT_INDEX
     putNet32(receiver, SFLFLOW_SAMPLE_EXPANDED);
@@ -542,6 +550,7 @@ int sfl_receiver_writeFlowSample(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs
     putNet32(receiver, fs->outputFormat);
     putNet32(receiver, fs->output);
 #else
+    //添加in-ifindex,out-ifindex
     putNet32(receiver, fs->input);
     putNet32(receiver, fs->output);
 #endif
@@ -564,6 +573,7 @@ int sfl_receiver_writeFlowSample(SFLReceiver *receiver, SFL_FLOW_SAMPLE_TYPE *fs
 		putNet32(receiver, elem->flowType.header.stripped);
 		putNet32(receiver, elem->flowType.header.header_length);
 		/* the header */
+		//将报文写入到receiver
 		memcpy(receiver->sampleCollector.datap, elem->flowType.header.header_bytes, elem->flowType.header.header_length);
 		/* round up to multiple of 4 to preserve alignment */
 		receiver->sampleCollector.datap += ((elem->flowType.header.header_length + 3) / 4);
@@ -836,21 +846,24 @@ u_int32_t sfl_receiver_samplePacketsSent(SFLReceiver *receiver)
   -----------------___________________________------------------
 */
 
+//构造并发送采样报文送给target
 static void sendSample(SFLReceiver *receiver)
 {
     /* construct and send out the sample, then reset for the next one... */
     /* first fill in the header with the latest values */
     /* version, agent_address and sub_agent_id were pre-set. */
     u_int32_t hdrIdx = (receiver->agent->myIP.type == SFLADDRESSTYPE_IP_V6) ? 7 : 4;
+    //存入序号，uptime,采样数
     receiver->sampleCollector.data[hdrIdx++] = htonl(++receiver->sampleCollector.packetSeqNo); /* seq no */
     receiver->sampleCollector.data[hdrIdx++] = htonl((receiver->agent->now - receiver->agent->bootTime) * 1000); /* uptime */
     receiver->sampleCollector.data[hdrIdx++] = htonl(receiver->sampleCollector.numSamples); /* num samples */
     /* send */
+    //向外发送收到的报文
     if(receiver->agent->sendFn) (*receiver->agent->sendFn)(receiver->agent->magic,
 							   receiver->agent,
 							   receiver,
-							   (u_char *)receiver->sampleCollector.data,
-							   receiver->sampleCollector.pktlen);
+							   (u_char *)receiver->sampleCollector.data/*要发送的报文*/,
+							   receiver->sampleCollector.pktlen/*发送的报文长度*/);
     else {
 #ifdef SFLOW_DO_SOCKET
 	/* send it myself */

@@ -871,7 +871,8 @@ recv_upcalls(struct handler *handler)
 
         //upcall 初始化（依据flow确定对应的datapath,in_port)，指明pmd为NULL
         error = upcall_receive(upcall, udpif->backer, &dupcall->packet/*upcall的报文*/,
-                               dupcall->type, dupcall->userdata, flow/*依据upcall报文填充好的flow*/, mru,
+                               dupcall->type, dupcall->userdata/*kernel上传的对其不透明数据，用于确定upcall上下文*/,
+                               flow/*依据upcall报文填充好的flow*/, mru,
                                &dupcall->ufid, PMD_ID_NULL);
         if (error) {
             if (error == ENODEV) {
@@ -1150,6 +1151,7 @@ classify_upcall(enum dpif_upcall_type type, const struct nlattr *userdata,
     }
     memcpy(cookie, nl_attr_get(userdata), sizeof *cookie);
     if (cookie->type == USER_ACTION_COOKIE_SFLOW) {
+        //如果type为sflow,则为sflow upcall
         return SFLOW_UPCALL;
     } else if (cookie->type == USER_ACTION_COOKIE_SLOW_PATH) {
         return SLOW_PATH_UPCALL;
@@ -1178,6 +1180,7 @@ compose_slow_path(struct udpif *udpif, struct xlate_out *xout,
     odp_port_t port;
     uint32_t pid;
 
+    //填充sflow对应的cookie
     memset(&cookie, 0, sizeof cookie);
     cookie.type = USER_ACTION_COOKIE_SLOW_PATH;
     cookie.ofp_in_port = ofp_in_port;
@@ -1192,6 +1195,7 @@ compose_slow_path(struct udpif *udpif, struct xlate_out *xout,
     size_t offset;
     size_t ac_offset;
     if (meter_id != UINT32_MAX) {
+        //添加sample action
         /* If slowpath meter is configured, generate clone(meter, userspace)
          * action. */
         offset = nl_msg_start_nested(buf, OVS_ACTION_ATTR_SAMPLE);
@@ -1200,6 +1204,7 @@ compose_slow_path(struct udpif *udpif, struct xlate_out *xout,
         nl_msg_put_u32(buf, OVS_ACTION_ATTR_METER, meter_id);
     }
 
+    //结合cookie，构造userspace action
     odp_put_userspace_action(pid, &cookie, sizeof cookie,
                              ODPP_NONE, false, buf);
 
@@ -1222,7 +1227,7 @@ upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
 {
     int error;
 
-    upcall->type = classify_upcall(type, userdata, &upcall->cookie);
+    upcall->type = classify_upcall(type/*upcall类型*/, userdata, &upcall->cookie);
     if (upcall->type == BAD_UPCALL) {
         return EAGAIN;
     } else if (upcall->type == MISS_UPCALL) {
@@ -1483,6 +1488,7 @@ dpif_get_actions(struct udpif *udpif, struct upcall *upcall,
     size_t actions_len = 0;
 
     if (upcall->actions) {
+        //upcall自带action,自upcall中提取此actions
         /* Actions were passed up from datapath. */
         *actions = nl_attr_get(upcall->actions);
         actions_len = nl_attr_get_size(upcall->actions);
@@ -1498,6 +1504,7 @@ dpif_get_actions(struct udpif *udpif, struct upcall *upcall,
         }
     }
 
+    /*返回action长度*/
     return actions_len;
 }
 
@@ -1538,7 +1545,7 @@ static int
 process_upcall(struct udpif *udpif, struct upcall *upcall,
                struct ofpbuf *odp_actions, struct flow_wildcards *wc)
 {
-    const struct dp_packet *packet = upcall->packet;
+    const struct dp_packet *packet = upcall->packet/*upcall的报文*/;
     const struct flow *flow = upcall->flow;
     size_t actions_len = 0;
 
@@ -1549,12 +1556,13 @@ process_upcall(struct udpif *udpif, struct upcall *upcall,
         return 0;
 
     case SFLOW_UPCALL:
-        //遇到sflow upcall
+        //遇到sflow 报文的upcall
         if (upcall->sflow) {
             struct dpif_sflow_actions sflow_actions;
 
             memset(&sflow_actions, 0, sizeof sflow_actions);
 
+            //自upcall中读取出sflow对应的action
             actions_len = dpif_read_actions(udpif, upcall, flow,
                                             upcall->type, &sflow_actions);
             dpif_sflow_received(upcall->sflow, packet, flow,

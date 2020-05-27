@@ -149,10 +149,10 @@ int
 main(int argc, char *argv[])
 {
     struct ovsdb_idl *idl;
-    struct ctl_command *commands;
+    struct ctl_command *commands/*解析的命令*/;
     struct shash local_options;
     unsigned int seqno;
-    size_t n_commands;
+    size_t n_commands;/*解析到的命令数目*/
 
     set_program_name(argv[0]);//程序名称
     fatal_ignore_sigpipe();
@@ -167,7 +167,7 @@ main(int argc, char *argv[])
     /* Parse command line. */
     char *args = process_escape_args(argv);
     shash_init(&local_options);
-    //解析选项ovs-ctrl注册的命令option参数均放在local_options中
+    //解析选项ovs-ctrl注册的命令option参数均放在local_options中(解析到'--'结束）
     parse_options(argc, argv, &local_options);
     //从argv＋optind这句可知，需要先写选项，再写命令,解析命令
     char *error = ctl_parse_commands(argc - optind, argv + optind,
@@ -3084,9 +3084,9 @@ static const struct ctl_command_syntax vsctl_commands[] = {
     {"add-br", 1, 3, "NEW-BRIDGE [PARENT] [NEW-VLAN]", pre_get_info,
      cmd_add_br, NULL, "--may-exist", RW},//桥添加命令处理
     {"del-br", 1, 1, "BRIDGE", pre_get_info, cmd_del_br,
-     NULL, "--if-exists", RW},
+     NULL, "--if-exists", RW},//桥删除命令
     {"list-br", 0, 0, "", pre_get_info, cmd_list_br, NULL, "--real,--fake",
-     RO},
+     RO},//列出所有桥
     {"br-exists", 1, 1, "BRIDGE", pre_get_info, cmd_br_exists, NULL, "", RO},
     {"br-to-vlan", 1, 1, "BRIDGE", pre_get_info, cmd_br_to_vlan, NULL, "",
      RO},
@@ -3176,6 +3176,7 @@ static const struct ctl_command_syntax vsctl_commands[] = {
 static void
 vsctl_cmd_init(void)
 {
+    //例如注册db相关的操作命令
     ctl_init(&ovsrec_idl_class, ovsrec_table_classes, tables, cmd_show_tables,
              vsctl_exit);
     ctl_register_commands(vsctl_commands);

@@ -2606,6 +2606,7 @@ dpif_netlink_queue_to_priority(const struct dpif *dpif OVS_UNUSED,
     }
 }
 
+//解析openvswitch datapath送上来的报文
 static int
 parse_odp_packet(struct ofpbuf *buf, struct dpif_upcall *upcall,
                  int *dp_ifindex/*出参，报文来源于哪个datapath*/)
@@ -2652,8 +2653,10 @@ parse_odp_packet(struct ofpbuf *buf, struct dpif_upcall *upcall,
                              nl_attr_get(a[OVS_PACKET_ATTR_KEY]));
     upcall->key_len = nl_attr_get_size(a[OVS_PACKET_ATTR_KEY]);
     odp_flow_key_hash(upcall->key, upcall->key_len, &upcall->ufid);
+    //自netlink中提取userdata
     upcall->userdata = a[OVS_PACKET_ATTR_USERDATA];
     upcall->out_tun_key = a[OVS_PACKET_ATTR_EGRESS_TUN_KEY];
+    //自netlink带上来的报文相关的action
     upcall->actions = a[OVS_PACKET_ATTR_ACTIONS];
     upcall->mru = a[OVS_PACKET_ATTR_MRU];
     upcall->hash = a[OVS_PACKET_ATTR_HASH];

@@ -7397,7 +7397,7 @@ dp_execute_userspace_action(struct dp_netdev_pmd_thread *pmd,
     ofpbuf_clear(actions);
 
     error = dp_netdev_upcall(pmd, packet, flow, NULL, ufid,
-                             DPIF_UC_ACTION, userdata, actions,
+                             DPIF_UC_ACTION/*按action要求送用户态*/, userdata, actions,
                              NULL);//走上送流程
     if (!error || error == ENOSPC) {
         dp_packet_batch_init_packet(&b, packet);

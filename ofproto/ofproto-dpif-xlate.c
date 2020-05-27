@@ -3256,12 +3256,13 @@ xlate_normal(struct xlate_ctx *ctx)
  */
 static size_t
 compose_sample_action(struct xlate_ctx *ctx,
-                      const uint32_t probability,
+                      const uint32_t probability/*采样比率*/,
                       const struct user_action_cookie *cookie,
                       const odp_port_t tunnel_out_port,
                       bool include_actions)
 {
     if (probability == 0) {
+        //比率为0，直接返回
         /* No need to generate sampling or the inner action. */
         return 0;
     }
@@ -3273,9 +3274,11 @@ compose_sample_action(struct xlate_ctx *ctx,
 
     /* When meter action is not required, avoid generate sample action
      * for 100% sampling rate.  */
+    //采样是非100%的
     bool is_sample = probability < UINT32_MAX || meter_id != UINT32_MAX;
     size_t sample_offset = 0, actions_offset = 0;
     if (is_sample) {
+        /*通过采样方式执行action*/
         sample_offset = nl_msg_start_nested(ctx->odp_actions,
                                             OVS_ACTION_ATTR_SAMPLE);
         nl_msg_put_u32(ctx->odp_actions, OVS_SAMPLE_ATTR_PROBABILITY,
@@ -3284,6 +3287,7 @@ compose_sample_action(struct xlate_ctx *ctx,
                                              OVS_SAMPLE_ATTR_ACTIONS);
     }
 
+    //存入meter
     if (meter_id != UINT32_MAX) {
         nl_msg_put_u32(ctx->odp_actions, OVS_ACTION_ATTR_METER, meter_id);
     }
@@ -3324,7 +3328,8 @@ compose_sflow_action(struct xlate_ctx *ctx)
     struct user_action_cookie cookie;
 
     memset(&cookie, 0, sizeof cookie);
-    cookie.type = USER_ACTION_COOKIE_SFLOW;//指定sflow类型
+    //指定upcall类型为sflow类型
+    cookie.type = USER_ACTION_COOKIE_SFLOW;
     //报文入接口
     cookie.ofp_in_port = ctx->xin->flow.in_port.ofp_port;
     //所属桥信息
@@ -7961,7 +7966,9 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         /* Sampling is done on initial reception; don't redo after thawing. */
         unsigned int user_cookie_offset = 0;
         if (!xin->frozen_state) {
+            /*合并入sflow action,仅部分*/
             user_cookie_offset = compose_sflow_action(&ctx);
+            /*合并入ipfix action*/
             compose_ipfix_action(&ctx, ODPP_NONE);
         }
         size_t sample_actions_len = ctx.odp_actions->size;
@@ -8038,6 +8045,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         }
 
         if (user_cookie_offset) {
+            //调整sflow action cookie
             fix_sflow_action(&ctx, user_cookie_offset);
         }
     }
