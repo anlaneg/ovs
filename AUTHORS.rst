@@ -128,6 +128,7 @@ Ed Maste                           emaste@freebsd.org
 Ed Swierk                          eswierk@skyportsystems.com
 Edouard Bourguignon                madko@linuxed.net
 Eelco Chaudron                     echaudro@redhat.com
+Eiichi Tsukata                     eiichi.tsukata@nutanix.com
 Eli Britstein                      elibr@mellanox.com
 Emma Finn                          emma.finn@intel.com
 Eric Lapointe                      elapointe@corsa.com
@@ -562,6 +563,7 @@ Krishna Miriyala                miriyalak@vmware.com
 Krishna Mohan Elluru            elluru.kri.mohan@hpe.com
 László Sürü                     laszlo.suru@ericsson.com
 Len Gao                         leng@vmware.com
+Linhaifeng                      haifeng.lin@huawei.com
 Logan Rosen                     logatronico@gmail.com
 Luca Falavigna                  dktrkranz@debian.org
 Luiz Henrique Ozaki             luiz.ozaki@gmail.com

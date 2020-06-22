@@ -5169,7 +5169,8 @@ compose_recirculate_and_fork(struct xlate_ctx *ctx, uint8_t table,
     	//记录此recirc状态
         if (oftrace_add_recirc_node(ctx->xin->recirc_queue,
                                     OFT_RECIRC_CONNTRACK, &ctx->xin->flow,
-                                    ctx->xin->packet, recirc_id, zone)) {
+                                    ctx->ct_nat_action, ctx->xin->packet,
+                                    recirc_id, zone)) {
             xlate_report(ctx, OFT_DETAIL, "A clone of the packet is forked to "
                          "recirculate. The forked pipeline will be resumed at "
                          "table %u.", table);
@@ -6406,7 +6407,6 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc,
     put_ct_helper(ctx, ctx->odp_actions, ofc);
     //生成nat动作
     put_ct_nat(ctx);
-    ctx->ct_nat_action = NULL;
     nl_msg_end_nested(ctx->odp_actions, ct_offset);
 
     //还原旧的信息，防止后面还有动作
@@ -6418,6 +6418,8 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc,
         ctx->conntracked = true;
         compose_recirculate_and_fork(ctx, ofc->recirc_table, zone);
     }
+
+    ctx->ct_nat_action = NULL;
 
     /* The ct_* fields are only available in the scope of the 'recirc_table'
      * call chain. */

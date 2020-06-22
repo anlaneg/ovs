@@ -2771,6 +2771,25 @@ udpif_update_flow_pps(struct udpif *udpif, struct udpif_key *ukey,
     ukey->flow_time = udpif->dpif->current_ms;
 }
 
+static long long int
+udpif_update_used(struct udpif *udpif, struct udpif_key *ukey,
+                  struct dpif_flow_stats *stats)
+    OVS_REQUIRES(ukey->mutex)
+{
+    if (!udpif->dump->terse) {
+        return ukey->created;
+    }
+
+    if (stats->n_packets > ukey->stats.n_packets) {
+        stats->used = udpif->dpif->current_ms;
+    } else if (ukey->stats.used) {
+        stats->used = ukey->stats.used;
+    } else {
+        stats->used = ukey->created;
+    }
+    return stats->used;
+}
+
 //revalidator线程需要处理的工作（主要是dump flow)
 static void
 revalidate(struct revalidator *revalidator)
@@ -2834,6 +2853,7 @@ revalidate(struct revalidator *revalidator)
         	//流的上次使用时间
             long long int used = f->stats.used;
             struct recirc_refs recircs = RECIRC_REFS_EMPTY_INITIALIZER;
+            struct dpif_flow_stats stats = f->stats;
             enum reval_result result;
             struct udpif_key *ukey;
             bool already_dumped;
@@ -2881,14 +2901,14 @@ revalidate(struct revalidator *revalidator)
 
             if (!used) {
             	//流创建的时间
-                used = ukey->created;
+                used = udpif_update_used(udpif, ukey, &stats);
             }
 
             if (kill_them_all || (used && used < now - max_idle)) {
             	//删除所有流或者上次使用已超过max_idle,则删除
                 result = UKEY_DELETE;
             } else {
-                result = revalidate_ukey(udpif, ukey, &f->stats, &odp_actions,
+                result = revalidate_ukey(udpif, ukey, &stats, &odp_actions,
                                          reval_seq/*reval时的seq*/, &recircs,
                                          f->attrs.offloaded);
             }
