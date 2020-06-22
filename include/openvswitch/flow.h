@@ -107,7 +107,9 @@ struct flow {
     uint32_t pkt_mark;          /* Packet mark. */
     uint32_t dp_hash;           /* Datapath computed hash value. The exact
                                  * computation is opaque to the user space. */
-    union flow_in_port in_port; /* Input port.*/ //报文入接口
+    //报文入接口
+    union flow_in_port in_port; /* Input port.*/
+    //报文当前所处的recirc编号，通过此编号可找到recirc_id_node
     uint32_t recirc_id;         /* Must be exact match. */
     uint8_t ct_state;           /* Connection tracking state. */
     uint8_t ct_nw_proto;        /* CT orig tuple IP protocol. */

@@ -1537,6 +1537,7 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer,
 
         recirc_id_node = recirc_id_node_find(flow->recirc_id);
 
+        //未查找到recirc_id_node，故recirc_id不合法
         if (OVS_UNLIKELY(!recirc_id_node)) {
             if (errorp) {
                 *errorp = xasprintf("no recirculation data for recirc_id "
@@ -1545,6 +1546,7 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer,
             return NULL;
         }
 
+        //自recirc_id_node中取得保存的状态中取得当前对应的in_port
         ofp_port_t in_port = recirc_id_node->state.metadata.in_port;
         if (in_port != OFPP_NONE && in_port != OFPP_CONTROLLER) {
             struct uuid xport_uuid = recirc_id_node->state.xport_uuid;
@@ -1622,7 +1624,7 @@ xlate_lookup_ofproto(const struct dpif_backer *backer, const struct flow *flow,
  */
 int
 xlate_lookup(const struct dpif_backer *backer, const struct flow *flow,
-             struct ofproto_dpif **ofprotop/*出参，此流对应的datapath*/, struct dpif_ipfix **ipfix,
+             struct ofproto_dpif **ofprotop/*出参，此流对应的ofproto*/, struct dpif_ipfix **ipfix,
              struct dpif_sflow **sflow, struct netflow **netflow,
              ofp_port_t *ofp_in_port/*出参，此流对应的入接口*/)
 {

@@ -75,6 +75,7 @@ struct netdev_registered_flow_api {
     struct ovs_refcount refcnt;
 };
 
+//检查flow api是否已注册
 static struct netdev_registered_flow_api *
 netdev_lookup_flow_api(const char *type)
 {
@@ -89,12 +90,14 @@ netdev_lookup_flow_api(const char *type)
 }
 
 /* Registers a new netdev flow api provider. */
+//注册netdev的offload流操作函数
 int
 netdev_register_flow_api_provider(const struct netdev_flow_api *new_flow_api)
     OVS_EXCLUDED(netdev_flow_api_provider_mutex)
 {
     int error = 0;
 
+    //必须提供init_flow_api
     if (!new_flow_api->init_flow_api) {
         VLOG_WARN("attempted to register invalid flow api provider: %s",
                    new_flow_api->type);
@@ -103,10 +106,12 @@ netdev_register_flow_api_provider(const struct netdev_flow_api *new_flow_api)
 
     ovs_mutex_lock(&netdev_flow_api_provider_mutex);
     if (netdev_lookup_flow_api(new_flow_api->type)) {
+        //此flow api已注册，报错
         VLOG_WARN("attempted to register duplicate flow api provider: %s",
                    new_flow_api->type);
         error = EEXIST;
     } else {
+        //不存在，申请rfa并将其加入到netdev_flow_apis中
         struct netdev_registered_flow_api *rfa;
 
         rfa = xmalloc(sizeof *rfa);
@@ -156,6 +161,7 @@ netdev_unregister_flow_api_provider(const char *type)
     return error;
 }
 
+//检查两个netdev是否使用相同的flow_api
 bool
 netdev_flow_api_equals(const struct netdev *netdev1,
                        const struct netdev *netdev2)
@@ -168,11 +174,13 @@ netdev_flow_api_equals(const struct netdev *netdev1,
     return netdev_flow_api1 == netdev_flow_api2;
 }
 
+//为netdev尝试关联其对应的flow_api
 static int
 netdev_assign_flow_api(struct netdev *netdev)
 {
     struct netdev_registered_flow_api *rfa;
 
+    //遍历所有flow api,如果某flow api可成功初始化此netdev，则采用此方式下发flow
     CMAP_FOR_EACH (rfa, cmap_node, &netdev_flow_apis) {
         if (!rfa->flow_api->init_flow_api(netdev)) {
             ovs_refcount_ref(&rfa->refcnt);
@@ -294,6 +302,7 @@ netdev_init_flow_api(struct netdev *netdev)
         return 0;
     }
 
+    //如果为此netdev关联flow api失败，则返回不支持
     if (netdev_assign_flow_api(netdev)) {
         return EOPNOTSUPP;
     }
@@ -578,6 +587,7 @@ netdev_ports_insert(struct netdev *netdev, const struct dpif_class *dpif_class,
     return 0;
 }
 
+//通过port_no获取netdev
 struct netdev *
 netdev_ports_get(odp_port_t port_no, const struct dpif_class *dpif_class)
 {

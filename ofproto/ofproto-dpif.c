@@ -4560,7 +4560,8 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto/*所属datapath*/,
         	//查找规则了
             goto out;   /* Match. */
         }
-        if (honor_table_miss) {//检查是否需要继续匹配
+        if (honor_table_miss) {
+            //检查是否需要继续匹配
             miss_config = ofproto_table_get_miss_config(&ofproto->up,
                                                         *table_id);
             if (miss_config == OFPUTIL_TABLE_MISS_CONTINUE) {

@@ -741,6 +741,7 @@ struct dpif_execute {
     const struct flow *flow;         /* Flow extracted from 'packet'. */
 
     /* Input, but possibly modified as a side effect of execution. */
+    //待执行的报文
     struct dp_packet *packet;          /* Packet to execute. */
 };
 
@@ -789,9 +790,9 @@ struct dpif_op {
     int error;
     union {
         struct dpif_flow_put flow_put;//要添加的流
-        struct dpif_flow_del flow_del;
-        struct dpif_execute execute;
-        struct dpif_flow_get flow_get;
+        struct dpif_flow_del flow_del;//要删除的流
+        struct dpif_execute execute;//要执行的流
+        struct dpif_flow_get flow_get;//要获取的流
     };
 };
 
@@ -800,6 +801,7 @@ void dpif_operate(struct dpif *, struct dpif_op **ops, size_t n_ops,
 
 /* Upcalls. */
 
+//datapath层面的upcall类型
 enum dpif_upcall_type {
     DPIF_UC_MISS,               /* Miss in flow table. */
     //kernel按action要求送报文给用户态

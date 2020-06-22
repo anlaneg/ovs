@@ -861,18 +861,20 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
     //遍历actions中的netlink格式的属性
     NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
         int type = nl_attr_type(a);//属性类型
-        bool last_action = (left <= NLA_ALIGN(a->nla_len));//是否最后一个action
+        //当前是否为最后一个action
+        bool last_action = (left <= NLA_ALIGN(a->nla_len));
 
         if (requires_datapath_assistance(a)) {
-        	//是否需要datapath协助,立即执行
+            //以下动作需要datapath协助，如提供dp_execute_action，则执行，否则跳过
             if (dp_execute_action) {
                 /* Allow 'dp_execute_action' to steal the packet data if we do
                  * not need it any more. */
                 bool should_steal = steal && last_action;
 
-                //执行a属性对应的动作
+                //通过dp_execute_action回调执行a属性对应的动作
                 dp_execute_action(dp, batch, a, should_steal);
 
+                //如果当前是最后一个action或者batch已被处理完成，则return
                 if (last_action || dp_packet_batch_is_empty(batch)) {
                     /* We do not need to free the packets.
                      * Either dp_execute_actions() has stolen them
@@ -885,11 +887,11 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             continue;
         }
 
-        //不需要datapath协助的工作
+        //不需要datapath协助的action
         switch ((enum ovs_action_attr) type) {
 
         case OVS_ACTION_ATTR_HASH: {
-        	    //按报文计算hash值
+        	//按报文计算hash值
             const struct ovs_action_hash *hash_act = nl_attr_get(a);
 
             /* Calculate a hash value directly. This might not match the
@@ -897,7 +899,6 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
              * and the current use case (bonding) does not require a strict
              * match to work properly. */
             switch (hash_act->hash_alg) {
-            //目前仅支持这一种hash算法
             case OVS_HASH_ALG_L4: {
                 struct flow flow;
                 uint32_t hash;
@@ -906,7 +907,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
                     /* RSS hash can be used here instead of 5tuple for
                      * performance reasons. */
                     if (dp_packet_rss_valid(packet)) {
-                    		//rss hash有效，取rsshash
+                    	//rss hash有效，取rsshash
                         hash = dp_packet_get_rss_hash(packet);
                         hash = hash_int(hash, hash_act->hash_basis);
                     } else {
@@ -939,7 +940,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         }
 
         case OVS_ACTION_ATTR_PUSH_VLAN: {
-        		//在原有的以太头的目的mac后加一层vlan头
+        	//在原有的以太头的目的mac后加一层vlan头
             const struct ovs_action_push_vlan *vlan = nl_attr_get(a);
 
             DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
@@ -956,8 +957,8 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
 
         case OVS_ACTION_ATTR_PUSH_MPLS: {
-        		//在l3层前加入mpls标签及ethertype
-        		//如果报文已有mpls标签，则放置在最外层
+        	//在l3层前加入mpls标签及ethertype
+        	//如果报文已有mpls标签，则放置在最外层
             const struct ovs_action_push_mpls *mpls = nl_attr_get(a);
 
             DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
@@ -974,8 +975,8 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
 
         case OVS_ACTION_ATTR_SET:
-            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
             //对报文或者元数据进行修改（直接赋值方式）
+            DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 odp_execute_set_action(packet, nl_attr_get(a));
             }
             break;
@@ -988,7 +989,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
 
         case OVS_ACTION_ATTR_SAMPLE:
-            //采样
+            //报文采样
             DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 odp_execute_sample(dp, packet, steal && last_action, a,
                                    dp_execute_action);
@@ -1002,7 +1003,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
 
         case OVS_ACTION_ATTR_TRUNC: {
-        		//完成报文内容截短
+        	//完成报文内容截短
             const struct ovs_action_trunc *trunc =
                         nl_attr_get_unspec(a, sizeof *trunc);
 
@@ -1014,7 +1015,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         }
 
         case OVS_ACTION_ATTR_CLONE:
-        		//实现报文clone,clone出的报文将继续执行剩下的action
+        	//实现报文clone,clone出的报文将继续执行剩下的action
             odp_execute_clone(dp, batch, steal && last_action, a,
                                                 dp_execute_action);
             if (last_action) {
@@ -1027,7 +1028,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             /* Not implemented yet. */
             break;
         case OVS_ACTION_ATTR_PUSH_ETH: {
-        		//在报文外层加一层以太头，（14字节长度），eth-type来源于报文的packet_type字段
+        	//在报文外层加一层以太头，（14字节长度），eth-type来源于报文的packet_type字段
             const struct ovs_action_push_eth *eth = nl_attr_get(a);
 
             DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
@@ -1069,6 +1070,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
         }
         case OVS_ACTION_ATTR_CT_CLEAR:
+            //清除掉报文缓存的ct状态
             DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
                 conntrack_clear(packet);
             }
@@ -1088,6 +1090,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
 
         case OVS_ACTION_ATTR_DROP:{
+            //报文丢弃
             const enum xlate_error *drop_reason = nl_attr_get(a);
 
             dp_update_drop_action_counter(*drop_reason,
@@ -1095,7 +1098,8 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             dp_packet_delete_batch(batch, steal);
             return;
         }
-        //这些动作需要在执行前合并，合并后将不包含这些动作，故挂掉
+
+        //针对netdev datapath,这些动作通过dp_execute_action执行
         case OVS_ACTION_ATTR_OUTPUT:
         case OVS_ACTION_ATTR_TUNNEL_PUSH:
         case OVS_ACTION_ATTR_TUNNEL_POP:

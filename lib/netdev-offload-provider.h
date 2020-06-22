@@ -29,7 +29,7 @@ extern "C" {
 #endif
 
 struct netdev_flow_api {
-    char *type;/*offload类型*/
+    char *type;/*offload类型名称*/
     /* Flush all offloaded flows from a netdev.
      * Return 0 if successful, otherwise returns a positive errno value. */
     int (*flow_flush)(struct netdev *);

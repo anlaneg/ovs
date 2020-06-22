@@ -1186,7 +1186,7 @@ dpctl_put_flow(int argc, const char *argv[], enum dpif_flow_put_flags flags,
                           mask.size == 0 ? NULL : mask.data,
                           mask.size, actions.data,
                           actions.size, ufid_present ? &ufid : NULL,
-                          PMD_ID_NULL,
+                          PMD_ID_NULL/*自dpctl下发的流，pmd_id置为NULL*/,
                           dpctl_p->print_statistics ? &stats : NULL);
 
     if (error) {

@@ -1093,6 +1093,7 @@ dpif_flow_del(struct dpif *dpif,
               const struct nlattr *key, size_t key_len, const ovs_u128 *ufid,
               const unsigned pmd_id, struct dpif_flow_stats *stats)
 {
+    //执行flow的删除
     struct dpif_op *opp;
     struct dpif_op op;
 
@@ -1343,7 +1344,9 @@ dpif_execute_with_help(struct dpif *dpif, struct dpif_execute *execute)
 
     COVERAGE_INC(dpif_execute_with_help);
 
+    //初始化一个batch
     dp_packet_batch_init_packet(&pb, execute->packet);
+    //执行execute指定的action
     odp_execute_actions(&aux, &pb, false, execute->actions,
                         execute->actions_len, dpif_execute_helper_cb);
     return aux.error;
@@ -1360,6 +1363,7 @@ dpif_execute_needs_help(const struct dpif_execute *execute)
 int
 dpif_execute(struct dpif *dpif, struct dpif_execute *execute)
 {
+    //构造需执行的flow
     if (execute->actions_len) {
         struct dpif_op *opp;
         struct dpif_op op;
@@ -1386,7 +1390,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
              enum dpif_offload_type offload_type)
 {
     if (offload_type == DPIF_OFFLOAD_ALWAYS && !netdev_is_flow_api_enabled()) {
-        //offload_type为always且flow_api未开启，则直接失败
+        //offload_type为always时且flow_api未开启，则直接失败
         size_t i;
         for (i = 0; i < n_ops; i++) {
             struct dpif_op *op = ops[i];
@@ -1401,7 +1405,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
         /* Count 'chunk', the number of ops that can be executed without
          * needing any help.  Ops that need help should be rare, so we
          * expect this to ordinarily be 'n_ops', that is, all the ops. */
-        //遍历每个op,如果遇到execute needs help,则先执行到chunk
+        //遍历每个op,如果遇到execute needs help,则跳出，跳出后，先执行前chunk个op,然后再执行execute
         for (chunk = 0; chunk < n_ops; chunk++) {
             struct dpif_op *op = ops[chunk];
 
@@ -1470,6 +1474,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
             ops += chunk;//跳过已执行的chunk
             n_ops -= chunk;
         } else {
+            //处理DPIF_OP_EXECUTE操作的规则
             /* Help the dpif provider to execute one op. */
             struct dpif_op *op = ops[0];
 

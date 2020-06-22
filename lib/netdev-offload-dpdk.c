@@ -1096,7 +1096,7 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
         goto out;
     }
 
-    //尝试offload方式offload规则
+    //尝试offload方式action规则
     flow = netdev_offload_dpdk_actions(netdev, &patterns, nl_actions,
                                        actions_len, info);
     if (!flow) {

@@ -182,7 +182,7 @@ struct recirc_id_node {
      *
      * This state should not be modified after inserting a node in the pool,
      * hence the 'const' to emphasize that. */
-    const struct frozen_state state;
+    const struct frozen_state state;//保存的recirc_id状态
 };
 
 /* This is only used for bonds and will go away when bonds implementation is

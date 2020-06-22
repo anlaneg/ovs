@@ -342,7 +342,7 @@ struct dp_netdev {
     /* Enable collection of PMD performance metrics. */
     atomic_bool pmd_perf_metrics;
     /* Enable the SMC cache from ovsdb config */
-    atomic_bool smc_enable_db;
+    atomic_bool smc_enable_db;/*标记smc cache是否被开启*/
 
     /* Protects access to ofproto-dpif-upcall interface during revalidator
      * thread synchronization. */
@@ -418,17 +418,19 @@ enum {
 };
 
 struct dp_flow_offload_item {
+    /*添加此offload item的pmd*/
     struct dp_netdev_pmd_thread *pmd;
     struct dp_netdev_flow *flow;
     /*flow的操作*/
     int op;
     /*offload对应的match*/
     struct match match;
+    /*offload规则对应的actions项*/
     struct nlattr *actions;
     //action长度
     size_t actions_len;
 
-    struct ovs_list node;
+    struct ovs_list node;//用于串链表
 };
 
 struct dp_flow_offload {
@@ -558,7 +560,7 @@ struct dp_netdev_flow {
     struct dp_netdev_flow_stats stats;
 
     /* Actions. */
-    OVSRCU_TYPE(struct dp_netdev_actions *) actions;//flow中的actions
+    OVSRCU_TYPE(struct dp_netdev_actions *) actions;//flow对应的actions
 
     /* While processing a group of input packets, the datapath uses the next
      * member to store a pointer to the output batch for the flow.  It is
@@ -663,7 +665,7 @@ struct dp_netdev_pmd_thread {
      * NON_PMD_CORE_ID can be accessed by multiple threads, and thusly
      * need to be protected by 'non_pmd_mutex'.  Every other instance
      * will only be accessed by its own pmd thread. */
-    //精确匹配缓存（每线程一个）
+    //精确匹配缓存（EMC 每线程一个）
     OVS_ALIGNED_VAR(CACHE_LINE_SIZE) struct dfc_cache flow_cache;
 
     /* Flow-Table and classifiers
@@ -673,9 +675,11 @@ struct dp_netdev_pmd_thread {
      * 'flow_mutex'.
      */
     struct ovs_mutex flow_mutex;
+    //每个pmd线程一个flow table,用于缓存规则（通过ufid可查询到flow)
     struct cmap flow_table OVS_GUARDED; /* Flow table. */
 
     /* One classifier per in_port polled by the pmd */
+    //l2 cache表（每线程一个）
     struct cmap classifiers;
     /* Periodically sort subtable vectors according to hit frequencies */
     long long int next_optimization;
@@ -2369,6 +2373,7 @@ flow_mark_flush(struct dp_netdev_pmd_thread *pmd)
     }
 }
 
+/*通过mark在flow_mark表中查找*/
 static struct dp_netdev_flow *
 mark_to_flow_find(const struct dp_netdev_pmd_thread *pmd,
                   const uint32_t mark)
@@ -2486,6 +2491,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
     info.flow_mark = mark;
     info.dpif_class = dpif_class;
 
+    //取in_port对应的netdev
     port = netdev_ports_get(in_port, pmd->dp->class);
     if (!port || netdev_vport_is_vport_class(port->netdev_class)) {
         netdev_close(port);
@@ -2494,6 +2500,7 @@ dp_netdev_flow_offload_put(struct dp_flow_offload_item *offload)
     /* Taking a global 'port_mutex' to fulfill thread safety restrictions for
      * the netdev-offload-dpdk module. */
     ovs_mutex_lock(&pmd->dp->port_mutex);
+
     /*netdev形式的flow下流过程*/
     ret = netdev_flow_put(port, &offload->match,
                           CONST_CAST(struct nlattr *, offload->actions),
@@ -2521,7 +2528,7 @@ err_free:
     return -1;
 }
 
-//netdev flow offload处理主线程
+//netdev flow offload处理主线程(自dp_flow_offload.list上取下所有需offload元素进行处理）
 static void *
 dp_netdev_flow_offload_main(void *data OVS_UNUSED)
 {
@@ -2590,10 +2597,12 @@ queue_netdev_flow_del(struct dp_netdev_pmd_thread *pmd,
     dp_netdev_append_flow_offload(offload);
 }
 
+//netdev datapath流表offload入口
+//pmd会将需要offload的流量添加到dp_netdev_flow_offload线程，再由其执行具体的下流表过程
 static void
 queue_netdev_flow_put(struct dp_netdev_pmd_thread *pmd,
-                      struct dp_netdev_flow *flow, struct match *match,
-                      const struct nlattr *actions, size_t actions_len)
+                      struct dp_netdev_flow *flow, struct match *match/*匹配信息*/,
+                      const struct nlattr *actions/*action信息*/, size_t actions_len)
 {
     struct dp_flow_offload_item *offload;
     int op;
@@ -3070,10 +3079,10 @@ dp_netdev_pmd_lookup_flow(struct dp_netdev_pmd_thread *pmd,
                                                      in_port.odp_port));
     struct dp_netdev_flow *netdev_flow = NULL;
 
-    //返回入接口为in_port对应的表
+    //返回入接口为in_port对应的l2 cache表
     cls = dp_netdev_pmd_lookup_dpcls(pmd, in_port);
     if (OVS_LIKELY(cls)) {
-    	//在相应的表中查询
+    	//在相应的cls表中查询
         dpcls_lookup(cls, &key, &rule, 1, lookup_num_p);
         netdev_flow = dp_netdev_flow_cast(rule);
     }
@@ -3377,8 +3386,8 @@ dp_netdev_get_mega_ufid(const struct match *match, ovs_u128 *mega_ufid)
 //向flow_table中加入流，match为匹配条件
 static struct dp_netdev_flow *
 dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
-                   struct match *match, const ovs_u128 *ufid,
-                   const struct nlattr *actions, size_t actions_len)
+                   struct match *match/*流匹配项*/, const ovs_u128 *ufid,
+                   const struct nlattr *actions/*match对应的action*/, size_t actions_len)
     OVS_REQUIRES(pmd->flow_mutex)
 {
     struct ds extra_info = DS_EMPTY_INITIALIZER;
@@ -3418,14 +3427,17 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     *CONST_CAST(struct flow *, &flow->flow) = match->flow;
     *CONST_CAST(ovs_u128 *, &flow->ufid) = *ufid;
     ovs_refcount_init(&flow->ref_cnt);
-    ovsrcu_set(&flow->actions, dp_netdev_actions_create(actions, actions_len));//申请空间，并存放actions到flow中
+    //申请空间，并存放actions到flow中
+    ovsrcu_set(&flow->actions, dp_netdev_actions_create(actions, actions_len));
 
     dp_netdev_get_mega_ufid(match, CONST_CAST(ovs_u128 *, &flow->mega_ufid));
     netdev_flow_key_init_masked(&flow->cr.flow, &match->flow, &mask);
 
     /* Select dpcls for in_port. Relies on in_port to be exact match. */
-    //如果这个in_port不存在，则创建对应dpcls
+    //如果这个in_port不存在，则创建in_port对应dpcls
     cls = dp_netdev_pmd_find_dpcls(pmd, in_port);
+
+    //将flow加入到cls表中（l2 cache)
     dpcls_insert(cls, &flow->cr, &mask);
 
     ds_put_cstr(&extra_info, "miniflow_bits(");
@@ -3440,13 +3452,14 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     flow->dp_extra_info = ds_steal_cstr(&extra_info);
     ds_destroy(&extra_info);
 
-    //将flow加入到flow_table表中，flow_table为l2表
+    //将flow加入到flow_table表中
     cmap_insert(&pmd->flow_table, CONST_CAST(struct cmap_node *, &flow->node),
                 dp_netdev_flow_hash(&flow->ufid));
 
+    //执行netdev datapath的flow offload
     queue_netdev_flow_put(pmd, flow, match, actions, actions_len);
 
-    if (OVS_UNLIKELY(!VLOG_DROP_DBG((&upcall_rl)))) {//调试代码
+    if (OVS_UNLIKELY(!VLOG_DROP_DBG((&upcall_rl)))) {
         struct ds ds = DS_EMPTY_INITIALIZER;
         struct ofpbuf key_buf, mask_buf;
         struct odp_flow_key_parms odp_parms = {
@@ -3495,6 +3508,7 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     return flow;
 }
 
+/*在指定的pmd上添加flow*/
 static int
 flow_put_on_pmd(struct dp_netdev_pmd_thread *pmd,//要下发到哪个pmd上
                 struct netdev_flow_key *key,//匹配时的比对结果
@@ -3574,6 +3588,7 @@ flow_put_on_pmd(struct dp_netdev_pmd_thread *pmd,//要下发到哪个pmd上
 static int
 dpif_netdev_flow_put(struct dpif *dpif, const struct dpif_flow_put *put)
 {
+    //取netdev datapath
     struct dp_netdev *dp = get_dp_netdev(dpif);
     struct netdev_flow_key key, mask;
     struct dp_netdev_pmd_thread *pmd;
@@ -3637,7 +3652,7 @@ dpif_netdev_flow_put(struct dpif *dpif, const struct dpif_flow_put *put)
             int pmd_error;
 
             pmd_error = flow_put_on_pmd(pmd, &key, &match, &ufid, put,
-                                        &pmd_stats);
+                                        &pmd_stats/*出参，flow匹配信息*/);
             if (pmd_error) {
                 error = pmd_error;//出错了，继续下发（这里应打一句log)
             } else if (put->stats) {
@@ -3946,12 +3961,14 @@ dpif_netdev_execute(struct dpif *dpif, struct dpif_execute *execute)
     return 0;
 }
 
+//netdev类型datapath的流操作函数
 static void
 dpif_netdev_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
                     enum dpif_offload_type offload_type OVS_UNUSED)
 {
     size_t i;
 
+    //遍历执行每个op
     for (i = 0; i < n_ops; i++) {
         struct dpif_op *op = ops[i];
 
@@ -6532,7 +6549,7 @@ static int
 dp_netdev_upcall(struct dp_netdev_pmd_thread *pmd, struct dp_packet *packet_,
                  struct flow *flow, struct flow_wildcards *wc, ovs_u128 *ufid,
                  enum dpif_upcall_type type, const struct nlattr *userdata,
-                 struct ofpbuf *actions, struct ofpbuf *put_actions)
+                 struct ofpbuf *actions/*出参，规则命中后合并产生的动作*/, struct ofpbuf *put_actions)
 {
     struct dp_netdev *dp = pmd->dp;
 
@@ -6841,6 +6858,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
             pkt_metadata_init(&packet->md, port_no);
         }
 
+        //通过flow mark获得flow
         if ((*recirc_depth_get() == 0) &&
             dp_packet_has_flow_mark(packet, &mark)) {
             flow = mark_to_flow_find(pmd, mark);
@@ -6864,7 +6882,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
 
         //解析此packet,将解析到的内容填充在key的minflow中
         miniflow_extract(packet, &key->mf);
-	//实际上我们已经填充了buf，但这里不为len赋值
+        //实际上我们已经填充了buf，但这里不为len赋值
         key->len = 0; /* Not computed yet. */
         key->hash =
                 (md_is_valid == false)
@@ -6921,6 +6939,7 @@ dfc_processing(struct dp_netdev_pmd_thread *pmd,
 
     pmd_perf_update_counter(&pmd->perf_stats, PMD_STAT_EXACT_HIT, n_emc_hit);
 
+    //如果开启了smc cache,则查询smc cache
     if (!smc_enable_db) {
         return dp_packet_batch_size(packets_);
     }
@@ -6936,7 +6955,7 @@ static inline int
 handle_packet_upcall(struct dp_netdev_pmd_thread *pmd,
                      struct dp_packet *packet,
                      const struct netdev_flow_key *key,
-                     struct ofpbuf *actions, struct ofpbuf *put_actions)
+                     struct ofpbuf *actions/*出参，合并后的动作*/, struct ofpbuf *put_actions)
 {
     struct ofpbuf *add_actions;
     struct dp_packet_batch b;
@@ -6953,13 +6972,14 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd,
     ofpbuf_clear(actions);
     ofpbuf_clear(put_actions);
 
-    odp_flow_key_hash(&match.flow, sizeof match.flow, &ufid);//生成流对应的hash(ufid)
-    //走upcall处理(actions,put_actions将被返回，如果put_actions->size为０，则action才会被加入）
-    //设置类型为流表缺失流程
+    //生成流对应的hash(ufid)
+    odp_flow_key_hash(&match.flow, sizeof match.flow, &ufid);
+    //走流表失配upcall处理
     error = dp_netdev_upcall(pmd, packet, &match.flow, &match.wc,
                              &ufid, DPIF_UC_MISS, NULL, actions,
                              put_actions);
-    if (OVS_UNLIKELY(error && error != ENOSPC)) {//有error,但error不为ENOSPC,则丢包
+    if (OVS_UNLIKELY(error && error != ENOSPC)) {
+        //有error,但error不为ENOSPC,则丢包
         dp_packet_delete(packet);
         COVERAGE_INC(datapath_drop_upcall_error);
         return error;
@@ -6979,10 +6999,11 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd,
      * the actions.  Otherwise, if there are any slow path actions,
      * we'll send the packet up twice. */
     dp_packet_batch_init_packet(&b, packet);
-    dp_netdev_execute_actions(pmd, &b, true, &match.flow,
-                              actions->data, actions->size);//执行动作（执行的是actions中的动作）
 
-    //如果put_actions存在，则加put_actions,否则使用actions
+    //netdev datapath执行action
+    dp_netdev_execute_actions(pmd, &b, true, &match.flow,
+                              actions->data, actions->size);
+
     add_actions = put_actions->size ? put_actions : actions;
     if (OVS_LIKELY(error != ENOSPC)) {
     	//说明成功执行了（前面对有错误，但错误不是ENOSPC的已处理）
@@ -6996,15 +7017,16 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd,
         ovs_mutex_lock(&pmd->flow_mutex);
         netdev_flow = dp_netdev_pmd_lookup_flow(pmd, key, NULL);
         if (OVS_LIKELY(!netdev_flow)) {
-        	//当前还没有人加入此条规则，我们来加入它
+        	//当前l2 cache还没有加入此条流表项，我们来加入它
             netdev_flow = dp_netdev_flow_add(pmd, &match, &ufid,
                                              add_actions->data,
-                                             add_actions->size);//l2层cache维护入口(将此flow加入）
+                                             add_actions->size);
         }
         ovs_mutex_unlock(&pmd->flow_mutex);
         uint32_t hash = dp_netdev_flow_hash(&netdev_flow->ufid);
         smc_insert(pmd, key, hash);
-        //向flow缓存中加入
+
+        //向emc缓存中加入流表项
         emc_probabilistic_insert(pmd, key, netdev_flow);
     }
     if (pmd_perf_metrics_enabled(pmd)) {
@@ -7049,7 +7071,7 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
     }
 
     /* Get the classifier for the in_port */
-    //获得通过in_port的分类
+    //获得通过in_port的分类，执行l2 cache查询
     cls = dp_netdev_pmd_lookup_dpcls(pmd, in_port);
     if (OVS_LIKELY(cls)) {
         any_miss = !dpcls_lookup(cls, (const struct netdev_flow_key **)keys,
@@ -7105,7 +7127,7 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
         ofpbuf_uninit(&put_actions);
         fat_rwlock_unlock(&dp->upcall_rwlock);
     } else if (OVS_UNLIKELY(any_miss)) {
-        //否则丢包
+        //l2 cache没有命中 ，且没有拿到upcall的锁，丢包
         DP_PACKET_BATCH_FOR_EACH (i, packet, packets_) {
             if (OVS_UNLIKELY(!rules[i])) {
                 dp_packet_delete(packet);
@@ -7129,12 +7151,12 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
         uint32_t hash =  dp_netdev_flow_hash(&flow->ufid);
         smc_insert(pmd, keys[i], hash);
 
-        //2层缓冲，对１层缓存的维护入口（将我们刚找到的这些加入到flow_cache中）
+        //2层cache，对１层缓存的维护入口（将我们刚找到的这些加入到flow_cache中）
         emc_probabilistic_insert(pmd, keys[i], flow);
         /* Add these packets into the flow map in the same order
          * as received.
          */
-	//将报文按flow划入不同batch中
+        //将报文按flow划入不同batch中
         tcp_flags = miniflow_get_tcp_flags(&keys[i]->mf);
         packet_enqueue_to_flow_map(packet, flow, tcp_flags,
                                    flow_map, recv_idx);
@@ -7182,7 +7204,7 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
     //填充到多少个了
     n_batches = 0;
 
-    //执行报文解析，并查询emc cache
+    //执行报文解析，并查询emc cache,smc cache
     dfc_processing(pmd, packets, keys, missed_keys, batches, &n_batches,
                    flow_map, &n_flows, index_map, md_is_valid, port_no);
 
@@ -7259,6 +7281,7 @@ dpif_netdev_register_dp_purge_cb(struct dpif *dpif, dp_purge_callback *cb,
     dp->dp_purge_cb = cb;
 }
 
+/*注册upcall回调*/
 static void
 dpif_netdev_register_upcall_cb(struct dpif *dpif, upcall_callback *cb,
                                void *aux)
@@ -7409,23 +7432,25 @@ dp_execute_userspace_action(struct dp_netdev_pmd_thread *pmd,
     }
 }
 
-//完成单个报文的动作处理（需要datapath（可以理解为虚设备）参与)
+//完成单个报文的动作处理（需要datapath参与)
 static void
 dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
-              const struct nlattr *a, bool should_steal)
+              const struct nlattr *a/*需要执行的action*/, bool should_steal)
     OVS_NO_THREAD_SAFETY_ANALYSIS
 {
     struct dp_netdev_execute_aux *aux = aux_;
     uint32_t *depth = recirc_depth_get();
     struct dp_netdev_pmd_thread *pmd = aux->pmd;
     struct dp_netdev *dp = pmd->dp;
-    int type = nl_attr_type(a);//检查动作类型
+    //取action类型
+    int type = nl_attr_type(a);
     struct tx_port *p;
     uint32_t packet_count, packets_dropped;
 
     switch ((enum ovs_action_attr)type) {
-    case OVS_ACTION_ATTR_OUTPUT://完成输出到指定接口的动作
-        //自cache中取port
+    case OVS_ACTION_ATTR_OUTPUT:
+        //完成输出到指定接口的动作
+        //1.自cache中取tx_port
         p = pmd_send_port_cache_lookup(pmd, nl_attr_get_odp_port(a));
         if (OVS_LIKELY(p)) {
             struct dp_packet *packet;
@@ -7465,13 +7490,14 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             }
             return;
         } else {
+            //未找到指定的port,增加计数
             COVERAGE_ADD(datapath_drop_invalid_port,
                          dp_packet_batch_size(packets_));
         }
         break;
 
-    //隧道报文封装，由指定的port来处理，而port依据自已的隧道类型处理
     case OVS_ACTION_ATTR_TUNNEL_PUSH:
+        //隧道报文封装，由指定的port来处理，而port依据自已的隧道类型处理
         if (should_steal) {
             /* We're requested to push tunnel header, but also we need to take
              * the ownership of these packets. Thus, we can avoid performing
@@ -7481,18 +7507,19 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         }
         dp_packet_batch_apply_cutlen(packets_);
         packet_count = dp_packet_batch_size(packets_);
-        //加隧道后，不重查规则，按action继续走
-	//执行push　tunnel动作
+        //执行push tunnel的动作
         if (push_tnl_action(pmd, a, packets_)) {
             COVERAGE_ADD(datapath_drop_tunnel_push_error,
                          packet_count);
         }
         return;
 
-    case OVS_ACTION_ATTR_TUNNEL_POP://隧道报文解封装
+    case OVS_ACTION_ATTR_TUNNEL_POP:
+        //隧道报文解封装
         if (*depth < MAX_RECIRC_DEPTH) {
             struct dp_packet_batch *orig_packets_ = packets_;
-            odp_port_t portno = nl_attr_get_odp_port(a);//由那个接口来解封装
+            //由那个接口来解封装
+            odp_port_t portno = nl_attr_get_odp_port(a);
 
             p = pmd_tnl_port_cache_lookup(pmd, portno);
             if (p) {
@@ -7589,7 +7616,8 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                      dp_packet_batch_size(packets_));
         break;
 
-    case OVS_ACTION_ATTR_RECIRC://规则要求跳表
+    case OVS_ACTION_ATTR_RECIRC:
+        //规则要求跳表
         if (*depth < MAX_RECIRC_DEPTH) {
             struct dp_packet_batch recirc_pkts;
 
@@ -7598,12 +7626,14 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                packets_ = &recirc_pkts;
             }
 
+            //更新报文的recirc_id
             struct dp_packet *packet;
             DP_PACKET_BATCH_FOR_EACH (i, packet, packets_) {
                 packet->md.recirc_id = nl_attr_get_u32(a);
             }
 
             (*depth)++;
+            //重走规则查询
             dp_netdev_recirculate(pmd, packets_);
             (*depth)--;
 
@@ -7670,14 +7700,18 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
                     tp_id = DEFAULT_TP_ID;
                 }
                 break;
-            //填充nat_action_info结构体
             case OVS_CT_ATTR_NAT: {
+                //填充nat_action_info结构体
                 const struct nlattr *b_nest;
                 unsigned int left_nest;
-                bool ip_min_specified = false;//是否指定了ip下限
-                bool proto_num_min_specified = false;//是否设置了port下限
-                bool ip_max_specified = false;//是否设置了ip上限
-                bool proto_num_max_specified = false;//是否设置了port上限
+                //是否指定了ip下限
+                bool ip_min_specified = false;
+                //是否设置了port下限
+                bool proto_num_min_specified = false;
+                //是否设置了ip上限
+                bool ip_max_specified = false;
+                //是否设置了port上限
+                bool proto_num_max_specified = false;
                 memset(&nat_action_info, 0, sizeof nat_action_info);
                 nat_action_info_ref = &nat_action_info;
 
@@ -7797,7 +7831,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
     dp_packet_delete_batch(packets_, should_steal);
 }
 
-//执行动作
+//执行netdev datapath规定的动作
 static void
 dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
                           struct dp_packet_batch *packets/*待按action处理的报文*/,
@@ -7806,8 +7840,9 @@ dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
 {
     struct dp_netdev_execute_aux aux = { pmd, flow };
 
+    //dp_execute_cb是单个动作执行
     odp_execute_actions(&aux, packets, should_steal, actions,
-                        actions_len, dp_execute_cb);//dp_execute_cb是单个动作执行
+                        actions_len, dp_execute_cb);
 
 }
 
@@ -8141,7 +8176,7 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_flow_dump_thread_create,
     dpif_netdev_flow_dump_thread_destroy,
     dpif_netdev_flow_dump_next,
-    dpif_netdev_operate,
+    dpif_netdev_operate,//dpdk流表操作
     NULL,                       /* recv_set */
     NULL,                       /* handlers_set */
     dpif_netdev_set_config,

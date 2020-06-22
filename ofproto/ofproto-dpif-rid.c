@@ -103,7 +103,7 @@ recirc_find__(uint32_t id)
 const struct recirc_id_node *
 recirc_id_node_find(uint32_t id)
 {
-	//recirc node查找
+	//给定recirc_id执行recirc node查找
     const struct cmap_node *node = cmap_find(&id_map, id);
 
     return node

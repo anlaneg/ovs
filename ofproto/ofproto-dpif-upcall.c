@@ -225,7 +225,7 @@ struct upcall {
     /* The flow and packet are only required to be constant when using
      * dpif-netdev.  If a modification is absolutely necessary, a const cast
      * may be used with other datapaths. */
-    //upcall报文对应的flow
+    //upcall报文解析到的字段项
     const struct flow *flow;       /* Parsed representation of the packet. */
     enum odp_key_fitness fitness;  /* Fitness of 'flow' relative to ODP key. */
     //upcall对应的ufid(由key生成）
@@ -248,6 +248,7 @@ struct upcall {
     //保存转换后的action
     struct ofpbuf odp_actions;     /* Datapath actions from xlate_actions(). */
     struct flow_wildcards wc;      /* Dependencies that megaflow must match. */
+    //
     struct ofpbuf put_actions;     /* Actions 'put' in the fastpath. */
 
     struct dpif_ipfix *ipfix;      /* IPFIX pointer or NULL. */
@@ -820,7 +821,7 @@ udpif_upcall_handler(void *arg)
     return NULL;
 }
 
-//接收upcall报文
+//kernel datapath接收upcall报文并进行处理
 static size_t
 recv_upcalls(struct handler *handler)
 {
@@ -872,7 +873,7 @@ recv_upcalls(struct handler *handler)
         //upcall 初始化（依据flow确定对应的datapath,in_port)，指明pmd为NULL
         error = upcall_receive(upcall, udpif->backer, &dupcall->packet/*upcall的报文*/,
                                dupcall->type, dupcall->userdata/*kernel上传的对其不透明数据，用于确定upcall上下文*/,
-                               flow/*依据upcall报文填充好的flow*/, mru,
+                               flow, mru,
                                &dupcall->ufid, PMD_ID_NULL);
         if (error) {
             if (error == ENODEV) {
@@ -1116,7 +1117,7 @@ udpif_revalidator(void *arg)
     return NULL;
 }
 
-//按类型对upcall分类
+//按类型细化upcall分类
 static enum upcall_type
 classify_upcall(enum dpif_upcall_type type, const struct nlattr *userdata,
                 struct user_action_cookie *cookie)
@@ -1124,14 +1125,15 @@ classify_upcall(enum dpif_upcall_type type, const struct nlattr *userdata,
     /* First look at the upcall type. */
     switch (type) {
     case DPIF_UC_ACTION:
-    	//kernel执行action后主动送给用户态
+    	//datapath执行action后主动送给用户态
         break;
 
     case DPIF_UC_MISS:
-    	//kernel送上来的失配报文，l1,l2流表未查到时，走此条
+    	//datapath送上来的失配报文，l1,l2流表未查到时，走此条
         return MISS_UPCALL;//流缺失
 
     case DPIF_N_UC_TYPES:
+        /*其它错误的upcall类型*/
     default:
         VLOG_WARN_RL(&rl, "upcall has unexpected type %"PRIu32, type);
         return BAD_UPCALL;
@@ -1139,29 +1141,37 @@ classify_upcall(enum dpif_upcall_type type, const struct nlattr *userdata,
 
     /* "action" upcalls need a closer look. */
     if (!userdata) {
+        /*datapath执行action后主动送给用户态时，必须包含userdata*/
         VLOG_WARN_RL(&rl, "action upcall missing cookie");
         return BAD_UPCALL;
     }
 
+    //userdata只能是struct user_action_cookie类型
     size_t userdata_len = nl_attr_get_size(userdata);
     if (userdata_len != sizeof *cookie) {
         VLOG_WARN_RL(&rl, "action upcall cookie has unexpected size %"PRIuSIZE,
                      userdata_len);
         return BAD_UPCALL;
     }
+
+    //填充cookie
     memcpy(cookie, nl_attr_get(userdata), sizeof *cookie);
     if (cookie->type == USER_ACTION_COOKIE_SFLOW) {
-        //如果type为sflow,则为sflow upcall
+        //如果cookie type为sflow,则细分为sflow upcall
         return SFLOW_UPCALL;
     } else if (cookie->type == USER_ACTION_COOKIE_SLOW_PATH) {
         return SLOW_PATH_UPCALL;
     } else if (cookie->type == USER_ACTION_COOKIE_FLOW_SAMPLE) {
+        //如果cookie type为flow sample，则细分为sample upcall
         return FLOW_SAMPLE_UPCALL;
     } else if (cookie->type == USER_ACTION_COOKIE_IPFIX) {
+        //ip fix upcall
         return IPFIX_UPCALL;
     } else if (cookie->type == USER_ACTION_COOKIE_CONTROLLER) {
+        //向controller去的upcall
         return CONTROLLER_UPCALL;
     } else {
+        //其它不认识的upcall
         VLOG_WARN_RL(&rl, "invalid user cookie of type %"PRIu16
                      " and size %"PRIuSIZE, cookie->type, userdata_len);
         return BAD_UPCALL;
@@ -1180,7 +1190,7 @@ compose_slow_path(struct udpif *udpif, struct xlate_out *xout,
     odp_port_t port;
     uint32_t pid;
 
-    //填充sflow对应的cookie
+    //填充slow path对应的cookie
     memset(&cookie, 0, sizeof cookie);
     cookie.type = USER_ACTION_COOKIE_SLOW_PATH;
     cookie.ofp_in_port = ofp_in_port;
@@ -1220,18 +1230,19 @@ compose_slow_path(struct udpif *udpif, struct xlate_out *xout,
  * since the 'upcall->put_actions' remains uninitialized. */
 static int
 upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
-               const struct dp_packet *packet, enum dpif_upcall_type type,
-               const struct nlattr *userdata, const struct flow *flow,
+               const struct dp_packet *packet/*upcall关联的报文*/, enum dpif_upcall_type type/*upcall类型*/,
+               const struct nlattr *userdata/*与upcall相关联的上下文*/, const struct flow *flow/*依据upcall报文填充好的字段项*/,
                const unsigned int mru,
-               const ovs_u128 *ufid, const unsigned pmd_id)
+               const ovs_u128 *ufid/*flow的唯一id*/, const unsigned pmd_id/*upcall的pmd_id*/)
 {
     int error;
 
-    upcall->type = classify_upcall(type/*upcall类型*/, userdata, &upcall->cookie);
+    upcall->type = classify_upcall(type, userdata, &upcall->cookie);
     if (upcall->type == BAD_UPCALL) {
+        /*当前用户态不认识的upcall类型,返回EGAGIN*/
         return EAGAIN;
     } else if (upcall->type == MISS_UPCALL) {
-        //flow查询miss,执行userspace查询
+        //当前upcall为datapath失配，执行userspace查询
     	//通过flow的in_port成员，确定packet所属的datapath,及port编号
         error = xlate_lookup(backer, flow, &upcall->ofproto, &upcall->ipfix,
                              &upcall->sflow, NULL, &upcall->ofp_in_port);
@@ -1239,6 +1250,7 @@ upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
             return error;
         }
     } else {
+        //通过uuid找到对应的ofproto
         struct ofproto_dpif *ofproto
             = ofproto_dpif_lookup_by_uuid(&upcall->cookie.ofproto_uuid);
         if (!ofproto) {
@@ -1278,7 +1290,7 @@ upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
 //流表未命中，执行upcall的转换
 static void
 upcall_xlate(struct udpif *udpif, struct upcall *upcall,
-             struct ofpbuf *odp_actions, struct flow_wildcards *wc)
+             struct ofpbuf *odp_actions/*出参，合并后的action*/, struct flow_wildcards *wc)
 {
     struct dpif_flow_stats stats;
     enum xlate_error xerr;
@@ -1424,16 +1436,15 @@ should_install_flow(struct udpif *udpif, struct upcall *upcall)
     return true;
 }
 
-//设备upcall回调函数入口
-//action,put_action收集对应的action信息
+//netdev datapath upcall回调函数入口
 static int
 upcall_cb(const struct dp_packet *packet, const struct flow *flow/*flow是自报文中解析出来的数据*/,
-		ovs_u128 *ufid/*ufid是由报文中解析数据得出的一个hash*/,
+		ovs_u128 *ufid,
           unsigned pmd_id, enum dpif_upcall_type type,
-          const struct nlattr *userdata, struct ofpbuf *actions,
-          struct flow_wildcards *wc/*收集对应的mask*/, struct ofpbuf *put_actions, void *aux)
+          const struct nlattr *userdata, struct ofpbuf *actions/*出参，保存转换后的action*/,
+          struct flow_wildcards *wc/*出参，收集对应的mask*/, struct ofpbuf *put_actions/*未使用的参数*/, void *aux)
 {
-    struct udpif *udpif = aux;//upcall的参数udpif
+    struct udpif *udpif = aux;
     struct upcall upcall;
     bool megaflow;
     int error;
@@ -1441,7 +1452,7 @@ upcall_cb(const struct dp_packet *packet, const struct flow *flow/*flow是自报
     atomic_read_relaxed(&enable_megaflows, &megaflow);
 
     error = upcall_receive(&upcall, udpif->backer, packet, type, userdata,
-                           flow, 0, ufid, pmd_id);//做upcall初始化
+                           flow, 0, ufid, pmd_id);
     if (error) {
         return error;
     }
@@ -1452,8 +1463,8 @@ upcall_cb(const struct dp_packet *packet, const struct flow *flow/*flow是自报
         goto out;
     }
 
+    //如果开启了slow,则将upcall.put_actions.data中的存入put_actions
     if (upcall.xout.slow && put_actions) {
-    	//将upcall.put_actions.data中的存入put_actions
         ofpbuf_put(put_actions, upcall.put_actions.data,
                    upcall.put_actions.size);
     }
@@ -1543,7 +1554,7 @@ dpif_read_actions(struct udpif *udpif, struct upcall *upcall,
 
 static int
 process_upcall(struct udpif *udpif, struct upcall *upcall,
-               struct ofpbuf *odp_actions, struct flow_wildcards *wc)
+               struct ofpbuf *odp_actions/*出参，合并后的action*/, struct flow_wildcards *wc)
 {
     const struct dp_packet *packet = upcall->packet/*upcall的报文*/;
     const struct flow *flow = upcall->flow;
@@ -1607,6 +1618,7 @@ process_upcall(struct udpif *udpif, struct upcall *upcall,
         break;
 
     case CONTROLLER_UPCALL:
+        //向controller去的upcall
         {
             struct user_action_cookie *cookie = &upcall->cookie;
 
