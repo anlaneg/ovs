@@ -3636,6 +3636,7 @@ const struct netdev_class netdev_afxdp_class = {
     .is_pmd = true,
 };
 
+//非pmd格式的afxdp 接口
 const struct netdev_class netdev_afxdp_nonpmd_class = {
     NETDEV_LINUX_CLASS_COMMON,
     NETDEV_AFXDP_CLASS_COMMON,

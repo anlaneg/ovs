@@ -161,8 +161,9 @@ netdev_initialize(void)
 
         netdev_register_flow_api_provider(&netdev_offload_tc);
 #ifdef HAVE_AF_XDP
-        //注册afxdp类型的netdev
+        //注册afxdp类型的netdev(pmd类型）
         netdev_register_provider(&netdev_afxdp_class);
+        //注册afxdp类型的netdev(non-pmd类型）
         netdev_register_provider(&netdev_afxdp_nonpmd_class);
 #endif
 #endif
