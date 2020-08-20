@@ -1781,7 +1781,8 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
         if (nl_attr_type(nla) == OVS_ACTION_ATTR_OUTPUT) {
         	//转换ovs output action
             odp_port_t port = nl_attr_get_odp_port(nla);
-            struct netdev *outdev = netdev_ports_get(port, info->dpif_class);
+            struct netdev *outdev = netdev_ports_get(
+                                        port, netdev_get_dpif_type(netdev));
 
             if (!outdev) {
                 VLOG_DBG_RL(&rl, "Can't find netdev for output port %d", port);
@@ -1860,6 +1861,10 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
             action->chain = nl_attr_get_u32(nla);
             flower.action_count++;
             recirc_act = true;
+        } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_DROP) {
+            action->type = TC_ACT_GOTO;
+            action->chain = 0;  /* 0 is reserved and not used by recirc. */
+            flower.action_count++;
         } else {
         	//其它的不支持
             VLOG_DBG_RL(&rl, "unsupported put action type: %d",
@@ -1993,6 +1998,7 @@ probe_multi_mask_per_prio(int ifindex)
     //构造命中ip报文，目的mac为11:11:11:11:11:11的报文
     memset(&flower, 0, sizeof flower);
 
+    flower.tc_policy = TC_POLICY_SKIP_HW;
     flower.key.eth_type = htons(ETH_P_IP);
     flower.mask.eth_type = OVS_BE16_MAX;
     memset(&flower.key.dst_mac, 0x11, sizeof flower.key.dst_mac);
@@ -2046,6 +2052,7 @@ probe_tc_block_support(int ifindex)
 
     memset(&flower, 0, sizeof flower);
 
+    flower.tc_policy = TC_POLICY_SKIP_HW;
     flower.key.eth_type = htons(ETH_P_IP);
     flower.mask.eth_type = OVS_BE16_MAX;
     memset(&flower.key.dst_mac, 0x11, sizeof flower.key.dst_mac);

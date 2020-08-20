@@ -371,6 +371,7 @@ do_open(const char *name, const char *type, bool create/*是否创建datapath*/,
     error = registered_class->dpif_class->open(registered_class->dpif_class,
                                                name, create, &dpif);
     if (!error) {
+        const char *dpif_type_str = dpif_normalize_type(dpif_type(dpif));
         struct dpif_port_dump port_dump;
         struct dpif_port dpif_port;
 
@@ -388,7 +389,7 @@ do_open(const char *name, const char *type, bool create/*是否创建datapath*/,
 
             if (!err) {
             	//将port添加进datapath
-                netdev_ports_insert(netdev, dpif->dpif_class, &dpif_port);
+                netdev_ports_insert(netdev, dpif_type_str, &dpif_port);
                 netdev_close(netdev);
             } else {
                 VLOG_WARN("could not open netdev %s type %s: %s",
@@ -458,14 +459,15 @@ dpif_create_and_open(const char *name, const char *type, struct dpif **dpifp/*�
 
 static void
 dpif_remove_netdev_ports(struct dpif *dpif) {
-        struct dpif_port_dump port_dump;
-        struct dpif_port dpif_port;
+    const char *dpif_type_str = dpif_normalize_type(dpif_type(dpif));
+    struct dpif_port_dump port_dump;
+    struct dpif_port dpif_port;
 
-        DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
-            if (!dpif_is_tap_port(dpif_port.type)) {
-                netdev_ports_remove(dpif_port.port_no, dpif->dpif_class);
-            }
+    DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
+        if (!dpif_is_tap_port(dpif_port.type)) {
+            netdev_ports_remove(dpif_port.port_no, dpif_type_str);
         }
+    }
 }
 
 /* Closes and frees the connection to 'dpif'.  Does not destroy the datapath
@@ -637,12 +639,13 @@ dpif_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
         //如果非tap口，则加入到datapath中
         if (!dpif_is_tap_port(netdev_get_type(netdev))) {
 
+            const char *dpif_type_str = dpif_normalize_type(dpif_type(dpif));
             struct dpif_port dpif_port;
 
             dpif_port.type = CONST_CAST(char *, netdev_get_type(netdev));
             dpif_port.name = CONST_CAST(char *, netdev_name);
             dpif_port.port_no = port_no;
-            netdev_ports_insert(netdev, dpif->dpif_class, &dpif_port);
+            netdev_ports_insert(netdev, dpif_type_str, &dpif_port);
         }
     } else {
     		//向datapath添加指定port失败
@@ -677,7 +680,7 @@ dpif_port_del(struct dpif *dpif, odp_port_t port_no, bool local_delete)
         }
     }
 
-    netdev_ports_remove(port_no, dpif->dpif_class);
+    netdev_ports_remove(port_no, dpif_normalize_type(dpif_type(dpif)));
     return error;
 }
 
@@ -1227,6 +1230,7 @@ dpif_execute_helper_cb(void *aux_, struct dp_packet_batch *packets_,
 
     case OVS_ACTION_ATTR_CT:
     case OVS_ACTION_ATTR_OUTPUT:
+    case OVS_ACTION_ATTR_LB_OUTPUT:
     case OVS_ACTION_ATTR_TUNNEL_PUSH:
     case OVS_ACTION_ATTR_TUNNEL_POP:
     case OVS_ACTION_ATTR_USERSPACE:
@@ -1277,6 +1281,7 @@ dpif_execute_helper_cb(void *aux_, struct dp_packet_batch *packets_,
         struct dp_packet *clone = NULL;
         uint32_t cutlen = dp_packet_get_cutlen(packet);
         if (cutlen && (type == OVS_ACTION_ATTR_OUTPUT
+                        || type == OVS_ACTION_ATTR_LB_OUTPUT
                         || type == OVS_ACTION_ATTR_TUNNEL_PUSH
                         || type == OVS_ACTION_ATTR_TUNNEL_POP
                         || type == OVS_ACTION_ATTR_USERSPACE)) {
@@ -1965,6 +1970,16 @@ dpif_supports_explicit_drop_action(const struct dpif *dpif)
     return dpif_is_netdev(dpif);
 }
 
+bool
+dpif_supports_lb_output_action(const struct dpif *dpif)
+{
+    /*
+     * Balance-tcp optimization is currently supported in netdev
+     * datapath only.
+     */
+    return dpif_is_netdev(dpif);
+}
+
 /* Meters */
 void
 dpif_meter_get_features(const struct dpif *dpif,
@@ -2066,4 +2081,31 @@ dpif_meter_del(struct dpif *dpif, ofproto_meter_id meter_id,
         }
     }
     return error;
+}
+
+int
+dpif_bond_add(struct dpif *dpif, uint32_t bond_id, odp_port_t *slave_map)
+{
+    return dpif->dpif_class->bond_del
+           ? dpif->dpif_class->bond_add(dpif, bond_id, slave_map)
+           : EOPNOTSUPP;
+}
+
+int
+dpif_bond_del(struct dpif *dpif, uint32_t bond_id)
+{
+    return dpif->dpif_class->bond_del
+           ? dpif->dpif_class->bond_del(dpif, bond_id)
+           : EOPNOTSUPP;
+}
+
+int
+dpif_bond_stats_get(struct dpif *dpif, uint32_t bond_id,
+                    uint64_t *n_bytes)
+{
+    memset(n_bytes, 0, BOND_BUCKETS * sizeof *n_bytes);
+
+    return dpif->dpif_class->bond_stats_get
+           ? dpif->dpif_class->bond_stats_get(dpif, bond_id, n_bytes)
+           : EOPNOTSUPP;
 }

@@ -106,7 +106,8 @@ struct netdev {
     /* Functions to control flow offloading. */
     //指明此设备对应的flow_api
     OVSRCU_TYPE(const struct netdev_flow_api *) flow_api;
-    struct netdev_hw_info hw_info;	/* offload-capable netdev info */
+    const char *dpif_type;          /* Type of dpif this netdev belongs to. */
+    struct netdev_hw_info hw_info;  /* Offload-capable netdev info. */
 };
 
 static inline void

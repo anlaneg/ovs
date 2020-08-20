@@ -56,6 +56,7 @@ COVERAGE_DEFINE(handler_duplicate_upcall);
 COVERAGE_DEFINE(upcall_ukey_contention);
 COVERAGE_DEFINE(upcall_ukey_replace);
 COVERAGE_DEFINE(revalidate_missed_dp_flow);
+COVERAGE_DEFINE(upcall_flow_limit_hit);
 
 /* A thread that reads upcalls from dpif, forwards each upcall's packet,
  * and possibly sets up a kernel flow as a cache. */
@@ -1429,6 +1430,7 @@ should_install_flow(struct udpif *udpif, struct upcall *upcall)
     //获取flow的limit值
     atomic_read_relaxed(&udpif->flow_limit, &flow_limit);
     if (udpif_get_n_flows(udpif) >= flow_limit) {
+        COVERAGE_INC(upcall_flow_limit_hit);
         VLOG_WARN_RL(&rl, "upcall: datapath flow limit reached");
         return false;
     }
@@ -2696,8 +2698,7 @@ ukey_netdev_unref(struct udpif_key *ukey)
 static void
 ukey_to_flow_netdev(struct udpif *udpif, struct udpif_key *ukey)
 {
-    const struct dpif *dpif = udpif->dpif;
-    const struct dpif_class *dpif_class = dpif->dpif_class;
+    const char *dpif_type_str = dpif_normalize_type(dpif_type(udpif->dpif));
     const struct nlattr *k;
     unsigned int left;
 
@@ -2710,7 +2711,7 @@ ukey_to_flow_netdev(struct udpif *udpif, struct udpif_key *ukey)
 
         if (type == OVS_KEY_ATTR_IN_PORT) {
             ukey->in_netdev = netdev_ports_get(nl_attr_get_odp_port(k),
-                                               dpif_class);
+                                               dpif_type_str);
         } else if (type == OVS_KEY_ATTR_TUNNEL) {
             struct flow_tnl tnl;
             enum odp_key_fitness res;
@@ -2845,6 +2846,10 @@ revalidate(struct revalidator *revalidator)
          *       gone.) */
         //当前系统中流的数目
         n_dp_flows = udpif_get_n_flows(udpif);
+        if (n_dp_flows >= flow_limit) {
+            COVERAGE_INC(upcall_flow_limit_hit);
+        }
+
         kill_them_all = n_dp_flows > flow_limit * 2;
         max_idle = n_dp_flows > flow_limit ? 100 : ofproto_max_idle;
 

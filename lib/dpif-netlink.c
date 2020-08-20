@@ -1167,6 +1167,7 @@ dpif_netlink_port_get_pid(const struct dpif *dpif_, odp_port_t port_no)
 static int
 dpif_netlink_flow_flush(struct dpif *dpif_)
 {
+    const char *dpif_type_str = dpif_normalize_type(dpif_type(dpif_));
     const struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
     struct dpif_netlink_flow flow;
 
@@ -1175,7 +1176,7 @@ dpif_netlink_flow_flush(struct dpif *dpif_)
     flow.dp_ifindex = dpif->dp_ifindex;
 
     if (netdev_is_flow_api_enabled()) {
-        netdev_ports_flow_flush(dpif_->dpif_class);
+        netdev_ports_flow_flush(dpif_type_str);
     }
 
     return dpif_netlink_flow_transact(&flow, NULL, NULL);
@@ -1501,7 +1502,7 @@ start_netdev_dump(const struct dpif *dpif_,
     ovs_mutex_lock(&dump->netdev_lock);
     dump->netdev_current_dump = 0;
     dump->netdev_dumps
-        = netdev_ports_flow_dump_create(dpif_->dpif_class,
+        = netdev_ports_flow_dump_create(dpif_normalize_type(dpif_type(dpif_)),
                                         &dump->netdev_dumps_num,
                                         dump->up.terse);
     ovs_mutex_unlock(&dump->netdev_lock);
@@ -2074,6 +2075,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
 static int
 parse_flow_get(struct dpif_netlink *dpif, struct dpif_flow_get *get)
 {
+    const char *dpif_type_str = dpif_normalize_type(dpif_type(&dpif->dpif));
     struct dpif_flow *dpif_flow = get->flow;
     struct match match;
     struct nlattr *actions;
@@ -2088,8 +2090,8 @@ parse_flow_get(struct dpif_netlink *dpif, struct dpif_flow_get *get)
     int err;
 
     ofpbuf_use_stack(&buf, &act_buf, sizeof act_buf);
-    err = netdev_ports_flow_get(dpif->dpif.dpif_class, &match,
-                                &actions, get->ufid, &stats, &attrs, &buf);
+    err = netdev_ports_flow_get(dpif_type_str, &match, &actions, get->ufid,
+                                &stats, &attrs, &buf);
     if (err) {
         return err;
     }
@@ -2114,8 +2116,8 @@ parse_flow_get(struct dpif_netlink *dpif, struct dpif_flow_get *get)
 static int
 parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
 {
+    const char *dpif_type_str = dpif_normalize_type(dpif_type(&dpif->dpif));
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
-    const struct dpif_class *dpif_class = dpif->dpif.dpif_class;
     struct match match;
     odp_port_t in_port;
     const struct nlattr *nla;
@@ -2138,7 +2140,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
 
     //按规则的入接口决定offload到哪个设备
     in_port = match.flow.in_port.odp_port;
-    dev = netdev_ports_get(in_port, dpif_class);
+    dev = netdev_ports_get(in_port, dpif_type_str);
     if (!dev) {
         return EOPNOTSUPP;
     }
@@ -2152,7 +2154,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
 
             //output action对应的port_id,取其对应的netdev
             out_port = nl_attr_get_odp_port(nla);
-            outdev = netdev_ports_get(out_port, dpif_class);
+            outdev = netdev_ports_get(out_port, dpif_type_str);
             if (!outdev) {
                 err = EOPNOTSUPP;
                 goto out;
@@ -2170,7 +2172,6 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
         }
     }
 
-    info.dpif_class = dpif_class;
     info.tp_dst_port = dst_port;
     info.tunnel_csum_on = csum_on;
     info.recirc_id_shared_with_tc = (dpif->user_features
@@ -2282,8 +2283,10 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
             break;
         }
 
-        err = netdev_ports_flow_del(dpif->dpif.dpif_class, del->ufid,
-                                    del->stats);
+        err = netdev_ports_flow_del(
+                                dpif_normalize_type(dpif_type(&dpif->dpif)),
+                                del->ufid,
+                                del->stats);
         log_flow_del_message(&dpif->dpif, &this_module, del, 0);
         break;
     }
@@ -4192,6 +4195,9 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_meter_set,/*meter配置*/
     dpif_netlink_meter_get,/*meter状态信息获取*/
     dpif_netlink_meter_del,/*meter配置删除*/
+    NULL,                       /* bond_add */
+    NULL,                       /* bond_del */
+    NULL,                       /* bond_stats_get */
 };
 
 static int

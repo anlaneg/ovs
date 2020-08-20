@@ -398,11 +398,10 @@ static struct hmap ifindex_to_port OVS_GUARDED_BY(netdev_hmap_rwlock)
     = HMAP_INITIALIZER(&ifindex_to_port);
 
 struct port_to_netdev_data {
-    struct hmap_node portno_node; /* By (dpif_class, dpif_port.port_no). */
-    struct hmap_node ifindex_node; /* By (dpif_class, ifindex). */
+    struct hmap_node portno_node; /* By (dpif_type, dpif_port.port_no). */
+    struct hmap_node ifindex_node; /* By (dpif_type, ifindex). */
     struct netdev *netdev;
     struct dpif_port dpif_port;
-    const struct dpif_class *dpif_class;
     int ifindex;
 };
 
@@ -438,13 +437,13 @@ netdev_is_flow_api_enabled(void)
 }
 
 void
-netdev_ports_flow_flush(const struct dpif_class *dpif_class)
+netdev_ports_flow_flush(const char *dpif_type)
 {
     struct port_to_netdev_data *data;
 
     ovs_rwlock_rdlock(&netdev_hmap_rwlock);
     HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
-        if (data->dpif_class == dpif_class) {
+        if (netdev_get_dpif_type(data->netdev) == dpif_type) {
             netdev_flow_flush(data->netdev);
         }
     }
@@ -453,8 +452,7 @@ netdev_ports_flow_flush(const struct dpif_class *dpif_class)
 
 //针对每个port创建一组dump,并返回（port需要为dpif_class类型）
 struct netdev_flow_dump **
-netdev_ports_flow_dump_create(const struct dpif_class *dpif_class, int *ports/*出参，dumps数组长度（与port数相等）*/,
-                              bool terse)
+netdev_ports_flow_dump_create(const char *dpif_type, int *ports/*出参，dumps数组长度（与port数相等）*/, bool terse)
 {
     struct port_to_netdev_data *data;
     struct netdev_flow_dump **dumps;
@@ -464,7 +462,7 @@ netdev_ports_flow_dump_create(const struct dpif_class *dpif_class, int *ports/*�
     ovs_rwlock_rdlock(&netdev_hmap_rwlock);
     //计算有多少个port(需要为指定的datapath)
     HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
-        if (data->dpif_class == dpif_class) {
+        if (netdev_get_dpif_type(data->netdev) == dpif_type) {
             count++;
         }
     }
@@ -474,7 +472,7 @@ netdev_ports_flow_dump_create(const struct dpif_class *dpif_class, int *ports/*�
 
     //针对每个port创建一个dump
     HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
-        if (data->dpif_class == dpif_class) {
+        if (netdev_get_dpif_type(data->netdev) == dpif_type) {
             if (netdev_flow_dump_create(data->netdev, &dumps[i], terse)) {
                 continue;
             }
@@ -490,15 +488,14 @@ netdev_ports_flow_dump_create(const struct dpif_class *dpif_class, int *ports/*�
 }
 
 int
-netdev_ports_flow_del(const struct dpif_class *dpif_class,
-                      const ovs_u128 *ufid,
+netdev_ports_flow_del(const char *dpif_type, const ovs_u128 *ufid,
                       struct dpif_flow_stats *stats)
 {
     struct port_to_netdev_data *data;
 
     ovs_rwlock_rdlock(&netdev_hmap_rwlock);
     HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
-        if (data->dpif_class == dpif_class
+        if (netdev_get_dpif_type(data->netdev) == dpif_type
             && !netdev_flow_del(data->netdev, ufid, stats)) {
             ovs_rwlock_unlock(&netdev_hmap_rwlock);
             return 0;
@@ -510,7 +507,7 @@ netdev_ports_flow_del(const struct dpif_class *dpif_class,
 }
 
 int
-netdev_ports_flow_get(const struct dpif_class *dpif_class, struct match *match,
+netdev_ports_flow_get(const char *dpif_type, struct match *match,
                       struct nlattr **actions, const ovs_u128 *ufid,
                       struct dpif_flow_stats *stats,
                       struct dpif_flow_attrs *attrs, struct ofpbuf *buf)
@@ -519,7 +516,7 @@ netdev_ports_flow_get(const struct dpif_class *dpif_class, struct match *match,
 
     ovs_rwlock_rdlock(&netdev_hmap_rwlock);
     HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
-        if (data->dpif_class == dpif_class
+        if (netdev_get_dpif_type(data->netdev) == dpif_type
             && !netdev_flow_get(data->netdev, match, actions,
                                 ufid, stats, attrs, buf)) {
             ovs_rwlock_unlock(&netdev_hmap_rwlock);
@@ -531,22 +528,22 @@ netdev_ports_flow_get(const struct dpif_class *dpif_class, struct match *match,
 }
 
 static uint32_t
-netdev_ports_hash(odp_port_t port, const struct dpif_class *dpif_class)
+netdev_ports_hash(odp_port_t port, const char *dpif_type)
 {
-    return hash_int(odp_to_u32(port), hash_pointer(dpif_class, 0));
+    return hash_int(odp_to_u32(port), hash_pointer(dpif_type, 0));
 }
 
 //给定port_no,获取netdev
 static struct port_to_netdev_data *
-netdev_ports_lookup(odp_port_t port_no, const struct dpif_class *dpif_class)
+netdev_ports_lookup(odp_port_t port_no, const char *dpif_type)
     OVS_REQ_RDLOCK(netdev_hmap_rwlock)
 {
     struct port_to_netdev_data *data;
 
     HMAP_FOR_EACH_WITH_HASH (data, portno_node,
-                             netdev_ports_hash(port_no, dpif_class),
+                             netdev_ports_hash(port_no, dpif_type),
                              &port_to_netdev/*记录port_no到netdev的映射*/) {
-        if (data->dpif_class == dpif_class
+        if (netdev_get_dpif_type(data->netdev) == dpif_type
             && data->dpif_port.port_no == port_no) {
             return data;
         }
@@ -555,7 +552,7 @@ netdev_ports_lookup(odp_port_t port_no, const struct dpif_class *dpif_class)
 }
 
 int
-netdev_ports_insert(struct netdev *netdev, const struct dpif_class *dpif_class,
+netdev_ports_insert(struct netdev *netdev, const char *dpif_type,
                     struct dpif_port *dpif_port)
 {
     struct port_to_netdev_data *data;
@@ -566,7 +563,7 @@ netdev_ports_insert(struct netdev *netdev, const struct dpif_class *dpif_class,
     }
 
     ovs_rwlock_wrlock(&netdev_hmap_rwlock);
-    if (netdev_ports_lookup(dpif_port->port_no, dpif_class)) {
+    if (netdev_ports_lookup(dpif_port->port_no, dpif_type)) {
     	//指定的port已存在
         ovs_rwlock_unlock(&netdev_hmap_rwlock);
         return EEXIST;
@@ -574,12 +571,13 @@ netdev_ports_insert(struct netdev *netdev, const struct dpif_class *dpif_class,
 
     data = xzalloc(sizeof *data);
     data->netdev = netdev_ref(netdev);
-    data->dpif_class = dpif_class;
     dpif_port_clone(&data->dpif_port, dpif_port);
     data->ifindex = ifindex;
 
+    netdev_set_dpif_type(netdev, dpif_type);
+
     hmap_insert(&port_to_netdev, &data->portno_node,
-                netdev_ports_hash(dpif_port->port_no, dpif_class));
+                netdev_ports_hash(dpif_port->port_no, dpif_type));
     hmap_insert(&ifindex_to_port, &data->ifindex_node, ifindex);
     ovs_rwlock_unlock(&netdev_hmap_rwlock);
 
@@ -591,13 +589,13 @@ netdev_ports_insert(struct netdev *netdev, const struct dpif_class *dpif_class,
 
 //通过port_no获取netdev
 struct netdev *
-netdev_ports_get(odp_port_t port_no, const struct dpif_class *dpif_class)
+netdev_ports_get(odp_port_t port_no, const char *dpif_type)
 {
     struct port_to_netdev_data *data;
     struct netdev *ret = NULL;
 
     ovs_rwlock_rdlock(&netdev_hmap_rwlock);
-    data = netdev_ports_lookup(port_no, dpif_class);
+    data = netdev_ports_lookup(port_no, dpif_type);
     if (data) {
         ret = netdev_ref(data->netdev);
     }
@@ -607,13 +605,13 @@ netdev_ports_get(odp_port_t port_no, const struct dpif_class *dpif_class)
 }
 
 int
-netdev_ports_remove(odp_port_t port_no, const struct dpif_class *dpif_class)
+netdev_ports_remove(odp_port_t port_no, const char *dpif_type)
 {
     struct port_to_netdev_data *data;
     int ret = ENOENT;
 
     ovs_rwlock_wrlock(&netdev_hmap_rwlock);
-    data = netdev_ports_lookup(port_no, dpif_class);
+    data = netdev_ports_lookup(port_no, dpif_type);
     if (data) {
         dpif_port_destroy(&data->dpif_port);
         netdev_close(data->netdev); /* unref and possibly close */

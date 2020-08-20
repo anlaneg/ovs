@@ -33,6 +33,7 @@ Name                               Email
 ================================== ===============================================
 Aaron Conole                       aconole@redhat.com
 Aaron Rosen                        arosen@clemson.edu
+Adrian Moreno                      amorenoz@redhat.com
 Alan Pevec                         alan.pevec@redhat.com
 Alessandro Pilotti                 apilotti@cloudbasesolutions.com
 Alexander Duyck                    alexander.h.duyck@redhat.com
@@ -191,6 +192,7 @@ Jason Kölker                       jason@koelker.net
 Jason Wessel                       jason.wessel@windriver.com
 Jasper Capel                       jasper@capel.tv
 Jean Tourrilhes                    jt@hpl.hp.com
+Jeff Squyres                       jsquyres@cisco.com
 Jeremy Stribling
 Jeroen van Bemmel                  jvb127@gmail.com
 Jesse Gross                        jesse@kernel.org
@@ -303,6 +305,7 @@ Paul Fazzone                       pfazzone@vmware.com
 Paul Ingram
 Paul-Emmanuel Raoul                skyper@skyplabs.net
 Pavithra Ramesh                    paramesh@vmware.com
+Peng He                            hepeng.0320@bytedance.com
 Peter Downs                        padowns@gmail.com
 Philippe Jung                      phil.jung@free.fr
 Pim van den Berg                   pim@nethuis.nl
@@ -356,7 +359,9 @@ Shih-Hao Li                        shihli@vmware.com
 Shu Shen                           shu.shen@radisys.com
 Simon Horman                       horms@verge.net.au
 Simon Horman                       simon.horman@netronome.com
+Sivaprasad Tummala                 sivaprasad.tummala@intel.com
 Sorin Vinturis                     svinturis@cloudbasesolutions.com
+Sriharsha Basavapatna              sriharsha.basavapatna@broadcom.com
 Steffen Gebert                     steffen.gebert@informatik.uni-wuerzburg.de
 Sten Spans                         sten@blinkenlights.nl
 Stephane A. Sezer                  sas@cd80.net
@@ -424,6 +429,7 @@ Zhenyu Gao                         sysugaozhenyu@gmail.com
 ZhiPeng Lu                         luzhipeng@uniudc.com
 Zhou Yangchao                      1028519445@qq.com
 aginwala                           amginwal@gmail.com
+lzhecheng                          lzhecheng@vmware.com
 parameswaran krishnamurthy         parkrish@gmail.com
 solomon                            liwei.solomon@gmail.com
 wenxu                              wenxu@ucloud.cn
@@ -501,6 +507,7 @@ Edwin Chiu                      echiu@vmware.com
 Eivind Bulie Haanaes
 Enas Ahmad                      enas.ahmad@kaust.edu.sa
 Eric Lopez
+Frank Wang (王培辉)             wangpeihui@inspur.com
 Frido Roose                     fr.roose@gmail.com
 Gaetano Catalli                 gaetano.catalli@gmail.com
 Gavin Remaley                   gavin_remaley@selinc.com
@@ -661,6 +668,7 @@ Ying Chen                       yingchen@vmware.com
 Yongqiang Liu                   liuyq7809@gmail.com
 ZHANG Zhiming                   zhangzhiming@yunshan.net.cn
 Zhangguanghui                   zhang.guanghui@h3c.com
+Zheng Jingzhou                  glovejmm@163.com
 Ziyou Wang                      ziyouw@vmware.com
 ankur dwivedi                   ankurengg2003@gmail.com
 chen zhang                      3zhangchen9211@gmail.com
