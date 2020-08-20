@@ -28,6 +28,7 @@ struct id_node {
 struct id_pool {
     struct hmap map;
     uint32_t base;         /* IDs in the range of [base, base + n_ids). */
+    /*pool中的id数目*/
     uint32_t n_ids;        /* Total number of ids in the pool. */
     uint32_t next_free_id; /* Possible next free id. */
 };
@@ -104,8 +105,9 @@ id_pool_add(struct id_pool *pool, uint32_t id)
     hmap_insert(&pool->map, &id_node->node, hash);
 }
 
+//自pool中申请一个空闲id
 bool
-id_pool_alloc_id(struct id_pool *pool, uint32_t *id_)
+id_pool_alloc_id(struct id_pool *pool, uint32_t *id_/*出参，申请到的id*/)
 {
     uint32_t id;
 

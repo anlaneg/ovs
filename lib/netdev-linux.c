@@ -3628,7 +3628,7 @@ const struct netdev_class netdev_internal_class = {
     .rxq_destruct = netdev_afxdp_rxq_destruct,                  \
     .rxq_recv = netdev_afxdp_rxq_recv
 
-//定义afxdp网络设备类型
+//定义afxdp网络设备类型（pmd类型）
 const struct netdev_class netdev_afxdp_class = {
     NETDEV_LINUX_CLASS_COMMON,
     NETDEV_AFXDP_CLASS_COMMON,
@@ -3636,7 +3636,7 @@ const struct netdev_class netdev_afxdp_class = {
     .is_pmd = true,
 };
 
-//非pmd格式的afxdp 接口
+//非pmd类型的afxdp接口
 const struct netdev_class netdev_afxdp_nonpmd_class = {
     NETDEV_LINUX_CLASS_COMMON,
     NETDEV_AFXDP_CLASS_COMMON,

@@ -250,9 +250,13 @@ static inline void ofpbuf_clear(struct ofpbuf *b)
 static inline void *ofpbuf_pull(struct ofpbuf *b, size_t size)
 {
     ovs_assert(b->size >= size);
+    //记录b->data现有位置
     void *data = b->data;
+    //将b->data位置后移size字节
     b->data = (char*)b->data + size;
+    //b中可读取buffer长度减少size
     b->size = b->size - size;
+    //返回原位置
     return data;
 }
 
@@ -261,6 +265,7 @@ static inline void *ofpbuf_pull(struct ofpbuf *b, size_t size)
  * null pointer without modifying 'b'. */
 static inline void *ofpbuf_try_pull(struct ofpbuf *b, size_t size)
 {
+    //如果b中buffer可用长度大于size,则返回前size字节，否则返回NULL
     return b->size >= size ? ofpbuf_pull(b, size) : NULL;
 }
 

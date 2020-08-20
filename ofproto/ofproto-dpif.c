@@ -6671,9 +6671,10 @@ meter_get_features(const struct ofproto *ofproto_,
     dpif_meter_get_features(ofproto->backer->dpif, features);
 }
 
+/*实现meter的添加修改*/
 static enum ofperr
 meter_set(struct ofproto *ofproto_, ofproto_meter_id *meter_id,
-          struct ofputil_meter_config *config)
+          struct ofputil_meter_config *config/*meter的配置*/)
 {
     struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofproto_);
 
@@ -6683,11 +6684,13 @@ meter_set(struct ofproto *ofproto_, ofproto_meter_id *meter_id,
             return OFPERR_OFPMMFC_OUT_OF_METERS; /* Meters not supported. */
         }
 
+        //如没有指明meter,则申请一个meter_id
         if(!id_pool_alloc_id(ofproto->backer->meter_ids, &meter_id->uint32)) {
             return OFPERR_OFPMMFC_OUT_OF_METERS; /* Can't allocate meter. */
         }
     }
 
+    /*设置指定meter_id对应的config*/
     switch (dpif_meter_set(ofproto->backer->dpif, *meter_id, config)) {
     case 0:
         return 0;
@@ -6707,6 +6710,7 @@ meter_set(struct ofproto *ofproto_, ofproto_meter_id *meter_id,
     }
 }
 
+/*获取指定meter的统计情况*/
 static enum ofperr
 meter_get(const struct ofproto *ofproto_, ofproto_meter_id meter_id,
           struct ofputil_meter_stats *stats, uint16_t n_bands)
@@ -6856,8 +6860,8 @@ const struct ofproto_class ofproto_dpif_class = {
     set_mcast_snooping,
     set_mcast_snooping_port,
     meter_get_features,
-    meter_set,
-    meter_get,
+    meter_set,/*meter添加修改*/
+    meter_get,/*meter统计信息获取*/
     meter_del,
     group_alloc,                /* group_alloc */
     group_construct,            /* group_construct */

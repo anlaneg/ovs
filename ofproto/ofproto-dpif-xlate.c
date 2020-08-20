@@ -3289,7 +3289,7 @@ compose_sample_action(struct xlate_ctx *ctx,
                                              OVS_SAMPLE_ATTR_ACTIONS);
     }
 
-    //存入meter
+    //存入meter id
     if (meter_id != UINT32_MAX) {
         nl_msg_put_u32(ctx->odp_actions, OVS_ACTION_ATTR_METER, meter_id);
     }
@@ -6021,6 +6021,7 @@ compose_clone(struct xlate_ctx *ctx, const struct ofpact_nest *oc,
                         false);
 }
 
+//生成meter action
 static void
 xlate_meter_action(struct xlate_ctx *ctx, const struct ofpact_meter *meter)
 {
@@ -7324,6 +7325,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_METER:
+            //添加meter action,指明provider_meter_id
             xlate_meter_action(ctx, ofpact_get_METER(a));
             break;
 

@@ -159,6 +159,7 @@ netdev_initialize(void)
         netdev_register_provider(&netdev_tap_class);//tap类型netdev注册
         netdev_vport_tunnel_register();//所有tunnel类型vport注册
 
+        //注册通过tc offload
         netdev_register_flow_api_provider(&netdev_offload_tc);
 #ifdef HAVE_AF_XDP
         //注册afxdp类型的netdev(pmd类型）

@@ -1007,7 +1007,7 @@ udpif_revalidator(void *arg)
 
             start_time = time_msec();
             if (!udpif->reval_exit) {
-            		//如果revalidator不需要退出，则创建flow dump的上下文，准备dump
+            	//如果revalidator不需要退出，则创建flow dump的上下文，准备dump
                 bool terse_dump;
 
                 //检查ufid是否开启

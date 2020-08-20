@@ -51,8 +51,8 @@ struct ofputil_meter_band_stats {
 struct ofputil_meter_config {
     uint32_t meter_id;
     uint16_t flags;
-    uint16_t n_bands;
-    struct ofputil_meter_band *bands;
+    uint16_t n_bands;//记录bands数组长度
+    struct ofputil_meter_band *bands;//记录bands配置情况
 };
 
 void ofputil_append_meter_config(struct ovs_list *replies,

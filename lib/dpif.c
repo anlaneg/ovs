@@ -1986,24 +1986,29 @@ dpif_meter_set(struct dpif *dpif, ofproto_meter_id meter_id,
 {
     COVERAGE_INC(dpif_meter_set);
 
+    /*当前仅支持kbps,pktps两种类型*/
     if (!(config->flags & (OFPMF13_KBPS | OFPMF13_PKTPS))) {
         return EBADF; /* Rate unit type not set. */
     }
 
+    /*配置不能两者均配*/
     if ((config->flags & OFPMF13_KBPS) && (config->flags & OFPMF13_PKTPS)) {
         return EBADF; /* Both rate units may not be set. */
     }
 
+    /*如果band配置为空，则返回*/
     if (config->n_bands == 0) {
         return EINVAL;
     }
 
+    /*rate不得为0*/
     for (size_t i = 0; i < config->n_bands; i++) {
         if (config->bands[i].rate == 0) {
             return EDOM; /* Rate must be non-zero */
         }
     }
 
+    /*向datapath下发配置，实现meter配置*/
     int error = dpif->dpif_class->meter_set(dpif, meter_id, config);
     if (!error) {
         VLOG_DBG_RL(&dpmsg_rl, "%s: DPIF meter %"PRIu32" set",

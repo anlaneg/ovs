@@ -3608,6 +3608,9 @@ ofproto_check_ofpacts(struct ofproto *ofproto,
     OFPACT_FOR_EACH_FLATTENED (a, ofpacts, ofpacts_len) {
         if (a->type == OFPACT_METER &&
             !ofproto_fix_meter_action(ofproto, ofpact_get_METER(a))) {
+            /*更新meter信息失败，返回invalid meter(由于datapath与openflow两层使用的meter_id不同
+             * 故需要进行fix
+             */
             return OFPERR_OFPMMFC_INVALID_METER;
         }
 
@@ -6692,13 +6695,16 @@ struct meter {
     struct hmap_node node;      /* In ofproto->meters. */
     long long int created;      /* Time created. */
     struct ovs_list rules;      /* List of "struct rule_dpif"s. */
+    //openflow的meter_id
     uint32_t id;                /* OpenFlow meter_id. */
+    //底层的meter_id
     ofproto_meter_id provider_meter_id;
     uint16_t flags;             /* Meter flags. */
     uint16_t n_bands;           /* Number of meter bands. */
     struct ofputil_meter_band *bands;
 };
 
+//通过meter_id检查meter
 static struct meter *
 ofproto_get_meter(const struct ofproto *ofproto, uint32_t meter_id)
 {
@@ -6755,8 +6761,10 @@ ofproto_fix_meter_action(const struct ofproto *ofproto,
                          struct ofpact_meter *ma)
 {
     if (ma->meter_id) {
+        /*通过meter_id找到meter*/
         const struct meter *meter = ofproto_get_meter(ofproto, ma->meter_id);
 
+        /*如果meter存在，且meter的provider_meter_id非unit32_max，即已在datapath层面生效，则设置ma的pmi*/
         if (meter && meter->provider_meter_id.uint32 != UINT32_MAX) {
             /* Update the action with the provider's meter ID, so that we
              * do not need any synchronization between ofproto_dpif_xlate
@@ -6809,9 +6817,11 @@ meter_insert_rule(struct rule *rule)
     uint32_t meter_id = ofpacts_get_meter(a->ofpacts, a->ofpacts_len);
     struct meter *meter = ofproto_get_meter(rule->ofproto, meter_id);
 
+    //将rule加入到meter对应的rules中
     ovs_list_insert(&meter->rules, &rule->meter_list_node);
 }
 
+//meter配置更新
 static void
 meter_update(struct meter *meter, const struct ofputil_meter_config *config)
 {
@@ -6823,6 +6833,7 @@ meter_update(struct meter *meter, const struct ofputil_meter_config *config)
                            config->n_bands * sizeof *meter->bands);
 }
 
+/*实现meter_id与provider_meter_id相关联*/
 static struct meter *
 meter_create(const struct ofputil_meter_config *config,
              ofproto_meter_id provider_meter_id)
@@ -6835,6 +6846,7 @@ meter_create(const struct ofputil_meter_config *config,
     meter->id = config->meter_id;
     ovs_list_init(&meter->rules);
 
+    //更新meter的配置
     meter_update(meter, config);
 
     return meter;
@@ -6845,11 +6857,13 @@ meter_destroy(struct ofproto *ofproto, struct meter *meter)
     OVS_REQUIRES(ofproto_mutex)
 {
     uint32_t *upcall_meter_ptr;
+    //由meter_id获得meter
     upcall_meter_ptr = ofproto_upcall_meter_ptr(ofproto, meter->id);
     if (upcall_meter_ptr) {
         *upcall_meter_ptr = UINT32_MAX;
     }
 
+    /*此meter有关联的rules,遍在边些rules,并将其删除掉*/
     if (!ovs_list_is_empty(&meter->rules)) {
         struct rule_collection rules;
         struct rule *rule;
@@ -6890,20 +6904,24 @@ meter_delete_all(struct ofproto *ofproto)
     }
 }
 
+//添加meter
 static enum ofperr
 handle_add_meter(struct ofproto *ofproto, struct ofputil_meter_mod *mm)
 {
+    /*总是提供meter_id为unit32_max,即采用动态meter id分配*/
     ofproto_meter_id provider_meter_id = { UINT32_MAX };
     struct meter *meter = ofproto_get_meter(ofproto, mm->meter.meter_id);
     enum ofperr error;
 
     if (meter) {
+        /*此meter已存在，返回失败*/
         return OFPERR_OFPMMFC_METER_EXISTS;
     }
 
     error = ofproto->ofproto_class->meter_set(ofproto, &provider_meter_id,
                                               &mm->meter);
     if (!error) {
+        /*meter在datapath层面创建成功，实现provider_meter_id与meter的映射*/
         ovs_assert(provider_meter_id.uint32 != UINT32_MAX);
         meter = meter_create(&mm->meter, provider_meter_id);
         ofproto_add_meter(ofproto, meter);
@@ -6922,10 +6940,12 @@ handle_modify_meter(struct ofproto *ofproto, struct ofputil_meter_mod *mm)
         return OFPERR_OFPMMFC_UNKNOWN_METER;
     }
 
+    /*更新meter配置*/
     provider_meter_id = meter->provider_meter_id.uint32;
     error = ofproto->ofproto_class->meter_set(ofproto,
                                               &meter->provider_meter_id,
                                               &mm->meter);
+    /*更新期间provider_meter_id不会被修改*/
     ovs_assert(meter->provider_meter_id.uint32 == provider_meter_id);
     if (!error) {
         meter_update(meter, &mm->meter);
@@ -6966,6 +6986,7 @@ handle_meter_mod(struct ofconn *ofconn, const struct ofp_header *oh)
     uint32_t meter_id;
     enum ofperr error;
 
+    //如果当前conn来自slave，则拒绝
     error = reject_slave_controller(ofconn);
     if (error) {
         return error;
@@ -6973,6 +6994,7 @@ handle_meter_mod(struct ofconn *ofconn, const struct ofp_header *oh)
 
     ofpbuf_use_stub(&bands, bands_stub, sizeof bands_stub);
 
+    //解析请求，填充mm
     error = ofputil_decode_meter_mod(oh, &mm, &bands);
     if (error) {
         goto exit_free_bands;
@@ -6991,6 +7013,7 @@ handle_meter_mod(struct ofconn *ofconn, const struct ofp_header *oh)
             error = OFPERR_OFPMMFC_INVALID_METER;
             goto exit_free_bands;
         } else if (meter_id > OFPM13_MAX) {
+            //特殊meter_id检查
             switch(meter_id) {
             case OFPM13_SLOWPATH:
             case OFPM13_CONTROLLER:
@@ -7001,6 +7024,8 @@ handle_meter_mod(struct ofconn *ofconn, const struct ofp_header *oh)
                 goto exit_free_bands;
             }
         }
+
+        /*传入的meter可能超过标准要求*/
         if (mm.meter.n_bands > ofproto->meter_features.max_bands) {
             error = OFPERR_OFPMMFC_OUT_OF_BANDS;
             goto exit_free_bands;
@@ -7009,6 +7034,7 @@ handle_meter_mod(struct ofconn *ofconn, const struct ofp_header *oh)
 
     switch (mm.command) {
     case OFPMC13_ADD:
+        /*meter添加*/
         error = handle_add_meter(ofproto, &mm);
         break;
 
@@ -7080,6 +7106,7 @@ meter_request_reply(struct ofproto *ofproto, struct meter *meter,
         stats.bands = ofpbuf_put_uninit(&bands, meter->n_bands
                                                 * sizeof *stats.bands);
 
+        /*指定获得具体meter_id的统计信息*/
         if (!ofproto->ofproto_class->meter_get(ofproto,
                                                meter->provider_meter_id,
                                                &stats, meter->n_bands)) {

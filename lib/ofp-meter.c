@@ -79,14 +79,16 @@ ofputil_format_meter_band(struct ds *s, enum ofp13_meter_flags flags,
     }
 }
 
+//自msg中提取ofputil_meter_band,将其保存在bands中
 static enum ofperr
-ofputil_pull_bands(struct ofpbuf *msg, size_t len, uint16_t *n_bands,
-                   struct ofpbuf *bands)
+ofputil_pull_bands(struct ofpbuf *msg, size_t len, uint16_t *n_bands/*mb在bands中的数目*/,
+                   struct ofpbuf *bands/*msg中的mb将保存在此buffer中*/)
 {
     const struct ofp13_meter_band_header *ombh;
     struct ofputil_meter_band *mb;
     uint16_t n = 0;
 
+    //取len长度的ombh
     ombh = ofpbuf_try_pull(msg, len);
     if (!ombh) {
         return OFPERR_OFPBRC_BAD_LEN;
@@ -96,8 +98,10 @@ ofputil_pull_bands(struct ofpbuf *msg, size_t len, uint16_t *n_bands,
         size_t ombh_len = ntohs(ombh->len);
         /* All supported band types have the same length. */
         if (ombh_len != sizeof (struct ofp13_meter_band_drop)) {
+            //长度有误，返回失败
             return OFPERR_OFPBRC_BAD_LEN;
         }
+        //在bands中增加一个 typeof(*mb)类型长度，并利用ombh填充此mb
         mb = ofpbuf_put_uninit(bands, sizeof *mb);
         mb->type = ntohs(ombh->type);
         if (mb->type != OFPMBT13_DROP && mb->type != OFPMBT13_DSCP_REMARK) {
@@ -119,10 +123,11 @@ ofputil_pull_bands(struct ofpbuf *msg, size_t len, uint16_t *n_bands,
     return 0;
 }
 
+//解析oh消息，填充mm
 enum ofperr
-ofputil_decode_meter_mod(const struct ofp_header *oh,
-                         struct ofputil_meter_mod *mm,
-                         struct ofpbuf *bands)
+ofputil_decode_meter_mod(const struct ofp_header *oh/*待解析的消息*/,
+                         struct ofputil_meter_mod *mm/*利用消息解析得到mm*/,
+                         struct ofpbuf *bands/*辅助空间*/)
 {
     struct ofpbuf b = ofpbuf_const_initializer(oh, ntohs(oh->length));
     ofpraw_pull_assert(&b);
@@ -133,8 +138,10 @@ ofputil_decode_meter_mod(const struct ofp_header *oh,
     if (mm->command != OFPMC13_ADD &&
         mm->command != OFPMC13_MODIFY &&
         mm->command != OFPMC13_DELETE) {
+        /*仅支持add,modify,delete三种操作*/
         return OFPERR_OFPMMFC_BAD_COMMAND;
     }
+    //提取传入的meter_id
     mm->meter.meter_id = ntohl(omm->meter_id);
 
     if (mm->command == OFPMC13_DELETE) {

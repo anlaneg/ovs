@@ -5553,10 +5553,12 @@ dpif_netdev_run(struct dpif *dpif)
 
                 for (i = 0; i < port->n_rxq; i++) {
 
+                    //跳过未开启的队列
                     if (!netdev_rxq_enabled(port->rxqs[i].rx)) {
                         continue;
                     }
 
+                    //收包并处理
                     if (dp_netdev_process_rxq_port(non_pmd,
                                                    &port->rxqs[i],
                                                    port->port_no)) {
@@ -6077,6 +6079,7 @@ static int
 dpif_netdev_meter_set(struct dpif *dpif, ofproto_meter_id meter_id,
                       struct ofputil_meter_config *config)
 {
+    //netdev datapath实现meter配置
     struct dp_netdev *dp = get_dp_netdev(dpif);
     uint32_t mid = meter_id.uint32;
     struct dp_meter *meter;
@@ -8217,9 +8220,9 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_ipf_dump_next,
     dpif_netdev_ipf_dump_done,
     dpif_netdev_meter_get_features,
-    dpif_netdev_meter_set,
-    dpif_netdev_meter_get,
-    dpif_netdev_meter_del,
+    dpif_netdev_meter_set,/*meter配置*/
+    dpif_netdev_meter_get,/*meter配置状态获取*/
+    dpif_netdev_meter_del,/*meter删除*/
 };
 
 static void

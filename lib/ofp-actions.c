@@ -7363,6 +7363,7 @@ encode_METER(const struct ofpact_meter *meter,
     }
 }
 
+//解析meter配置
 static char * OVS_WARN_UNUSED_RESULT
 parse_METER(char *arg, const struct ofpact_parse_params *pp)
 {

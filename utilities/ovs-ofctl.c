@@ -4081,7 +4081,7 @@ ofctl_meter_request__(const char *bridge, const char *str,
     vconn_close(vconn);
 }
 
-
+//用于解析meter的创建
 static void
 ofctl_add_meter(struct ovs_cmdl_context *ctx)
 {

@@ -3864,6 +3864,7 @@ dpif_netlink_meter_get_features(const struct dpif *dpif_,
     ofpbuf_delete(msg);
 }
 
+/*向datapath发送meter配置消息*/
 static int
 dpif_netlink_meter_set__(struct dpif *dpif_, ofproto_meter_id meter_id,
                          struct ofputil_meter_config *config)
@@ -3881,6 +3882,7 @@ dpif_netlink_meter_set__(struct dpif *dpif_, ofproto_meter_id meter_id,
         return EBADF; /* Unsupported flags set */
     }
 
+    /*仅支持drop type*/
     for (size_t i = 0; i < config->n_bands; i++) {
         switch (config->bands[i].type) {
         case OFPMBT13_DROP:
@@ -3890,8 +3892,10 @@ dpif_netlink_meter_set__(struct dpif *dpif_, ofproto_meter_id meter_id,
         }
     }
 
+    //设置meter设置命令
     dpif_netlink_meter_init(dpif, &buf, stub, sizeof stub, OVS_METER_CMD_SET);
 
+    //设置meter配置(meter_id,kbps,bands)
     nl_msg_put_u32(&buf, OVS_METER_ATTR_ID, meter_id.uint32);
 
     if (config->flags & OFPMF13_KBPS) {
@@ -3932,6 +3936,7 @@ dpif_netlink_meter_set__(struct dpif *dpif_, ofproto_meter_id meter_id,
         return error;
     }
 
+    /*如果kernel返回的meter与用户配置的id不等时，返回失败*/
     if (nl_attr_get_u32(a[OVS_METER_ATTR_ID]) != meter_id.uint32) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
         VLOG_INFO_RL(&rl,
@@ -3941,14 +3946,17 @@ dpif_netlink_meter_set__(struct dpif *dpif_, ofproto_meter_id meter_id,
     return 0;
 }
 
+/*kernel datapath实现meter配置*/
 static int
 dpif_netlink_meter_set(struct dpif *dpif_, ofproto_meter_id meter_id,
                        struct ofputil_meter_config *config)
 {
     if (probe_broken_meters(dpif_)) {
+        /*如果meter是坏的，则返回失败*/
         return ENOMEM;
     }
 
+    /*否则向kernel配置meter配置*/
     return dpif_netlink_meter_set__(dpif_, meter_id, config);
 }
 
@@ -4036,6 +4044,7 @@ dpif_netlink_meter_get_stats(const struct dpif *dpif_,
     return error;
 }
 
+/*获取指定meter id的状态信息*/
 static int
 dpif_netlink_meter_get(const struct dpif *dpif, ofproto_meter_id meter_id,
                        struct ofputil_meter_stats *stats, uint16_t max_bands)
@@ -4044,6 +4053,7 @@ dpif_netlink_meter_get(const struct dpif *dpif, ofproto_meter_id meter_id,
                                         OVS_METER_CMD_GET);
 }
 
+/*删除指定meter*/
 static int
 dpif_netlink_meter_del(struct dpif *dpif, ofproto_meter_id meter_id,
                        struct ofputil_meter_stats *stats, uint16_t max_bands)
@@ -4052,6 +4062,7 @@ dpif_netlink_meter_del(struct dpif *dpif, ofproto_meter_id meter_id,
                                         OVS_METER_CMD_DEL);
 }
 
+/*检查meter的创建，获取，删除是否正常,返回true,表示broken*/
 static bool
 probe_broken_meters__(struct dpif *dpif)
 {
@@ -4072,6 +4083,7 @@ probe_broken_meters__(struct dpif *dpif)
 
     if (dpif_netlink_meter_get(dpif, id1, NULL, 0)
         || dpif_netlink_meter_get(dpif, id2, NULL, 0)) {
+        /*kernel的meter实现有误，返回true*/
         VLOG_INFO("The kernel module has a broken meter implementation.");
         return true;
     }
@@ -4082,6 +4094,7 @@ probe_broken_meters__(struct dpif *dpif)
     return false;
 }
 
+/*meter是否是坏的*/
 static bool
 probe_broken_meters(struct dpif *dpif)
 {
@@ -4176,9 +4189,9 @@ const struct dpif_class dpif_netlink_class = {
     NULL,                       /* ipf_dump_next */
     NULL,                       /* ipf_dump_done */
     dpif_netlink_meter_get_features,
-    dpif_netlink_meter_set,
-    dpif_netlink_meter_get,
-    dpif_netlink_meter_del,
+    dpif_netlink_meter_set,/*meter配置*/
+    dpif_netlink_meter_get,/*meter状态信息获取*/
+    dpif_netlink_meter_del,/*meter配置删除*/
 };
 
 static int
@@ -4188,7 +4201,7 @@ dpif_netlink_init(void)
     static int error;
 
     if (ovsthread_once_start(&once)) {
-    		//获取并加载各family
+    	//获取并加载各family
         error = nl_lookup_genl_family(OVS_DATAPATH_FAMILY,
                                       &ovs_datapath_family);
         if (error) {

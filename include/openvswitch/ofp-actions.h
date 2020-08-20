@@ -135,6 +135,7 @@ struct vl_mff_map;
     OFPACT(DEBUG_SLOW,   ofpact_null,           ofpact, "debug_slow")   \
                                                                         \
     /* Instructions ("meter" is an action in OF1.5+). */                \
+    /*meter action定义*/\
     OFPACT(METER,           ofpact_meter,       ofpact, "meter")        \
     OFPACT(CLEAR_ACTIONS,   ofpact_null,        ofpact, "clear_actions") \
     OFPACT(WRITE_ACTIONS,   ofpact_nest,        actions, "write_actions") \
@@ -638,7 +639,7 @@ struct ofpact_meter {
     OFPACT_PADDED_MEMBERS(
         struct ofpact ofpact;
         uint32_t meter_id;
-        uint32_t provider_meter_id;
+        uint32_t provider_meter_id;/*meter的id*/
     );
 };
 
