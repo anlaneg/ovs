@@ -1189,6 +1189,7 @@ dpif_flow_dump_next(struct dpif_flow_dump_thread *thread,
         /*获得n条flow*/
         struct dpif_flow *f;
 
+        //如有必要显示dump出来的flow
         for (f = flows; f < &flows[n]
              && should_log_flow_message(&this_module, 0); f++) {
             log_flow_message(dpif, 0, &this_module, "flow_dump",

@@ -380,7 +380,7 @@ netdev_tc_flow_flush(struct netdev *netdev)
 static int
 netdev_tc_flow_dump_create(struct netdev *netdev,
                            struct netdev_flow_dump **dump_out,
-                           bool terse)
+                           bool terse/*是否采用简短模式dump*/)
 {
     enum tc_qdisc_hook hook = get_tc_qdisc_hook(netdev);
     struct netdev_flow_dump *dump;
@@ -523,6 +523,7 @@ flower_tun_opt_to_match(struct match *match, struct tc_flower *flower)
     match->wc.masks.tunnel.flags |= FLOW_TNL_F_UDPIF;
 }
 
+/*自flower中取出统计信息*/
 static void
 parse_tc_flower_to_stats(struct tc_flower *flower,
                          struct dpif_flow_stats *stats)
@@ -566,7 +567,7 @@ static int
 parse_tc_flower_to_match(struct tc_flower *flower,
                          struct match *match,
                          struct nlattr **actions,
-                         struct dpif_flow_stats *stats,
+                         struct dpif_flow_stats *stats/*规则命中的数目*/,
                          struct dpif_flow_attrs *attrs,
                          struct ofpbuf *buf,
                          bool terse)
@@ -950,7 +951,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
     return 0;
 }
 
-//dump tc flower规则
+//通过本函数完成tc flower规则的dump
 static bool
 netdev_tc_flow_dump_next(struct netdev_flow_dump *dump,
                          struct match *match,
@@ -970,7 +971,7 @@ netdev_tc_flow_dump_next(struct netdev_flow_dump *dump,
                         0, /* prio */
                         get_tc_qdisc_hook(netdev));
 
-    //自netlink中获得dump中的nl_flow
+    //自rbuffer中提取nl_flow
     while (nl_dump_next(dump->nl_dump, &nl_flow, rbuffer)) {
         struct tc_flower flower;
 
@@ -2137,9 +2138,12 @@ const struct netdev_flow_api netdev_offload_tc = {
    .flow_flush = netdev_tc_flow_flush,
    .flow_dump_create = netdev_tc_flow_dump_create,
    .flow_dump_destroy = netdev_tc_flow_dump_destroy,
-   .flow_dump_next = netdev_tc_flow_dump_next,/*通过tc dump flow*/
-   .flow_put = netdev_tc_flow_put,/*通过tc offload 给flower*/
+   /*通过tc dump flow*/
+   .flow_dump_next = netdev_tc_flow_dump_next,
+   /*通过tc offload 给flower*/
+   .flow_put = netdev_tc_flow_put,
    .flow_get = netdev_tc_flow_get,
-   .flow_del = netdev_tc_flow_del,/*通过tc 删除offload的flow*/
+   /*通过tc 删除offload的flow*/
+   .flow_del = netdev_tc_flow_del,
    .init_flow_api = netdev_tc_init_flow_api,/*队列初始化*/
 };

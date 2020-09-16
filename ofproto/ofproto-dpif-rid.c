@@ -26,11 +26,14 @@ VLOG_DEFINE_THIS_MODULE(ofproto_dpif_rid);
 
 static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
 
+//记录recirc_id_node的id与id_node间的映射关系
 static struct cmap id_map = CMAP_INITIALIZER;
 static struct cmap metadata_map = CMAP_INITIALIZER;
 
+/*记录等待过期处理的recirc_id_node*/
 static struct ovs_list expiring OVS_GUARDED_BY(mutex)
     = OVS_LIST_INITIALIZER(&expiring);
+/*记录已过期的recirc_id_node*/
 static struct ovs_list expired OVS_GUARDED_BY(mutex)
     = OVS_LIST_INITIALIZER(&expired);
 
@@ -52,6 +55,7 @@ recirc_run(void)
     /* Do maintenance at most 4 times / sec. */
     ovs_mutex_lock(&mutex);
     if (now - last > 250) {
+        //每秒最多执行4次
         struct recirc_id_node *node;
 
         last = now;
@@ -71,9 +75,11 @@ recirc_run(void)
         /* Delete the expired.  These have been lingering for at least 250 ms,
          * which should be enough for any ongoing recirculations to be
          * finished. */
+        //移除掉已经过期的recirc_node
         LIST_FOR_EACH_POP (node, exp_node, &expired) {
-        	//移除掉已经过期的recirc_node
+        	//遍历挂接在expired上的所有recirc_id_node，将其指明的id，自id_map中移除。
             cmap_remove(&id_map, &node->id_node, node->id);
+            /*交给rcu,后面释放掉*/
             ovsrcu_postpone(recirc_id_node_free, node);
         }
 
@@ -93,6 +99,7 @@ static struct recirc_id_node *
 recirc_find__(uint32_t id)
     OVS_REQUIRES(mutex)
 {
+    //给定recirc_id,查找recirc_id_node结构体，由表id_map负责具体查询
     struct cmap_node *node = cmap_find_protected(&id_map, id);
 
     return node ? CONTAINER_OF(node, struct recirc_id_node, id_node) : NULL;
@@ -114,6 +121,7 @@ recirc_id_node_find(uint32_t id)
 bool
 recirc_id_node_find_and_ref(uint32_t id)
 {
+    //查找recirc_id_node并增加引用
     struct recirc_id_node *rid_node =
         CONST_CAST(struct recirc_id_node *, recirc_id_node_find(id));
 
@@ -314,12 +322,14 @@ recirc_id_node_free(struct recirc_id_node *node)
     free(node);
 }
 
+//减recirc_id_node的引用计数，如果引数减为0，则将其自metadata__map中移除，加入expiring链
 void
 recirc_id_node_unref(const struct recirc_id_node *node_)
     OVS_EXCLUDED(mutex)
 {
     struct recirc_id_node *node = CONST_CAST(struct recirc_id_node *, node_);
 
+    //引用计数减为1，将其自metadata_map中移除，将其存放到expiring链上
     if (node && ovs_refcount_unref(&node->refcount) == 1) {
         ovs_mutex_lock(&mutex);
         /* Prevent re-use of this node by removing the node from 'metadata_map'

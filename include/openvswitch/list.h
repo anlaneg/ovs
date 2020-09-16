@@ -102,7 +102,7 @@ static inline bool ovs_list_is_short(const struct ovs_list *);
           : 0);                                                    \
          (ITER) = (NEXT))
 #define LIST_FOR_EACH_POP(ITER, MEMBER, LIST)                      \
-	/*链表为空*/\
+	/*链表不为空*/\
     while (!ovs_list_is_empty(LIST)                                    \
     		/*设置iter为list中的下一个成员*/\
            && (INIT_CONTAINER(ITER, ovs_list_pop_front(LIST), MEMBER), 1))
@@ -225,6 +225,7 @@ ovs_list_remove(struct ovs_list *elem)
 static inline struct ovs_list *
 ovs_list_pop_front(struct ovs_list *list)
 {
+    //移除list的首元素，并将其返回
     struct ovs_list *front = list->next;
 
     ovs_list_remove(front);
@@ -236,6 +237,7 @@ ovs_list_pop_front(struct ovs_list *list)
 static inline struct ovs_list *
 ovs_list_pop_back(struct ovs_list *list)
 {
+    //移除list的尾元素，并将其返回
     struct ovs_list *back = list->prev;
 
     ovs_list_remove(back);

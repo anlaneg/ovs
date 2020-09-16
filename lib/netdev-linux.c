@@ -2800,6 +2800,7 @@ tc_lookup_ovs_name(const char *name)
     return NULL;
 }
 
+//给定流控算法名称查找流控操作集
 static const struct tc_ops *
 tc_lookup_linux_name(const char *name)
 {
@@ -6014,6 +6015,7 @@ tc_query_qdisc(const struct netdev *netdev_)
         if (error) {
             ops = &tc_ops_other;
         } else {
+            //取流控操作集
             ops = tc_lookup_linux_name(kind);
             if (!ops) {
                 static struct vlog_rate_limit rl2 = VLOG_RATE_LIMIT_INIT(1, 1);

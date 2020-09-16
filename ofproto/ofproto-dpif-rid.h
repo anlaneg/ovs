@@ -171,12 +171,12 @@ struct frozen_state {
  * restore when recirculation occurs. */
 struct recirc_id_node {
     /* Index data. */
-    struct ovs_list exp_node OVS_GUARDED;
-    struct cmap_node id_node;
-    struct cmap_node metadata_node;
-    uint32_t id;
-    uint32_t hash;
-    struct ovs_refcount refcount;
+    struct ovs_list exp_node OVS_GUARDED;//用于存放在过期链上（待过期链，已过期链）
+    struct cmap_node id_node;//用于存放在id_map链上
+    struct cmap_node metadata_node;//用于存放在metadata_map链上
+    uint32_t id;//recirc_id，用于在id_map中查询
+    uint32_t hash;//对应的在metadata_map表中的hashcode
+    struct ovs_refcount refcount;//引用计数
 
     /* Saved state.
      *

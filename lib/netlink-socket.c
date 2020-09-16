@@ -601,6 +601,7 @@ nl_sock_send__(struct nl_sock *sock, const struct ofpbuf *msg,
             retval = msg->size;
         }
 #else
+        //向外发送netlink消息
         retval = send(sock->fd, msg->data, msg->size,
                       wait ? 0 : MSG_DONTWAIT);
 #endif
@@ -1193,6 +1194,7 @@ nl_dump_start(struct nl_dump *dump, int protocol, const struct ofpbuf *request)
     //创建或者取protocol对应的socket
     dump->status = nl_pool_alloc(protocol, &dump->sock);
     if (!dump->status) {
+        //向外发送此请求
         dump->status = nl_sock_send__(dump->sock, request,
                                       nl_sock_allocate_seq(dump->sock, 1),
                                       true);
@@ -1201,6 +1203,7 @@ nl_dump_start(struct nl_dump *dump, int protocol, const struct ofpbuf *request)
     ovs_mutex_unlock(&dump->mutex);
 }
 
+/*收取netlink消息，并将收取到的内容保存在buffer中*/
 static int
 nl_dump_refill(struct nl_dump *dump, struct ofpbuf *buffer)
     OVS_REQUIRES(dump->mutex)
@@ -1209,6 +1212,7 @@ nl_dump_refill(struct nl_dump *dump, struct ofpbuf *buffer)
     int error;
 
     while (!buffer->size) {
+        //自dump socket中收取消息
         error = nl_sock_recv__(dump->sock, buffer, NULL, false);
         if (error) {
             /* The kernel never blocks providing the results of a dump, so
@@ -1221,6 +1225,7 @@ nl_dump_refill(struct nl_dump *dump, struct ofpbuf *buffer)
             return error == EAGAIN ? EOF : error;
         }
 
+        //检查收到的消息seq
         nlmsghdr = nl_msg_nlmsghdr(buffer);
         if (dump->nl_seq != nlmsghdr->nlmsg_seq) {
             VLOG_DBG_RL(&rl, "ignoring seq %#"PRIx32" != expected %#"PRIx32,
@@ -1229,6 +1234,7 @@ nl_dump_refill(struct nl_dump *dump, struct ofpbuf *buffer)
         }
     }
 
+    /*包含error的消息检查*/
     if (nl_msg_nlmsgerr(buffer, &error) && error) {
         VLOG_INFO_RL(&rl, "netlink dump request error (%s)",
                      ovs_strerror(error));
@@ -1239,11 +1245,14 @@ nl_dump_refill(struct nl_dump *dump, struct ofpbuf *buffer)
     return 0;
 }
 
+//自buffer中采集出一个reply消息
 static int
 nl_dump_next__(struct ofpbuf *reply, struct ofpbuf *buffer)
 {
+    //自buffer中提供响应消息reply
     struct nlmsghdr *nlmsghdr = nl_msg_next(buffer, reply);
     if (!nlmsghdr) {
+        //消息返回有误，被丢弃
         VLOG_WARN_RL(&rl, "netlink dump contains message fragment");
         return EPROTO;
     } else if (nlmsghdr->nlmsg_type == NLMSG_DONE) {
@@ -1276,6 +1285,7 @@ nl_dump_next__(struct ofpbuf *reply, struct ofpbuf *buffer)
 bool
 nl_dump_next(struct nl_dump *dump, struct ofpbuf *reply, struct ofpbuf *buffer)
 {
+    //总述：由dump中收取netlink消息填充到buffer中，并自buffer中提取一条reply消息
     int retval = 0;
 
     /* If the buffer is empty, refill it.
@@ -1284,6 +1294,9 @@ nl_dump_next(struct nl_dump *dump, struct ofpbuf *reply, struct ofpbuf *buffer)
      * Otherwise, we could end up skipping some of the dump results if thread A
      * hits EOF while thread B is in the midst of processing a batch. */
     if (!buffer->size) {
+        /*buffer中没有数据，执行填充*/
+
+        //加锁，防止多个线程同时进入
         ovs_mutex_lock(&dump->mutex);
         if (!dump->status) {
             /* Take the mutex here to avoid an in-kernel race.  If two threads
@@ -1292,6 +1305,7 @@ nl_dump_next(struct nl_dump *dump, struct ofpbuf *reply, struct ofpbuf *buffer)
              * next recv on that socket, which could be anywhere due to the way
              * that we pool Netlink sockets.  Serializing the recv calls avoids
              * the issue. */
+            //自fd中读取内容，将其填充到buffer中
             dump->status = nl_dump_refill(dump, buffer);
         }
         retval = dump->status;
@@ -1300,6 +1314,7 @@ nl_dump_next(struct nl_dump *dump, struct ofpbuf *reply, struct ofpbuf *buffer)
 
     /* Fetch the next message from the buffer. */
     if (!retval) {
+        /*接收数据成功，自buffer中提取一条netlink消息，存放在reply中*/
         retval = nl_dump_next__(reply, buffer);
         if (retval) {
             /* Record 'retval' as the dump status, but don't overwrite an error
@@ -1313,6 +1328,7 @@ nl_dump_next(struct nl_dump *dump, struct ofpbuf *reply, struct ofpbuf *buffer)
     }
 
     if (retval) {
+        /*提取有误，将reply消息置为空*/
         reply->data = NULL;
         reply->size = 0;
     }

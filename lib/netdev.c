@@ -151,13 +151,18 @@ netdev_initialize(void)
     	//注册信号发生时，或进程退出时执行restore_all_flags回调
         fatal_signal_add_hook(restore_all_flags, NULL, NULL, true);
 
-        netdev_vport_patch_register();//patch类型vport注册
+        //patch类型vport注册
+        netdev_vport_patch_register();
 
 #ifdef __linux__
-        netdev_register_provider(&netdev_linux_class);//system类型netdev注册
-        netdev_register_provider(&netdev_internal_class);//internal类型netdev注册
-        netdev_register_provider(&netdev_tap_class);//tap类型netdev注册
-        netdev_vport_tunnel_register();//所有tunnel类型vport注册
+        //system类型netdev注册
+        netdev_register_provider(&netdev_linux_class);
+        //internal类型netdev注册
+        netdev_register_provider(&netdev_internal_class);
+        //tap类型netdev注册
+        netdev_register_provider(&netdev_tap_class);
+        //所有tunnel类型vport注册
+        netdev_vport_tunnel_register();
 
         //注册通过tc offload
         netdev_register_flow_api_provider(&netdev_offload_tc);

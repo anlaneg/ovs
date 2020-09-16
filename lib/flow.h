@@ -1019,6 +1019,7 @@ pkt_metadata_from_flow(struct pkt_metadata *md, const struct flow *flow)
 
     md->recirc_id = flow->recirc_id;
     md->dp_hash = flow->dp_hash;
+    //自flow中来的tunnel信息
     flow_tnl_copy__(&md->tunnel, &flow->tunnel);
     md->skb_priority = flow->skb_priority;
     md->pkt_mark = flow->pkt_mark;

@@ -515,6 +515,7 @@ struct dpif_flow_detailed_stats {
 };
 
 struct dpif_flow_attrs {
+    //标明flow是否offload到硬件
     bool offloaded;            /* True if flow is offloaded to HW. */
     const char *dp_layer;      /* DP layer the flow is handled in. */
     const char *dp_extra_info; /* Extra information provided by DP. */
@@ -594,6 +595,7 @@ void dpif_flow_dump_thread_destroy(struct dpif_flow_dump_thread *);
 #define PMD_ID_NULL OVS_CORE_UNSPEC
 
 /* A datapath flow as dumped by dpif_flow_dump_next(). */
+//datapath层面提供的抽象flow信息
 struct dpif_flow {
 	//flow的key
     const struct nlattr *key;     /* Flow key, as OVS_KEY_ATTR_* attrs. */
@@ -605,6 +607,7 @@ struct dpif_flow {
     size_t actions_len;           /* 'actions' length in bytes. */
     //flow的id
     ovs_u128 ufid;                /* Unique flow identifier. */
+    //ufid字段是否有效
     bool ufid_present;            /* True if 'ufid' was provided by datapath.*/
     unsigned pmd_id;              /* Datapath poll mode driver id. */
     struct dpif_flow_stats stats; /* Flow statistics. */

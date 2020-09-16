@@ -562,9 +562,10 @@ struct nlmsghdr *
 nl_msg_next(struct ofpbuf *buffer, struct ofpbuf *msg)
 {
     if (buffer->size >= sizeof(struct nlmsghdr)) {
+        /*自buffer中取出消息头*/
         struct nlmsghdr *nlmsghdr = nl_msg_nlmsghdr(buffer);
         size_t len = nlmsghdr->nlmsg_len;
-        /*校验len，只有有效，则返回nlmsghdr*/
+        /*校验len，如果buffer中包含多个nlmsghdr,则采用msg返回第一个消息，并将buffer前移*/
         if (len >= sizeof *nlmsghdr && len <= buffer->size) {
             ofpbuf_use_const(msg, nlmsghdr, len);
             ofpbuf_pull(buffer, len);
@@ -572,6 +573,7 @@ nl_msg_next(struct ofpbuf *buffer, struct ofpbuf *msg)
         }
     }
 
+    /*消息长度不合法，丢弃消息，返回NULL*/
     ofpbuf_clear(buffer);
     msg->data = NULL;
     msg->size = 0;

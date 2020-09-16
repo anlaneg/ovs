@@ -189,8 +189,10 @@ tc_make_request(int ifindex, int type, unsigned int flags,
     struct tcmsg *tcmsg;
 
     ofpbuf_init(request, 512);
+    /*指明为发送给kernel的请求报文*/
     nl_msg_put_nlmsghdr(request, sizeof *tcmsg, type, NLM_F_REQUEST | flags);
     tcmsg = ofpbuf_put_zeros(request, sizeof *tcmsg);
+    //指明family为AF_UNSPEC
     tcmsg->tcm_family = AF_UNSPEC;
     //接口ifindex
     tcmsg->tcm_ifindex = ifindex;
@@ -443,6 +445,7 @@ static const struct nl_policy tca_flower_terse_policy[] = {
     [TCA_FLOWER_ACT] = { .type = NL_A_NESTED, .optional = false, },
 };
 
+//解析flower中的arp相关信息
 static void
 nl_parse_flower_arp(struct nlattr **attrs, struct tc_flower *flower)
 {
@@ -837,6 +840,7 @@ nl_parse_flower_ct_match(struct nlattr **attrs, struct tc_flower *flower) {
     }
 }
 
+//解析flower中ip相关信息
 static void
 nl_parse_flower_ip(struct nlattr **attrs, struct tc_flower *flower) {
     uint8_t ip_proto = 0;
@@ -938,6 +942,7 @@ nl_parse_flower_ip(struct nlattr **attrs, struct tc_flower *flower) {
     nl_parse_flower_ct_match(attrs, flower);
 }
 
+/*解析attr,检查是否offload到硬件里*/
 static enum tc_offloaded_state
 nl_get_flower_offloaded_state(struct nlattr **attrs)
 {
@@ -1265,12 +1270,14 @@ get_user_hz(void)
     return user_hz;
 }
 
+/*设置flower的lastused时间*/
 static void
 nl_parse_tcf(const struct tcf_t *tm, struct tc_flower *flower)
 {
     flower->lastused = time_msec() - (tm->lastuse * 1000 / get_user_hz());
 }
 
+//gact 动作解析
 static int
 nl_parse_act_gact(struct nlattr *options, struct tc_flower *flower)
 {
@@ -1298,6 +1305,7 @@ nl_parse_act_gact(struct nlattr *options, struct tc_flower *flower)
         return EINVAL;
     }
 
+    /*取规则上一次使用时间*/
     tm = nl_attr_get_unspec(gact_attrs[TCA_GACT_TM], sizeof *tm);
     nl_parse_tcf(tm, flower);
 
@@ -1350,6 +1358,7 @@ nl_parse_act_mirred(struct nlattr *options, struct tc_flower *flower)
     }
     action->type = TC_ACT_OUTPUT;
 
+    /*取上一次使用时间*/
     mirred_tm = mirred_attrs[TCA_MIRRED_TM];
     tm = nl_attr_get_unspec(mirred_tm, sizeof *tm);
     nl_parse_tcf(tm, flower);
@@ -1389,6 +1398,7 @@ static const struct nl_policy ct_policy[] = {
                               .optional = true, },
 };
 
+//解析ct action
 static int
 nl_parse_act_ct(struct nlattr *options, struct tc_flower *flower)
 {
@@ -1668,9 +1678,10 @@ static const struct nl_policy stats_policy[] = {
                           .optional = false, },
 };
 
+//完成单个action解析
 static int
 nl_parse_single_action(struct nlattr *action, struct tc_flower *flower,
-                       bool terse)
+                       bool terse/*是否简短信息*/)
 {
     struct nlattr *act_options;
     struct nlattr *act_stats;
@@ -1682,6 +1693,7 @@ nl_parse_single_action(struct nlattr *action, struct tc_flower *flower,
     const struct gnet_stats_basic *bs;
     int err = 0;
 
+    //解析action的公共属性
     if (!nl_parse_nested(action, act_policy, action_attrs,
                          ARRAY_SIZE(act_policy)) ||
         (!terse && !action_attrs[TCA_ACT_OPTIONS])) {
@@ -1689,11 +1701,15 @@ nl_parse_single_action(struct nlattr *action, struct tc_flower *flower,
         return EPROTO;
     }
 
+    /*action名称*/
     act_kind = nl_attr_get_string(action_attrs[TCA_ACT_KIND]);
+    /*action选项*/
     act_options = action_attrs[TCA_ACT_OPTIONS];
+    /*action cookie*/
     act_cookie = action_attrs[TCA_ACT_COOKIE];
 
     if (terse) {
+        /*针对简短型dump,不解析action信息*/
         /* Terse dump doesn't provide act options attribute. */
     } else if (!strcmp(act_kind, "gact")) {
         err = nl_parse_act_gact(act_options, flower);
@@ -1727,14 +1743,17 @@ nl_parse_single_action(struct nlattr *action, struct tc_flower *flower,
         flower->act_cookie.len = nl_attr_get_size(act_cookie);
     }
 
+    //基本统计信息获取
     act_stats = action_attrs[TCA_ACT_STATS];
 
+    /*校验并解析action的基础统计信息*/
     if (!nl_parse_nested(act_stats, stats_policy, stats_attrs,
                          ARRAY_SIZE(stats_policy))) {
         VLOG_ERR_RL(&error_rl, "failed to parse action stats policy");
         return EPROTO;
     }
 
+    /*获取action的通过字节数及包数，填充到ovs_flow_stats*/
     bs = nl_attr_get_unspec(stats_attrs[TCA_STATS_BASIC], sizeof *bs);
     if (bs->packets) {
         put_32aligned_u64(&stats->n_packets, bs->packets);
@@ -1746,26 +1765,30 @@ nl_parse_single_action(struct nlattr *action, struct tc_flower *flower,
 
 #define TCA_ACT_MIN_PRIO 1
 
+//flower action解析
 static int
 nl_parse_flower_actions(struct nlattr **attrs, struct tc_flower *flower,
-                        bool terse)
+                        bool terse/*是否采有简短信息*/)
 {
     const struct nlattr *actions = attrs[TCA_FLOWER_ACT];
     static struct nl_policy actions_orders_policy[TCA_ACT_MAX_NUM + 1] = {};
     struct nlattr *actions_orders[ARRAY_SIZE(actions_orders_policy)];
     const int max_size = ARRAY_SIZE(actions_orders_policy);
 
+    /*将action置为nested*/
     for (int i = TCA_ACT_MIN_PRIO; i < max_size; i++) {
         actions_orders_policy[i].type = NL_A_NESTED;
         actions_orders_policy[i].optional = true;
     }
 
+    //自netlink中完成action解析
     if (!nl_parse_nested(actions, actions_orders_policy, actions_orders,
                          ARRAY_SIZE(actions_orders_policy))) {
         VLOG_ERR_RL(&error_rl, "failed to parse flower order of actions");
         return EPROTO;
     }
 
+    //遍历所有action
     for (int i = TCA_ACT_MIN_PRIO; i < max_size; i++) {
         if (actions_orders[i]) {
             int err;
@@ -1774,6 +1797,7 @@ nl_parse_flower_actions(struct nlattr **attrs, struct tc_flower *flower,
                 VLOG_DBG_RL(&error_rl, "Can only support %d actions", TCA_ACT_MAX_NUM);
                 return EOPNOTSUPP;
             }
+            /*解析单个action*/
             err = nl_parse_single_action(actions_orders[i], flower, terse);
 
             if (err) {
@@ -1792,13 +1816,15 @@ nl_parse_flower_actions(struct nlattr **attrs, struct tc_flower *flower,
     return 0;
 }
 
+//解析flower的选项
 static int
 nl_parse_flower_options(struct nlattr *nl_options, struct tc_flower *flower,
-                        bool terse)
+                        bool terse/*是否采用简短信息*/)
 {
     struct nlattr *attrs[ARRAY_SIZE(tca_flower_policy)];
     int err;
 
+    //解析flags及action字段到attrs
     if (terse) {
         if (!nl_parse_nested(nl_options, tca_flower_terse_policy,
                              attrs, ARRAY_SIZE(tca_flower_terse_policy))) {
@@ -1808,6 +1834,7 @@ nl_parse_flower_options(struct nlattr *nl_options, struct tc_flower *flower,
         goto skip_flower_opts;
     }
 
+    //解析flower相应字段到attrs
     if (!nl_parse_nested(nl_options, tca_flower_policy,
                          attrs, ARRAY_SIZE(tca_flower_policy))) {
         VLOG_ERR_RL(&error_rl, "failed to parse flower classifier options");
@@ -1825,6 +1852,7 @@ nl_parse_flower_options(struct nlattr *nl_options, struct tc_flower *flower,
     }
 
 skip_flower_opts:
+    //解析flower的flags,actions字段
     nl_parse_flower_flags(attrs, flower);
     return nl_parse_flower_actions(attrs, flower, terse);
 }
@@ -1832,7 +1860,7 @@ skip_flower_opts:
 //将netlink消息解析为flower对象
 int
 parse_netlink_to_tc_flower(struct ofpbuf *reply, struct tcf_id *id,
-                           struct tc_flower *flower, bool terse)
+                           struct tc_flower *flower, bool terse/*是否采用简短信息*/)
 {
     struct tcmsg *tc;
     struct nlattr *ta[ARRAY_SIZE(tca_policy)];
@@ -1876,6 +1904,7 @@ parse_netlink_to_tc_flower(struct ofpbuf *reply, struct tcf_id *id,
         return EPROTO;
     }
 
+    //解析flower的规则详情
     return nl_parse_flower_options(ta[TCA_OPTIONS], flower, terse);
 }
 
@@ -1925,7 +1954,7 @@ tc_get_flower(struct tcf_id *id, struct tc_flower *flower)
         return error;
     }
 
-    error = parse_netlink_to_tc_flower(reply, id, flower, false);
+    error = parse_netlink_to_tc_flower(reply, id, flower, false/*非简短模式解析*/);
     ofpbuf_delete(reply);
     return error;
 }

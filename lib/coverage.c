@@ -48,7 +48,7 @@ static bool coverage_read_counter(const char *name,
                                   unsigned long long int *count);
 
 /* Registers a coverage counter with the coverage core */
-//注册记数器
+//注册openvswitch记数器
 void
 coverage_counter_register(struct coverage_counter* counter)
 {
@@ -57,6 +57,7 @@ coverage_counter_register(struct coverage_counter* counter)
                                        &allocated_coverage_counters,
                                        sizeof(struct coverage_counter*));
     }
+    /*存入计数器*/
     coverage_counters[n_coverage_counters++] = counter;
 }
 
@@ -97,6 +98,7 @@ coverage_unixctl_read_counter(struct unixctl_conn *conn, int argc OVS_UNUSED,
 void
 coverage_init(void)
 {
+    /*显示coverage counter的统计值*/
     unixctl_command_register("coverage/show", "", 0, 0,
                              coverage_unixctl_show, NULL);
     unixctl_command_register("coverage/read-counter", "COUNTER", 1, 1,
@@ -129,20 +131,25 @@ coverage_hash(void)
     /* Sort coverage counters into groups with equal totals. */
     c = xmalloc(n_coverage_counters * sizeof *c);
     ovs_mutex_lock(&coverage_mutex);
+    /*加锁收集每个coverage计数的当前值*/
     for (i = 0; i < n_coverage_counters; i++) {
         c[i] = coverage_counters[i];
     }
     ovs_mutex_unlock(&coverage_mutex);
-    qsort(c, n_coverage_counters, sizeof *c, compare_coverage_counters);//将c数组按计数大小进行排序
+    //将c数组按计数大小进行排序
+    qsort(c, n_coverage_counters, sizeof *c, compare_coverage_counters);
 
     /* Hash the names in each group along with the rank. */
+    //遍历每个coverage计数器
     n_groups = 0;
     for (i = 0; i < n_coverage_counters; ) {
         int j;
 
-        if (!c[i]->total) {//丢掉计数为0的
+        if (!c[i]->total) {
+            //丢掉总计数为0的
             break;
         }
+        /*总计数非零的coverage计数口数目*/
         n_groups++;
         hash = hash_int(i, hash);
         for (j = i; j < n_coverage_counters; j++) {
@@ -229,7 +236,8 @@ coverage_read(struct svec *lines)
     uint32_t hash;
     size_t i;
 
-    hash = coverage_hash();//这个hash的计算代价有点大
+    //这个hash的计算代价有点大
+    hash = coverage_hash();
 
     n_never_hit = 0;
     svec_add_nocopy(lines,
@@ -246,6 +254,7 @@ coverage_read(struct svec *lines)
     }
     ovs_mutex_unlock(&coverage_mutex);
 
+    /*显示每一个coverage counter*/
     for (i = 0; i < n_coverage_counters; i++) {
         if (totals[i]) {
             /* Shows the averaged per-second rates for the last
@@ -254,17 +263,18 @@ coverage_read(struct svec *lines)
             svec_add_nocopy(lines,
                 xasprintf("%-24s %5.1f/sec %9.3f/sec "
                           "%13.4f/sec   total: %llu",
-                          c[i]->name,
+                          c[i]->name,/*coverage counter的名称*/
                           (c[i]->min[(idx_count - 1) % MIN_AVG_LEN]
-                           * 1000.0 / COVERAGE_RUN_INTERVAL),
+                           * 1000.0 / COVERAGE_RUN_INTERVAL),/*按5S的视角内计算的一秒速度*/
                           coverage_array_sum(c[i]->min, MIN_AVG_LEN) / 60.0,//在一分钟的视角内计算一秒速度
                           coverage_array_sum(c[i]->hr,  HR_AVG_LEN) / 3600.0,//在一小时的视角内计算一秒速度
-                          totals[i]));//显示总数
+                          totals[i]));/*显示converage counter当前总数*/
         } else {
-            n_never_hit++;
+            n_never_hit++;/*有多少counter一直没有进入*/
         }
     }
 
+    /*显示没有进入的counter计数*/
     svec_add_nocopy(lines, xasprintf("%"PRIuSIZE" events never hit", n_never_hit));
     free(totals);
 }

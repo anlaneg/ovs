@@ -6281,6 +6281,7 @@ handle_flow_mod(struct ofconn *ofconn, const struct ofp_header *oh)
     }
 
     ofpbuf_use_stub(&ofpacts, ofpacts_stub, sizeof ofpacts_stub);
+    //自connect中提取编码后的flow
     error = ofputil_decode_flow_mod(&fm, oh, ofconn_get_protocol(ofconn),
                                     ofproto_get_tun_tab(ofproto),
                                     &ofproto->vl_mff_map, &ofpacts,
@@ -6297,6 +6298,7 @@ handle_flow_mod(struct ofconn *ofconn, const struct ofp_header *oh)
     return error;
 }
 
+//处理流表的修改
 static enum ofperr
 handle_flow_mod__(struct ofproto *ofproto, const struct ofputil_flow_mod *fm,
                   const struct openflow_mod_requester *req)
@@ -8639,7 +8641,7 @@ handle_single_part_openflow(struct ofconn *ofconn, const struct ofp_header *oh,
         return handle_port_mod(ofconn, oh);
 
     case OFPTYPE_FLOW_MOD:
-    	//流修改消息
+    	//流表规则修改消息
         return handle_flow_mod(ofconn, oh);
 
     case OFPTYPE_GROUP_MOD:

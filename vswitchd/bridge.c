@@ -5019,6 +5019,7 @@ queue_ids_include(const struct ovsdb_datum *queues, int64_t target)
     return ovsdb_datum_find_key(queues, &atom, OVSDB_TYPE_INTEGER) != UINT_MAX;
 }
 
+//针对接口配置qos
 static void
 iface_configure_qos(struct iface *iface, const struct ovsrec_qos *qos)
 {
@@ -5037,6 +5038,7 @@ iface_configure_qos(struct iface *iface, const struct ovsrec_qos *qos)
         size_t i;
 
         /* Configure top-level Qos for 'iface'. */
+        //为此接口配置qos
         netdev_set_qos(iface->netdev, qos->type, &qos->other_config);
 
         /* Deconfigure queues that were deleted. */

@@ -231,6 +231,7 @@ netdev_flow_dump_destroy(struct netdev_flow_dump *dump)
            : EOPNOTSUPP;
 }
 
+/*dump已经offload的flow*/
 bool
 netdev_flow_dump_next(struct netdev_flow_dump *dump, struct match *match,
                       struct nlattr **actions, struct dpif_flow_stats *stats,

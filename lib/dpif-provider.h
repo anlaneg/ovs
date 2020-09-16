@@ -34,6 +34,7 @@ extern "C" {
  *
  * This structure should be treated as opaque by dpif implementations. */
 struct dpif {
+    //datapath的接口函数集，例如dpif_netlink_class，dpif_netdev_class
     const struct dpif_class *dpif_class;
     char *base_name;
     char *full_name;

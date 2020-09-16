@@ -120,7 +120,7 @@ struct dpif_netlink_flow {
 
     /* struct ovs_header. */
     unsigned int nlmsg_flags;
-    int dp_ifindex;
+    int dp_ifindex;/*datapath对应的ifindex*/
 
     /* Attributes.
      *
@@ -130,19 +130,25 @@ struct dpif_netlink_flow {
      *
      * If 'actions' is nonnull then OVS_FLOW_ATTR_ACTIONS will be included in
      * the Netlink version of the command, even if actions_len is zero. */
-    //key
+    //flow对应的key字段
     const struct nlattr *key;           /* OVS_FLOW_ATTR_KEY. */
+    //key字段的长度
     size_t key_len;
-    //mask
+    //flow对应的掩码信息
     const struct nlattr *mask;          /* OVS_FLOW_ATTR_MASK. */
+    //mask字段的长度
     size_t mask_len;
-    //actions
+
+    //flow对应的action字段
     const struct nlattr *actions;       /* OVS_FLOW_ATTR_ACTIONS. */
+    //action字段长度
     size_t actions_len;
 
     ovs_u128 ufid;                      /* OVS_FLOW_ATTR_FLOW_ID. */
+    //指明底层是否指明ufid
     bool ufid_present;                  /* Is there a UFID? */
     bool ufid_terse;                    /* Skip serializing key/mask/acts? */
+    //flow的统计信息
     const struct ovs_flow_stats *stats; /* OVS_FLOW_ATTR_STATS. */
     const uint8_t *tcp_flags;           /* OVS_FLOW_ATTR_TCP_FLAGS. */
     const ovs_32aligned_u64 *used;      /* OVS_FLOW_ATTR_USED. */
@@ -482,7 +488,7 @@ vport_get_pid(struct dpif_netlink *dpif, uint32_t port_idx,
 
     return true;
 }
-//增加新的channel
+//增加新的收包channel
 static int
 vport_add_channel(struct dpif_netlink *dpif, odp_port_t port_no,
                   struct nl_sock *sock)
@@ -1470,9 +1476,11 @@ dpif_netlink_init_flow_del(struct dpif_netlink *dpif,
 
 struct dpif_netlink_flow_dump {
     struct dpif_flow_dump up;
+    /*dump上下文*/
     struct nl_dump nl_dump;
     atomic_int status;
     //针对每个port创建一组netdev的dumps
+    //这些netdev上需要dump offload的规则
     struct netdev_flow_dump **netdev_dumps;
     //指出netdev_dumps指针数组大小
     int netdev_dumps_num;                    /* Number of netdev_flow_dumps */
@@ -1529,7 +1537,7 @@ dpif_netlink_flow_dump_create(const struct dpif *dpif_, bool terse,
     //取kernel datapath接口
     const struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
     struct dpif_netlink_flow_dump *dump;
-    struct dpif_netlink_flow request;
+    struct dpif_netlink_flow request;/*flow dump请求消息*/
     struct ofpbuf *buf;
 
     dump = xmalloc(sizeof *dump);
@@ -1546,6 +1554,7 @@ dpif_netlink_flow_dump_create(const struct dpif *dpif_, bool terse,
         request.ufid_present = false;
         request.ufid_terse = terse;
 
+        //将请求输出到buf中
         buf = ofpbuf_new(1024);
         dpif_netlink_flow_to_ofpbuf(&request, buf);
         nl_dump_start(&dump->nl_dump, NETLINK_GENERIC, buf);
@@ -1592,9 +1601,12 @@ struct dpif_netlink_flow_dump_thread {
     struct dpif_netlink_flow_dump *dump;
     struct dpif_netlink_flow flow;
     struct dpif_flow_stats stats;
+    /*存放netlink响应的dump flow buffer*/
     struct ofpbuf nl_flows;     /* Always used to store flows. */
     struct ofpbuf *nl_actions;  /* Used if kernel does not supply actions. */
+    /*记录当前dump到哪个netdev*/
     int netdev_dump_idx;        /* This thread current netdev dump index */
+    /*标记是否所有netdev均完成flow dump*/
     bool netdev_done;           /* If we are finished dumping netdevs */
 
     /* (Key/Mask/Actions) Buffers for netdev dumping */
@@ -1639,26 +1651,32 @@ dpif_netlink_flow_dump_thread_destroy(struct dpif_flow_dump_thread *thread_)
     free(thread);
 }
 
+//将netlink_flow转换为dpif_flow
 static void
 dpif_netlink_flow_to_dpif_flow(struct dpif_flow *dpif_flow,
                                const struct dpif_netlink_flow *datapath_flow)
 {
     dpif_flow->key = datapath_flow->key;
     dpif_flow->key_len = datapath_flow->key_len;
+
     dpif_flow->mask = datapath_flow->mask;
     dpif_flow->mask_len = datapath_flow->mask_len;
+
     dpif_flow->actions = datapath_flow->actions;
     dpif_flow->actions_len = datapath_flow->actions_len;
+
     dpif_flow->ufid_present = datapath_flow->ufid_present;
     dpif_flow->pmd_id = PMD_ID_NULL;
     if (datapath_flow->ufid_present) {
         dpif_flow->ufid = datapath_flow->ufid;
     } else {
+        /*datapath没有指明ufid,利用key,key_len生成ufid*/
         ovs_assert(datapath_flow->key && datapath_flow->key_len);
         odp_flow_key_hash(datapath_flow->key, datapath_flow->key_len,
                           &dpif_flow->ufid);
     }
     dpif_netlink_flow_get_stats(datapath_flow, &dpif_flow->stats);
+    /*标明这些flow没有offload到硬件*/
     dpif_flow->attrs.offloaded = false;
     dpif_flow->attrs.dp_layer = "ovs";
     dpif_flow->attrs.dp_extra_info = NULL;
@@ -1673,6 +1691,8 @@ dpif_netlink_flow_to_dpif_flow(struct dpif_flow *dpif_flow,
 static void
 dpif_netlink_advance_netdev_dump(struct dpif_netlink_flow_dump_thread *thread)
 {
+    //netdev设备的flow dump需要针对netdev来dump,当前dump的位置为netdev_current_dump
+    //此函数用于完成这些dump位置的切换。
     struct dpif_netlink_flow_dump *dump = thread->dump;
 
     ovs_mutex_lock(&dump->netdev_lock);
@@ -1697,6 +1717,7 @@ dpif_netlink_advance_netdev_dump(struct dpif_netlink_flow_dump_thread *thread)
     ovs_mutex_unlock(&dump->netdev_lock);
 }
 
+//转换为dpif_flow输出
 static int
 dpif_netlink_netdev_match_to_dpif_flow(struct match *match,
                                        struct ofpbuf *key_buf,
@@ -1760,7 +1781,7 @@ dpif_netlink_netdev_match_to_dpif_flow(struct match *match,
 //获取下一组flow
 static int
 dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
-                            struct dpif_flow *flows/*可填充的buffer*/, int max_flows/*最大的flows*/)
+                            struct dpif_flow *flows/*出参，保存dump出来的flow*/, int max_flows/*最大的flows*/)
 {
     struct dpif_netlink_flow_dump_thread *thread
         = dpif_netlink_flow_dump_thread_cast(thread_);
@@ -1774,12 +1795,14 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
     n_flows = 0;
     max_flows = MIN(max_flows, FLOW_DUMP_MAX_BATCH);
 
+    //dump offload的flow
     while (!thread->netdev_done && n_flows < max_flows) {
         struct odputil_keybuf *maskbuf = &thread->maskbuf[n_flows];
         struct odputil_keybuf *keybuf = &thread->keybuf[n_flows];
         struct odputil_keybuf *actbuf = &thread->actbuf[n_flows];
         struct ofpbuf key, mask, act;
         struct dpif_flow *f = &flows[n_flows];
+        //获取当前正在dump哪个netdev
         int cur = thread->netdev_dump_idx;
         struct netdev_flow_dump *netdev_dump = dump->netdev_dumps[cur];
         struct match match;
@@ -1792,6 +1815,7 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         ofpbuf_use_stack(&key, keybuf, sizeof *keybuf);
         ofpbuf_use_stack(&act, actbuf, sizeof *actbuf);
         ofpbuf_use_stack(&mask, maskbuf, sizeof *maskbuf);
+        //通过offload api实现netdev dump flow
         has_next = netdev_flow_dump_next(netdev_dump, &match,
                                         &actions, &stats, &attrs,
                                         &ufid,
@@ -1804,21 +1828,25 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
                                                    &stats,
                                                    &attrs,
                                                    &ufid,
-                                                   f,
+                                                   f/*出参，填充后的dpif_flow*/,
                                                    dump->up.terse);
             n_flows++;
         } else {
+            //当前netdev_dump完成，检查是否需要切换到其它netdev
             dpif_netlink_advance_netdev_dump(thread);
         }
     }
 
+    //如果不需要dump ovs的流表，则直接返回
     if (!(dump->types.ovs_flows)) {
         return n_flows;
     }
 
+    //dump kernel的flow
     while (!n_flows
            || (n_flows < max_flows && thread->nl_flows.size)) {
         struct dpif_netlink_flow datapath_flow;
+        /*保存kernel响应的flow信息*/
         struct ofpbuf nl_flow;
         int error;
 
@@ -1828,12 +1856,14 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         }
 
         /* Convert the flow to our output format. */
+        //将datapath_flow转换为nl_flow
         error = dpif_netlink_flow_from_ofpbuf(&datapath_flow, &nl_flow);
         if (error) {
             atomic_store_relaxed(&dump->status, error);
             break;
         }
 
+        //将datapath_flow转换为dpif_flow
         if (dump->up.terse || datapath_flow.actions) {
             /* Common case: we don't want actions, or the flow includes
              * actions. */
@@ -1841,6 +1871,7 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         } else {
             /* Rare case: the flow does not include actions.  Retrieve this
              * individual flow again to get the actions. */
+            /*再向kernel取一次action*/
             error = dpif_netlink_flow_get(dpif, &datapath_flow,
                                           &datapath_flow, &thread->nl_actions);
             if (error == ENOENT) {
@@ -4142,11 +4173,14 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_port_poll_wait,
     dpif_netlink_flow_flush,
 	//kernel datapath流dump
+    //对于kernel的flow dump,在thread中传入的实际为全局全量，故
+    //所有revalidator线程均会同时dump,但在执行netlink fd消息读取时
+    //拒绝多个线程同时读取，故此解决了并发读的问题。
     dpif_netlink_flow_dump_create,
     dpif_netlink_flow_dump_destroy,
     dpif_netlink_flow_dump_thread_create,
     dpif_netlink_flow_dump_thread_destroy,
-	//通过此函数完成flow dump
+	//通过此函数完成offload/unoffload的所有flow dump
     dpif_netlink_flow_dump_next,
 	//向kernel下发flow
     dpif_netlink_operate,
@@ -4617,6 +4651,7 @@ static int
 dpif_netlink_flow_from_ofpbuf(struct dpif_netlink_flow *flow,
                               const struct ofpbuf *buf)
 {
+    //将返回的netlink消息解析为dpif_netlink_flow结构
     static const struct nl_policy ovs_flow_policy[__OVS_FLOW_ATTR_MAX] = {
         [OVS_FLOW_ATTR_KEY] = { .type = NL_A_NESTED, .optional = true },
         [OVS_FLOW_ATTR_MASK] = { .type = NL_A_NESTED, .optional = true },
@@ -4641,10 +4676,13 @@ dpif_netlink_flow_from_ofpbuf(struct dpif_netlink_flow *flow,
     struct nlattr *a[ARRAY_SIZE(ovs_flow_policy)];
     if (!nlmsg || !genl || !ovs_header
         || nlmsg->nlmsg_type != ovs_flow_family
+        /*netlink消息解析*/
         || !nl_policy_parse(&b, 0, ovs_flow_policy, a,
                             ARRAY_SIZE(ovs_flow_policy))) {
         return EINVAL;
     }
+
+    /*两者均为空，无效消息*/
     if (!a[OVS_FLOW_ATTR_KEY] && !a[OVS_FLOW_ATTR_UFID]) {
         return EINVAL;
     }
@@ -4823,6 +4861,7 @@ dpif_netlink_flow_transact(struct dpif_netlink_flow *request,
     return error;
 }
 
+/*netlink flow统计信息向dpif_flow_stats转换*/
 static void
 dpif_netlink_flow_get_stats(const struct dpif_netlink_flow *flow,
                             struct dpif_flow_stats *stats)

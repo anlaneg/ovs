@@ -260,13 +260,16 @@ void nl_transact_multiple(int protocol, struct nl_transaction **, size_t n);
 
 struct nl_dump {
     /* These members are immutable during the lifetime of the nl_dump. */
+    /*dump对应的socket*/
     struct nl_sock *sock;       /* Socket being dumped. */
     uint32_t nl_seq;            /* Expected nlmsg_seq for replies. */
+    /*dump状态信息*/
     int status OVS_GUARDED;     /* 0: dump in progress,
                                  * positive errno: dump completed with error,
                                  * EOF: dump completed successfully. */
 
     /* 'mutex' protects 'status' and serializes access to 'sock'. */
+    //互斥锁，用于在一个线程dump时拒绝其它线程dump
     struct ovs_mutex mutex;     /* Protects 'status', synchronizes recv(). */
 };
 

@@ -69,6 +69,7 @@ void coverage_counter_register(struct coverage_counter*);
 #define COVERAGE_DEFINE(COUNTER)                                        \
         DEFINE_STATIC_PER_THREAD_DATA(unsigned int,                     \
                                       counter_##COUNTER, 0);            \
+        /*获取指定count的计数*/\
         static unsigned int COUNTER##_count(void)                       \
         {                                                               \
             unsigned int *countp = counter_##COUNTER##_get();           \
@@ -76,6 +77,7 @@ void coverage_counter_register(struct coverage_counter*);
             *countp = 0;                                                \
             return count;                                               \
         }                                                               \
+        /*增加指定count的计数*/\
         static inline void COUNTER##_add(unsigned int n)                \
         {                                                               \
             *counter_##COUNTER##_get() += n;                            \
@@ -83,6 +85,7 @@ void coverage_counter_register(struct coverage_counter*);
         extern struct coverage_counter counter_##COUNTER;               \
         struct coverage_counter counter_##COUNTER                       \
             = { #COUNTER, COUNTER##_count, 0, 0, {0}, {0} };            \
+            /*完成指定count的名称注册*/\
         OVS_CONSTRUCTOR(COUNTER##_init_coverage) {                      \
             coverage_counter_register(&counter_##COUNTER);              \
         }

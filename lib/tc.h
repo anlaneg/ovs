@@ -267,7 +267,9 @@ struct tc_action {
 };
 
 enum tc_offloaded_state {
+    //offload状态未知
     TC_OFFLOADED_STATE_UNDEFINED,
+    //offload 卸载在硬件
     TC_OFFLOADED_STATE_IN_HW,
     TC_OFFLOADED_STATE_NOT_IN_HW,
 };
@@ -336,7 +338,8 @@ struct tc_flower {
     int action_count;
     struct tc_action actions[TCA_ACT_MAX_NUM];
 
-    struct ovs_flow_stats stats;//flower状态
+    /*flower统计信息，规则命中了多少报文及字节*/
+    struct ovs_flow_stats stats;
     uint64_t lastused;
 
     struct {

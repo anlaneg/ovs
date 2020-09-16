@@ -1807,6 +1807,7 @@ ofctl_flow_mod(int argc, char *argv[], uint16_t command)
         if (error) {
             ovs_fatal(0, "%s", error);
         }
+        //执行流表修改
         ofctl_flow_mod__(argv[1], &fm, 1, usable_protocols);
     }
 }
