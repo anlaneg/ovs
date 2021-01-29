@@ -280,9 +280,7 @@ static inline void skb_clear_hash(struct sk_buff *skb)
 #ifdef HAVE_RXHASH
 	skb->rxhash = 0;
 #endif
-#if defined(HAVE_L4_RXHASH) && !defined(HAVE_RHEL_OVS_HOOK)
-	skb->l4_rxhash = 0;
-#endif
+	skb->l4_hash = 0;
 }
 #endif
 
@@ -373,7 +371,7 @@ static inline void skb_pop_mac_header(struct sk_buff *skb)
 #ifndef HAVE_SKB_CLEAR_HASH_IF_NOT_L4
 static inline void skb_clear_hash_if_not_l4(struct sk_buff *skb)
 {
-	if (!skb->l4_rxhash)
+	if (!skb->l4_hash)
 		skb_clear_hash(skb);
 }
 #endif
@@ -467,11 +465,7 @@ __skb_set_hash(struct sk_buff *skb, __u32 hash, bool is_sw, bool is_l4)
 #else
 	skb->hash = hash;
 #endif
-#if defined(HAVE_L4_RXHASH)
-	skb->l4_rxhash = is_l4;
-#else
 	skb->l4_hash = is_l4;
-#endif
 #ifdef HAVE_SW_HASH
 	skb->sw_hash = is_sw;
 #endif
@@ -487,6 +481,13 @@ static inline __u32 skb_get_hash_raw(const struct sk_buff *skb)
 	return skb->hash;
 #endif
 }
+#endif
+
+#ifndef skb_list_walk_safe
+/* Iterate through singly-linked GSO fragments of an skb. */
+#define skb_list_walk_safe(first, skb, next_skb)                               \
+	for ((skb) = (first), (next_skb) = (skb) ? (skb)->next : NULL; (skb);  \
+	     (skb) = (next_skb), (next_skb) = (skb) ? (skb)->next : NULL)
 #endif
 
 #endif

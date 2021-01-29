@@ -400,7 +400,7 @@ struct sset;
 
 int dp_register_provider(const struct dpif_class *);
 int dp_unregister_provider(const char *type);
-void dp_blacklist_provider(const char *type);
+void dp_disallow_provider(const char *type);
 void dp_enumerate_types(struct sset *types);
 const char *dpif_normalize_type(const char *);
 
@@ -436,6 +436,8 @@ struct dpif_dp_stats {
 int dpif_get_dp_stats(const struct dpif *, struct dpif_dp_stats *);
 
 int dpif_set_features(struct dpif *, uint32_t new_features);
+
+int dpif_get_n_offloaded_flows(struct dpif *dpif, uint64_t *n_flows);
 
 
 /* Port operations. */
@@ -923,7 +925,7 @@ int dpif_meter_del(struct dpif *, ofproto_meter_id meter_id,
 #define BOND_MASK 0xff
 #define BOND_BUCKETS (BOND_MASK + 1)
 
-int dpif_bond_add(struct dpif *, uint32_t bond_id, odp_port_t *slave_map);
+int dpif_bond_add(struct dpif *, uint32_t bond_id, odp_port_t *member_map);
 int dpif_bond_del(struct dpif *, uint32_t bond_id);
 int dpif_bond_stats_get(struct dpif *, uint32_t bond_id, uint64_t *n_bytes);
 bool dpif_supports_lb_output_action(const struct dpif *);

@@ -80,6 +80,7 @@ Bert Vermeulen                     bert@biot.com
 Bhanuprakash Bodireddy             bhanuprakash.bodireddy@intel.com
 Billy O'Mahony                     billy.o.mahony@intel.com
 Binbin Xu                          xu.binbin1@zte.com.cn
+Boleslaw Tokarski                  boleslaw.tokarski@jollamobile.com
 Brian Haley                        haleyb.dev@gmail.com
 Brian Kruger                       bkruger+ovsdev@gmail.com
 Bruce Davie                        bdavie@vmware.com
@@ -87,6 +88,7 @@ Bryan Phillippe                    bp@toroki.com
 Carlo Andreotti                    c.andreotti@m3s.it
 Casey Barker                       crbarker@google.com
 Chandra Sekhar Vejendla            csvejend@us.ibm.com
+Christophe Fontaine                cfontain@redhat.com
 Christoph Jaeger                   cj@linux.com
 Chris Wright                       chrisw@sous-sol.org
 Chuck Short                        zulcss@ubuntu.com
@@ -130,7 +132,7 @@ Ed Swierk                          eswierk@skyportsystems.com
 Edouard Bourguignon                madko@linuxed.net
 Eelco Chaudron                     echaudro@redhat.com
 Eiichi Tsukata                     eiichi.tsukata@nutanix.com
-Eli Britstein                      elibr@mellanox.com
+Eli Britstein                      elibr@nvidia.com
 Emma Finn                          emma.finn@intel.com
 Eric Lapointe                      elapointe@corsa.com
 Esteban Rodriguez Betancourt       estebarb@hpe.com
@@ -144,6 +146,7 @@ Eric Sesterhenn                    eric.sesterhenn@lsexperts.de
 Ethan J. Jackson                   ejj@eecs.berkeley.edu
 Ethan Rahn                         erahn@arista.com
 Eziz Durdyyev                      ezizdurdy@gmail.com
+Fabrizio D'Angelo                  fdangelo@redhat.com
 Flavio Fernandes                   flavio@flaviof.com
 Flavio Leitner                     fbl@redhat.com
 Francesco Fusco                    ffusco@redhat.com
@@ -255,7 +258,7 @@ Madhu Challa                       challa@noironetworks.com
 Manohar K C                        manukc@gmail.com
 Marcin Mirecki                     mmirecki@redhat.com
 Mario Cabrera                      mario.cabrera@hpe.com
-Mark D. Gray                       mark.d.gray@intel.com
+Mark D. Gray                       mark.d.gray@redhat.com
 Mark Hamilton
 Mark Kavanagh                      mark.b.kavanagh81@gmail.com
 Mark Maglana                       mmaglana@gmail.com
@@ -322,6 +325,7 @@ Ravi Kerur                         Ravi.Kerur@telekom.com
 Raymond Burkholder                 ray@oneunified.net
 Reid Price
 Remko Tronçon                      git@el-tramo.be
+Renat Nurgaliyev                   impleman@gmail.com
 Rich Lane                          rlane@bigswitch.com
 Richard Oliver                     richard@richard-oliver.co.uk
 Rishi Bamba                        rishi.bamba@tcs.com
@@ -330,7 +334,7 @@ Robert Åkerblom-Andersson          Robert.nr1@gmail.com
 Robert Wojciechowicz               robertx.wojciechowicz@intel.com
 Rob Hoes                           rob.hoes@citrix.com
 Rohith Basavaraja                  rohith.basavaraja@gmail.com
-Roi Dayan                          roid@mellanox.com
+Roi Dayan                          roid@nvidia.com
 Róbert Mulik                       robert.mulik@ericsson.com
 Romain Lenglet                     romain.lenglet@berabera.info
 Roni Bar Yanai                     roniba@mellanox.com
@@ -408,8 +412,10 @@ William Tu                         u9012063@gmail.com
 Xiao Liang                         shaw.leon@gmail.com
 xu rong                            xu.rong@zte.com.cn
 YAMAMOTO Takashi                   yamamoto@midokura.com
+Yalei Li                           liyl43@chinatelecom.cn
 Yanqin Wei                         Yanqin.Wei@arm.com
 Yasuhito Takamiya                  yasuhito@gmail.com
+Yi Li                              yili@winhong.com
 Yi Yang                            yangyi01@inspur.com
 Yi-Hung Wei                        yihung.wei@gmail.com
 Yifeng Sun                         pkusunyifeng@gmail.com
@@ -574,13 +580,14 @@ Linhaifeng                      haifeng.lin@huawei.com
 Logan Rosen                     logatronico@gmail.com
 Luca Falavigna                  dktrkranz@debian.org
 Luiz Henrique Ozaki             luiz.ozaki@gmail.com
+Madhu Venugopal                 mavenugo@gmail.com
+Malvika Gupta                   malvika.gupta@arm.com
 Manpreet Singh                  er.manpreet25@gmail.com
+Mao YingMing                    maoyingming@baidu.com
 Marco d'Itri                    md@Linux.IT
 Martin Vizvary                  vizvary@ics.muni.cz
 Marvin Pascual                  marvin@pascual.com.ph
 Maxime Brun                     m.brun@alphalink.fr
-Madhu Venugopal                 mavenugo@gmail.com
-Malvika Gupta                   malvika.gupta@arm.com
 Michael A. Collins              mike.a.collins@ark-net.org
 Michael Ben-Ami                 mbenami@digitalocean.com
 Michael Hu                      humichael@vmware.com

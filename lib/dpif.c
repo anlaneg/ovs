@@ -81,9 +81,9 @@ struct registered_dpif_class {
 };
 //存放已经注册了的dp_if_class,目前来源于base_dpif_classes，用netlink_class,netdev_class
 static struct shash dpif_classes = SHASH_INITIALIZER(&dpif_classes);
-static struct sset dpif_blacklist = SSET_INITIALIZER(&dpif_blacklist);
+static struct sset dpif_disallowed = SSET_INITIALIZER(&dpif_disallowed);
 
-/* Protects 'dpif_classes', including the refcount, and 'dpif_blacklist'. */
+/* Protects 'dpif_classes', including the refcount, and 'dpif_disallowed'. */
 static struct ovs_mutex dpif_mutex = OVS_MUTEX_INITIALIZER;
 
 /* Rate limit for individual messages going to or from the datapath, output at
@@ -141,8 +141,8 @@ dp_register_provider__(const struct dpif_class *new_class)//dpif_class注册
     int error;
 
     //类型不能在blacklist中
-    if (sset_contains(&dpif_blacklist, new_class->type)) {
-        VLOG_DBG("attempted to register blacklisted provider: %s",
+    if (sset_contains(&dpif_disallowed, new_class->type)) {
+        VLOG_DBG("attempted to register disallowed provider: %s",
                  new_class->type);
         //拒绝掉在黑名单中的dpif
         return EINVAL;
@@ -230,14 +230,14 @@ dp_unregister_provider(const char *type)
     return error;
 }
 
-/* Blacklists a provider.  Causes future calls of dp_register_provider() with
+/* Disallows a provider.  Causes future calls of dp_register_provider() with
  * a dpif_class which implements 'type' to fail. */
 //向dpif_blacklist中添加type（会禁止注册指定的dpif)
 void
-dp_blacklist_provider(const char *type)
+dp_disallow_provider(const char *type)
 {
     ovs_mutex_lock(&dpif_mutex);
-    sset_add(&dpif_blacklist, type);
+    sset_add(&dpif_disallowed, type);
     ovs_mutex_unlock(&dpif_mutex);
 }
 
@@ -2090,10 +2090,10 @@ dpif_meter_del(struct dpif *dpif, ofproto_meter_id meter_id,
 }
 
 int
-dpif_bond_add(struct dpif *dpif, uint32_t bond_id, odp_port_t *slave_map)
+dpif_bond_add(struct dpif *dpif, uint32_t bond_id, odp_port_t *member_map)
 {
     return dpif->dpif_class->bond_del
-           ? dpif->dpif_class->bond_add(dpif, bond_id, slave_map)
+           ? dpif->dpif_class->bond_add(dpif, bond_id, member_map)
            : EOPNOTSUPP;
 }
 
@@ -2114,4 +2114,27 @@ dpif_bond_stats_get(struct dpif *dpif, uint32_t bond_id,
     return dpif->dpif_class->bond_stats_get
            ? dpif->dpif_class->bond_stats_get(dpif, bond_id, n_bytes)
            : EOPNOTSUPP;
+}
+
+int
+dpif_get_n_offloaded_flows(struct dpif *dpif, uint64_t *n_flows)
+{
+    const char *dpif_type_str = dpif_normalize_type(dpif_type(dpif));
+    struct dpif_port_dump port_dump;
+    struct dpif_port dpif_port;
+    int ret, n_devs = 0;
+    uint64_t nflows;
+
+    *n_flows = 0;
+    DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
+        ret = netdev_ports_get_n_flows(dpif_type_str, dpif_port.port_no,
+                                       &nflows);
+        if (!ret) {
+            *n_flows += nflows;
+        } else if (ret == EOPNOTSUPP) {
+            continue;
+        }
+        n_devs++;
+    }
+    return n_devs ? 0 : EOPNOTSUPP;
 }

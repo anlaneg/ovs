@@ -2486,7 +2486,7 @@ output_normal(struct xlate_ctx *ctx, const struct xbundle *out_xbundle,
     vid = out_xvlan.v[0].vid;
     if (ovs_list_is_empty(&out_xbundle->xports)) {
     	//这个xbundle没有成员
-        /* Partially configured bundle with no slaves.  Drop the packet. */
+        /* Partially configured bundle with no members.  Drop the packet. */
         return;
     } else if (!out_xbundle->bond) {
     	//取第一个port
@@ -2512,13 +2512,13 @@ output_normal(struct xlate_ctx *ctx, const struct xbundle *out_xbundle,
             }
         }
 
-        ofport = bond_choose_output_slave(out_xbundle->bond,
-                                          &ctx->xin->flow, wc, vid);
+        ofport = bond_choose_output_member(out_xbundle->bond,
+                                           &ctx->xin->flow, wc, vid);
         xport = xport_lookup(ctx->xcfg, ofport);
 
         if (!xport) {
-        	//port不存在，丢包
-            /* No slaves enabled, so drop packet. */
+            //port不存在，丢包
+            /* No member interfaces enabled, so drop packet. */
             return;
         }
 
@@ -3173,6 +3173,7 @@ xlate_normal(struct xlate_ctx *ctx)
                 xlate_report(ctx, OFT_DETAIL, "MLD query, flooding");
                 xlate_normal_flood(ctx, in_xbundle, &xvlan);
             }
+            return;
         } else {
             if (is_ip_local_multicast(flow, wc)) {
                 /* RFC4541: section 2.1.2, item 2: Packets with a dst IP
@@ -3302,12 +3303,11 @@ compose_sample_action(struct xlate_ctx *ctx,
     odp_port_t odp_port = ofp_port_to_odp_port(
         ctx->xbridge, ctx->xin->flow.in_port.ofp_port);
     uint32_t pid = dpif_port_get_pid(ctx->xbridge->dpif, odp_port);
-    size_t cookie_offset = odp_put_userspace_action(pid, cookie,
-                                                    sizeof *cookie,
-                                                    tunnel_out_port,
-                                                    include_actions,
-                                                    ctx->odp_actions);
-
+    size_t cookie_offset;
+    int res = odp_put_userspace_action(pid, cookie, sizeof *cookie,
+                                       tunnel_out_port, include_actions,
+                                       ctx->odp_actions, &cookie_offset);
+    ovs_assert(res == 0);
     if (is_sample) {
         /*指定sample附加action长度*/
         nl_msg_end_nested(ctx->odp_actions, actions_offset);
@@ -3468,11 +3468,11 @@ process_special(struct xlate_ctx *ctx, const struct xport *xport)
         if (packet) {
             lacp_may_enable = lacp_process_packet(xport->xbundle->lacp,
                                                   xport->ofport, packet);//lacp协议处理
-            /* Update LACP status in bond-slave to avoid packet-drops until
-             * LACP state machine is run by the main thread. */
+            /* Update LACP status in bond-member to avoid packet-drops
+             * until LACP state machine is run by the main thread. */
             if (xport->xbundle->bond && lacp_may_enable) {
-                bond_slave_set_may_enable(xport->xbundle->bond, xport->ofport,
-                                          lacp_may_enable);
+                bond_member_set_may_enable(xport->xbundle->bond, xport->ofport,
+                                           lacp_may_enable);
             }
         }
         slow = SLOW_LACP;
@@ -3672,6 +3672,7 @@ propagate_tunnel_data_to_flow(struct xlate_ctx *ctx, struct eth_addr dmac,
     case OVS_VPORT_TYPE_VXLAN:
     case OVS_VPORT_TYPE_GENEVE:
     case OVS_VPORT_TYPE_GTPU:
+    case OVS_VPORT_TYPE_BAREUDP:
         nw_proto = IPPROTO_UDP;
         break;
     case OVS_VPORT_TYPE_LISP:
@@ -4337,7 +4338,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         if (xr && bond_use_lb_output_action(xport->xbundle->bond)) {
             /*
              * If bond mode is balance-tcp and optimize balance tcp is enabled
-             * then use the hash directly for slave selection and avoid
+             * then use the hash directly for member selection and avoid
              * recirculation.
              *
              * Currently support for netdev datapath only.
@@ -5006,7 +5007,7 @@ put_controller_user_action(struct xlate_ctx *ctx,
                                              ctx->xin->flow.in_port.ofp_port);
     uint32_t pid = dpif_port_get_pid(ctx->xbridge->dpif, odp_port);
     odp_put_userspace_action(pid, &cookie, sizeof cookie, ODPP_NONE,
-                             false, ctx->odp_actions);
+                             false, ctx->odp_actions, NULL);
 }
 
 static void
@@ -5583,7 +5584,7 @@ xlate_set_queue_action(struct xlate_ctx *ctx, uint32_t queue_id)
 }
 
 static bool
-slave_enabled_cb(ofp_port_t ofp_port, void *xbridge_)
+member_enabled_cb(ofp_port_t ofp_port, void *xbridge_)
 {
     const struct xbridge *xbridge = xbridge_;
     struct xport *port;
@@ -5613,7 +5614,7 @@ xlate_bundle_action(struct xlate_ctx *ctx,
     ofp_port_t port;
 
     //选择出一个port
-    port = bundle_execute(bundle, &ctx->xin->flow, ctx->wc, slave_enabled_cb,
+    port = bundle_execute(bundle, &ctx->xin->flow, ctx->wc, member_enabled_cb,
                           CONST_CAST(struct xbridge *, ctx->xbridge));
     if (bundle->dst.field) {
     		//将port加载到bundle->dst中

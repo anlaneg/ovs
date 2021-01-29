@@ -2708,10 +2708,6 @@ static int validate_set(const struct nlattr *a,
 		return -EINVAL;
 
 	switch (key_type) {
-	const struct ovs_key_ipv4 *ipv4_key;
-	const struct ovs_key_ipv6 *ipv6_key;
-	int err;
-
 	case OVS_KEY_ATTR_PRIORITY:
 	case OVS_KEY_ATTR_SKB_MARK:
 	case OVS_KEY_ATTR_CT_MARK:
@@ -2723,7 +2719,9 @@ static int validate_set(const struct nlattr *a,
 			return -EINVAL;
 		break;
 
-	case OVS_KEY_ATTR_TUNNEL:
+	case OVS_KEY_ATTR_TUNNEL: {
+		int err;
+
 #ifndef USE_UPSTREAM_TUNNEL
 		if (eth_p_mpls(eth_type))
 			return -EINVAL;
@@ -2736,8 +2734,10 @@ static int validate_set(const struct nlattr *a,
 		if (err)
 			return err;
 		break;
+	}
+	case OVS_KEY_ATTR_IPV4: {
+		const struct ovs_key_ipv4 *ipv4_key;
 
-	case OVS_KEY_ATTR_IPV4:
 		if (eth_type != htons(ETH_P_IP))
 			return -EINVAL;
 
@@ -2757,8 +2757,10 @@ static int validate_set(const struct nlattr *a,
 				return -EINVAL;
 		}
 		break;
+	}
+	case OVS_KEY_ATTR_IPV6: {
+		const struct ovs_key_ipv6 *ipv6_key;
 
-	case OVS_KEY_ATTR_IPV6:
 		if (eth_type != htons(ETH_P_IPV6))
 			return -EINVAL;
 
@@ -2785,7 +2787,7 @@ static int validate_set(const struct nlattr *a,
 			return -EINVAL;
 
 		break;
-
+	}
 	case OVS_KEY_ATTR_TCP:
 		if ((eth_type != htons(ETH_P_IP) &&
 		     eth_type != htons(ETH_P_IPV6)) ||

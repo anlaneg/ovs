@@ -53,6 +53,10 @@ struct jsonrpc {
     size_t output_count;        /* Number of elements in "output". */
     //总的输出串长度
     size_t backlog;
+
+    /* Limits. */
+    size_t max_output;          /* 'output_count' disconnection threshold. */
+    size_t max_backlog;         /* 'backlog' disconnection threshold. */
 };
 
 /* Rate limit for error messages. */
@@ -184,6 +188,17 @@ jsonrpc_get_backlog(const struct jsonrpc *rpc)
     return rpc->status ? 0 : rpc->backlog;
 }
 
+/* Sets thresholds for send backlog.  If send backlog contains more than
+ * 'max_n_msgs' messages or is larger than 'max_backlog_bytes' bytes,
+ * connection will be dropped. */
+void
+jsonrpc_set_backlog_threshold(struct jsonrpc *rpc,
+                              size_t max_n_msgs, size_t max_backlog_bytes)
+{
+    rpc->max_output = max_n_msgs;
+    rpc->max_backlog = max_backlog_bytes;
+}
+
 /* Returns the number of bytes that have been received on 'rpc''s underlying
  * stream.  (The value wraps around if it exceeds UINT_MAX.) */
 unsigned int
@@ -268,9 +283,26 @@ jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
     rpc->backlog += length;
 
     if (rpc->output_count >= 50) {//数量积累过多，报警
-        VLOG_INFO_RL(&rl, "excessive sending backlog, jsonrpc: %s, num of"
+        static struct vlog_rate_limit bl_rl = VLOG_RATE_LIMIT_INIT(5, 5);
+        bool disconnect = false;
+
+        VLOG_INFO_RL(&bl_rl, "excessive sending backlog, jsonrpc: %s, num of"
                      " msgs: %"PRIuSIZE", backlog: %"PRIuSIZE".", rpc->name,
                      rpc->output_count, rpc->backlog);
+        if (rpc->max_output && rpc->output_count > rpc->max_output) {
+            disconnect = true;
+            VLOG_WARN("sending backlog exceeded maximum number of messages (%"
+                      PRIuSIZE" > %"PRIuSIZE"), disconnecting, jsonrpc: %s.",
+                      rpc->output_count, rpc->max_output, rpc->name);
+        } else if (rpc->max_backlog && rpc->backlog > rpc->max_backlog) {
+            disconnect = true;
+            VLOG_WARN("sending backlog exceeded maximum size (%"PRIuSIZE" > %"
+                      PRIuSIZE" bytes), disconnecting, jsonrpc: %s.",
+                      rpc->backlog, rpc->max_backlog, rpc->name);
+        }
+        if (disconnect) {
+            jsonrpc_error(rpc, E2BIG);
+        }
     }
 
     if (rpc->backlog == length) {//只有我们一个，触发run,如果有多个说明run已被触发
@@ -803,6 +835,10 @@ struct jsonrpc_session {
     int last_error;
     unsigned int seqno;
     uint8_t dscp;
+
+    /* Limits for jsonrpc. */
+    size_t max_n_msgs;
+    size_t max_backlog_bytes;
 };
 
 static void
@@ -858,6 +894,8 @@ jsonrpc_session_open_multiple(const struct svec *remotes, bool retry)
     s->dscp = 0;
     s->last_error = 0;
 
+    jsonrpc_session_set_backlog_threshold(s, 0, 0);
+
     const char *name = reconnect_get_name(s->reconnect);
     //检查name是否为pstream(被动socket，即server端)
     if (!pstream_verify_name(name)) {
@@ -901,6 +939,7 @@ jsonrpc_session_open_unreliably(struct jsonrpc *jsonrpc, uint8_t dscp)
     s->pstream = NULL;
     s->seqno = 1;
 
+    jsonrpc_session_set_backlog_threshold(s, 0, 0);
     return s;
 }
 
@@ -991,6 +1030,8 @@ jsonrpc_session_run(struct jsonrpc_session *s)
             }
             reconnect_connected(s->reconnect, time_msec());
             s->rpc = jsonrpc_open(stream);//构造与client间的rpc
+            jsonrpc_set_backlog_threshold(s->rpc, s->max_n_msgs,
+                                                  s->max_backlog_bytes);
             s->seqno++;
         } else if (error != EAGAIN) {
         	//发生错误，关闭pstream
@@ -1033,6 +1074,8 @@ jsonrpc_session_run(struct jsonrpc_session *s)
         if (!error) {
             reconnect_connected(s->reconnect, time_msec());
             s->rpc = jsonrpc_open(s->stream);
+            jsonrpc_set_backlog_threshold(s->rpc, s->max_n_msgs,
+                                                  s->max_backlog_bytes);
             s->stream = NULL;
             s->seqno++;
         } else if (error != EAGAIN) {
@@ -1136,6 +1179,9 @@ jsonrpc_session_recv(struct jsonrpc_session *s)
 
         received_bytes = jsonrpc_get_received_bytes(s->rpc);
         jsonrpc_recv(s->rpc, &msg);
+
+        long long int now = time_msec();
+        reconnect_receive_attempted(s->reconnect, now);
         if (received_bytes != jsonrpc_get_received_bytes(s->rpc)) {
         	//收到了一些数据，标记connect是活跃的
             /* Data was successfully received.
@@ -1143,7 +1189,7 @@ jsonrpc_session_recv(struct jsonrpc_session *s)
              * Previously we only counted receiving a full message as activity,
              * but with large messages or a slow connection that policy could
              * time out the session mid-message. */
-            reconnect_activity(s->reconnect, time_msec());
+            reconnect_activity(s->reconnect, now);
         }
 
         if (msg) {
@@ -1276,5 +1322,20 @@ jsonrpc_session_set_dscp(struct jsonrpc_session *s, uint8_t dscp)
 
         s->dscp = dscp;
         jsonrpc_session_force_reconnect(s);
+    }
+}
+
+/* Sets thresholds for send backlog.  If send backlog contains more than
+ * 'max_n_msgs' messages or is larger than 'max_backlog_bytes' bytes,
+ * connection will be closed (then reconnected, if that feature is enabled). */
+void
+jsonrpc_session_set_backlog_threshold(struct jsonrpc_session *s,
+                                      size_t max_n_msgs,
+                                      size_t max_backlog_bytes)
+{
+    s->max_n_msgs = max_n_msgs;
+    s->max_backlog_bytes = max_backlog_bytes;
+    if (s->rpc) {
+        jsonrpc_set_backlog_threshold(s->rpc, max_n_msgs, max_backlog_bytes);
     }
 }

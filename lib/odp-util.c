@@ -391,7 +391,8 @@ format_odp_push_nsh_action(struct ds *ds,
         break;
     }
     default:
-        OVS_NOT_REACHED();
+        ds_put_cstr(ds, ",<error: unknown mdtype>");
+        break;
     }
     ds_put_format(ds, ")");
 }
@@ -1466,14 +1467,20 @@ parse_odp_userspace_action(const char *s, struct ofpbuf *actions)
         int n1 = -1;
         if (ovs_scan(&s[n], ",tunnel_out_port=%"SCNi32")%n",
                      &tunnel_out_port, &n1)) {
-            odp_put_userspace_action(pid, user_data, user_data_size,
-                                     tunnel_out_port, include_actions, actions);
-            res = n + n1;
+            res = odp_put_userspace_action(pid, user_data, user_data_size,
+                                           tunnel_out_port, include_actions,
+                                           actions, NULL);
+            if (!res) {
+                res = n + n1;
+            }
             goto out;
         } else if (s[n] == ')') {
-            odp_put_userspace_action(pid, user_data, user_data_size,
-                                     ODPP_NONE, include_actions, actions);
-            res = n + 1;
+            res = odp_put_userspace_action(pid, user_data, user_data_size,
+                                           ODPP_NONE, include_actions,
+                                           actions, NULL);
+            if (!res) {
+                res = n + 1;
+            }
             goto out;
         }
     }
@@ -4005,7 +4012,7 @@ format_odp_tun_attr(const struct nlattr *attr, const struct nlattr *mask_attr,
         case OVS_TUNNEL_KEY_ATTR_GTPU_OPTS:
             ds_put_cstr(ds, "gtpu(");
             format_odp_tun_gtpu_opt(a, ma, ds, verbose);
-            ds_put_cstr(ds, ")");
+            ds_put_cstr(ds, "),");
             break;
         case __OVS_TUNNEL_KEY_ATTR_MAX:
         default:
@@ -5232,8 +5239,8 @@ scan_gtpu_metadata(const char *s,
                    struct gtpu_metadata *mask)
 {
     const char *s_base = s;
-    uint8_t flags, flags_ma;
-    uint8_t msgtype, msgtype_ma;
+    uint8_t flags = 0, flags_ma = 0;
+    uint8_t msgtype = 0, msgtype_ma = 0;
     int len;
 
     if (!strncmp(s, "flags=", 6)) {
@@ -5603,13 +5610,16 @@ gtpu_to_attr(struct ofpbuf *a, const void *data_)
         do {                                               \
             len = 0;
 
-#define SCAN_END_NESTED()                               \
-        SCAN_FINISH();                                  \
-        nl_msg_end_nested(key, key_offset);             \
-        if (mask) {                                     \
-            nl_msg_end_nested(mask, mask_offset);       \
-        }                                               \
-        return s - start;                               \
+#define SCAN_END_NESTED()                                                     \
+        SCAN_FINISH();                                                        \
+        if (nl_attr_oversized(key->size - key_offset - NLA_HDRLEN)) {         \
+            return -E2BIG;                                                    \
+        }                                                                     \
+        nl_msg_end_nested(key, key_offset);                                   \
+        if (mask) {                                                           \
+            nl_msg_end_nested(mask, mask_offset);                             \
+        }                                                                     \
+        return s - start;                                                     \
     }
 
 #define SCAN_FIELD_NESTED__(NAME, TYPE, SCAN_AS, ATTR, FUNC)  \
@@ -7634,15 +7644,18 @@ odp_key_fitness_to_string(enum odp_key_fitness fitness)
 
 /* Appends an OVS_ACTION_ATTR_USERSPACE action to 'odp_actions' that specifies
  * Netlink PID 'pid'.  If 'userdata' is nonnull, adds a userdata attribute
- * whose contents are the 'userdata_size' bytes at 'userdata' and returns the
- * offset within 'odp_actions' of the start of the cookie.  (If 'userdata' is
- * null, then the return value is not meaningful.) */
-size_t
+ * whose contents are the 'userdata_size' bytes at 'userdata' and sets
+ * 'odp_actions_ofs' if nonnull with the offset within 'odp_actions' of the
+ * start of the cookie.  (If 'userdata' is null, then the 'odp_actions_ofs'
+ * value is not meaningful.)
+ *
+ * Returns negative error code on failure. */
+int
 odp_put_userspace_action(uint32_t pid,
                          const void *userdata, size_t userdata_size/*userdata数据大小*/,
                          odp_port_t tunnel_out_port,
                          bool include_actions/*是否需要包含action*/,
-                         struct ofpbuf *odp_actions/*要包含的action*/)
+                         struct ofpbuf *odp_actions/*要包含的action*/, size_t *odp_actions_ofs)
 {
     size_t userdata_ofs;
     size_t offset;
@@ -7651,6 +7664,9 @@ odp_put_userspace_action(uint32_t pid,
     offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_USERSPACE);
     nl_msg_put_u32(odp_actions, OVS_USERSPACE_ATTR_PID, pid);
     if (userdata) {
+        if (nl_attr_oversized(userdata_size)) {
+            return -E2BIG;
+        }
         /*userdata为上下文，由用户态传给kernel,kernel在upcall时再传回给用户态*/
         userdata_ofs = odp_actions->size + NLA_HDRLEN;
 
@@ -7679,9 +7695,16 @@ odp_put_userspace_action(uint32_t pid,
         //如果要包含action,则加入userspace的actions
         nl_msg_put_flag(odp_actions, OVS_USERSPACE_ATTR_ACTIONS);
     }
+    if (nl_attr_oversized(odp_actions->size - offset - NLA_HDRLEN)) {
+        return -E2BIG;
+    }
     nl_msg_end_nested(odp_actions, offset);
 
-    return userdata_ofs;
+    if (odp_actions_ofs) {
+        *odp_actions_ofs = userdata_ofs;
+    }
+
+    return 0;
 }
 
 void

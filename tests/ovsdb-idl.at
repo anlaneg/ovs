@@ -12,25 +12,6 @@ ovsdb_start_idltest () {
     on_exit 'kill `cat ovsdb-server.pid`'
 }
 
-# ovsdb_cluster_start_idltest [REMOTE] [SCHEMA]
-#
-# Creates a database using SCHEMA (default: idltest.ovsschema) and
-# starts a database cluster listening on punix:socket and REMOTE (if
-# specified).
-ovsdb_cluster_start_idltest () {
-   local n=$1
-   ovsdb-tool create-cluster s1.db $abs_srcdir/idltest.ovsschema unix:s1.raft || return $?
-   cid=`ovsdb-tool db-cid s1.db`
-   schema_name=`ovsdb-tool schema-name $abs_srcdir/idltest.ovsschema`
-   for i in `seq 2 $n`; do
-     ovsdb-tool join-cluster s$i.db $schema_name unix:s$i.raft unix:s1.raft || return $?
-   done
-   for i in `seq $n`; do
-     ovsdb-server -vraft -vconsole:warn --detach --no-chdir --log-file=s$i.log --pidfile=s$i.pid --unixctl=s$i --remote=punix:s$i.ovsdb ${2:+--remote=$2} s$i.db || return $?
-   done
-   on_exit 'kill `cat s*.pid`'
-}
-
 # ovsdb_cluster_leader [REMOTES] [DATABASE]
 #
 # Returns the leader of the DATABASE cluster.
@@ -47,6 +28,35 @@ ovsdb_cluster_leader () {
       fi
    done
 }])
+
+# OVSDB_CLUSTER_START_IDLTEST([N], [REMOTE])
+#
+# Creates a clustered database using idltest.ovsschema and starts a database
+# cluster of N servers listening on punix:socket and REMOTE (if specified).
+m4_define([OVSDB_CLUSTER_START_IDLTEST],
+  [n=$1
+   AT_CHECK([ovsdb-tool create-cluster s1.db \
+                        $abs_srcdir/idltest.ovsschema unix:s1.raft])
+   cid=$(ovsdb-tool db-cid s1.db)
+   schema_name=$(ovsdb-tool schema-name $abs_srcdir/idltest.ovsschema)
+   for i in $(seq 2 $n); do
+     AT_CHECK([ovsdb-tool join-cluster s$i.db \
+                          $schema_name unix:s$i.raft unix:s1.raft])
+   done
+   on_exit 'kill $(cat s*.pid)'
+   for i in $(seq $n); do
+     AT_CHECK([ovsdb-server -vraft -vconsole:warn --detach --no-chdir \
+                   --log-file=s$i.log --pidfile=s$i.pid --unixctl=s$i \
+                   --remote=punix:s$i.ovsdb                           \
+                   m4_if([$2], [], [], [--remote=$2]) s$i.db])
+   done
+
+   for i in $(seq $n); do
+       OVS_WAIT_UNTIL([ovs-appctl -t $(pwd)/s$i cluster/status ${schema_name} \
+                                           | grep -q 'Status: cluster member'])
+   done
+])
+
 
 # OVSDB_CHECK_IDL_C(TITLE, [PRE-IDL-TXN], TRANSACTIONS, OUTPUT, [KEYWORDS],
 #                   [FILTER])
@@ -957,6 +967,7 @@ AT_CHECK([grep ovsdb_idl stderr | sort], [0], [dnl
 test-ovsdb|ovsdb_idl|idltest database lacks indexed table (database needs upgrade?)
 test-ovsdb|ovsdb_idl|idltest database lacks link2 table (database needs upgrade?)
 test-ovsdb|ovsdb_idl|idltest database lacks simple5 table (database needs upgrade?)
+test-ovsdb|ovsdb_idl|idltest database lacks simple6 table (database needs upgrade?)
 test-ovsdb|ovsdb_idl|idltest database lacks singleton table (database needs upgrade?)
 test-ovsdb|ovsdb_idl|link1 table in idltest database lacks l2 column (database needs upgrade?)
 ])
@@ -1152,12 +1163,118 @@ OVSDB_CHECK_IDL_TRACK([track, simple idl, initially populated],
        "where": [],
        "row": {"b": true}}]']],
   [[000: i=1 r=2 b=true s=mystring u=<0> ia=[1 2 3] ra=[-0.5] ba=[true] sa=[abc def] ua=[<1> <2>] uuid=<3>
+000: inserted row: uuid=<3>
 000: updated columns: b ba i ia r ra s sa u ua
 001: {"error":null,"result":[{"count":2}]}
 002: i=0 r=0 b=true s= u=<4> ia=[] ra=[] ba=[] sa=[] ua=[] uuid=<5>
 002: i=1 r=2 b=true s=mystring u=<0> ia=[1 2 3] ra=[-0.5] ba=[true] sa=[abc def] ua=[<1> <2>] uuid=<3>
 002: updated columns: b
 003: done
+]])
+
+dnl This test creates database with weak references and checks that orphan
+dnl rows created for weak references are not available for iteration via
+dnl list of tracked changes.
+OVSDB_CHECK_IDL_TRACK([track, simple idl, initially populated, orphan weak references],
+  [['["idltest",
+      {"op": "insert",
+       "table": "simple",
+       "row": {"s": "row0_s"},
+       "uuid-name": "weak_row0"},
+      {"op": "insert",
+       "table": "simple",
+       "row": {"s": "row1_s"},
+       "uuid-name": "weak_row1"},
+      {"op": "insert",
+       "table": "simple",
+       "row": {"s": "row2_s"},
+       "uuid-name": "weak_row2"},
+      {"op": "insert",
+       "table": "simple6",
+       "row": {"name": "first_row",
+               "weak_ref": ["set",
+                             [["named-uuid", "weak_row0"],
+                              ["named-uuid", "weak_row1"],
+                              ["named-uuid", "weak_row2"]]
+                           ]}}]']],
+  [['condition simple []' \
+    'condition simple [["s","==","row1_s"]]' \
+    '["idltest",
+      {"op": "update",
+      "table": "simple6",
+      "where": [],
+      "row": {"name": "new_name"}}]' \
+    '["idltest",
+      {"op": "delete",
+      "table": "simple6",
+      "where": []}]']],
+  [[000: change conditions
+001: inserted row: uuid=<0>
+001: name=first_row weak_ref=[] uuid=<0>
+001: updated columns: name weak_ref
+002: change conditions
+003: i=0 r=0 b=false s=row1_s u=<1> ia=[] ra=[] ba=[] sa=[] ua=[] uuid=<2>
+003: inserted row: uuid=<2>
+003: name=first_row weak_ref=[<2>] uuid=<0>
+003: updated columns: s
+004: {"error":null,"result":[{"count":1}]}
+005: name=new_name weak_ref=[<2>] uuid=<0>
+005: updated columns: name
+006: {"error":null,"result":[{"count":1}]}
+007: i=0 r=0 b=false s=row1_s u=<1> ia=[] ra=[] ba=[] sa=[] ua=[] uuid=<2>
+008: done
+]])
+
+dnl This test creates database with weak references and checks that the
+dnl content of orphaned rows created for weak references after monitor
+dnl condition change are not leaked when the row is reinserted and deleted.
+OVSDB_CHECK_IDL_TRACK([track, simple idl, initially populated, orphan rows, conditional],
+  [['["idltest",
+      {"op": "insert",
+       "table": "simple",
+       "row": {"s": "row0_s"},
+       "uuid-name": "weak_row0"},
+      {"op": "insert",
+       "table": "simple",
+       "row": {"s": "row1_s"},
+       "uuid-name": "weak_row1"},
+      {"op": "insert",
+       "table": "simple6",
+       "row": {"name": "first_row",
+               "weak_ref": ["set",
+                             [["named-uuid", "weak_row0"]]
+                           ]}}]']],
+  [['condition simple []' \
+    'condition simple [["s","==","row0_s"]]' \
+    'condition simple [["s","==","row1_s"]]' \
+    'condition simple [["s","==","row0_s"]]' \
+    '["idltest",
+      {"op": "delete",
+      "table": "simple6",
+      "where": []}]']],
+  [[000: change conditions
+001: inserted row: uuid=<0>
+001: name=first_row weak_ref=[] uuid=<0>
+001: updated columns: name weak_ref
+002: change conditions
+003: i=0 r=0 b=false s=row0_s u=<1> ia=[] ra=[] ba=[] sa=[] ua=[] uuid=<2>
+003: inserted row: uuid=<2>
+003: name=first_row weak_ref=[<2>] uuid=<0>
+003: updated columns: s
+004: change conditions
+005: i=0 r=0 b=false s=row1_s u=<1> ia=[] ra=[] ba=[] sa=[] ua=[] uuid=<3>
+005: inserted row: uuid=<3>
+005: updated columns: s
+006: change conditions
+007: deleted row: uuid=<3>
+007: i=0 r=0 b=false s=row0_s u=<1> ia=[] ra=[] ba=[] sa=[] ua=[] uuid=<2>
+007: i=0 r=0 b=false s=row1_s u=<1> ia=[] ra=[] ba=[] sa=[] ua=[] uuid=<3>
+007: inserted row: uuid=<2>
+007: name=first_row weak_ref=[<2>] uuid=<0>
+007: updated columns: s
+008: {"error":null,"result":[{"count":1}]}
+009: i=0 r=0 b=false s=row0_s u=<1> ia=[] ra=[] ba=[] sa=[] ua=[] uuid=<2>
+010: done
 ]])
 
 OVSDB_CHECK_IDL_TRACK([track, simple idl, initially empty, various ops],
@@ -1214,6 +1331,7 @@ OVSDB_CHECK_IDL_TRACK([track, simple idl, initially empty, various ops],
   [[000: empty
 001: {"error":null,"result":[{"uuid":["uuid","<0>"]},{"uuid":["uuid","<1>"]}]}
 002: i=1 r=2 b=true s=mystring u=<2> ia=[1 2 3] ra=[-0.5] ba=[true] sa=[abc def] ua=[<3> <4>] uuid=<0>
+002: inserted row: uuid=<0>
 002: updated columns: b ba i ia r ra s sa u ua
 003: {"error":null,"result":[{"count":2}]}
 004: i=0 r=0 b=true s= u=<5> ia=[] ra=[] ba=[] sa=[] ua=[] uuid=<1>
@@ -1225,6 +1343,7 @@ OVSDB_CHECK_IDL_TRACK([track, simple idl, initially empty, various ops],
 006: updated columns: r
 007: {"error":null,"result":[{"uuid":["uuid","<6>"]}]}
 008: i=-1 r=125 b=false s= u=<5> ia=[1] ra=[1.5] ba=[false] sa=[] ua=[] uuid=<6>
+008: inserted row: uuid=<6>
 008: updated columns: ba i ia r ra
 009: {"error":null,"result":[{"count":2}]}
 010: i=-1 r=125 b=false s=newstring u=<5> ia=[1] ra=[1.5] ba=[false] sa=[] ua=[] uuid=<6>
@@ -1232,7 +1351,8 @@ OVSDB_CHECK_IDL_TRACK([track, simple idl, initially empty, various ops],
 010: updated columns: s
 010: updated columns: s
 011: {"error":null,"result":[{"count":1}]}
-012: ##deleted## uuid=<1>
+012: deleted row: uuid=<1>
+012: i=0 r=123.5 b=true s=newstring u=<5> ia=[] ra=[] ba=[] sa=[] ua=[] uuid=<1>
 013: reconnect
 014: i=-1 r=125 b=false s=newstring u=<5> ia=[1] ra=[1.5] ba=[false] sa=[] ua=[] uuid=<6>
 014: i=1 r=123.5 b=true s=mystring u=<2> ia=[1 2 3] ra=[-0.5] ba=[true] sa=[abc def] ua=[<3> <4>] uuid=<0>
@@ -1778,33 +1898,25 @@ OVSDB_CHECK_IDL_COMPOUND_INDEX_WITH_REF([set, simple3 idl-compound-index-with-re
 ]])
 
 m4_define([CHECK_STREAM_OPEN_BLOCK],
-  [AT_SETUP([Check Stream open block - C - $1])
-   AT_SKIP_IF([test "$1" = "tcp6" && test "$IS_WIN32" = "yes"])
-   AT_SKIP_IF([test "$1" = "tcp6" && test "$HAVE_IPV6" = "no"])
-   AT_KEYWORDS([Check Stream open block $1])
-   AT_CHECK([ovsdb_start_idltest "ptcp:0:$2"])
+  [AT_SETUP([Check stream open block - $1 - $3])
+   AT_SKIP_IF([test "$3" = "tcp6" && test "$IS_WIN32" = "yes"])
+   AT_SKIP_IF([test "$3" = "tcp6" && test "$HAVE_IPV6" = "no"])
+   AT_KEYWORDS([ovsdb server stream open_block $3])
+   AT_CHECK([ovsdb_start_idltest "ptcp:0:$4"])
    PARSE_LISTENING_PORT([ovsdb-server.log], [TCP_PORT])
    WRONG_PORT=$(($TCP_PORT + 101))
-   AT_CHECK([test-stream tcp:$2:$TCP_PORT], [0], [ignore])
-   AT_CHECK([test-stream tcp:$2:$WRONG_PORT], [1], [ignore], [ignore])
+   AT_CHECK([$2 tcp:$4:$TCP_PORT], [0], [ignore])
+   AT_CHECK([$2 tcp:$4:$WRONG_PORT], [1], [ignore], [ignore])
    OVSDB_SERVER_SHUTDOWN
-   AT_CHECK([test-stream tcp:$2:$TCP_PORT], [1], [ignore], [ignore])
+   AT_CHECK([$2 tcp:$4:$TCP_PORT], [1], [ignore], [ignore])
    AT_CLEANUP])
 
-CHECK_STREAM_OPEN_BLOCK([tcp], [127.0.0.1])
-CHECK_STREAM_OPEN_BLOCK([tcp6], [[[::1]]])
-
-m4_define([CHECK_STREAM_OPEN_BLOCK_PY],
-  [AT_SETUP([$1 - Python3])
-   AT_KEYWORDS([Check PY Stream open block - $3])
-   AT_CHECK([ovsdb_start_idltest "ptcp:0:127.0.0.1"])
-   PARSE_LISTENING_PORT([ovsdb-server.log], [TCP_PORT])
-   WRONG_PORT=$(($TCP_PORT + 101))
-   AT_CHECK([$3 $srcdir/test-stream.py tcp:127.0.0.1:$TCP_PORT], [0], [ignore])
-   AT_CHECK([$3 $srcdir/test-stream.py tcp:127.0.0.1:$WRONG_PORT], [1], [ignore])
-   OVSDB_SERVER_SHUTDOWN
-   AT_CHECK([$3 $srcdir/test-stream.py tcp:127.0.0.1:$TCP_PORT], [1], [ignore])
-   AT_CLEANUP])
+CHECK_STREAM_OPEN_BLOCK([C], [test-stream], [tcp], [127.0.0.1])
+CHECK_STREAM_OPEN_BLOCK([C], [test-stream], [tcp6], [[[::1]]])
+CHECK_STREAM_OPEN_BLOCK([Python3], [$PYTHON3 $srcdir/test-stream.py],
+                        [tcp], [127.0.0.1])
+CHECK_STREAM_OPEN_BLOCK([Python3], [$PYTHON3 $srcdir/test-stream.py],
+                        [tcp6], [[[::1]]])
 
 # same as OVSDB_CHECK_IDL but uses Python IDL implementation with tcp
 # with multiple remotes to assert the idl connects to the leader of the Raft cluster
@@ -1813,7 +1925,7 @@ m4_define([OVSDB_CHECK_IDL_LEADER_ONLY_PY],
    AT_SKIP_IF([test "$IS_ARM64" = "yes"])
    AT_KEYWORDS([ovsdb server idl Python leader_only with tcp socket])
    m4_define([LPBK],[127.0.0.1])
-   AT_CHECK([ovsdb_cluster_start_idltest $2 "ptcp:0:"LPBK])
+   OVSDB_CLUSTER_START_IDLTEST([$2], ["ptcp:0:"LPBK])
    PARSE_LISTENING_PORT([s2.log], [TCP_PORT_1])
    PARSE_LISTENING_PORT([s3.log], [TCP_PORT_2])
    PARSE_LISTENING_PORT([s1.log], [TCP_PORT_3])
@@ -1836,7 +1948,7 @@ m4_define([OVSDB_CHECK_CLUSTER_IDL_C],
   [AT_SETUP([$1 - C - tcp])
    AT_KEYWORDS([ovsdb server idl positive tcp socket $5])
    m4_define([LPBK],[127.0.0.1])
-   AT_CHECK([ovsdb_cluster_start_idltest $2 "ptcp:0:"LPBK])
+   OVSDB_CLUSTER_START_IDLTEST([$2], ["ptcp:0:"LPBK])
    PARSE_LISTENING_PORT([s1.log], [TCP_PORT_1])
    PARSE_LISTENING_PORT([s2.log], [TCP_PORT_2])
    PARSE_LISTENING_PORT([s3.log], [TCP_PORT_3])

@@ -2333,6 +2333,35 @@ NXST_FLOW reply:
 OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
+AT_SETUP([conntrack - generic IP protocol])
+CHECK_CONNTRACK()
+OVS_TRAFFIC_VSWITCHD_START()
+AT_CHECK([ovs-appctl vlog/set dpif:dbg dpif_netdev:dbg ofproto_dpif_upcall:dbg])
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
+ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
+
+AT_DATA([flows.txt], [dnl
+table=0, priority=1,action=drop
+table=0, priority=10,arp,action=normal
+table=0, priority=100,ip,action=ct(table=1)
+table=1, priority=100,in_port=1,ip,ct_state=+trk+new,action=ct(commit)
+table=1, priority=100,in_port=1,ct_state=+trk+est,action=normal
+])
+
+AT_CHECK([ovs-ofctl --bundle add-flows br0 flows.txt])
+
+AT_CHECK([ovs-ofctl -O OpenFlow13 packet-out br0 "in_port=1 packet=01005e00001200005e000101080045c0002800000000ff7019cdc0a8001ee0000012210164010001ba52c0a800010000000000000000000000000000 actions=resubmit(,0)"])
+
+AT_CHECK([ovs-appctl dpctl/dump-conntrack | grep "orig=.src=192\.168\.0\.30,"], [], [dnl
+112,orig=(src=192.168.0.30,dst=224.0.0.18,sport=0,dport=0),reply=(src=224.0.0.18,dst=192.168.0.30,sport=0,dport=0)
+])
+
+OVS_TRAFFIC_VSWITCHD_STOP
+AT_CLEANUP
+
 AT_SETUP([conntrack - ICMP related])
 AT_SKIP_IF([test $HAVE_NC = no])
 CHECK_CONNTRACK()
@@ -4810,7 +4839,7 @@ dnl Non-REPLY/RELATED packets get the ACL lookup with the packet headers
 dnl in the actual packet direction in reg0 (IN=1, OUT=2).  REPLY packets
 dnl get the ACL lookup using the conntrack tuple and the inverted direction.
 dnl RELATED packets get ACL lookup using the conntrack tuple in the direction
-dnl of the master connection, as stored in ct_label[0].
+dnl of the parent connection, as stored in ct_label[0].
 dnl
 dnl Incoming non-related packet in the original direction (ACL IN)
 table=1 reg3=1, ip, ct_state=-rel-rpl+trk-inv action=set_field:1->reg0,resubmit(,3),goto_table:5
@@ -4821,7 +4850,7 @@ table=1 reg3=2, ip, ct_state=-rel-rpl+trk-inv action=set_field:2->reg0,resubmit(
 dnl Outgoing non-related reply packet (CT ACL IN)
 table=1 reg3=2, ip, ct_state=-rel+rpl+trk-inv action=set_field:1->reg0,resubmit(,3,ct),goto_table:4
 dnl
-dnl Related packet (CT ACL in the direction of the master connection.)
+dnl Related packet (CT ACL in the direction of the parent connection.)
 table=1 ip, ct_state=+rel+trk-inv, action=move:NXM_NX_CT_LABEL[[0]]->NXM_NX_REG0[[0]],resubmit(,3,ct),goto_table:4
 dnl Drop everything else.
 table=1 priority=0, action=drop
@@ -4863,7 +4892,7 @@ dnl (This should not get any packets in this test.)
 table=5 priority=10 reg2=1 reg3=2 ct_state=+new-rel, ip, action=ct(zone=NXM_NX_REG4[[0..15]],commit,nat(dst=$2),exec(move:NXM_NX_REG3[[0]]->NXM_NX_CT_LABEL[[0]],move:NXM_NX_REG1[[0..31]]->NXM_NX_CT_LABEL[[96..127]])),goto_table:6
 dnl Commit new related connections in either direction, which need 'nat'
 dnl and which inherit the label (the direction of the original direction
-dnl master tuple) from the master connection.
+dnl parent tuple) from the parent connection.
 table=5 priority=10 reg2=1 ct_state=+new+rel, ip, action=ct(zone=NXM_NX_REG4[[0..15]],commit,nat,exec(move:NXM_NX_REG1[[0..31]]->NXM_NX_CT_LABEL[[96..127]])),goto_table:6
 dnl
 dnl NAT incoming non-NEW packets. Outgoing packets were NATted in table 0.
@@ -5894,6 +5923,50 @@ tcp,orig=(src=10.254.254.2,dst=10.1.1.1,sport=<cleared>,dport=<cleared>),reply=(
 ])
 
 ovs-appctl dpif/dump-flows br0
+
+OVS_TRAFFIC_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([conntrack - Multiple ICMP traverse])
+dnl This tracks sending ICMP packets via conntrack multiple times for the
+dnl same packet
+CHECK_CONNTRACK()
+OVS_TRAFFIC_VSWITCHD_START()
+OVS_CHECK_CT_CLEAR()
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24", "f0:00:00:01:01:01")
+ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24", "f0:00:00:01:01:02")
+dnl setup ct flows
+AT_DATA([flows.txt], [dnl
+table=0,priority=10  ip,icmp,ct_state=-trk action=ct(zone=1,table=1)
+table=0,priority=0   action=drop
+table=1,priority=10  ct_state=-est+trk+new,ip,ct_zone=1,in_port=1 action=ct(commit,table=2)
+table=1,priority=10  ct_state=+est-new+trk,ct_zone=1,in_port=1 action=resubmit(,2)
+table=1,priority=0   action=drop
+table=2,priority=10  ct_state=+trk+new,in_port=1 action=drop
+table=2,priority=10  ct_state=+trk+est action=drop
+])
+
+AT_CHECK([ovs-ofctl --bundle add-flows br0 flows.txt])
+
+# sending icmp pkts, first and second
+NS_CHECK_EXEC([at_ns0], [$PYTHON3 $srcdir/sendpkt.py p0 f0 00 00 01 01 02 f0 00 00 01 01 01 08 00 45 00 00 1c 00 01 00 00 40 01 64 dc 0a 01 01 01 0a 01 01 02 08 00 f7 ff ff ff ff ff > /dev/null])
+
+NS_CHECK_EXEC([at_ns0], [$PYTHON3 $srcdir/sendpkt.py p0 f0 00 00 01 01 02 f0 00 00 01 01 01 08 00 45 00 00 1c 00 01 00 00 40 01 64 dc 0a 01 01 01 0a 01 01 02 08 00 f7 ff ff ff ff ff > /dev/null])
+
+sleep 1
+
+dnl ensure CT picked up the packet
+AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(10.1.1)], [0], [dnl
+icmp,orig=(src=10.1.1.1,dst=10.1.1.2,id=<cleared>,type=8,code=0),reply=(src=10.1.1.2,dst=10.1.1.1,id=<cleared>,type=0,code=0)
+])
+
+AT_CHECK([ovs-ofctl dump-flows br0 | grep table=2, | OFPROTO_CLEAR_DURATION_IDLE],
+         [0], [dnl
+ cookie=0x0, duration=<cleared>, table=2, n_packets=2, n_bytes=84, idle_age=<cleared>, priority=10,ct_state=+new+trk,in_port=1 actions=drop
+ cookie=0x0, duration=<cleared>, table=2, n_packets=0, n_bytes=0, idle_age=<cleared>, priority=10,ct_state=+est+trk actions=drop
+])
 
 OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP

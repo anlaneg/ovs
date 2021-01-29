@@ -60,6 +60,9 @@ struct conn_key {
     uint8_t nw_proto;//l4层协议，udp or tcp or ...
 };
 
+/* Verify that nw_proto stays uint8_t as it's used to index into l4_protos[] */
+BUILD_ASSERT_DECL(MEMBER_SIZEOF(struct conn_key, nw_proto) == sizeof(uint8_t));
+
 /* This is used for alg expectations; an expectation is a
  * context created in preparation for establishing a data
  * connection. The expectation is created by the control
@@ -72,13 +75,13 @@ struct alg_exp_node {
     /* Key of data connection to be created. */
     struct conn_key key;
     /* Corresponding key of the control connection. */
-    struct conn_key master_key;
+    struct conn_key parent_key;
     /* The NAT replacement address to be used by the data connection. */
     union ct_addr alg_nat_repl_addr;
-    /* The data connection inherits the master control
+    /* The data connection inherits the parent control
      * connection label and mark. */
-    ovs_u128 master_label;
-    uint32_t master_mark;
+    ovs_u128 parent_label;
+    uint32_t parent_mark;
     /* True if for NAT application, the alg replaces the dest address;
      * otherwise, the source address is replaced.  */
     bool nat_rpl_dst;
@@ -93,7 +96,7 @@ struct conn {
     /* Immutable data. */
     struct conn_key key;//正向
     struct conn_key rev_key;//反向
-    struct conn_key master_key; /* Only used for orig_tuple support. */
+    struct conn_key parent_key; /* Only used for orig_tuple support. */
     struct ovs_list exp_node;//过期挂链用
     struct cmap_node cm_node;//挂connect链
     struct nat_action_info_t *nat_info;//nat分配信息

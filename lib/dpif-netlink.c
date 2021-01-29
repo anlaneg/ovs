@@ -781,6 +781,9 @@ get_vport_type(const struct dpif_netlink_vport *vport)
     case OVS_VPORT_TYPE_GTPU:
         return "gtpu";
 
+    case OVS_VPORT_TYPE_BAREUDP:
+        return "bareudp";
+
     case OVS_VPORT_TYPE_UNSPEC:
     case __OVS_VPORT_TYPE_MAX:
         break;
@@ -819,6 +822,8 @@ netdev_to_ovs_vport_type(const char *type)
         return OVS_VPORT_TYPE_GRE;
     } else if (!strcmp(type, "gtpu")) {
         return OVS_VPORT_TYPE_GTPU;
+    } else if (!strcmp(type, "bareudp")) {
+        return OVS_VPORT_TYPE_BAREUDP;
     } else {
     	//未指定名称的port类型
         return OVS_VPORT_TYPE_UNSPEC;
@@ -2381,55 +2386,11 @@ dpif_netlink_operate_chunks(struct dpif_netlink *dpif, struct dpif_op **ops,
 
 /*如果op没有提供ufid,则在此处计考虑为其赋值*/
 static void
-dpif_netlink_try_update_ufid__(struct dpif_op *op, ovs_u128 *ufid)
-{
-    switch (op->type) {
-    case DPIF_OP_FLOW_PUT:
-        if (!op->flow_put.ufid) {
-            odp_flow_key_hash(op->flow_put.key, op->flow_put.key_len,
-                              ufid);
-            op->flow_put.ufid = ufid;
-        }
-        break;
-    case DPIF_OP_FLOW_DEL:
-        if (!op->flow_del.ufid) {
-            odp_flow_key_hash(op->flow_del.key, op->flow_del.key_len,
-                              ufid);
-            op->flow_del.ufid = ufid;
-        }
-        break;
-    case DPIF_OP_FLOW_GET:
-        if (!op->flow_get.ufid) {
-            odp_flow_key_hash(op->flow_get.key, op->flow_get.key_len,
-                              ufid);
-            op->flow_get.ufid = ufid;
-        }
-        break;
-    case DPIF_OP_EXECUTE:
-    default:
-        break;
-    }
-}
-
-//更新op的ufid
-static void
-dpif_netlink_try_update_ufid(struct dpif_op **ops, ovs_u128 *ufid,
-                             size_t n_ops)
-{
-    int i;
-
-    for (i = 0; i < n_ops; i++) {
-        dpif_netlink_try_update_ufid__(ops[i], &ufid[i]);
-    }
-}
-
-static void
 dpif_netlink_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops,
                      enum dpif_offload_type offload_type)
 {
     struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
     struct dpif_op *new_ops[OPERATE_MAX_OPS];
-    ovs_u128 ufids[OPERATE_MAX_OPS];
     int count = 0;
     int i = 0;
     int err = 0;
@@ -2439,8 +2400,6 @@ dpif_netlink_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops,
         VLOG_DBG("Invalid offload_type: %d", offload_type);
         return;
     }
-
-    dpif_netlink_try_update_ufid(ops, ufids, n_ops);
 
     if (offload_type != DPIF_OFFLOAD_NEVER && netdev_is_flow_api_enabled()) {
     	//flow_api开启了，且offload_type为auto或者always，则尝试执行offload

@@ -76,8 +76,12 @@ static char *ssl_protocols;
 static char *ssl_ciphers;
 static bool bootstrap_ca_cert;
 
+/* Try to reclaim heap memory back to system after DB compaction. */
+static bool trim_memory = false;
+
 static unixctl_cb_func ovsdb_server_exit;
 static unixctl_cb_func ovsdb_server_compact;
+static unixctl_cb_func ovsdb_server_memory_trim_on_compaction;
 static unixctl_cb_func ovsdb_server_reconnect;
 static unixctl_cb_func ovsdb_server_perf_counters_clear;
 static unixctl_cb_func ovsdb_server_perf_counters_show;
@@ -90,6 +94,7 @@ static unixctl_cb_func ovsdb_server_set_active_ovsdb_server_probe_interval;
 static unixctl_cb_func ovsdb_server_set_sync_exclude_tables;
 static unixctl_cb_func ovsdb_server_get_sync_exclude_tables;
 static unixctl_cb_func ovsdb_server_get_sync_status;
+static unixctl_cb_func ovsdb_server_get_db_storage_status;
 
 struct server_config {
     struct sset *remotes;
@@ -249,7 +254,7 @@ main_loop(struct server_config *config,
                           xasprintf("removing database %s because storage "
                                     "disconnected permanently", node->name));
             } else if (ovsdb_storage_should_snapshot(db->db->storage)) {
-                log_and_free_error(ovsdb_snapshot(db->db));
+                log_and_free_error(ovsdb_snapshot(db->db, trim_memory));
             }
         }
         if (run_process) {
@@ -425,6 +430,9 @@ main(int argc, char *argv[])
     unixctl_command_register("exit", "", 0, 0, ovsdb_server_exit, &exiting);
     unixctl_command_register("ovsdb-server/compact", "", 0, 1,
                              ovsdb_server_compact, &all_dbs);
+    unixctl_command_register("ovsdb-server/memory-trim-on-compaction",
+                             "on|off", 1, 1,
+                             ovsdb_server_memory_trim_on_compaction, NULL);
     unixctl_command_register("ovsdb-server/reconnect", "", 0, 0,
                              ovsdb_server_reconnect, jsonrpc);
 
@@ -468,6 +476,9 @@ main(int argc, char *argv[])
                              NULL);
     unixctl_command_register("ovsdb-server/sync-status", "",
                              0, 0, ovsdb_server_get_sync_status,
+                             &server_config);
+    unixctl_command_register("ovsdb-server/get-db-storage-status", "DB", 1, 1,
+                             ovsdb_server_get_db_storage_status,
                              &server_config);
 
     /* Simulate the behavior of OVS release prior to version 2.5 that
@@ -1425,7 +1436,7 @@ ovsdb_server_set_sync_exclude_tables(struct unixctl_conn *conn,
 {
     struct server_config *config = config_;
 
-    char *err = set_blacklist_tables(argv[1], true);
+    char *err = set_excluded_tables(argv[1], true);
     if (!err) {
         free(*config->sync_exclude);
         *config->sync_exclude = xstrdup(argv[1]);
@@ -1437,7 +1448,7 @@ ovsdb_server_set_sync_exclude_tables(struct unixctl_conn *conn,
                                    config->all_dbs, server_uuid,
                                    *config->replication_probe_interval);
         }
-        err = set_blacklist_tables(argv[1], false);
+        err = set_excluded_tables(argv[1], false);
     }
     unixctl_command_reply(conn, err);
     free(err);
@@ -1449,7 +1460,7 @@ ovsdb_server_get_sync_exclude_tables(struct unixctl_conn *conn,
                                      const char *argv[] OVS_UNUSED,
                                      void *arg_ OVS_UNUSED)
 {
-    char *reply = get_blacklist_tables();
+    char *reply = get_excluded_tables();
     unixctl_command_reply(conn, reply);
     free(reply);
 }
@@ -1526,7 +1537,8 @@ ovsdb_server_compact(struct unixctl_conn *conn, int argc,
                 VLOG_INFO("compacting %s database by user request",
                           node->name);
 
-                struct ovsdb_error *error = ovsdb_snapshot(db->db);
+                struct ovsdb_error *error = ovsdb_snapshot(db->db,
+                                                           trim_memory);
                 if (error) {
                     char *s = ovsdb_error_to_string(error);
                     ds_put_format(&reply, "%s\n", s);
@@ -1547,6 +1559,35 @@ ovsdb_server_compact(struct unixctl_conn *conn, int argc,
         unixctl_command_reply(conn, NULL);
     }
     ds_destroy(&reply);
+}
+
+/* "ovsdb-server/memory-trim-on-compaction": controls whether ovsdb-server
+ * tries to reclaim heap memory back to system using malloc_trim() after
+ * compaction.  */
+static void
+ovsdb_server_memory_trim_on_compaction(struct unixctl_conn *conn,
+                                       int argc OVS_UNUSED,
+                                       const char *argv[],
+                                       void *arg OVS_UNUSED)
+{
+    const char *command = argv[1];
+
+#if !HAVE_DECL_MALLOC_TRIM
+    unixctl_command_reply_error(conn, "memory trimming is not supported");
+    return;
+#endif
+
+    if (!strcmp(command, "on")) {
+        trim_memory = true;
+    } else if (!strcmp(command, "off")) {
+        trim_memory = false;
+    } else {
+        unixctl_command_reply_error(conn, "invalid argument");
+        return;
+    }
+    VLOG_INFO("memory trimming after compaction %s.",
+              trim_memory ? "enabled" : "disabled");
+    unixctl_command_reply(conn, NULL);
 }
 
 /* "ovsdb-server/reconnect": makes ovsdb-server drop all of its JSON-RPC
@@ -1740,6 +1781,41 @@ ovsdb_server_get_sync_status(struct unixctl_conn *conn, int argc OVS_UNUSED,
 }
 
 static void
+ovsdb_server_get_db_storage_status(struct unixctl_conn *conn,
+                                   int argc OVS_UNUSED,
+                                   const char *argv[],
+                                   void *config_)
+{
+    struct server_config *config = config_;
+    struct shash_node *node;
+
+    node = shash_find(config->all_dbs, argv[1]);
+    if (!node) {
+        unixctl_command_reply_error(conn, "Failed to find the database.");
+        return;
+    }
+
+    struct db *db = node->data;
+
+    if (!db->db) {
+        unixctl_command_reply_error(conn, "Failed to find the database.");
+        return;
+    }
+
+    struct ds ds = DS_EMPTY_INITIALIZER;
+    char *error = ovsdb_storage_get_error(db->db->storage);
+
+    if (!error) {
+        ds_put_cstr(&ds, "status: ok");
+    } else {
+        ds_put_format(&ds, "status: %s", error);
+        free(error);
+    }
+    unixctl_command_reply(conn, ds_cstr(&ds));
+    ds_destroy(&ds);
+}
+
+static void
 parse_options(int argc, char *argv[],
               struct sset *db_filenames, struct sset *remotes,
               char **unixctl_pathp, char **run_command,
@@ -1755,6 +1831,7 @@ parse_options(int argc, char *argv[],
         OPT_SYNC_EXCLUDE,
         OPT_ACTIVE,
         OPT_NO_DBS,
+        OPT_FILE_COLUMN_DIFF,
         VLOG_OPTION_ENUMS,
         DAEMON_OPTION_ENUMS,
         SSL_OPTION_ENUMS,
@@ -1777,6 +1854,7 @@ parse_options(int argc, char *argv[],
         {"sync-exclude-tables", required_argument, NULL, OPT_SYNC_EXCLUDE},
         {"active", no_argument, NULL, OPT_ACTIVE},
         {"no-dbs", no_argument, NULL, OPT_NO_DBS},
+        {"disable-file-column-diff", no_argument, NULL, OPT_FILE_COLUMN_DIFF},
         {NULL, 0, NULL, 0},
     };
     char *short_options = ovs_cmdl_long_options_to_short_options(long_options);
@@ -1852,7 +1930,7 @@ parse_options(int argc, char *argv[],
             break;
 
         case OPT_SYNC_EXCLUDE: {//由参数sync-exclude-tables指定
-            char *err = set_blacklist_tables(optarg, false);
+            char *err = set_excluded_tables(optarg, false);
             if (err) {
                 ovs_fatal(0, "%s", err);
             }
@@ -1865,6 +1943,10 @@ parse_options(int argc, char *argv[],
 
         case OPT_NO_DBS:
             add_default_db = false;
+            break;
+
+        case OPT_FILE_COLUMN_DIFF:
+            ovsdb_file_column_diff_disable();
             break;
 
         case '?':
@@ -1904,6 +1986,8 @@ usage(void)
     printf("\nOther options:\n"
            "  --run COMMAND           run COMMAND as subprocess then exit\n"
            "  --unixctl=SOCKET        override default control socket name\n"
+           "  --disable-file-column-diff\n"
+           "                          don't use column diff in database file\n"
            "  -h, --help              display this help message\n"
            "  -V, --version           display version information\n");
     exit(EXIT_SUCCESS);

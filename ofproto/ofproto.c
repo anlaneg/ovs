@@ -1429,7 +1429,8 @@ ofproto_port_is_lacp_current(struct ofproto *ofproto, ofp_port_t ofp_port)
 }
 
 int
-ofproto_port_get_lacp_stats(const struct ofport *port, struct lacp_slave_stats *stats)
+ofproto_port_get_lacp_stats(const struct ofport *port,
+                            struct lacp_member_stats *stats)
 {
     struct ofproto *ofproto = port->ofproto;
     int error;
@@ -1447,8 +1448,8 @@ ofproto_port_get_lacp_stats(const struct ofport *port, struct lacp_slave_stats *
 
 /* Registers a "bundle" associated with client data pointer 'aux' in 'ofproto'.
  * A bundle is the same concept as a Port in OVSDB, that is, it consists of one
- * or more "slave" devices (Interfaces, in OVSDB) along with a VLAN
- * configuration plus, if there is more than one slave, a bonding
+ * or more "member" devices (Interfaces, in OVSDB) along with a VLAN
+ * configuration plus, if there is more than one member, a bonding
  * configuration.
  *
  * If 'aux' is already registered then this function updates its configuration
@@ -3551,7 +3552,7 @@ handle_set_config(struct ofconn *ofconn, const struct ofp_header *oh)
     }
 
     if (ofconn_get_type(ofconn) != OFCONN_PRIMARY
-        || ofconn_get_role(ofconn) != OFPCR12_ROLE_SLAVE) {
+        || ofconn_get_role(ofconn) != OFPCR12_ROLE_SECONDARY) {
         enum ofputil_frag_handling cur = ofproto->frag_handling;
         enum ofputil_frag_handling next = config.frag;
 
@@ -3576,17 +3577,17 @@ handle_set_config(struct ofconn *ofconn, const struct ofp_header *oh)
     return 0;
 }
 
-/* Checks whether 'ofconn' is a slave controller.  If so, returns an OpenFlow
- * error message code for the caller to propagate upward.  Otherwise, returns
- * 0.
+/* Checks whether 'ofconn' is a secondary controller.  If so, returns an
+ * OpenFlow error message code for the caller to propagate upward.  Otherwise,
+ * returns 0.
  *
  * The log message mentions 'msg_type'. */
 //检查当前controller是否为salve controller
 static enum ofperr
-reject_slave_controller(struct ofconn *ofconn)
+reject_secondary_controller(struct ofconn *ofconn)
 {
-    if (ofconn_get_role(ofconn) == OFPCR12_ROLE_SLAVE) {
-        return OFPERR_OFPBRC_IS_SLAVE;
+    if (ofconn_get_role(ofconn) == OFPCR12_ROLE_SECONDARY) {
+        return OFPERR_OFPBRC_IS_SECONDARY;
     } else {
         return 0;
     }
@@ -3776,7 +3777,7 @@ handle_packet_out(struct ofconn *ofconn, const struct ofp_header *oh)
 
     COVERAGE_INC(ofproto_packet_out);
 
-    error = reject_slave_controller(ofconn);
+    error = reject_secondary_controller(ofconn);
     if (error) {
         return error;
     }
@@ -3898,7 +3899,7 @@ handle_port_mod(struct ofconn *ofconn, const struct ofp_header *oh)
     struct ofport *port;
     enum ofperr error;
 
-    error = reject_slave_controller(ofconn);
+    error = reject_secondary_controller(ofconn);
     if (error) {
         return error;
     }
@@ -6284,7 +6285,7 @@ handle_flow_mod(struct ofconn *ofconn, const struct ofp_header *oh/*openflow消�
     struct ofpbuf ofpacts;
     enum ofperr error;
 
-    error = reject_slave_controller(ofconn);
+    error = reject_secondary_controller(ofconn);
     if (error) {
         return error;
     }
@@ -6352,7 +6353,7 @@ handle_role_request(struct ofconn *ofconn, const struct ofp_header *oh)
     if (request.role != OFPCR12_ROLE_NOCHANGE) {
         if (request.role != OFPCR12_ROLE_EQUAL
             && request.have_generation_id
-            && !ofconn_set_master_election_id(ofconn, request.generation_id)) {
+            && !ofconn_set_primary_election_id(ofconn, request.generation_id)) {
                 return OFPERR_OFPRRFC_STALE;
         }
 
@@ -6360,7 +6361,7 @@ handle_role_request(struct ofconn *ofconn, const struct ofp_header *oh)
     }
 
     reply.role = ofconn_get_role(ofconn);
-    reply.have_generation_id = ofconn_get_master_election_id(
+    reply.have_generation_id = ofconn_get_primary_election_id(
         ofconn, &reply.generation_id);
     buf = ofputil_encode_role_reply(oh, &reply);
     ofconn_send_reply(ofconn, buf);
@@ -7000,7 +7001,7 @@ handle_meter_mod(struct ofconn *ofconn, const struct ofp_header *oh)
     enum ofperr error;
 
     //如果当前conn来自slave，则拒绝
-    error = reject_slave_controller(ofconn);
+    error = reject_secondary_controller(ofconn);
     if (error) {
         return error;
     }
@@ -7943,7 +7944,7 @@ handle_group_mod(struct ofconn *ofconn, const struct ofp_header *oh)
     struct ofproto_group_mod ogm;
     enum ofperr error;
 
-    error = reject_slave_controller(ofconn);
+    error = reject_secondary_controller(ofconn);
     if (error) {
         return error;
     }
@@ -8064,7 +8065,7 @@ handle_table_mod(struct ofconn *ofconn, const struct ofp_header *oh)
     struct ofputil_table_mod tm;
     enum ofperr error;
 
-    error = reject_slave_controller(ofconn);
+    error = reject_secondary_controller(ofconn);
     if (error) {
         return error;
     }
@@ -8440,7 +8441,7 @@ handle_bundle_control(struct ofconn *ofconn, const struct ofp_header *oh)
     struct ofpbuf *buf;
     enum ofperr error;
 
-    error = reject_slave_controller(ofconn);
+    error = reject_secondary_controller(ofconn);
     if (error) {
         return error;
     }
@@ -8494,7 +8495,7 @@ handle_bundle_add(struct ofconn *ofconn, const struct ofp_header *oh)
     struct ofputil_bundle_add_msg badd;
     enum ofptype type;
 
-    error = reject_slave_controller(ofconn);
+    error = reject_secondary_controller(ofconn);
     if (error) {
         return error;
     }
@@ -8572,7 +8573,7 @@ handle_tlv_table_mod(struct ofconn *ofconn, const struct ofp_header *oh)
     struct ofputil_tlv_table_mod ttm;
     enum ofperr error;
 
-    error = reject_slave_controller(ofconn);
+    error = reject_secondary_controller(ofconn);
     if (error) {
         return error;
     }

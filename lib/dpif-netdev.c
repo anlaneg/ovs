@@ -85,9 +85,9 @@
 VLOG_DEFINE_THIS_MODULE(dpif_netdev);
 
 /* Auto Load Balancing Defaults */
-#define ALB_ACCEPTABLE_IMPROVEMENT       25
-#define ALB_PMD_LOAD_THRESHOLD           95
-#define ALB_PMD_REBALANCE_POLL_INTERVAL  1 /* 1 Min */
+#define ALB_IMPROVEMENT_THRESHOLD    25
+#define ALB_LOAD_THRESHOLD           95
+#define ALB_REBALANCE_INTERVAL       1 /* 1 Min */
 #define MIN_TO_MSEC                  60000
 
 #define FLOW_DUMP_MAX_BATCH 50
@@ -303,6 +303,8 @@ struct pmd_auto_lb {
     bool is_enabled;            /* Current status of Auto load balancing. */
     uint64_t rebalance_intvl;
     uint64_t rebalance_poll_timer;
+    uint8_t rebalance_improve_thresh;
+    atomic_uint8_t rebalance_load_thresh;
 };
 
 /* Datapath based on the network device interface from netdev.h.
@@ -646,9 +648,9 @@ struct tx_port {
     struct dp_netdev_rxq *output_pkts_rxqs[NETDEV_MAX_BURST];
 };
 
-/* Contained by struct tx_bond 'slave_buckets'. */
-struct slave_entry {
-    odp_port_t slave_id;
+/* Contained by struct tx_bond 'member_buckets'. */
+struct member_entry {
+    odp_port_t member_id;
     atomic_ullong n_packets;
     atomic_ullong n_bytes;
 };
@@ -657,7 +659,7 @@ struct slave_entry {
 struct tx_bond {
     struct cmap_node node;
     uint32_t bond_id;
-    struct slave_entry slave_buckets[BOND_BUCKETS];
+    struct member_entry member_buckets[BOND_BUCKETS];
 };
 
 /* A set of properties for the current processing loop that is not directly
@@ -1609,17 +1611,17 @@ dpif_netdev_bond_show(struct unixctl_conn *conn, int argc,
 
     if (cmap_count(&dp->tx_bonds) > 0) {
         struct tx_bond *dp_bond_entry;
-        uint32_t slave_id;
 
         ds_put_cstr(&reply, "Bonds:\n");
         CMAP_FOR_EACH (dp_bond_entry, node, &dp->tx_bonds) {
             ds_put_format(&reply, "  bond-id %"PRIu32":\n",
                           dp_bond_entry->bond_id);
             for (int bucket = 0; bucket < BOND_BUCKETS; bucket++) {
-                slave_id =
-                    odp_to_u32(dp_bond_entry->slave_buckets[bucket].slave_id);
-                ds_put_format(&reply, "    bucket %d - slave %"PRIu32"\n",
-                              bucket, slave_id);
+                uint32_t member_id = odp_to_u32(
+                    dp_bond_entry->member_buckets[bucket].member_id);
+                ds_put_format(&reply,
+                              "    bucket %d - member %"PRIu32"\n",
+                              bucket, member_id);
             }
         }
     }
@@ -2326,6 +2328,8 @@ static void
 do_del_port(struct dp_netdev *dp, struct dp_netdev_port *port)
     OVS_REQUIRES(dp->port_mutex)
 {
+    netdev_flow_flush(port->netdev);
+    netdev_uninit_flow_api(port->netdev);
     hmap_remove(&dp->ports, &port->node);
     seq_change(dp->port_seq);
 
@@ -4317,11 +4321,12 @@ dpif_netdev_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
 
 /* Enable or Disable PMD auto load balancing. */
 static void
-set_pmd_auto_lb(struct dp_netdev *dp)
+set_pmd_auto_lb(struct dp_netdev *dp, bool always_log)
 {
     unsigned int cnt = 0;
     struct dp_netdev_pmd_thread *pmd;
     struct pmd_auto_lb *pmd_alb = &dp->pmd_alb;
+    uint8_t rebalance_load_thresh;
 
     bool enable_alb = false;
     bool multi_rxq = false;
@@ -4348,18 +4353,24 @@ set_pmd_auto_lb(struct dp_netdev *dp)
     enable_alb = enable_alb && pmd_rxq_assign_cyc &&
                     pmd_alb->auto_lb_requested;
 
-    if (pmd_alb->is_enabled != enable_alb) {
+    if (pmd_alb->is_enabled != enable_alb || always_log) {
         pmd_alb->is_enabled = enable_alb;
         if (pmd_alb->is_enabled) {
+            atomic_read_relaxed(&pmd_alb->rebalance_load_thresh,
+                                &rebalance_load_thresh);
             VLOG_INFO("PMD auto load balance is enabled "
-                      "(with rebalance interval:%"PRIu64" msec)",
-                       pmd_alb->rebalance_intvl);
+                      "interval %"PRIu64" mins, "
+                      "pmd load threshold %"PRIu8"%%, "
+                      "improvement threshold %"PRIu8"%%",
+                       pmd_alb->rebalance_intvl / MIN_TO_MSEC,
+                       rebalance_load_thresh,
+                       pmd_alb->rebalance_improve_thresh);
+
         } else {
             pmd_alb->rebalance_poll_timer = 0;
             VLOG_INFO("PMD auto load balance is disabled");
         }
     }
-
 }
 
 /* Applies datapath configuration from the database. Some of the changes are
@@ -4378,6 +4389,9 @@ dpif_netdev_set_config(struct dpif *dpif, const struct smap *other_config)
     uint32_t insert_min, cur_min;
     uint32_t tx_flush_interval, cur_tx_flush_interval;
     uint64_t rebalance_intvl;
+    uint8_t rebalance_load, cur_rebalance_load;
+    uint8_t rebalance_improve;
+    bool log_autolb = false;
 
     tx_flush_interval = smap_get_int(other_config, "tx-flush-interval",
                                      DEFAULT_TX_FLUSH_INTERVAL);
@@ -4455,7 +4469,7 @@ dpif_netdev_set_config(struct dpif *dpif, const struct smap *other_config)
                               false);
 
     rebalance_intvl = smap_get_int(other_config, "pmd-auto-lb-rebal-interval",
-                              ALB_PMD_REBALANCE_POLL_INTERVAL);
+                                   ALB_REBALANCE_INTERVAL);
 
     /* Input is in min, convert it to msec. */
     rebalance_intvl =
@@ -4463,9 +4477,38 @@ dpif_netdev_set_config(struct dpif *dpif, const struct smap *other_config)
 
     if (pmd_alb->rebalance_intvl != rebalance_intvl) {
         pmd_alb->rebalance_intvl = rebalance_intvl;
+        VLOG_INFO("PMD auto load balance interval set to "
+                  "%"PRIu64" mins\n", rebalance_intvl / MIN_TO_MSEC);
+        log_autolb = true;
     }
 
-    set_pmd_auto_lb(dp);
+    rebalance_improve = smap_get_int(other_config,
+                                     "pmd-auto-lb-improvement-threshold",
+                                     ALB_IMPROVEMENT_THRESHOLD);
+    if (rebalance_improve > 100) {
+        rebalance_improve = ALB_IMPROVEMENT_THRESHOLD;
+    }
+    if (rebalance_improve != pmd_alb->rebalance_improve_thresh) {
+        pmd_alb->rebalance_improve_thresh = rebalance_improve;
+        VLOG_INFO("PMD auto load balance improvement threshold set to "
+                  "%"PRIu8"%%", rebalance_improve);
+        log_autolb = true;
+    }
+
+    rebalance_load = smap_get_int(other_config, "pmd-auto-lb-load-threshold",
+                                  ALB_LOAD_THRESHOLD);
+    if (rebalance_load > 100) {
+        rebalance_load = ALB_LOAD_THRESHOLD;
+    }
+    atomic_read_relaxed(&pmd_alb->rebalance_load_thresh, &cur_rebalance_load);
+    if (rebalance_load != cur_rebalance_load) {
+        atomic_store_relaxed(&pmd_alb->rebalance_load_thresh,
+                             rebalance_load);
+        VLOG_INFO("PMD auto load balance load threshold set to %"PRIu8"%%",
+                  rebalance_load);
+        log_autolb = true;
+    }
+    set_pmd_auto_lb(dp, log_autolb);
     return 0;
 }
 
@@ -5610,7 +5653,7 @@ reconfigure_datapath(struct dp_netdev *dp)
     reload_affected_pmds(dp);
 
     /* Check if PMD Auto LB is to be enabled */
-    set_pmd_auto_lb(dp);
+    set_pmd_auto_lb(dp, false);
 }
 
 /* Returns true if one of the netdevs in 'dp' requires a reconfiguration */
@@ -5855,7 +5898,7 @@ pmd_rebalance_dry_run(struct dp_netdev *dp)
             improvement =
                 ((curr_variance - new_variance) * 100) / curr_variance;
         }
-        if (improvement < ALB_ACCEPTABLE_IMPROVEMENT) {
+        if (improvement < dp->pmd_alb.rebalance_improve_thresh) {
             ret = false;
         }
     }
@@ -6917,10 +6960,10 @@ dp_netdev_add_bond_tx_to_pmd(struct dp_netdev_pmd_thread *pmd,
         for (int i = 0; i < BOND_BUCKETS; i++) {
             uint64_t n_packets, n_bytes;
 
-            atomic_read_relaxed(&tx->slave_buckets[i].n_packets, &n_packets);
-            atomic_read_relaxed(&tx->slave_buckets[i].n_bytes, &n_bytes);
-            atomic_init(&new_tx->slave_buckets[i].n_packets, n_packets);
-            atomic_init(&new_tx->slave_buckets[i].n_bytes, n_bytes);
+            atomic_read_relaxed(&tx->member_buckets[i].n_packets, &n_packets);
+            atomic_read_relaxed(&tx->member_buckets[i].n_bytes, &n_bytes);
+            atomic_init(&new_tx->member_buckets[i].n_packets, n_packets);
+            atomic_init(&new_tx->member_buckets[i].n_bytes, n_bytes);
         }
         cmap_replace(&pmd->tx_bonds, &tx->node, &new_tx->node,
                      hash_bond_id(bond->bond_id));
@@ -7930,18 +7973,19 @@ dp_execute_lb_output_action(struct dp_netdev_pmd_thread *pmd,
 
     DP_PACKET_BATCH_FOR_EACH (i, packet, packets_) {
         /*
-         * Lookup the bond-hash table using hash to get the slave.
+         * Lookup the bond-hash table using hash to get the member.
          */
         uint32_t hash = dp_packet_get_rss_hash(packet);
-        struct slave_entry *s_entry = &p_bond->slave_buckets[hash & BOND_MASK];
-        odp_port_t bond_member = s_entry->slave_id;
+        struct member_entry *s_entry
+            = &p_bond->member_buckets[hash & BOND_MASK];
+        odp_port_t bond_member = s_entry->member_id;
         uint32_t size = dp_packet_size(packet);
         struct dp_packet_batch output_pkt;
 
         dp_packet_batch_init_packet(&output_pkt, packet);
         if (OVS_LIKELY(dp_execute_output_action(pmd, &output_pkt, true,
                                                 bond_member))) {
-            /* Update slave stats. */
+            /* Update member stats. */
             non_atomic_ullong_add(&s_entry->n_packets, 1);
             non_atomic_ullong_add(&s_entry->n_bytes, size);
         }
@@ -8624,7 +8668,7 @@ dpif_netdev_ipf_dump_done(struct dpif *dpif OVS_UNUSED, void *ipf_dump_ctx)
 
 static int
 dpif_netdev_bond_add(struct dpif *dpif, uint32_t bond_id,
-                     odp_port_t *slave_map)
+                     odp_port_t *member_map)
 {
     struct tx_bond *new_tx = xzalloc(sizeof *new_tx);
     struct dp_netdev *dp = get_dp_netdev(dpif);
@@ -8633,7 +8677,7 @@ dpif_netdev_bond_add(struct dpif *dpif, uint32_t bond_id,
     /* Prepare new bond mapping. */
     new_tx->bond_id = bond_id;
     for (int bucket = 0; bucket < BOND_BUCKETS; bucket++) {
-        new_tx->slave_buckets[bucket].slave_id = slave_map[bucket];
+        new_tx->member_buckets[bucket].member_id = member_map[bucket];
     }
 
     ovs_mutex_lock(&dp->bond_mutex);
@@ -8706,7 +8750,7 @@ dpif_netdev_bond_stats_get(struct dpif *dpif, uint32_t bond_id,
         for (int i = 0; i < BOND_BUCKETS; i++) {
             uint64_t pmd_n_bytes;
 
-            atomic_read_relaxed(&pmd_bond_entry->slave_buckets[i].n_bytes,
+            atomic_read_relaxed(&pmd_bond_entry->member_buckets[i].n_bytes,
                                 &pmd_n_bytes);
             n_bytes[i] += pmd_n_bytes;
         }
@@ -9048,6 +9092,7 @@ dp_netdev_pmd_try_optimize(struct dp_netdev_pmd_thread *pmd,
 
     if (pmd->ctx.now > pmd->rxq_next_cycle_store) {
         uint64_t curr_tsc;
+        uint8_t rebalance_load_trigger;
         struct pmd_auto_lb *pmd_alb = &pmd->dp->pmd_alb;
         if (pmd_alb->is_enabled && !pmd->isolated
             && (pmd->perf_stats.counters.n[PMD_CYCLES_ITER_IDLE] >=
@@ -9064,7 +9109,9 @@ dp_netdev_pmd_try_optimize(struct dp_netdev_pmd_thread *pmd,
                 pmd_load = ((tot_proc * 100) / (tot_idle + tot_proc));
             }
 
-            if (pmd_load >= ALB_PMD_LOAD_THRESHOLD) {
+            atomic_read_relaxed(&pmd_alb->rebalance_load_thresh,
+                                &rebalance_load_trigger);
+            if (pmd_load >= rebalance_load_trigger) {
                 atomic_count_inc(&pmd->pmd_overloaded);
             } else {
                 atomic_count_set(&pmd->pmd_overloaded, 0);

@@ -214,7 +214,7 @@ ovsdb_log_open(const char *name, const char *magic,
     if (!strcmp(name, "/dev/stdin") && open_mode == OVSDB_LOG_READ_ONLY) {
         fd = dup(STDIN_FILENO);
     } else {
-        fd = open(name, flags, 0666);//打开文件
+        fd = open(name, flags, 0660);//打开文件
     }
     if (fd < 0) {
         const char *op = (open_mode == OVSDB_LOG_CREATE_EXCL ? "create"

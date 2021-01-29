@@ -32,7 +32,7 @@ Q: What does it mean for an Open vSwitch release to be LTS (long-term support)?
     If a significant bug is identified in an LTS release, we will provide an
     updated release that includes the fix.  Releases that are not LTS may not
     be fixed and may just be supplanted by the next major release.  The current
-    LTS release is 2.5.x.
+    LTS release is 2.13.x.
 
     For more information on the Open vSwitch release process, refer to
     :doc:`/internals/release-process`.
@@ -72,6 +72,7 @@ Q: What Linux kernel versions does each Open vSwitch release work with?
     2.12.x       3.16 to 5.0
     2.13.x       3.16 to 5.0
     2.14.x       3.16 to 5.5
+    2.15.x       3.16 to 5.8
     ============ ==============
 
     Open vSwitch userspace should also work with the Linux kernel module built
@@ -83,6 +84,12 @@ Q: What Linux kernel versions does each Open vSwitch release work with?
     Open vSwitch branches 2.10 through 2.14 will still compile against the
     RHEL and CentOS 7 3.10 based kernels since they have diverged from the
     Linux kernel.org 3.10 kernels.
+
+    Starting with Open vSwitch 2.15, building the Linux kernel module from
+    the Open vSwitch source tree is deprecated.  It will not be updated to
+    support Linux versions later than 5.8.  We will remove the kernel module
+    source code from the Open vSwitch source tree for the Open vSwitch 2.18
+    release.
 
 Q: Are all features available with all datapaths?
 
@@ -99,8 +106,9 @@ Q: Are all features available with all datapaths?
       feature.
 
     Linux OVS tree
-      The datapath implemented by the Linux kernel module distributed with the
-      OVS source tree.
+      The datapath implemented by the Linux kernel module distributed with
+      the OVS source tree. This datapath is deprecated starting with OVS
+      2.15.x and support capped at Linux kernel version 5.8.
 
     Userspace
       This datapath supports conventional system devices as well as
@@ -137,6 +145,7 @@ Q: Are all features available with all datapaths?
     Tunnel - ERSPAN                 4.18           2.10         2.10     NO
     Tunnel - ERSPAN-IPv6            4.18           2.10         2.10     NO
     Tunnel - GTP-U                  NO             NO           2.14     NO
+    Tunnel - Bareudp                5.7            NO           NO       NO
     QoS - Policing                  YES            1.1          2.6      NO
     QoS - Shaping                   YES            1.1          NO       NO
     sFlow                           YES            1.0          1.0      NO
@@ -213,7 +222,7 @@ Q: Are all the DPDK releases that OVS versions work with maintained?
     The latest information about DPDK stable and LTS releases can be found
     at `DPDK stable`_.
 
-.. _DPDK stable: http://dpdk.org/doc/guides/contributing/stable.html
+.. _DPDK stable: http://doc.dpdk.org/guides-20.11/contributing/stable.html
 
 Q: I get an error like this when I configure Open vSwitch:
 

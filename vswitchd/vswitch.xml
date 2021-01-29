@@ -653,8 +653,9 @@
               type='{"type": "boolean"}'>
         <p>
          Configures PMD Auto Load Balancing that allows automatic assignment of
-         RX queues to PMDs if any of PMDs is overloaded (i.e. processing cycles
-         > 95%).
+         RX queues to PMDs if any of PMDs is overloaded (i.e. a processing
+         cycles >
+         <ref column="other_config" key="pmd-auto-lb-load-threshold"/>).
         </p>
         <p>
          It uses current scheme of cycle based assignment of RX queues that
@@ -688,6 +689,32 @@
          This option can be configured to avoid frequent trigger of auto load
          balancing of PMDs. For e.g. set the value (in min) such that it occurs
          once in few hours or a day or a week.
+        </p>
+      </column>
+      <column name="other_config" key="pmd-auto-lb-load-threshold"
+              type='{"type": "integer", "minInteger": 0, "maxInteger": 100}'>
+        <p>
+         Specifies the minimum PMD thread load threshold (% of used cycles) of
+         any non-isolated PMD threads when a PMD Auto Load Balance may be
+         triggered.
+        </p>
+        <p>
+         The default value is <code>95%</code>.
+        </p>
+      </column>
+      <column name="other_config" key="pmd-auto-lb-improvement-threshold"
+              type='{"type": "integer", "minInteger": 0, "maxInteger": 100}'>
+        <p>
+         Specifies the minimum evaluated % improvement in load distribution
+         across the non-isolated PMD threads that will allow a PMD Auto Load
+         Balance to occur.
+        </p>
+        <p>
+         Note, setting this parameter to 0 will always allow an auto load
+         balance to occur regardless of estimated improvement or not.
+        </p>
+        <p>
+         The default value is <code>25%</code>.
         </p>
       </column>
       <column name="other_config" key="userspace-tso-enable"
@@ -1072,7 +1099,7 @@
               Drop all unencrypted tunneled packets in which the
               least-significant bit of <code>skb_mark</code> is 0.  This would
               be a useful policy if no unencrypted tunneled traffic should exit
-              the system without being specially whitelisted by setting
+              the system without being specially permitted by setting
               <code>skb_mark</code> to 1.
             </dd>
 
@@ -1949,15 +1976,16 @@
       <dl>
         <dt><code>balance-slb</code></dt>
         <dd>
-          Balances flows among slaves based on source MAC address and output
-          VLAN, with periodic rebalancing as traffic patterns change.
+          Balances flows among members based on source MAC address and
+          output VLAN, with periodic rebalancing as traffic patterns change.
         </dd>
 
         <dt><code>active-backup</code></dt>
         <dd>
-          Assigns all flows to one slave, failing over to a backup slave when
-          the active slave is disabled.  This is the only bonding mode in which
-          interfaces may be plugged into different upstream switches.
+          Assigns all flows to one member, failing over to a backup
+          member when the active member is disabled.  This is the
+          only bonding mode in which interfaces may be plugged into different
+          upstream switches.
         </dd>
       </dl>
 
@@ -1971,8 +1999,8 @@
       <dl>
         <dt><code>balance-tcp</code></dt>
         <dd>
-          Balances flows among slaves based on L3 and L4 protocol information
-          such as IP addresses and TCP/UDP ports.
+          Balances flows among members based on L3 and L4 protocol
+          information such as IP addresses and TCP/UDP ports.
         </dd>
       </dl>
 
@@ -1987,20 +2015,20 @@
 
       <column name="other_config" key="bond-hash-basis"
               type='{"type": "integer"}'>
-        An integer hashed along with flows when choosing output slaves in load
-        balanced bonds.  When changed, all flows will be assigned different
-        hash values possibly causing slave selection decisions to change.  Does
-        not affect bonding modes which do not employ load balancing such as
-        <code>active-backup</code>.
+        An integer hashed along with flows when choosing output members
+        in load balanced bonds.  When changed, all flows will be assigned
+        different hash values possibly causing member selection
+        decisions to change.  Does not affect bonding modes which do not employ
+        load balancing such as <code>active-backup</code>.
       </column>
 
       <column name="other_config" key="lb-output-action"
               type='{"type": "boolean"}'>
         Enable/disable usage of optimized <code>lb_output</code> action for
-        balancing flows among output slaves in load balanced bonds in
+        balancing flows among output members in load balanced bonds in
         <code>balance-tcp</code>. When enabled, it uses optimized path for
-        balance-tcp mode by using rss hash and avoids recirculation.
-        This knob does not affect other balancing modes.
+        balance-tcp mode by using rss hash and avoids recirculation.  This knob
+        does not affect other balancing modes.
       </column>
 
       <column name="other_config" key="bond-primary"
@@ -2008,7 +2036,10 @@
         If a slave interface with this name exists in the bond and
         is up, it will be made active.  Relevant only when <ref
         column="other_config" key="bond_mode"/> is
-        <code>active-backup</code>.
+        <code>active-backup</code> or if <code>balance-tcp</code> falls back
+        to <code>active-backup</code> (e.g., LACP negotiation fails and
+        <ref column="other_config" key="lacp-fallback-ab"/> is
+        <code>true</code>).
       </column>
 
       <group title="Link Failure Detection">
@@ -2387,7 +2418,8 @@
     </group>
 
     <column name="bond_active_slave">
-      For a bonded port, record the mac address of the current active slave.
+      For a bonded port, record the MAC address of the current active
+      member.
     </column>
 
     <group title="Port Statistics">
@@ -2477,7 +2509,8 @@
           <li>For the local interface, the default is the lowest-numbered MAC
           address among the other bridge ports, either the value of the
           <ref table="Port" column="mac"/> in its <ref table="Port"/> record,
-          if set, or its actual MAC (for bonded ports, the MAC of its slave
+          if set, or its actual MAC (for bonded ports, the MAC of its
+          member
           whose name is first in alphabetical order).  Internal ports and
           bridge ports that are used as port mirroring destinations (see the
           <ref table="Mirror"/> table) are ignored.</li>
@@ -2688,6 +2721,15 @@
             </p>
           </dd>
 
+          <dt><code>Bareudp</code></dt>
+          <dd>
+            <p>
+            The Bareudp tunnel provides a generic L3 encapsulation support for
+            tunnelling different L3 protocols like MPLS, IP, NSH etc. inside a
+            UDP tunnel.
+            </p>
+          </dd>
+
         </dl>
       </column>
     </group>
@@ -2695,8 +2737,9 @@
     <group title="Tunnel Options">
       <p>
         These options apply to interfaces with <ref column="type"/> of
-        <code>geneve</code>, <code>gre</code>, <code>ip6gre</code>,
-        <code>vxlan</code>, <code>lisp</code> and <code>stt</code>.
+        <code>geneve</code>, <code>bareudp</code>, <code>gre</code>,
+        <code>ip6gre</code>, <code>vxlan</code>, <code>lisp</code> and
+        <code>stt</code>.
       </p>
 
       <p>
@@ -2708,6 +2751,8 @@
         one is matched first.  <ref column="options" key="in_key"/> is
         considered more specific than <ref column="options" key="local_ip"/> if
         a port defines one and another port defines the other.
+        <ref column="options" key="in_key"/> is not applicable for bareudp
+        tunnels. Hence it is not considered while identifying a bareudp tunnel.
       </p>
 
       <column name="options" key="remote_ip">
@@ -2774,7 +2819,10 @@
       </column>
 
       <column name="options" key="in_key">
-        <p>Optional.  The key that received packets must contain, one of:</p>
+        <p>
+          Optional, not applicable for <code>bareudp</code>. The key that
+          received packets must contain, one of:
+        </p>
 
         <ul>
           <li>
@@ -2801,7 +2849,10 @@
       </column>
 
       <column name="options" key="out_key">
-        <p>Optional.  The key to be set on outgoing packets, one of:</p>
+      <p>
+        Optional, not applicable for <code>bareudp</code>. The key to be set
+        on outgoing packets, one of:
+      </p>
 
         <ul>
           <li>
@@ -2993,10 +3044,11 @@
         </column>
       </group>
 
-      <group title="Tunnel Options: gre, ip6gre, geneve, and vxlan">
+      <group title="Tunnel Options: gre, ip6gre, geneve, bareudp and vxlan">
         <p>
           <code>gre</code>, <code>ip6gre</code>, <code>geneve</code>,
-          and <code>vxlan</code> interfaces support these options.
+          <code>bareudp</code> and <code>vxlan</code> interfaces support these
+          options.
         </p>
 
         <column name="options" key="csum" type='{"type": "boolean"}'>
@@ -3082,6 +3134,17 @@
         <p>
           ERSPAN hardware ID is a 6-bit unique identifier of an
           ERSPAN v2 engine within a system.
+        </p>
+      </column>
+    </group>
+
+    <group title="Tunnel Options: Bareudp only">
+      <column name="options" key="payload_type">
+        <p>
+           Specifies the ethertype of the l3 protocol the bareudp
+           device is tunnelling. For the tunnels which supports multiple
+           ethertypes of a l3 protocol (IP, MPLS) this field specifies the
+           protocol name as a string.
         </p>
       </column>
     </group>
@@ -3236,17 +3299,6 @@ ovs-vsctl add-port br0 p0 -- set Interface p0 type=patch options:peer=p1 \
         </p>
       </column>
 
-      <column name="options" key="dq-zero-copy"
-              type='{"type": "boolean"}'>
-        <p>
-          The value specifies whether or not to enable dequeue zero copy on
-          the given interface.
-          Must be set before vhost-server-path is specified.
-          Only supported by dpdkvhostuserclient interfaces.
-          The feature is considered experimental.
-        </p>
-      </column>
-
       <column name="options" key="tx-retries-max"
               type='{"type": "integer", "minInteger": 0, "maxInteger": 32}'>
         <p>
@@ -3279,6 +3331,24 @@ ovs-vsctl add-port br0 p0 -- set Interface p0 type=patch options:peer=p1 \
           If not specified or an incorrect value is specified, 2048 tx
           descriptors will be used by default.
         </p>
+      </column>
+
+      <column name="options" key="dpdk-vf-mac">
+        <p>
+          Ethernet address to set for this VF interface.  If unset then the
+          default MAC address is used:
+        </p>
+        <ul>
+          <li>
+            For most drivers, the default MAC address assigned by their
+            hardware.
+          </li>
+          <li>
+            For bifurcated drivers, the MAC currently used by the kernel
+            netdevice.
+          </li>
+        </ul>
+        <p>This option may only be used with dpdk VF representors.</p>
       </column>
     </group>
 
@@ -5275,16 +5345,21 @@ ovs-vsctl add-port br0 p0 -- set Interface p0 type=patch options:peer=p1 \
           <dt><code>other</code></dt>
           <dd>Allows the controller access to all OpenFlow features.</dd>
           <dt><code>master</code></dt>
-          <dd>Equivalent to <code>other</code>, except that there may be at
-          most one master controller at a time.  When a controller configures
-          itself as <code>master</code>, any existing master is demoted to
-          the <code>slave</code> role.</dd>
+          <dd>
+            Equivalent to <code>other</code>, except that there may be at
+            most one such controller at a time.  If a given controller
+            promotes itself to this role, <code>ovs-vswitchd</code>
+            demotes any existing controller with the role to <code>slave</code>.
+          </dd>
+
           <dt><code>slave</code></dt>
-          <dd>Allows the controller read-only access to OpenFlow features.
-          Attempts to modify the flow table will be rejected with an
-          error.  Slave controllers do not receive OFPT_PACKET_IN or
-          OFPT_FLOW_REMOVED messages, but they do receive OFPT_PORT_STATUS
-          messages.</dd>
+          <dd>
+            Allows the controller read-only access to OpenFlow features.
+            Attempts to modify the flow table will be rejected with an
+            error.  Such controllers do not receive OFPT_PACKET_IN or
+            OFPT_FLOW_REMOVED messages, but they do receive OFPT_PORT_STATUS
+            messages.
+          </dd>
         </dl>
       </column>
 

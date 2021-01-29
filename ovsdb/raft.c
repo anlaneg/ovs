@@ -264,6 +264,12 @@ struct raft {
     long long int election_base;    /* Time of last heartbeat from leader. */
     long long int election_timeout; /* Time at which we start an election. */
 
+    long long int election_start;   /* Start election time. */
+    long long int election_won;     /* Time of election completion. */
+    bool leadership_transfer;       /* Was the leadership transferred? */
+
+    unsigned int n_disconnections;
+
     /* Used for joining a cluster. */
     bool joining;                 /* Attempting to join the cluster? */
     struct sset remote_addresses; /* Addresses to try to find other servers. */
@@ -305,6 +311,12 @@ struct raft {
     bool ever_had_leader;       /* There has been leader elected since the raft
                                    is initialized, meaning it is ever
                                    connected. */
+
+    /* Connection backlog limits. */
+#define DEFAULT_MAX_BACKLOG_N_MSGS    500
+#define DEFAULT_MAX_BACKLOG_N_BYTES   UINT32_MAX
+    size_t conn_backlog_max_n_msgs;   /* Number of messages. */
+    size_t conn_backlog_max_n_bytes;  /* Number of bytes. */
 };
 
 /* All Raft structures. */
@@ -411,6 +423,9 @@ raft_alloc(void)
     hmap_init(&raft->commands);
 
     raft->election_timer = ELECTION_BASE_MSEC;
+
+    raft->conn_backlog_max_n_msgs = DEFAULT_MAX_BACKLOG_N_MSGS;
+    raft->conn_backlog_max_n_bytes = DEFAULT_MAX_BACKLOG_N_BYTES;
 
     return raft;
 }
@@ -940,6 +955,8 @@ raft_add_conn(struct raft *raft, struct jsonrpc_session *js,
     conn->incoming = incoming;
     conn->js_seqno = jsonrpc_session_get_seqno(conn->js);
     jsonrpc_session_set_probe_interval(js, 0);
+    jsonrpc_session_set_backlog_threshold(js, raft->conn_backlog_max_n_msgs,
+                                              raft->conn_backlog_max_n_bytes);
 }
 
 /* Starts the local server in an existing Raft cluster, using the local copy of
@@ -1020,14 +1037,16 @@ void
 raft_get_memory_usage(const struct raft *raft, struct simap *usage)
 {
     struct raft_conn *conn;
+    uint64_t backlog = 0;
     int cnt = 0;
 
     LIST_FOR_EACH (conn, list_node, &raft->conns) {
-        simap_increase(usage, "raft-backlog",
-                       jsonrpc_session_get_backlog(conn->js));
+        backlog += jsonrpc_session_get_backlog(conn->js);
         cnt++;
     }
+    simap_increase(usage, "raft-backlog-kB", backlog / 1000);
     simap_increase(usage, "raft-connections", cnt);
+    simap_increase(usage, "raft-log", raft->log_end - raft->log_start);
 }
 
 /* Returns true if 'raft' has completed joining its cluster, has not left or
@@ -1043,13 +1062,22 @@ raft_get_memory_usage(const struct raft *raft, struct simap *usage)
 bool
 raft_is_connected(const struct raft *raft)
 {
+    static bool last_state = false;
     bool ret = (!raft->candidate_retrying
             && !raft->joining
             && !raft->leaving
             && !raft->left
             && !raft->failed
             && raft->ever_had_leader);
-    VLOG_DBG("raft_is_connected: %s\n", ret? "true": "false");
+
+    if (!ret) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
+        VLOG_DBG_RL(&rl, "raft_is_connected: false");
+    } else if (!last_state) {
+        VLOG_DBG("raft_is_connected: true");
+    }
+    last_state = ret;
+
     return ret;
 }
 
@@ -1426,12 +1454,11 @@ raft_conn_run(struct raft *raft, struct raft_conn *conn)
                            && jsonrpc_session_is_connected(conn->js));
 
     if (reconnected) {
-        /* Clear 'last_install_snapshot_request' since it might not reach the
-         * destination or server was restarted. */
+        /* Clear 'install_snapshot_request_in_progress' since it might not
+         * reach the destination or server was restarted. */
         struct raft_server *server = raft_find_server(raft, &conn->sid);
         if (server) {
-            free(server->last_install_snapshot_request);
-            server->last_install_snapshot_request = NULL;
+            server->install_snapshot_request_in_progress = false;
         }
     }
 
@@ -1687,6 +1714,10 @@ raft_start_election(struct raft *raft, bool leadership_transfer)
 
     raft->n_votes = 0;
 
+    raft->election_start = time_msec();
+    raft->election_won = 0;
+    raft->leadership_transfer = leadership_transfer;
+
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
     if (!VLOG_DROP_INFO(&rl)) {
         long long int now = time_msec();
@@ -1836,6 +1867,7 @@ raft_run(struct raft *raft)
     struct raft_conn *next;
     LIST_FOR_EACH_SAFE (conn, next, list_node, &raft->conns) {
         if (!raft_conn_should_stay_open(raft, conn)) {
+            raft->n_disconnections++;
             raft_conn_close(conn);
         }
     }
@@ -2553,6 +2585,7 @@ raft_server_init_leader(struct raft *raft, struct raft_server *s)
     s->match_index = 0;
     s->phase = RAFT_PHASE_STABLE;
     s->replied = false;
+    s->install_snapshot_request_in_progress = false;
 }
 
 static void
@@ -2575,6 +2608,7 @@ raft_become_leader(struct raft *raft)
 
     ovs_assert(raft->role != RAFT_LEADER);
     raft->role = RAFT_LEADER;
+    raft->election_won = time_msec();
     raft_set_leader(raft, &raft->sid);
     raft_reset_election_timer(raft);
     raft_reset_ping_timer(raft);
@@ -3309,31 +3343,19 @@ raft_send_install_snapshot_request(struct raft *raft,
         }
     };
 
-    if (s->last_install_snapshot_request) {
-        struct raft_install_snapshot_request *old, *new;
+    if (s->install_snapshot_request_in_progress) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
 
-        old = s->last_install_snapshot_request;
-        new = &rpc.install_snapshot_request;
-        if (   old->term           == new->term
-            && old->last_index     == new->last_index
-            && old->last_term      == new->last_term
-            && old->last_servers   == new->last_servers
-            && old->data           == new->data
-            && old->election_timer == new->election_timer
-            && uuid_equals(&old->last_eid, &new->last_eid)) {
-            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
-
-            VLOG_WARN_RL(&rl, "not sending exact same install_snapshot_request"
-                              " to server %s again", s->nickname);
-            return;
-        }
+        VLOG_INFO_RL(&rl, "not sending snapshot to server %s, "
+                          "already in progress", s->nickname);
+        return;
     }
-    free(s->last_install_snapshot_request);
-    CONST_CAST(struct raft_server *, s)->last_install_snapshot_request
-        = xmemdup(&rpc.install_snapshot_request,
-                  sizeof rpc.install_snapshot_request);
 
-    raft_send(raft, &rpc);
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
+    VLOG_INFO_RL(&rl, "sending snapshot to server %s, %"PRIu64":%"PRIu64".",
+                      s->nickname, raft->term, raft->log_start - 1);
+    CONST_CAST(struct raft_server *, s)->install_snapshot_request_in_progress
+        = raft_send(raft, &rpc);
 }
 
 static void
@@ -3704,6 +3726,7 @@ raft_handle_add_server_request(struct raft *raft,
     s->requester_sid = rq->common.sid;
     s->requester_conn = NULL;
     s->phase = RAFT_PHASE_CATCHUP;
+    s->last_msg_ts = time_msec();
 
     /* Start sending the log.  If this is the first time we've tried to add
      * this server, then this will quickly degenerate into an InstallSnapshot
@@ -3986,7 +4009,7 @@ raft_handle_install_snapshot_request__(
     struct ovsdb_error *error = raft_save_snapshot(raft, new_log_start,
                                                    &new_snapshot);
     if (error) {
-        char *error_s = ovsdb_error_to_string(error);
+        char *error_s = ovsdb_error_to_string_free(error);
         VLOG_WARN("could not save snapshot: %s", error_s);
         free(error_s);
         return false;
@@ -4049,6 +4072,8 @@ raft_handle_install_snapshot_reply(
             return;
         }
     }
+
+    s->install_snapshot_request_in_progress = false;
 
     if (rpy->last_index != raft->log_start - 1 ||
         rpy->last_term != raft->snap.term) {
@@ -4261,6 +4286,11 @@ raft_handle_execute_command_reply(
 static void
 raft_handle_rpc(struct raft *raft, const union raft_rpc *rpc)
 {
+    struct raft_server *s = raft_find_server(raft, &rpc->common.sid);
+    if (s) {
+        s->last_msg_ts = time_msec();
+    }
+
     uint64_t term = raft_rpc_get_term(rpc);
     if (term
         && !raft_should_suppress_disruptive_server(raft, rpc)
@@ -4473,6 +4503,17 @@ raft_unixctl_status(struct unixctl_conn *conn,
     raft_put_sid("Vote", &raft->vote, raft, &s);
     ds_put_char(&s, '\n');
 
+    if (raft->election_start) {
+        ds_put_format(&s,
+                      "Last Election started %"PRIu64" ms ago, reason: %s\n",
+                      (uint64_t) (time_msec() - raft->election_start),
+                      raft->leadership_transfer
+                      ? "leadership_transfer" : "timeout");
+    }
+    if (raft->election_won) {
+        ds_put_format(&s, "Last Election won: %"PRIu64" ms ago\n",
+                      (uint64_t) (time_msec() - raft->election_won));
+    }
     ds_put_format(&s, "Election timer: %"PRIu64, raft->election_timer);
     if (raft->role == RAFT_LEADER && raft->election_timer_new) {
         ds_put_format(&s, " (changing to %"PRIu64")",
@@ -4500,6 +4541,8 @@ raft_unixctl_status(struct unixctl_conn *conn,
     }
     ds_put_char(&s, '\n');
 
+    ds_put_format(&s, "Disconnections: %u\n", raft->n_disconnections);
+
     ds_put_cstr(&s, "Servers:\n");
     struct raft_server *server;
     HMAP_FOR_EACH (server, hmap_node, &raft->servers) {
@@ -4523,6 +4566,10 @@ raft_unixctl_status(struct unixctl_conn *conn,
         } else if (raft->role == RAFT_LEADER) {
             ds_put_format(&s, " next_index=%"PRIu64" match_index=%"PRIu64,
                           server->next_index, server->match_index);
+        }
+        if (server->last_msg_ts) {
+            ds_put_format(&s, " last msg %"PRIu64" ms ago",
+                          (uint64_t) (time_msec() - server->last_msg_ts));
         }
         ds_put_char(&s, '\n');
     }
@@ -4712,6 +4759,42 @@ raft_unixctl_change_election_timer(struct unixctl_conn *conn,
 }
 
 static void
+raft_unixctl_set_backlog_threshold(struct unixctl_conn *conn,
+                                   int argc OVS_UNUSED, const char *argv[],
+                                   void *aux OVS_UNUSED)
+{
+    const char *cluster_name = argv[1];
+    unsigned long long n_msgs, n_bytes;
+    struct raft_conn *r_conn;
+
+    struct raft *raft = raft_lookup_by_name(cluster_name);
+    if (!raft) {
+        unixctl_command_reply_error(conn, "unknown cluster");
+        return;
+    }
+
+    if (!str_to_ullong(argv[2], 10, &n_msgs)
+        || !str_to_ullong(argv[3], 10, &n_bytes)) {
+        unixctl_command_reply_error(conn, "invalid argument");
+        return;
+    }
+
+    if (n_msgs < 50 || n_msgs > SIZE_MAX || n_bytes > SIZE_MAX) {
+        unixctl_command_reply_error(conn, "values out of range");
+        return;
+    }
+
+    raft->conn_backlog_max_n_msgs = n_msgs;
+    raft->conn_backlog_max_n_bytes = n_bytes;
+
+    LIST_FOR_EACH (r_conn, list_node, &raft->conns) {
+        jsonrpc_session_set_backlog_threshold(r_conn->js, n_msgs, n_bytes);
+    }
+
+    unixctl_command_reply(conn, NULL);
+}
+
+static void
 raft_unixctl_failure_test(struct unixctl_conn *conn OVS_UNUSED,
                           int argc OVS_UNUSED, const char *argv[],
                           void *aux OVS_UNUSED)
@@ -4771,6 +4854,9 @@ raft_init(void)
                              raft_unixctl_kick, NULL);
     unixctl_command_register("cluster/change-election-timer", "DB TIME", 2, 2,
                              raft_unixctl_change_election_timer, NULL);
+    unixctl_command_register("cluster/set-backlog-threshold",
+                             "DB N_MSGS N_BYTES", 3, 3,
+                             raft_unixctl_set_backlog_threshold, NULL);
     unixctl_command_register("cluster/failure-test", "FAILURE SCENARIO", 1, 1,
                              raft_unixctl_failure_test, NULL);
     ovsthread_once_done(&once);

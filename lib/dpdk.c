@@ -468,7 +468,7 @@ dpdk_init__(const struct smap *ovs_other_config)
 
     /**
      * NOTE: This is an unsophisticated mechanism for determining the DPDK
-     * lcore for the DPDK Master.
+     * main core.
      */
     //未给出-c,-l参数，构造-c参数
     if (auto_determine) {

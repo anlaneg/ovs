@@ -246,6 +246,7 @@ enum ovs_vport_type {
 	OVS_VPORT_TYPE_IP6ERSPAN = 108, /* ERSPAN tunnel. */
 	OVS_VPORT_TYPE_IP6GRE = 109,
 	OVS_VPORT_TYPE_GTPU = 110,
+	OVS_VPORT_TYPE_BAREUDP = 111,  /* Bareudp tunnel. */
 	__OVS_VPORT_TYPE_MAX
 };
 
@@ -307,6 +308,14 @@ enum {
 };
 
 #define OVS_VXLAN_EXT_MAX (__OVS_VXLAN_EXT_MAX - 1)
+
+enum {
+	OVS_BAREUDP_EXT_UNSPEC,
+	OVS_BAREUDP_EXT_MULTIPROTO_MODE,
+	__OVS_BAREUDP_EXT_MAX,
+};
+
+#define OVS_BAREUDP_EXT_MAX (__OVS_BAREUDP_EXT_MAX - 1)
 
 /* OVS_VPORT_ATTR_OPTIONS attributes for tunnels.
  */
@@ -405,7 +414,10 @@ enum ovs_tunnel_key_attr {
 	OVS_TUNNEL_KEY_ATTR_IPV6_DST,		/* struct in6_addr dst IPv6 address. */
 	OVS_TUNNEL_KEY_ATTR_PAD,
 	OVS_TUNNEL_KEY_ATTR_ERSPAN_OPTS,	/* struct erspan_metadata */
+#ifndef __KERNEL__
+	/* Only used within userspace data path. */
 	OVS_TUNNEL_KEY_ATTR_GTPU_OPTS,		/* struct gtpu_metadata */
+#endif
 	__OVS_TUNNEL_KEY_ATTR_MAX
 };
 

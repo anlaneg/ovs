@@ -107,6 +107,7 @@ struct netdev_tunnel_config {//tunnel配置结构体
     bool out_key_flow;//是否用流中的key(out)
     ovs_be64 out_key;//tunnel id
 
+    ovs_be16 payload_ethertype;
     ovs_be16 dst_port;//tunnel的目的端口
 
     bool ip_src_flow;//是否用流中的src地址

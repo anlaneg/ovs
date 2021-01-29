@@ -167,6 +167,7 @@ __regex_is_for_if_single_line_bracket = \
 __regex_ends_with_bracket = \
     re.compile(r'[^\s]\) {(\s+/\*[\s\Sa-zA-Z0-9\.,\?\*/+-]*)?$')
 __regex_ptr_declaration_missing_whitespace = re.compile(r'[a-zA-Z0-9]\*[^*]')
+__regex_cast_missing_whitespace = re.compile(r'\)[a-zA-Z0-9]')
 __regex_is_comment_line = re.compile(r'^\s*(/\*|\*\s)')
 __regex_has_comment = re.compile(r'.*(/\*|\*\s)')
 __regex_has_c99_comment = re.compile(r'.*//.*$')
@@ -190,13 +191,13 @@ skip_signoff_check = False
 # name, as they may have legitimate reasons to have longer lines.
 #
 # Python isn't checked as flake8 performs these checks during build.
-line_length_blacklist = re.compile(
+line_length_ignore_list = re.compile(
     r'\.(am|at|etc|in|m4|mk|patch|py)$|debian/rules')
 
 # Don't enforce a requirement that leading whitespace be all spaces on
 # files that include these characters in their name, since these kinds
 # of files need lines with leading tabs.
-leading_whitespace_blacklist = re.compile(r'\.(mk|am|at)$|debian/rules')
+leading_whitespace_ignore_list = re.compile(r'\.(mk|am|at)$|debian/rules')
 
 
 def is_subtracted_line(line):
@@ -284,6 +285,12 @@ def pointer_whitespace_check(line):
     """Return TRUE if there is no space between a pointer name and the
        asterisk that denotes this is a apionter type, ie: 'struct foo*'"""
     return __regex_ptr_declaration_missing_whitespace.search(line) is not None
+
+
+def cast_whitespace_check(line):
+    """Return TRUE if there is no space between the '()' used in a cast and
+       the expression whose type is cast, i.e.: '(void *)foo'"""
+    return __regex_cast_missing_whitespace.search(line) is not None
 
 
 def line_length_check(line):
@@ -523,11 +530,11 @@ file_checks = [
 
 checks = [
     {'regex': None,
-     'match_name': lambda x: not line_length_blacklist.search(x),
+     'match_name': lambda x: not line_length_ignore_list.search(x),
      'check': lambda x: line_length_check(x)},
 
     {'regex': None,
-     'match_name': lambda x: not leading_whitespace_blacklist.search(x),
+     'match_name': lambda x: not leading_whitespace_ignore_list.search(x),
      'check': lambda x: not leading_whitespace_is_spaces(x),
      'print': lambda: print_warning("Line has non-spaces leading whitespace")},
 
@@ -550,6 +557,12 @@ checks = [
      'check': lambda x: pointer_whitespace_check(x),
      'print':
      lambda: print_error("Inappropriate spacing in pointer declaration")},
+
+    {'regex': r'(\.c|\.h)(\.in)?$', 'match_name': None,
+     'prereq': lambda x: not is_comment_line(x),
+     'check': lambda x: cast_whitespace_check(x),
+     'print':
+     lambda: print_error("Inappropriate spacing around cast")},
 
     {'regex': r'(\.c|\.h)(\.in)?$', 'match_name': None,
      'prereq': lambda x: not is_comment_line(x),

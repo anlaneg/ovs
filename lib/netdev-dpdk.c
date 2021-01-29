@@ -26,12 +26,6 @@
 #include <sys/socket.h>
 #include <linux/if.h>
 
-/* Include rte_compat.h first to allow experimental API's needed for the
- * rte_meter.h rfc4115 functions. Once they are no longer marked as
- * experimental the #define and rte_compat.h include can be removed.
- */
-#define ALLOW_EXPERIMENTAL_API
-#include <rte_compat.h>
 #include <rte_bus_pci.h>
 #include <rte_config.h>
 #include <rte_cycles.h>
@@ -162,20 +156,19 @@ typedef uint16_t dpdk_port_t;
 
 
 static const struct rte_eth_conf port_conf = {
-.rxmode = {
-.mq_mode = ETH_MQ_RX_RSS,
-.split_hdr_size = 0,
-.offloads = 0,
-},
-.rx_adv_conf = {
-.rss_conf = {
-    .rss_key = NULL,
-    .rss_hf = ETH_RSS_IP | ETH_RSS_UDP | ETH_RSS_TCP,
-},
-},
-.txmode = {
-.mq_mode = ETH_MQ_TX_NONE,
-},
+    .rxmode = {
+        .split_hdr_size = 0,
+        .offloads = 0,
+    },
+    .rx_adv_conf = {
+        .rss_conf = {
+            .rss_key = NULL,
+            .rss_hf = ETH_RSS_IP | ETH_RSS_UDP | ETH_RSS_TCP,
+        },
+    },
+    .txmode = {
+        .mq_mode = ETH_MQ_TX_NONE,
+    },
 };
 
 /*
@@ -524,6 +517,9 @@ struct netdev_dpdk {
          * otherwise interrupt mode is used. */
         bool requested_lsc_interrupt_mode;
         bool lsc_interrupt_mode;
+
+        /* VF configuration. */
+        struct eth_addr requested_hwaddr;
     );
 
     PADDED_MEMBERS(CACHE_LINE_SIZE,
@@ -971,6 +967,14 @@ dpdk_eth_dev_port_config(struct netdev_dpdk *dev, int n_rxq, int n_txq)
 
     rte_eth_dev_info_get(dev->port_id, &info);
 
+    /* As of DPDK 19.11, it is not allowed to set a mq_mode for
+     * virtio PMD driver. */
+    if (!strcmp(info.driver_name, "net_virtio")) {
+        conf.rxmode.mq_mode = ETH_MQ_RX_NONE;
+    } else {
+        conf.rxmode.mq_mode = ETH_MQ_RX_RSS;
+    }
+
     /* As of DPDK 17.11.1 a few PMDs require to explicitly enable
      * scatter to support jumbo RX.
      * Setting scatter for the device is done after checking for
@@ -1330,7 +1334,7 @@ vhost_common_construct(struct netdev *netdev)
 OVS_REQUIRES(dpdk_mutex)
 {
     //获得master core的socket
-    int socket_id = rte_lcore_to_socket_id(rte_get_master_lcore());
+    int socket_id = rte_lcore_to_socket_id(rte_get_main_lcore());
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
 
     dev->vhost_rxq_enabled = dpdk_rte_mzalloc(OVS_VHOST_MAX_QUEUE_NUM *
@@ -1483,10 +1487,9 @@ dpdk_mp_put(dev->dpdk_mp);
 static void
 netdev_dpdk_destruct(struct netdev *netdev)
 {
-struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-struct rte_device *rte_dev;
-struct rte_eth_dev *eth_dev;
-bool remove_on_close;
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    struct rte_device *rte_dev;
+    struct rte_eth_dev *eth_dev;
 
 ovs_mutex_lock(&dpdk_mutex);
 
@@ -1498,20 +1501,15 @@ dev->started = false;
          * FIXME: avoid direct access to DPDK internal array rte_eth_devices.
          */
         eth_dev = &rte_eth_devices[dev->port_id];
-        remove_on_close =
-            eth_dev->data &&
-                (eth_dev->data->dev_flags & RTE_ETH_DEV_CLOSE_REMOVE);
         rte_dev = eth_dev->device;
 
         /* Remove the eth device. */
         rte_eth_dev_close(dev->port_id);
 
-        /* Remove this rte device and all its eth devices if flag
-         * RTE_ETH_DEV_CLOSE_REMOVE is not supported (which means representors
-         * are not supported), or if all the eth devices belonging to the rte
-         * device are closed.
+        /* Remove this rte device and all its eth devices if all the eth
+         * devices belonging to the rte device are closed.
          */
-        if (!remove_on_close || !netdev_dpdk_get_num_ports(rte_dev)) {
+        if (!netdev_dpdk_get_num_ports(rte_dev)) {
             int ret = rte_dev_remove(rte_dev);
 
             if (ret < 0) {
@@ -1725,6 +1723,16 @@ netdev_dpdk_clear_xstats(dev);
 return ret;
 }
 
+static bool
+dpdk_port_is_representor(struct netdev_dpdk *dev)
+    OVS_REQUIRES(dev->mutex)
+{
+    struct rte_eth_dev_info dev_info;
+
+    rte_eth_dev_info_get(dev->port_id, &dev_info);
+    return (*dev_info.dev_flags) & RTE_ETH_DEV_REPRESENTOR;
+}
+
 static int
 netdev_dpdk_get_config(const struct netdev *netdev, struct smap *args)//填充当前配置
 {
@@ -1760,6 +1768,11 @@ smap_add_format(args, "mtu", "%d", dev->mtu);
         }
         smap_add(args, "lsc_interrupt_mode",
                  dev->lsc_interrupt_mode ? "true" : "false");
+
+        if (dpdk_port_is_representor(dev)) {
+            smap_add_format(args, "dpdk-vf-mac", ETH_ADDR_FMT,
+                            ETH_ADDR_ARGS(dev->requested_hwaddr));
+        }
     }
     ovs_mutex_unlock(&dev->mutex);
 
@@ -1943,6 +1956,7 @@ netdev_dpdk_set_config(struct netdev *netdev, const struct smap *args,
         {RTE_FC_RX_PAUSE, RTE_FC_FULL    }
     };
     const char *new_devargs;
+    const char *vf_mac;
     int err = 0;
 
     ovs_mutex_lock(&dpdk_mutex);
@@ -1989,11 +2003,33 @@ if (err) {
 goto out;
 }
 
-lsc_interrupt_mode = smap_get_bool(args, "dpdk-lsc-interrupt", false);
-if (dev->requested_lsc_interrupt_mode != lsc_interrupt_mode) {
-dev->requested_lsc_interrupt_mode = lsc_interrupt_mode;
-netdev_request_reconfigure(netdev);
-}
+    vf_mac = smap_get(args, "dpdk-vf-mac");
+    if (vf_mac) {
+        struct eth_addr mac;
+
+        if (!dpdk_port_is_representor(dev)) {
+            VLOG_WARN_BUF(errp, "'%s' is trying to set the VF MAC '%s' "
+                          "but 'options:dpdk-vf-mac' is only supported for "
+                          "VF representors.",
+                          netdev_get_name(netdev), vf_mac);
+        } else if (!eth_addr_from_string(vf_mac, &mac)) {
+            VLOG_WARN_BUF(errp, "interface '%s': cannot parse VF MAC '%s'.",
+                          netdev_get_name(netdev), vf_mac);
+        } else if (eth_addr_is_multicast(mac)) {
+            VLOG_WARN_BUF(errp,
+                          "interface '%s': cannot set VF MAC to multicast "
+                          "address '%s'.", netdev_get_name(netdev), vf_mac);
+        } else if (!eth_addr_equals(dev->requested_hwaddr, mac)) {
+            dev->requested_hwaddr = mac;
+            netdev_request_reconfigure(netdev);
+        }
+    }
+
+    lsc_interrupt_mode = smap_get_bool(args, "dpdk-lsc-interrupt", false);
+    if (dev->requested_lsc_interrupt_mode != lsc_interrupt_mode) {
+        dev->requested_lsc_interrupt_mode = lsc_interrupt_mode;
+        netdev_request_reconfigure(netdev);
+    }
 
 rx_fc_en = smap_get_bool(args, "rx-flow-ctrl", false);
 tx_fc_en = smap_get_bool(args, "tx-flow-ctrl", false);
@@ -2053,12 +2089,6 @@ netdev_dpdk_vhost_client_set_config(struct netdev *netdev,
         if (!nullable_string_is_equal(path, dev->vhost_id)) {
             free(dev->vhost_id);
             dev->vhost_id = nullable_xstrdup(path);
-            /* check zero copy configuration */
-            if (smap_get_bool(args, "dq-zero-copy", false)) {
-                dev->vhost_driver_flags |= RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
-            } else {
-                dev->vhost_driver_flags &= ~RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
-            }
             netdev_request_reconfigure(netdev);
         }
     }
@@ -2952,18 +2982,45 @@ netdev_dpdk_eth_send(struct netdev *netdev, int qid,
 }
 
 static int
-netdev_dpdk_set_etheraddr(struct netdev *netdev, const struct eth_addr mac)//设置dpdk对应的mac地址
+//设置dpdk对应的mac地址
+netdev_dpdk_set_etheraddr__(struct netdev_dpdk *dev, const struct eth_addr mac)
+    OVS_REQUIRES(dev->mutex)
+{
+    int err = 0;
+
+    if (dev->type == DPDK_DEV_ETH) {
+        struct rte_ether_addr ea;
+
+        memcpy(ea.addr_bytes, mac.ea, ETH_ADDR_LEN);
+        err = -rte_eth_dev_default_mac_addr_set(dev->port_id, &ea);
+    }
+    if (!err) {
+        dev->hwaddr = mac;
+    } else {
+        VLOG_WARN("%s: Failed to set requested mac("ETH_ADDR_FMT"): %s",
+                  netdev_get_name(&dev->up), ETH_ADDR_ARGS(mac),
+                  rte_strerror(err));
+    }
+
+    return err;
+}
+
+static int
+netdev_dpdk_set_etheraddr(struct netdev *netdev, const struct eth_addr mac)
 {
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    int err = 0;
 
     ovs_mutex_lock(&dev->mutex);
     if (!eth_addr_equals(dev->hwaddr, mac)) {
-        dev->hwaddr = mac;
-        netdev_change_seq_changed(netdev);
+        err = netdev_dpdk_set_etheraddr__(dev, mac);
+        if (!err) {
+            netdev_change_seq_changed(netdev);
+        }
     }
     ovs_mutex_unlock(&dev->mutex);
 
-    return 0;
+    return err;
 }
 
 static int
@@ -3662,6 +3719,7 @@ netdev_dpdk_get_status(const struct netdev *netdev, struct smap *args)
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
     struct rte_eth_dev_info dev_info;
     uint32_t link_speed;
+    uint32_t dev_flags;
 
     if (!rte_eth_dev_is_valid_port(dev->port_id)) {
         return ENODEV;
@@ -3671,6 +3729,7 @@ netdev_dpdk_get_status(const struct netdev *netdev, struct smap *args)
     ovs_mutex_lock(&dev->mutex);
     rte_eth_dev_info_get(dev->port_id, &dev_info);
     link_speed = dev->link.link_speed;
+    dev_flags = *dev_info.dev_flags;
     ovs_mutex_unlock(&dev->mutex);
     const struct rte_bus *bus;
     const struct rte_pci_device *pci_dev;
@@ -3717,6 +3776,11 @@ netdev_dpdk_get_status(const struct netdev *netdev, struct smap *args)
      */
     smap_add(args, "link_speed",
              netdev_dpdk_link_speed_to_str__(link_speed));
+
+    if (dev_flags & RTE_ETH_DEV_REPRESENTOR) {
+        smap_add_format(args, "dpdk-vf-mac", ETH_ADDR_FMT,
+                        ETH_ADDR_ARGS(dev->hwaddr));
+    }
 
     return 0;
 }
@@ -4959,6 +5023,7 @@ netdev_dpdk_reconfigure(struct netdev *netdev)
         && dev->lsc_interrupt_mode == dev->requested_lsc_interrupt_mode
         && dev->rxq_size == dev->requested_rxq_size
         && dev->txq_size == dev->requested_txq_size
+        && eth_addr_equals(dev->hwaddr, dev->requested_hwaddr)
         && dev->socket_id == dev->requested_socket_id
         && dev->started && !dev->reset_needed) {
         /* Reconfiguration is unnecessary */
@@ -4991,6 +5056,14 @@ netdev_dpdk_reconfigure(struct netdev *netdev)
     dev->txq_size = dev->requested_txq_size;
 
     rte_free(dev->tx_q);
+
+    if (!eth_addr_equals(dev->hwaddr, dev->requested_hwaddr)) {
+        err = netdev_dpdk_set_etheraddr__(dev, dev->requested_hwaddr);
+        if (err) {
+            goto out;
+        }
+    }
+
     err = dpdk_eth_dev_init(dev);
     if (dev->hw_ol_features & NETDEV_TX_TSO_OFFLOAD) {
         netdev->ol_flags |= NETDEV_TX_OFFLOAD_TCP_TSO;
@@ -5001,6 +5074,18 @@ netdev_dpdk_reconfigure(struct netdev *netdev)
             netdev->ol_flags |= NETDEV_TX_OFFLOAD_SCTP_CKSUM;
         }
     }
+
+    /* If both requested and actual hwaddr were previously
+     * unset (initialized to 0), then first device init above
+     * will have set actual hwaddr to something new.
+     * This would trigger spurious MAC reconfiguration unless
+     * the requested MAC is kept in sync.
+     *
+     * This is harmless in case requested_hwaddr was
+     * configured by the user, as netdev_dpdk_set_etheraddr__()
+     * will have succeeded to get to this point.
+     */
+    dev->requested_hwaddr = dev->hwaddr;
 
     dev->tx_q = netdev_dpdk_alloc_txq(netdev->n_txq);
     if (!dev->tx_q) {
@@ -5076,7 +5161,6 @@ netdev_dpdk_vhost_client_reconfigure(struct netdev *netdev)
     int err;
     uint64_t vhost_flags = 0;
     uint64_t vhost_unsup_flags;
-    bool zc_enabled;
 
     ovs_mutex_lock(&dev->mutex);
 
@@ -5102,19 +5186,6 @@ netdev_dpdk_vhost_client_reconfigure(struct netdev *netdev)
             vhost_flags |= RTE_VHOST_USER_POSTCOPY_SUPPORT;
         }
 
-        zc_enabled = dev->vhost_driver_flags
-                     & RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
-        /* Enable zero copy flag, if requested */
-        if (zc_enabled) {
-            vhost_flags |= RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
-            /* DPDK vHost library doesn't allow zero-copy with linear buffers.
-             * Hence disable Linear buffer.
-             */
-            vhost_flags &= ~RTE_VHOST_USER_LINEARBUF_SUPPORT;
-            VLOG_WARN("Zero copy enabled, disabling linear buffer"
-                      " check for vHost port %s", dev->up.name);
-        }
-
         /* Enable External Buffers if TCP Segmentation Offload is enabled. */
         if (userspace_tso_enabled()) {
             vhost_flags |= RTE_VHOST_USER_EXTBUF_SUPPORT;
@@ -5131,11 +5202,6 @@ netdev_dpdk_vhost_client_reconfigure(struct netdev *netdev)
             VLOG_INFO("vHost User device '%s' created in 'client' mode, "
                       "using client socket '%s'",
                       dev->up.name, dev->vhost_id);
-            if (zc_enabled) {
-                VLOG_INFO("Zero copy enabled for vHost port %s", dev->up.name);
-                VLOG_WARN("Zero copy support is deprecated and will be "
-                          "removed in the next OVS release.");
-            }
         }
 
         err = rte_vhost_driver_callback_register(dev->vhost_id,

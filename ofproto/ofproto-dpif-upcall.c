@@ -57,6 +57,7 @@ COVERAGE_DEFINE(upcall_ukey_contention);
 COVERAGE_DEFINE(upcall_ukey_replace);
 COVERAGE_DEFINE(revalidate_missed_dp_flow);
 COVERAGE_DEFINE(upcall_flow_limit_hit);
+COVERAGE_DEFINE(upcall_flow_limit_kill);
 
 /* A thread that reads upcalls from dpif, forwards each upcall's packet,
  * and possibly sets up a kernel flow as a cache. */
@@ -1228,7 +1229,7 @@ compose_slow_path(struct udpif *udpif, struct xlate_out *xout,
 
     //结合cookie，构造userspace action
     odp_put_userspace_action(pid, &cookie, sizeof cookie,
-                             ODPP_NONE, false, buf);
+                             ODPP_NONE, false, buf, NULL);
 
     if (meter_id != UINT32_MAX) {
         nl_msg_end_nested(buf, ac_offset);
@@ -1443,7 +1444,9 @@ should_install_flow(struct udpif *udpif, struct upcall *upcall)
     atomic_read_relaxed(&udpif->flow_limit, &flow_limit);
     if (udpif_get_n_flows(udpif) >= flow_limit) {
         COVERAGE_INC(upcall_flow_limit_hit);
-        VLOG_WARN_RL(&rl, "upcall: datapath flow limit reached");
+        VLOG_WARN_RL(&rl,
+                     "upcall: datapath reached the dynamic limit of %u flows.",
+                     flow_limit);
         return false;
     }
 
@@ -2854,6 +2857,7 @@ revalidate(struct revalidator *revalidator)
     struct udpif *udpif = revalidator->udpif;
     struct dpif_flow_dump_thread *dump_thread;
     uint64_t dump_seq, reval_seq;
+    bool kill_warn_print = true;
     unsigned int flow_limit;
 
     dump_seq = seq_read(udpif->dump_seq);
@@ -2873,6 +2877,7 @@ revalidate(struct revalidator *revalidator)
 
         long long int max_idle;
         long long int now;
+        size_t kill_all_limit;
         size_t n_dp_flows;
         bool kill_them_all;
 
@@ -2905,7 +2910,23 @@ revalidate(struct revalidator *revalidator)
         }
 
         /*如果流总数大于2倍的flow limit,则清除掉所有*/
-        kill_them_all = n_dp_flows > flow_limit * 2;
+        kill_them_all = false;
+        kill_all_limit = flow_limit * 2;
+        if (OVS_UNLIKELY(n_dp_flows > kill_all_limit)) {
+            static struct vlog_rate_limit rlem = VLOG_RATE_LIMIT_INIT(1, 1);
+
+            kill_them_all = true;
+            COVERAGE_INC(upcall_flow_limit_kill);
+            if (kill_warn_print) {
+                kill_warn_print = false;
+                VLOG_WARN_RL(&rlem,
+                    "Number of datapath flows (%"PRIuSIZE") twice as high as "
+                    "current dynamic flow limit (%"PRIuSIZE").  "
+                    "Starting to delete flows unconditionally "
+                    "as an emergency measure.", n_dp_flows, kill_all_limit);
+            }
+        }
+
         max_idle = n_dp_flows > flow_limit ? 100 : ofproto_max_idle;
 
         udpif->dpif->current_ms = time_msec();
@@ -3166,6 +3187,7 @@ upcall_unixctl_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
                     const char *argv[] OVS_UNUSED, void *aux OVS_UNUSED)
 {
     struct ds ds = DS_EMPTY_INITIALIZER;
+    uint64_t n_offloaded_flows;
     struct udpif *udpif;
 
     LIST_FOR_EACH (udpif, list_node, &all_udpifs) {
@@ -3181,6 +3203,10 @@ upcall_unixctl_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
         ds_put_format(&ds, "  flows         : (current %lu)"
             " (avg %u) (max %u) (limit %u)\n", udpif_get_n_flows(udpif),
             udpif->avg_n_flows, udpif->max_n_flows, flow_limit);
+        if (!dpif_get_n_offloaded_flows(udpif->dpif, &n_offloaded_flows)) {
+            ds_put_format(&ds, "  offloaded flows : %"PRIu64"\n",
+                          n_offloaded_flows);
+        }
         ds_put_format(&ds, "  dump duration : %lldms\n", udpif->dump_duration);
         //显示ufid是否开启
         ds_put_format(&ds, "  ufid enabled : ");
