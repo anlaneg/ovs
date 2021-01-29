@@ -1096,7 +1096,8 @@ static inline bool is_vlan(const struct flow *flow,
     return (flow->vlans[0].tci & htons(VLAN_CFI)) != 0;
 }
 
-static inline bool is_ip_any(const struct flow *flow)//检查链路层是否为ipv4或者ipv6
+//检查网络层是否为ipv4或者ipv6
+static inline bool is_ip_any(const struct flow *flow)
 {
     return dl_type_is_ip_any(get_dl_type(flow));
 }

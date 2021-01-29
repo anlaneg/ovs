@@ -280,11 +280,12 @@ struct tcf_id {
     enum tc_qdisc_hook hook;
     uint32_t block_id;
     int ifindex;
-    uint32_t chain;
+    uint32_t chain;/*对应的chain*/
     uint16_t prio;
-    uint32_t handle;
+    uint32_t handle;/*tc规则对应的handle*/
 };
 
+/*构造tfilter的唯一链编号*/
 static inline struct tcf_id
 tc_make_tcf_id(int ifindex, uint32_t block_id, uint16_t prio,
                enum tc_qdisc_hook hook)

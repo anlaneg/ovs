@@ -147,6 +147,7 @@ netdev_vport_get_dpif_port(const struct netdev *netdev,
          * port numbers but assert just in case.
          */
         BUILD_ASSERT(NETDEV_VPORT_NAME_BUFSIZE >= IFNAMSIZ);
+        /*只创建一个vxlan_sys_4789,以容许多个vxlan tunnel使用一个dest port*/
         ovs_assert(strlen(dpif_port) + 6 < IFNAMSIZ);
         snprintf(namebuf, bufsize, "%s_%d", dpif_port,
                  ntohs(vport->tnl_cfg.dst_port));

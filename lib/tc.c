@@ -183,7 +183,7 @@ csum_update_flag(struct tc_flower *flower,
                  enum pedit_header_type htype);
 
 struct tcmsg *
-tc_make_request(int ifindex, int type, unsigned int flags,
+tc_make_request(int ifindex, int type, unsigned int flags/*构造请求的flags*/,
                 struct ofpbuf *request)
 {
     struct tcmsg *tcmsg;
@@ -214,6 +214,7 @@ static void request_from_tcf_id(struct tcf_id *id, uint16_t eth_type,
     tcmsg->tcm_parent = (id->hook == TC_EGRESS) ?
                         TC_EGRESS_PARENT : ingress_parent;
     tcmsg->tcm_info = tc_make_handle(id->prio, eth_type);
+    /*设置规则的handle*/
     tcmsg->tcm_handle = id->handle;
 
     if (id->chain) {
@@ -722,12 +723,14 @@ nl_parse_flower_tunnel(struct nlattr **attrs, struct tc_flower *flower)
     int err;
 
     if (attrs[TCA_FLOWER_KEY_ENC_KEY_ID]) {
+        //隧道key
         ovs_be32 id = nl_attr_get_be32(attrs[TCA_FLOWER_KEY_ENC_KEY_ID]);
 
         flower->key.tunnel.id = be32_to_be64(id);
         flower->mask.tunnel.id = OVS_BE64_MAX;
     }
     if (attrs[TCA_FLOWER_KEY_ENC_IPV4_SRC_MASK]) {
+        //隧道src-ip及掩码
         flower->mask.tunnel.ipv4.ipv4_src =
             nl_attr_get_be32(attrs[TCA_FLOWER_KEY_ENC_IPV4_SRC_MASK]);
         flower->key.tunnel.ipv4.ipv4_src =
@@ -1846,6 +1849,7 @@ nl_parse_flower_options(struct nlattr *nl_options, struct tc_flower *flower,
     nl_parse_flower_mpls(attrs, flower);
     nl_parse_flower_vlan(attrs, flower);
     nl_parse_flower_ip(attrs, flower);
+    /*解析flower中的tunnel信息*/
     err = nl_parse_flower_tunnel(attrs, flower);
     if (err) {
         return err;
@@ -1876,6 +1880,7 @@ parse_netlink_to_tc_flower(struct ofpbuf *reply, struct tcf_id *id,
 
     flower->key.eth_type = (OVS_FORCE ovs_be16) tc_get_minor(tc->tcm_info);
     flower->mask.eth_type = OVS_BE16_MAX;
+    /*填充规则的优化级及handle*/
     id->prio = tc_get_major(tc->tcm_info);
     id->handle = tc->tcm_handle;
 
@@ -1883,16 +1888,19 @@ parse_netlink_to_tc_flower(struct ofpbuf *reply, struct tcf_id *id,
         return 0;
     }
 
+    /*每条流必须要有handle*/
     if (!id->handle) {
         return EAGAIN;
     }
 
+    /*解析flower响应数据*/
     if (!nl_policy_parse(reply, NLMSG_HDRLEN + sizeof *tc,
                          tca_policy, ta, ARRAY_SIZE(ta))) {
         VLOG_ERR_RL(&error_rl, "failed to parse tca policy");
         return EPROTO;
     }
 
+    /*填充规则对应的chain*/
     if (ta[TCA_CHAIN]) {
         id->chain = nl_attr_get_u32(ta[TCA_CHAIN]);
     }
@@ -2784,6 +2792,7 @@ nl_msg_put_flower_tunnel_opts(struct ofpbuf *request, uint16_t type,
     nl_msg_end_nested(request, outer);
 }
 
+//向reuqest中存放flower的tunnel匹配信息
 static void
 nl_msg_put_flower_tunnel(struct ofpbuf *request, struct tc_flower *flower)
 {
@@ -2804,6 +2813,7 @@ nl_msg_put_flower_tunnel(struct ofpbuf *request, struct tc_flower *flower)
     ovs_be64 id_mask = flower->mask.tunnel.id;
 
     if (ipv4_dst_mask || ipv4_src_mask) {
+        /*存放要匹配的tunnel的源及目的ip*/
         nl_msg_put_be32(request, TCA_FLOWER_KEY_ENC_IPV4_DST_MASK,
                         ipv4_dst_mask);
         nl_msg_put_be32(request, TCA_FLOWER_KEY_ENC_IPV4_SRC_MASK,
@@ -3032,6 +3042,7 @@ tc_replace_flower(struct tcf_id *id, struct tc_flower *flower)
             ofpbuf_at_assert(reply, NLMSG_HDRLEN, sizeof *tc);
 
         id->prio = tc_get_major(tc->tcm_info);
+        /*成功下发，更新handle*/
         id->handle = tc->tcm_handle;
         ofpbuf_delete(reply);
     }

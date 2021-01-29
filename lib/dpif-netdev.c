@@ -8846,6 +8846,7 @@ exit:
     dp_netdev_unref(dp);
 }
 
+//注册netdev类型的datapath
 static void
 dpif_dummy_register__(const char *type)
 {
@@ -8882,14 +8883,17 @@ dpif_dummy_register(enum dummy_level level)
         sset_init(&types);
         dp_enumerate_types(&types);
         SSET_FOR_EACH (type, &types) {
-            dpif_dummy_override(type);//强制使用netdev
+            //强制使用netdev
+            dpif_dummy_override(type);
         }
         sset_destroy(&types);
     } else if (level == DUMMY_OVERRIDE_SYSTEM) {
-        dpif_dummy_override("system");//替换system为netdev回调
+        //替换system为netdev回调
+        dpif_dummy_override("system");
     }
 
-    dpif_dummy_register__("dummy");//创建dummy为netdev回调
+    //创建名称为dummy datapath(实际仍使用netdev datapath)
+    dpif_dummy_register__("dummy");
 
     unixctl_command_register("dpif-dummy/change-port-number",
                              "dp port new-number",

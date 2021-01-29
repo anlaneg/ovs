@@ -181,6 +181,7 @@ parsed_dpif_open(const char *arg_, bool create, struct dpif **dpifp)
     	//如需要create,则创建此dpif
         result = dpif_create(name, type, dpifp);
     } else {
+        //打开此名称的dapapath
         result = dpif_open(name, type, dpifp);
     }
 
@@ -209,6 +210,7 @@ dp_exists(const char *queried_dp)
     return found;
 }
 
+/*检查参数argv[1]给定的是否为datapath名称*/
 static bool
 dp_arg_exists(int argc, const char *argv[])
 {
@@ -241,18 +243,21 @@ opt_dpif_open(int argc, const char *argv[], struct dpctl_params *dpctl_p,
 
     int error = 0;
     if (!dpname) {
+        /*datapath未找到*/
         error = EINVAL;
         dpctl_error(dpctl_p, error, "datapath not found");
     } else {
         error = parsed_dpif_open(dpname, false, dpifp);
         free(dpname);
         if (error) {
+            /*尝试打开datapath失败*/
             dpctl_error(dpctl_p, error, "opening datapath");
         }
     }
     return error;
 }
 
+/*dpctl 添加datapath*/
 static int
 dpctl_add_dp(int argc, const char *argv[],
              struct dpctl_params *dpctl_p)
@@ -260,18 +265,20 @@ dpctl_add_dp(int argc, const char *argv[],
     struct dpif *dpif;
     int error;
 
-    error = parsed_dpif_open(argv[1], true, &dpif);
+    error = parsed_dpif_open(argv[1], true/*创建*/, &dpif);
     if (error) {
         dpctl_error(dpctl_p, error, "add_dp");
         return error;
     }
     dpif_close(dpif);
     if (argc > 2) {
+        /*向datapath中添加接口名称*/
         error = dpctl_add_if(argc, argv, dpctl_p);
     }
     return error;
 }
 
+//删除datapath
 static int
 dpctl_del_dp(int argc OVS_UNUSED, const char *argv[],
              struct dpctl_params *dpctl_p)
@@ -284,6 +291,7 @@ dpctl_del_dp(int argc OVS_UNUSED, const char *argv[],
         dpctl_error(dpctl_p, error, "opening datapath");
         return error;
     }
+    //执行datapath移除
     error = dpif_delete(dpif);
     if (error) {
         dpctl_error(dpctl_p, error, "del_dp");
@@ -293,6 +301,7 @@ dpctl_del_dp(int argc OVS_UNUSED, const char *argv[],
     return error;
 }
 
+/*向datapath中添加接口*/
 static int
 dpctl_add_if(int argc OVS_UNUSED, const char *argv[],
              struct dpctl_params *dpctl_p)
@@ -300,11 +309,13 @@ dpctl_add_if(int argc OVS_UNUSED, const char *argv[],
     struct dpif *dpif;
     int i, error, lasterror = 0;
 
+    /*打开datapath,获得dpif*/
     error = parsed_dpif_open(argv[1], false, &dpif);
     if (error) {
         dpctl_error(dpctl_p, error, "opening datapath");
         return error;
     }
+    /*遍历所有port配置，进行if添加*/
     for (i = 2; i < argc; i++) {
         const char *name, *type;
         char *save_ptr = NULL, *argcopy;
@@ -344,6 +355,7 @@ dpctl_add_if(int argc OVS_UNUSED, const char *argv[],
             }
         }
 
+        //获得$type类型的名称为$name的netdev
         error = netdev_open(name, type, &netdev);
         if (error) {
             dpctl_error(dpctl_p, error, "%s: failed to open network device",
@@ -351,11 +363,13 @@ dpctl_add_if(int argc OVS_UNUSED, const char *argv[],
             goto next_destroy_args;
         }
 
+        //为netdev添加配置
         error = netdev_set_config(netdev, &args, NULL);
         if (error) {
             goto next_destroy_args;
         }
 
+        //将netdev添加进dpif
         error = dpif_port_add(dpif, netdev, &port_no);
         if (error) {
             dpctl_error(dpctl_p, error, "adding %s to %s failed", name,
@@ -363,6 +377,7 @@ dpctl_add_if(int argc OVS_UNUSED, const char *argv[],
             goto next_destroy_args;
         }
 
+        //设置netdev up
         error = if_up(netdev);
         if (error) {
             dpctl_error(dpctl_p, error, "%s: failed bringing interface up",
@@ -383,6 +398,7 @@ next:
     return lasterror;
 }
 
+//dpctl 设置接口配置
 static int
 dpctl_set_if(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 {
@@ -540,6 +556,7 @@ dpctl_del_if(int argc, const char *argv[], struct dpctl_params *dpctl_p)
             continue;
         }
 
+        //删除指定的port
         error = dpif_port_del(dpif, port, false);
         if (error) {
             dpctl_error(dpctl_p, error, "deleting port %s from %s failed",
@@ -810,6 +827,7 @@ dump_cb(struct dpif *dpif, struct dpctl_params *dpctl_p)
     dpctl_print(dpctl_p, "%s\n", dpif_name(dpif));
 }
 
+/*显示所有datapath*/
 static int
 dpctl_dump_dps(int argc OVS_UNUSED, const char *argv[] OVS_UNUSED,
                struct dpctl_params *dpctl_p)
@@ -1075,6 +1093,7 @@ dpctl_dump_flows(int argc, const char *argv[], struct dpctl_params *dpctl_p)
             struct match match, match_filter;
             struct minimatch minimatch;
 
+            //将key,mask解到flow中
             odp_flow_key_to_flow(f.key, f.key_len, &flow, NULL);
             odp_flow_key_to_mask(f.mask, f.mask_len, &wc, &flow, NULL);
             match_init(&match, &flow, &wc);
@@ -1142,11 +1161,13 @@ dpctl_put_flow(int argc, const char *argv[], enum dpif_flow_put_flags flags,
     struct simap port_names;
     int n, error;
 
+    //获得dpif
     error = opt_dpif_open(argc, argv, dpctl_p, 4, &dpif);
     if (error) {
         return error;
     }
 
+    //生成ufid
     ufid_present = false;
     n = odp_ufid_from_string(key_s, &ufid);
     if (n < 0) {
@@ -1157,11 +1178,13 @@ dpctl_put_flow(int argc, const char *argv[], enum dpif_flow_put_flags flags,
         ufid_present = true;
     }
 
+    //解析port名称与port_number映射
     simap_init(&port_names);
     DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
         simap_put(&port_names, dpif_port.name, odp_to_u32(dpif_port.port_no));
     }
 
+    //解析key及mask
     ofpbuf_init(&key, 0);
     ofpbuf_init(&mask, 0);
     char *error_s;
@@ -1173,6 +1196,7 @@ dpctl_put_flow(int argc, const char *argv[], enum dpif_flow_put_flags flags,
         goto out_freekeymask;
     }
 
+    //解析action字段
     ofpbuf_init(&actions, 0);
     error = odp_actions_from_string(actions_s, NULL, &actions);
     if (error) {
@@ -1180,6 +1204,7 @@ dpctl_put_flow(int argc, const char *argv[], enum dpif_flow_put_flags flags,
         goto out_freeactions;
     }
 
+    //dp直接下发规则到datapath(待定：这样下发的规则datapath为什么不会删除掉？）
     /* The flow will be added on all pmds currently in the datapath. */
     error = dpif_flow_put(dpif, flags,
                           key.data, key.size,
@@ -1219,6 +1244,7 @@ dpctl_add_flow(int argc, const char *argv[], struct dpctl_params *dpctl_p)
     return dpctl_put_flow(argc, argv, DPIF_FP_CREATE, dpctl_p);
 }
 
+//执行流表修改
 static int
 dpctl_mod_flow(int argc, const char *argv[], struct dpctl_params *dpctl_p)
 {
@@ -1871,6 +1897,7 @@ dpctl_ct_get_tcp_seq_chk(int argc, const char *argv[],
     return error;
 }
 
+/*ct limit设置ct-set-limits*/
 static int
 dpctl_ct_set_limits(int argc, const char *argv[],
                     struct dpctl_params *dpctl_p)
@@ -1881,6 +1908,7 @@ dpctl_ct_set_limits(int argc, const char *argv[],
     uint32_t default_limit, *p_default_limit = NULL;
     struct ovs_list zone_limits = OVS_LIST_INITIALIZER(&zone_limits);
 
+    /*打开dpif*/
     int error = opt_dpif_open(argc, argv, dpctl_p, INT_MAX, &dpif);
     if (error) {
         return error;
@@ -1888,6 +1916,7 @@ dpctl_ct_set_limits(int argc, const char *argv[],
 
     /* Parse default limit */
     if (!strncmp(argv[i], "default=", 8)) {
+        /*解析default limit值*/
         if (ovs_scan(argv[i], "default=%"SCNu32, &default_limit)) {
             p_default_limit = &default_limit;
             i++;
@@ -1906,9 +1935,11 @@ dpctl_ct_set_limits(int argc, const char *argv[],
             error = EINVAL;
             goto error;
         }
+        /*记录本次argv[i++]对应的zone,limit配置*/
         ct_dpif_push_zone_limit(&zone_limits, zone, limit, 0);
     }
 
+    /*设置一组zone_limits配置*/
     error = ct_dpif_set_limits(dpif, p_default_limit, &zone_limits);
     if (!error) {
         ct_dpif_free_zone_limits(&zone_limits);
@@ -2519,16 +2550,23 @@ out:
     return error;
 }
 
+//dpctl对外提供的命令
 static const struct dpctl_command all_commands[] = {
+     //增加datapath及if
     { "add-dp", "dp [iface...]", 1, INT_MAX, dpctl_add_dp, DP_RW },
+    //移除datapath
     { "del-dp", "dp", 1, 1, dpctl_del_dp, DP_RW },
+    //向datapath添加接口
     { "add-if", "dp iface...", 2, INT_MAX, dpctl_add_if, DP_RW },
+    //删除if
     { "del-if", "dp iface...", 2, INT_MAX, dpctl_del_if, DP_RW },
+    //设置if
     { "set-if", "dp iface...", 2, INT_MAX, dpctl_set_if, DP_RW },
     { "dump-dps", "", 0, 0, dpctl_dump_dps, DP_RO },
     { "show", "[dp...]", 0, INT_MAX, dpctl_show, DP_RO },
     { "dump-flows", "[dp] [filter=..] [type=..]",
       0, 3, dpctl_dump_flows, DP_RO },
+    //向datapath中添加流
     { "add-flow", "[dp] flow actions", 2, 3, dpctl_add_flow, DP_RW },
     { "mod-flow", "[dp] flow actions", 2, 3, dpctl_mod_flow, DP_RW },
     { "get-flow", "[dp] ufid", 1, 2, dpctl_get_flow, DP_RO },
@@ -2727,7 +2765,7 @@ dpctl_unixctl_register(void)
 {
     const struct dpctl_command *p;
 
-    //注册dpctl对应的命令
+    //注册dpctl dpctl/help对应的命令
     for (p = all_commands; p->name != NULL; p++) {
         if (strcmp(p->name, "help")) {
             char *cmd_name = xasprintf("dpctl/%s", p->name);

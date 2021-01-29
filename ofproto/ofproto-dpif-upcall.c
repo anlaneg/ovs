@@ -73,6 +73,7 @@ struct handler {
  * own lock for writing. */
 #define N_UMAPS 512 /* per udpif. */
 struct umap {
+    //保护cmap
     struct ovs_mutex mutex;            /* Take for writing to the following. */
     //通过ufid可获取udpif_key的hashtable
     struct cmap cmap;                  /* Datapath flow keys. */
@@ -316,6 +317,7 @@ struct udpif_key {
 
     struct ovs_mutex mutex;                   /* Guards the following. */
     struct dpif_flow_stats stats OVS_GUARDED; /* Last known stats.*/
+    //ukey创建时间
     long long int created OVS_GUARDED;        /* Estimate of creation time. */
     //规则dump时的seq号
     uint64_t dump_seq OVS_GUARDED;            /* Tracks udpif->dump_seq. */
@@ -1551,6 +1553,7 @@ dpif_read_actions(struct udpif *udpif, struct upcall *upcall,
         break;
     case FLOW_SAMPLE_UPCALL:
     case IPFIX_UPCALL:
+        /*sample慢路处理*/
         dpif_ipfix_read_actions(flow, actions, actions_len, upcall_data);
         break;
     case BAD_UPCALL:
@@ -1748,14 +1751,15 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
 
         //检查是否需要添加flow到datapath/tc
         if (should_install_flow(udpif, upcall)) {
-            /*需要向datapath/tc添加flow,这里我们构造create规则*/
+            /*需要向datapath/tc添加flow,这里我们向udpif添加ukey,并构造create规则*/
             struct udpif_key *ukey = upcall->ukey;
 
             if (ukey_install(udpif, ukey)) {
                 upcall->ukey_persists = true;
-                //初始化put_flow规则
+                //需要创建流表datapath,增加ops
                 put_op_init(&ops[n_ops++], ukey, DPIF_FP_CREATE);
             }
+            /*else 忽略掉不需要添加的flow*/
         }
 
         if (upcall->odp_actions.size) {
@@ -1783,14 +1787,16 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
         opsp[n_opsp++] = &ops[i].dop;
     }
 
-    //在此处向kernel中的openvswitch下发flow，下发报文及action
+    //在此处向进行整个批次的flow规则offload或者下给kernel datapath
     dpif_operate(udpif->dpif, opsp, n_opsp, DPIF_OFFLOAD_AUTO);
+    //完成flow处理，如果flow下发失败，则ukey需要移除。
     for (i = 0; i < n_ops; i++) {
         struct udpif_key *ukey = ops[i].ukey;
 
         if (ukey) {
             ovs_mutex_lock(&ukey->mutex);
             if (ops[i].dop.error) {
+                /*dop处理出错，将其置为*/
                 transition_ukey(ukey, UKEY_EVICTED);
             } else if (ukey->state < UKEY_OPERATIONAL) {
                 transition_ukey(ukey, UKEY_OPERATIONAL);
@@ -1828,6 +1834,7 @@ ukey_lookup(struct udpif *udpif, const ovs_u128 *ufid, const unsigned pmd_id)
 static void
 ukey_get_actions(struct udpif_key *ukey, const struct nlattr **actions, size_t *size)
 {
+    //指用ukey中存储的action及size
     const struct ofpbuf *buf = ovsrcu_get(struct ofpbuf *, &ukey->actions);
     *actions = buf->data;
     *size = buf->size;
@@ -1849,8 +1856,8 @@ ukey_set_actions(struct udpif_key *ukey, const struct ofpbuf *actions)
 //创建ukey
 static struct udpif_key *
 ukey_create__(const struct nlattr *key/*match字段*/, size_t key_len/*match字段长度*/,
-              const struct nlattr *mask/*match字段的掩码*/, size_t mask_len,
-              bool ufid_present, const ovs_u128 *ufid,
+              const struct nlattr *mask/*mask字段的掩码*/, size_t mask_len/*mask字段长度*/,
+              bool ufid_present/*ufid是否有效*/, const ovs_u128 *ufid/*此flow对应的ufid*/,
               const unsigned pmd_id, const struct ofpbuf *actions/*match字段的action*/,
               uint64_t reval_seq, long long int used,
               uint32_t key_recirc_id, struct xlate_out *xout)
@@ -1858,12 +1865,16 @@ ukey_create__(const struct nlattr *key/*match字段*/, size_t key_len/*match字�
 {
     struct udpif_key *ukey = xmalloc(sizeof *ukey);
 
+    //填充key
     memcpy(&ukey->keybuf, key, key_len);
     ukey->key = &ukey->keybuf.nla;
     ukey->key_len = key_len;
+
+    //填充mask
     memcpy(&ukey->maskbuf, mask, mask_len);
     ukey->mask = &ukey->maskbuf.nla;
     ukey->mask_len = mask_len;
+
     ukey->ufid_present = ufid_present;
     ukey->ufid = *ufid;/*对应的ufid*/
     ukey->pmd_id = pmd_id;
@@ -1959,6 +1970,7 @@ ukey_create_from_dpif_flow(const struct udpif *udpif,
                             flow->ufid_present ? &flow->ufid : NULL,
                             flow->pmd_id, &buf, &full_flow/*出参，datapath返回的详细flow信息*/);
         if (err) {
+            /*datapath获取action,match失败，返回错误*/
             return err;
         }
         flow = &full_flow;
@@ -1971,13 +1983,13 @@ ukey_create_from_dpif_flow(const struct udpif *udpif,
     NL_ATTR_FOR_EACH (a, left, flow->key, flow->key_len) {
         if (nl_attr_type(a) == OVS_KEY_ATTR_RECIRC_ID
             && nl_attr_get_u32(a) != 0) {
-        	//此流recirc_id不为0
+        	//此流recirc_id不能为0，可能ovs重启了,recirc_id的原数据不存在了。
             return EINVAL;
         }
     }
     NL_ATTR_FOR_EACH (a, left, flow->actions, flow->actions_len) {
         if (nl_attr_type(a) == OVS_ACTION_ATTR_RECIRC) {
-        	//此流action中不能含有recirc
+        	//此流action中不能含有recirc_id
             return EINVAL;
         }
     }
@@ -2002,9 +2014,11 @@ try_ukey_replace(struct umap *umap, struct udpif_key *old_ukey,
 {
     bool replaced = false;
 
+    /*尝试对old_ukey进行加锁，如成功，执行替换*/
     if (!ovs_mutex_trylock(&old_ukey->mutex)) {
         if (old_ukey->state == UKEY_EVICTED) {
-        	//旧的ukey处于驱逐状态
+        	//除非old_ukey处于evicted,否则不处理
+            //旧的ukey处于驱逐状态，则将旧的ukey移除掉，将新的ukey置为可见
             /* The flow was deleted during the current revalidator dump,
              * but its ukey won't be fully cleaned up until the sweep phase.
              * In the mean time, we are receiving upcalls for this traffic.
@@ -2041,16 +2055,19 @@ ukey_install__(struct udpif *udpif, struct udpif_key *new_ukey)
     uint32_t idx;
     bool locked = false;
 
+    /*通过new_ukey->hash获得umap*/
     idx = new_ukey->hash % N_UMAPS;
     umap = &udpif->ukeys[idx];
     ovs_mutex_lock(&umap->mutex);
+
+    /*通过new_ukey的ufid,pmd_id做hash,在cmap中查询对应的ukey*/
     old_ukey = ukey_lookup(udpif, &new_ukey->ufid, new_ukey->pmd_id);
     if (old_ukey) {
     	//存在旧的ukey,执行替换
         /* Uncommon case: A ukey is already installed with the same UFID. */
         if (old_ukey->key_len == new_ukey->key_len
             && !memcmp(old_ukey->key, new_ukey->key, new_ukey->key_len)) {
-        	//旧的ukey与之相同，执行替换
+        	//旧的ukey的match与当前待插入的相同，执行替换
             locked = try_ukey_replace(umap, old_ukey, new_ukey);
         } else {
         	//旧的ukey与之不同，构造告警日志，指明flow有冲突的ukey
@@ -2079,16 +2096,19 @@ ukey_install__(struct udpif *udpif, struct udpif_key *new_ukey)
     return locked;
 }
 
+/*ukey状态转换*/
 static void
 transition_ukey_at(struct udpif_key *ukey, enum ukey_state dst,
-                   const char *where)
+                   const char *where/*位置信息*/)
     OVS_REQUIRES(ukey->mutex)
 {
     if (dst < ukey->state) {
+        /*要设置的状态小于ukey当前状态，系统挂掉*/
         VLOG_ABORT("Invalid ukey transition %d->%d (last transitioned from "
                    "thread %u at %s)", ukey->state, dst, ukey->state_thread,
                    ukey->state_where);
     }
+    /*状态未变，并且处于operational状态（umap存在，且已安装进datapath)*/
     if (ukey->state == dst && dst == UKEY_OPERATIONAL) {
         return;
     }
@@ -2116,6 +2136,7 @@ transition_ukey_at(struct udpif_key *ukey, enum ukey_state dst,
                                    dst < UKEY_DELETED)) {
         ukey->state = dst;
     } else {
+        /*告警无效的ukey状态转换*/
         struct ds ds = DS_EMPTY_INITIALIZER;
 
         odp_format_ufid(&ukey->ufid, &ds);
@@ -2152,7 +2173,7 @@ ukey_install(struct udpif *udpif, struct udpif_key *ukey)
  * and its value matches the return value. */
 static int
 ukey_acquire(struct udpif *udpif, const struct dpif_flow *flow/*自dp dump出现的流*/,
-             struct udpif_key **result, int *error)
+             struct udpif_key **result/*出参，dump流对应的ukey*/, int *error)
     OVS_TRY_LOCK(0, (*result)->mutex)
 {
     struct udpif_key *ukey;
@@ -2182,7 +2203,7 @@ ukey_acquire(struct udpif *udpif, const struct dpif_flow *flow/*自dp dump出现
         if (install) {
             retval = 0;
         } else {
-        		//安装失败，删除
+        	//安装失败，删除
             ukey_delete__(ukey);
             retval = EBUSY;
         }
@@ -2191,15 +2212,16 @@ ukey_acquire(struct udpif *udpif, const struct dpif_flow *flow/*自dp dump出现
 done:
     *error = retval;
     if (retval) {
-    		//加锁失败或安装失败，返回NULL
+    	//加锁失败或安装失败，返回NULL
         *result = NULL;
     } else {
-    		//加锁成功，返回对应的ukey
+    	//加锁成功，返回对应的ukey
         *result = ukey;
     }
     return retval;
 }
 
+/*ukey释放函数*/
 static void
 ukey_delete__(struct udpif_key *ukey)
     OVS_NO_THREAD_SAFETY_ANALYSIS
@@ -2222,8 +2244,11 @@ ukey_delete(struct umap *umap, struct udpif_key *ukey)
 {
     ovs_mutex_lock(&ukey->mutex);
     if (ukey->state < UKEY_DELETED) {
+        /*当此ukey自umap->cmap中移除掉*/
         cmap_remove(&umap->cmap, &ukey->cmap_node, ukey->hash);
+        /*延迟删除此ukey*/
         ovsrcu_postpone(ukey_delete__, ukey);
+        /*将此ukey直接置为delete*/
         transition_ukey(ukey, UKEY_DELETED);
     }
     ovs_mutex_unlock(&ukey->mutex);
@@ -2316,7 +2341,7 @@ xlate_key(struct udpif *udpif, const struct nlattr *key, unsigned int len,
         xin.allow_side_effects = true;
     }
     xin.xcache = ctx->xcache;
-    //执行慢路检测
+    //执行慢路检测，产生action
     xlate_actions(&xin, &ctx->xout);
     if (fitness == ODP_FIT_TOO_LITTLE) {
         ctx->xout.slow |= SLOW_MATCH;
@@ -2332,6 +2357,7 @@ xlate_ukey(struct udpif *udpif, const struct udpif_key *ukey,
     struct dpif_flow_stats push = {
         .tcp_flags = tcp_flags,
     };
+    //利用ukey走慢路查询action
     return xlate_key(udpif, ukey->key, ukey->key_len, &push, ctx);
 }
 
@@ -2358,6 +2384,7 @@ populate_xcache(struct udpif *udpif, struct udpif_key *ukey,
     return 0;
 }
 
+//针对ukey,对flow中的action进行revalidate
 static enum reval_result
 revalidate_ukey__(struct udpif *udpif, const struct udpif_key *ukey,
                   uint16_t tcp_flags, struct ofpbuf *odp_actions,
@@ -2401,6 +2428,7 @@ revalidate_ukey__(struct udpif *udpif, const struct udpif_key *ukey,
             goto exit;
         }
 
+        //慢速处理,upcall->xout.slow非0的情况，见slow处理
         compose_slow_path(udpif, xoutp, ctx.flow.in_port.odp_port,
                           ofp_in_port, odp_actions,
                           ofproto->up.slowpath_meter_id, &ofproto->uuid);
@@ -2464,7 +2492,7 @@ exit:
 static enum reval_result
 revalidate_ukey(struct udpif *udpif, struct udpif_key *ukey,
                 const struct dpif_flow_stats *stats/*flow的统计信息*/,
-                struct ofpbuf *odp_actions, uint64_t reval_seq,
+                struct ofpbuf *odp_actions/*出参*/, uint64_t reval_seq,
                 struct recirc_refs *recircs, bool offloaded)
     OVS_REQUIRES(ukey->mutex)
 {
@@ -2494,6 +2522,7 @@ revalidate_ukey(struct udpif *udpif, struct udpif_key *ukey,
             } else {
                 xlate_cache_clear(ukey->xcache);
             }
+            /*针对ukey进行重查，确定action*/
             result = revalidate_ukey__(udpif, ukey, push.tcp_flags,
                                        odp_actions, recircs, ukey->xcache);
         } /* else delete; too expensive to revalidate */
@@ -2546,6 +2575,7 @@ put_op_init(struct ukey_op *op, struct udpif_key *ukey,
     op->ukey = ukey;
     op->dop.type = DPIF_OP_FLOW_PUT;
     op->dop.flow_put.flags = flags;
+    /*设置要put的key与ukey相同*/
     op->dop.flow_put.key = ukey->key;
     op->dop.flow_put.key_len = ukey->key_len;
     op->dop.flow_put.mask = ukey->mask;
@@ -2553,6 +2583,7 @@ put_op_init(struct ukey_op *op, struct udpif_key *ukey,
     op->dop.flow_put.ufid = ukey->ufid_present ? &ukey->ufid : NULL;
     op->dop.flow_put.pmd_id = ukey->pmd_id;
     op->dop.flow_put.stats = NULL;
+    /*设置要put的action*/
     ukey_get_actions(ukey, &op->dop.flow_put.actions,
                      &op->dop.flow_put.actions_len);
 }
@@ -2569,6 +2600,7 @@ push_dp_ops(struct udpif *udpif, struct ukey_op *ops, size_t n_ops)
     for (i = 0; i < n_ops; i++) {
         opsp[i] = &ops[i].dop;
     }
+    /*按opsp中指定方式处理n_ops个datapath规则*/
     dpif_operate(udpif->dpif, opsp, n_ops, DPIF_OFFLOAD_AUTO);
 
     for (i = 0; i < n_ops; i++) {
@@ -2583,6 +2615,7 @@ push_dp_ops(struct udpif *udpif, struct ukey_op *ops, size_t n_ops)
             continue;
         }
 
+        /*在向下发送flow_del消息给datapath后执行失败，移除此ukey*/
         if (op->dop.error) {
             /* flow_del error, 'stats' is unusable. */
             if (op->ukey) {
@@ -2681,7 +2714,7 @@ reval_op_init(struct ukey_op *op, enum reval_result result/*流的操作结果*/
     OVS_REQUIRES(ukey->mutex)
 {
     if (result == UKEY_DELETE) {
-    	//需要删除的flow
+    	//需要删除此flow，将ukey变更为EVICTING状态
         delete_op_init(udpif, op, ukey);
         transition_ukey(ukey, UKEY_EVICTING);
     } else if (result == UKEY_MODIFY) {
@@ -2692,7 +2725,9 @@ reval_op_init(struct ukey_op *op, enum reval_result result/*流的操作结果*/
         recirc_refs_unref(recircs);
         /* ukey->key_recirc_id remains, as the key is the same as before. */
 
+        /*更新flow对应的action*/
         ukey_set_actions(ukey, odp_actions);
+        /*向datapath下发modify操作*/
         put_op_init(op, ukey, DPIF_FP_MODIFY);
     }
 }
@@ -2884,7 +2919,7 @@ revalidate(struct revalidator *revalidator)
             bool already_dumped;
             int error;
 
-            //通过f查询ukey,如果ukey不存在，则创建并将其加入到udpif的hash表中
+            //通过f查询ukey(并加锁）,如果ukey不存在，则创建并将其加入到udpif的hash表中
             if (ukey_acquire(udpif, f, &ukey, &error)) {
                 if (error == EBUSY) {
                     /* Another thread is processing this flow, so don't bother
@@ -2893,7 +2928,8 @@ revalidate(struct revalidator *revalidator)
                 } else {
                     log_unexpected_flow(f, error);
                     if (error != ENOENT) {
-                    	//将这种流删除掉
+                    	//没有查询到ukey且创建ukey失败，则将这种flow直接删除
+                        //例如recirc
                         delete_op_init__(udpif, &ops[n_ops++], f);
                     }
                 }
@@ -2915,9 +2951,11 @@ revalidate(struct revalidator *revalidator)
             }
 
             if (ukey->state <= UKEY_OPERATIONAL) {
+                /*确认此流在datapath中*/
                 /* The flow is now confirmed to be in the datapath. */
                 transition_ukey(ukey, UKEY_OPERATIONAL);
             } else {
+                /*flow状态有误*/
                 VLOG_INFO("Unexpected ukey transition from state %d "
                           "(last transitioned from thread %u at %s)",
                           ukey->state, ukey->state_thread, ukey->state_where);
@@ -2926,14 +2964,15 @@ revalidate(struct revalidator *revalidator)
             }
 
             if (!used) {
-            	//流创建的时间
+            	//时间未初始化，记录流创建的时间
                 used = udpif_update_used(udpif, ukey, &stats);
             }
 
             if (kill_them_all || (used && used < now - max_idle)) {
-            	//删除所有流或者上次使用已超过max_idle,则删除
+            	//删除所有流或者距离上次使用已超过max_idle,则删除
                 result = UKEY_DELETE;
             } else {
+                /*不需要删除，则进行flow校验*/
                 result = revalidate_ukey(udpif, ukey, &stats, &odp_actions,
                                          reval_seq/*reval时的seq*/, &recircs,
                                          f->attrs.offloaded);
@@ -2947,6 +2986,7 @@ revalidate(struct revalidator *revalidator)
             }
 
             if (result != UKEY_KEEP) {
+                /*流需要被移除，或者被修改，构造ops*/
                 /* Takes ownership of 'recircs'. */
                 reval_op_init(&ops[n_ops++], result, udpif, ukey, &recircs,
                               &odp_actions);
@@ -2956,6 +2996,7 @@ revalidate(struct revalidator *revalidator)
 
         if (n_ops) {
             /* Push datapath ops but defer ukey deletion to 'sweep' phase. */
+            /*本次revalidator有多个处理结果，向datapath推这些ops,使得他们能被更新*/
             push_dp_ops(udpif, ops, n_ops);
         }
         ovsrcu_quiesce();
@@ -2991,9 +3032,11 @@ revalidator_sweep__(struct revalidator *revalidator, bool purge)
     udpif = revalidator->udpif;
     dump_seq = seq_read(udpif->dump_seq);
     reval_seq = seq_read(udpif->reval_seq);
+    /*当前对应的revalidator编号*/
     slice = revalidator - udpif->revalidators;
     ovs_assert(slice < udpif->n_revalidators);
 
+    /*各revalidator,分工处理ukeys*/
     for (int i = slice; i < N_UMAPS; i += udpif->n_revalidators) {
         uint64_t odp_actions_stub[1024 / 8];
         struct ofpbuf odp_actions = OFPBUF_STUB_INITIALIZER(odp_actions_stub);
@@ -3003,14 +3046,18 @@ revalidator_sweep__(struct revalidator *revalidator, bool purge)
         struct umap *umap = &udpif->ukeys[i];
         size_t n_ops = 0;
 
+        /*遍历对应的umap桶上的ukey*/
         CMAP_FOR_EACH(ukey, cmap_node, &umap->cmap) {
             enum ukey_state ukey_state;
 
             /* Handler threads could be holding a ukey lock while it installs a
              * new flow, so don't hang around waiting for access to it. */
             if (ovs_mutex_trylock(&ukey->mutex)) {
+                /*哪不到此ukey的锁，则跳过*/
                 continue;
             }
+
+            /*取ukey当前状态*/
             ukey_state = ukey->state;
             if (ukey_state == UKEY_OPERATIONAL
                 || (ukey_state == UKEY_VISIBLE && purge)) {
@@ -3039,7 +3086,8 @@ revalidator_sweep__(struct revalidator *revalidator, bool purge)
             ovs_mutex_unlock(&ukey->mutex);
 
             if (ukey_state == UKEY_EVICTED) {
-            	//处理需要删除的flow
+            	//遇到ukey_state为UKEY_EVICTED,将其自hashtable中移除
+                //并将其置为UKEY_DELETED状态
                 /* The common flow deletion case involves deletion of the flow
                  * during the dump phase and ukey deletion here. */
                 ovs_mutex_lock(&umap->mutex);
@@ -3047,6 +3095,7 @@ revalidator_sweep__(struct revalidator *revalidator, bool purge)
                 ovs_mutex_unlock(&umap->mutex);
             }
 
+            /*所有的流均需要处理update/delete*/
             if (n_ops == REVALIDATE_MAX_BATCH) {
                 /* Update/delete missed flows and clean up corresponding ukeys
                  * if necessary. */

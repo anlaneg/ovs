@@ -142,6 +142,7 @@ enum ofp_version {
 struct ofp_header {
     uint8_t version;    /* An OpenFlow version number, e.g. OFP10_VERSION. */
     uint8_t type;       /* One of the OFPT_ constants. */
+    /*buffer长度*/
     ovs_be16 length;    /* Length including this ofp_header. */
     ovs_be32 xid;       /* Transaction id associated with this packet.
                            Replies use the same id as was in the request

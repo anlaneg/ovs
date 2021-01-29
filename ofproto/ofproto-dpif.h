@@ -248,6 +248,7 @@ struct dpif_backer {
     //所有当前backer的port保存在此hash表上，索引odp_port_t
     struct hmap odp_to_ofport_map OVS_GUARDED; /* Contains "struct ofport"s. */
 
+    //隧道backer名称集
     struct simap tnl_backers;      /* Set of dpif ports backing tunnels. */
 
     enum revalidate_reason need_revalidate; /* Revalidate all flows. */

@@ -2993,6 +2993,7 @@ static enum odp_key_fitness
 odp_tun_key_from_attr__(const struct nlattr *attr, bool is_mask,
                         struct flow_tnl *tun, char **errorp)
 {
+    //自attr中解析tunnel信息
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
     unsigned int left;
     const struct nlattr *a;
@@ -3012,14 +3013,17 @@ odp_tun_key_from_attr__(const struct nlattr *attr, bool is_mask,
             return ODP_FIT_ERROR;
         }
 
+        //依据每个tunnel类型，填充相应tunnel字段
         switch (type) {
         case OVS_TUNNEL_KEY_ATTR_ID:
             tun->tun_id = nl_attr_get_be64(a);
             tun->flags |= FLOW_TNL_F_KEY;
             break;
         case OVS_TUNNEL_KEY_ATTR_IPV4_SRC:
+            /*tunnel的源ip*/
             tun->ip_src = nl_attr_get_be32(a);
             break;
+            /*tunnel的目的ip*/
         case OVS_TUNNEL_KEY_ATTR_IPV4_DST:
             tun->ip_dst = nl_attr_get_be32(a);
             break;
@@ -7557,10 +7561,12 @@ odp_flow_key_to_mask(const struct nlattr *mask_key, size_t mask_key_len,
 int
 parse_key_and_mask_to_match(const struct nlattr *key, size_t key_len,
                             const struct nlattr *mask, size_t mask_len,
-                            struct match *match)
+                            struct match *match/*出参，转换后的key及mask*/)
 {
+    //转换key,mask到match结构体
     enum odp_key_fitness fitness;
 
+    //转换key到match->flow
     fitness = odp_flow_key_to_flow(key, key_len, &match->flow, NULL);
     if (fitness) {
         /* This should not happen: it indicates that
@@ -7581,6 +7587,7 @@ parse_key_and_mask_to_match(const struct nlattr *key, size_t key_len,
         return EINVAL;
     }
 
+    //转换mask到match->wc
     fitness = odp_flow_key_to_mask(mask, mask_len, &match->wc, &match->flow,
                                    NULL);
     if (fitness) {

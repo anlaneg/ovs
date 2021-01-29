@@ -2186,6 +2186,7 @@ bool
 flow_wildcards_has_extra(const struct flow_wildcards *a,
                          const struct flow_wildcards *b)
 {
+    //a要求的太宽松，则返回true
     const uint64_t *a_u64 = (const uint64_t *) &a->masks;
     const uint64_t *b_u64 = (const uint64_t *) &b->masks;
     size_t i;
@@ -3430,8 +3431,10 @@ miniflow_map_init(struct miniflow *flow, const struct flow *src)
 size_t
 miniflow_alloc(struct miniflow *dsts[], size_t n, const struct miniflow *src)
 {
+    //取src给定的minflow中有多少个字段，这些字段占用多少长度
     size_t n_values = miniflow_n_values(src);
     size_t data_size = MINIFLOW_VALUES_SIZE(n_values);
+    /*申请n个miniflow*/
     struct miniflow *dst = xmalloc(n * (sizeof *src + data_size));
     size_t i;
 

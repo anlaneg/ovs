@@ -1787,11 +1787,13 @@ netdev_dpdk_get_port_by_mac(const char *mac_str)
 dpdk_port_t port_id;
 struct eth_addr mac, port_mac;
 
+/*校验mac_str是否为合法的mac地址*/
 if (!eth_addr_from_string(mac_str, &mac)) {
 VLOG_ERR("invalid mac: %s", mac_str);
 return DPDK_ETH_PORT_ID_INVALID;
 }
 
+    /*遍历dpdk中的port,获得与所给mac一致的port_id*/
     RTE_ETH_FOREACH_DEV (port_id) {
         struct rte_ether_addr ea;
 
@@ -1840,6 +1842,7 @@ OVS_REQUIRES(dpdk_mutex)
 dpdk_port_t new_port_id;
 
 if (strncmp(devargs, "class=eth,mac=", 14) == 0) {
+    /*通过mac查找port_id*/
 new_port_id = netdev_dpdk_get_port_by_mac(&devargs[14]);
 } else {
 new_port_id = netdev_dpdk_get_port_by_devargs(devargs);

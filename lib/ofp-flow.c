@@ -156,6 +156,7 @@ ofputil_decode_flow_mod(struct ofputil_flow_mod *fm,
     ovs_be16 raw_flags;
     enum ofperr error;
     struct match match;
+    /*构造ofpbuf*/
     struct ofpbuf b = ofpbuf_const_initializer(oh, ntohs(oh->length));
     enum ofpraw raw = ofpraw_pull_assert(&b);
     if (raw == OFPRAW_OFPT11_FLOW_MOD) {
@@ -1477,7 +1478,7 @@ parse_subfield(const char *name, const char *str_value, struct match *match,
 }
 
 static char * OVS_WARN_UNUSED_RESULT
-parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
+parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string/*规则*/,
                 const struct ofputil_port_map *port_map,
                 const struct ofputil_table_map *table_map,
                 enum ofputil_protocol *usable_protocols)
@@ -1496,6 +1497,7 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
     *usable_protocols = OFPUTIL_P_ANY;
 
     if (command == -2) {
+        /*没有指定command,获取command*/
         size_t len;
 
         string += strspn(string, " \t\r\n");   /* Skip white space. */
@@ -1548,6 +1550,7 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string,
         OVS_NOT_REACHED();
     }
 
+    /*默认送table=255*/
     *fm = (struct ofputil_flow_mod) {
         .priority = OFP_DEFAULT_PRIORITY,
         .table_id = 0xff,
@@ -1828,6 +1831,7 @@ parse_ofp_flow_mod_str(struct ofputil_flow_mod *fm, const char *string,
                        int command/*规则操作符*/,
                        enum ofputil_protocol *usable_protocols)
 {
+    //解析规则字符串
     char *error = parse_ofp_str(fm, command, string, port_map, table_map,
                                 usable_protocols);
 

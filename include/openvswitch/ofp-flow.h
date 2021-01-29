@@ -73,8 +73,9 @@ void ofputil_flow_mod_flags_format(struct ds *, enum ofputil_flow_mod_flags);
 struct ofputil_flow_mod {
     struct ovs_list list_node; /* For queuing flow_mods. */
 
+    /*flow对应的match字段*/
     struct minimatch match;
-    int priority;
+    int priority;/*flow优先级*/
 
     /* Cookie matching.  The flow_mod affects only flows that have cookies that
      * bitwise match 'cookie' bits in positions where 'cookie_mask has 1-bits.
@@ -101,7 +102,7 @@ struct ofputil_flow_mod {
     ovs_be64 new_cookie;     /* New cookie to install or UINT64_MAX. */
     bool modify_cookie;      /* Set cookie of existing flow to 'new_cookie'? */
 
-    uint8_t table_id;
+    uint8_t table_id;/*flow所属的table*/
     uint16_t command;
     uint16_t idle_timeout;
     uint16_t hard_timeout;
@@ -110,6 +111,7 @@ struct ofputil_flow_mod {
     uint32_t out_group;
     enum ofputil_flow_mod_flags flags;
     uint16_t importance;     /* Eviction precedence. */
+    /*flow对应的action*/
     struct ofpact *ofpacts;  /* Series of "struct ofpact"s. */
     size_t ofpacts_len;      /* Length of ofpacts, in bytes. */
     uint64_t ofpacts_tlv_bitmap; /* 1-bit for each present TLV in 'ofpacts'. */

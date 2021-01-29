@@ -374,7 +374,8 @@ type_run(const char *type)
 
     //找出type类型对应的backer
     backer = shash_find_data(&all_dpif_backers, type);
-    if (!backer) {//这种类型还没有创建backer
+    if (!backer) {
+        //这种类型还没有创建backer
         /* This is not necessarily a problem, since backers are only
          * created on demand. */
         return 0;
@@ -831,9 +832,11 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
     ovs_rwlock_init(&backer->odp_to_ofport_lock);
     backer->need_revalidate = 0;
     simap_init(&backer->tnl_backers);
+    //如果flow-restore-wait配置成false,则recv_set_enable为true
     backer->recv_set_enable = !ofproto_get_flow_restore_wait();
     *backerp = backer;//设置创建好的backer
 
+    //如为true,则移除datapath中所有的即有规则（默认行为）
     if (backer->recv_set_enable) {
         dpif_flow_flush(backer->dpif);
     }
@@ -2372,6 +2375,7 @@ set_ipfix(
     bool new_di = false;
 
     if (has_options && !di) {
+        /*创建ipfix*/
         di = ofproto->ipfix = dpif_ipfix_create();
         new_di = true;
     }
@@ -3686,7 +3690,7 @@ bundle_wait(struct ofbundle *bundle)
 }
 
 /* Mirrors. */
-
+/*为ofproto_执行mirror配置*/
 static int
 mirror_set__(struct ofproto *ofproto_, void *aux,
              const struct ofproto_mirror_settings *s)
@@ -3697,10 +3701,12 @@ mirror_set__(struct ofproto *ofproto_, void *aux,
     size_t i;
 
     if (!s) {
+        /*不再具有mirror配置，移除mirror*/
         mirror_destroy(ofproto->mbridge, aux);
         return 0;
     }
 
+    /*确认mirror规则要求的ingress/egress两个方向的ofbundle*/
     srcs = xmalloc(s->n_srcs * sizeof *srcs);
     dsts = xmalloc(s->n_dsts * sizeof *dsts);
 
@@ -3712,10 +3718,11 @@ mirror_set__(struct ofproto *ofproto_, void *aux,
         dsts[i] = bundle_lookup(ofproto, s->dsts[i]);
     }
 
-    error = mirror_set(ofproto->mbridge, aux, s->name, srcs, s->n_srcs, dsts,
+    /*具体配置mirror*/
+    error = mirror_set(ofproto->mbridge, aux, s->name, srcs/*ingress方向 ofbundle*/, s->n_srcs, dsts/*egress方向 ofbundle*/,
                        s->n_dsts, s->src_vlans,
-                       bundle_lookup(ofproto, s->out_bundle),
-                       s->snaplen, s->out_vlan);
+                       bundle_lookup(ofproto, s->out_bundle)/*mirror目的口*/,
+                       s->snaplen/*mirror的报文最大长度*/, s->out_vlan);
     free(srcs);
     free(dsts);
     return error;
@@ -3996,14 +4003,14 @@ port_add(struct ofproto *ofproto_, struct netdev *netdev)
     const char *dp_port_name;
 
     if (netdev_vport_is_patch(netdev)) {
-    		//如果是patch口，加入ghost_ports即可，tunnel口，patch口
+    	//如果是patch口，加入ghost_ports即可，tunnel口，patch口
         sset_add(&ofproto->ghost_ports, netdev_get_name(netdev));
         return 0;
     }
 
     dp_port_name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
     if (!dpif_port_exists(ofproto->backer->dpif, dp_port_name)) {
-    		//datapath下没有这个dp_port_name,则创建并加入
+    	//datapath下没有这个dp_port_name,则创建并加入
         odp_port_t port_no = ODPP_NONE;
         int error;
 
@@ -4013,7 +4020,7 @@ port_add(struct ofproto *ofproto_, struct netdev *netdev)
             return error;
         }
         if (netdev_get_tunnel_config(netdev)) {
-        		//tunnel口
+        	//tunnel口
             simap_put(&ofproto->backer->tnl_backers,
                       dp_port_name, odp_to_u32(port_no));
         }
@@ -4534,7 +4541,8 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto/*所属datapath*/,
              * Use the drop_frags_rule (which cannot disappear). */
             rule = ofproto->drop_frags_rule;
             if (stats) {
-                struct oftable *tbl = &ofproto->up.tables[*table_id];//选出当前要查找的表
+                //选出当前要查找的表
+                struct oftable *tbl = &ofproto->up.tables[*table_id];
                 unsigned long orig;
 
                 atomic_add_relaxed(&tbl->n_matched, stats->n_packets, &orig);
@@ -4634,6 +4642,7 @@ static struct rule_dpif *rule_dpif_cast(const struct rule *rule)
     return rule ? CONTAINER_OF(rule, struct rule_dpif, up) : NULL;
 }
 
+/*申请rule对象*/
 static struct rule *
 rule_alloc(void)
 {
@@ -6415,12 +6424,14 @@ ofproto_unixctl_dpif_dump_flows(struct unixctl_conn *conn,
     struct dpif_flow f;
     int error;
 
+    /*依据名称查找相应的ofproto*/
     ofproto = ofproto_dpif_lookup_by_name(argv[argc - 1]);
     if (!ofproto) {
         unixctl_command_reply_error(conn, "no such bridge");
         return;
     }
 
+    //参数信息获取
     bool verbosity = false;
     bool names = false;
     bool set_names = false;
@@ -6439,6 +6450,7 @@ ofproto_unixctl_dpif_dump_flows(struct unixctl_conn *conn,
         names = verbosity;
     }
 
+    /*收集当前backer中所有port_no，建立其与dpif_port.name的映射关系*/
     struct hmap *portno_names = NULL;
     if (names) {
         portno_names = xmalloc(sizeof *portno_names);
@@ -6452,12 +6464,14 @@ ofproto_unixctl_dpif_dump_flows(struct unixctl_conn *conn,
         }
     }
 
+    /*进行流表dump*/
     ds_init(&ds);
     flow_dump = dpif_flow_dump_create(ofproto->backer->dpif, false, NULL);
     flow_dump_thread = dpif_flow_dump_thread_create(flow_dump);
     while (dpif_flow_dump_next(flow_dump_thread, &f, 1)) {
         struct flow flow;
 
+        //将f.key转换进flow
         if ((odp_flow_key_to_flow(f.key, f.key_len, &flow, NULL)
              == ODP_FIT_ERROR)
             || (xlate_lookup_ofproto(ofproto->backer, &flow, NULL, NULL)
@@ -6465,6 +6479,7 @@ ofproto_unixctl_dpif_dump_flows(struct unixctl_conn *conn,
             continue;
         }
 
+        //显示ufid
         if (verbosity) {
             odp_format_ufid(&f.ufid, &ds);
             ds_put_cstr(&ds, " ");
@@ -6569,6 +6584,7 @@ ofproto_unixctl_init(void)
                              NULL);
     unixctl_command_register("dpif/show-dp-features", "bridge", 1, 1,
                              ofproto_unixctl_dpif_show_dp_features, NULL);
+    /*显示datapath中flow情况*/
     unixctl_command_register("dpif/dump-flows",
                              "[-m] [--names | --no-names] bridge", 1, INT_MAX,
                              ofproto_unixctl_dpif_dump_flows, NULL);
@@ -6837,7 +6853,9 @@ const struct ofproto_class ofproto_dpif_class = {
     port_is_lacp_current,
     port_get_lacp_stats,
     NULL,                       /* rule_choose_table */
+    /*为rule申请空间*/
     rule_alloc,
+    /*构造rule的空间*/
     rule_construct,
     rule_insert,
     NULL,                       /* rule_delete */
@@ -6881,7 +6899,7 @@ const struct ofproto_class ofproto_dpif_class = {
     set_queues,
     bundle_set,//bundle口更新(增，删除，改）
     bundle_remove,//自bundle口中移除一个成员口
-    mirror_set__,
+    mirror_set__,/*配置mirror*/
     mirror_get_stats__,
     set_flood_vlans,
     is_mirror_output_bundle,

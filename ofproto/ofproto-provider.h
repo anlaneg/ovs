@@ -106,7 +106,7 @@ struct ofproto {//openflow 交换机
     long long int eviction_group_timer; /* For rate limited reheapification. */
     struct oftable *tables;//指向n个表，
     int n_tables;//有多少个表
-    //表版本号（只要有一个表发生变化，版本号就发生变化）
+    //当前表版本号（只要有一个表发生变化，版本号就发生变化）
     ovs_version_t tables_version;  /* Controls which rules are visible to
                                     * table lookups. */
 
@@ -238,10 +238,12 @@ struct oftable {
 
     /* Maximum number of flows or UINT_MAX if there is no limit besides any
      * limit imposed by resource limitations. */
-    unsigned int max_flows;//流表的最大条数
+    //流表容许的最大条数
+    unsigned int max_flows;
     /* Current number of flows, not counting temporary duplicates nor deferred
      * deletions. */
-    unsigned int n_flows;//流表中的当前条数
+    //流表中的当前条数
+    unsigned int n_flows;
 
     /* These members determine the handling of an attempt to add a flow that
      * would cause the table to have more than 'max_flows' flows.
@@ -1984,7 +1986,7 @@ struct ofproto_flow_mod {
 
     /* Replicate needed fields from ofputil_flow_mod to not need it after the
      * flow has been created. */
-    uint16_t command;
+    uint16_t command;/*操作规则的命令*/
     bool modify_cookie;
     /* Fields derived from ofputil_flow_mod. */
     bool modify_may_add_flow;
@@ -1993,6 +1995,7 @@ struct ofproto_flow_mod {
 
     /* These are only used during commit execution.
      * ofproto_flow_mod_uninit() does NOT clean these up. */
+    /*此操作对应的版本号*/
     ovs_version_t version;              /* Version in which changes take
                                          * effect. */
     bool learn_adds_rule;               /* Learn execution adds a rule. */
@@ -2060,8 +2063,9 @@ enum ofperr ofproto_check_ofpacts(struct ofproto *,
                                   size_t ofpacts_len)
     OVS_REQUIRES(ofproto_mutex);
 
+//获取规则的动作
 static inline const struct rule_actions *
-rule_get_actions(const struct rule *rule)//获取规则的动作
+rule_get_actions(const struct rule *rule)
 {
     return rule->actions;
 }

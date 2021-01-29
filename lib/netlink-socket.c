@@ -1488,6 +1488,7 @@ struct genl_family {
 
 static struct hmap genl_families = HMAP_INITIALIZER(&genl_families);
 
+/*用于family获取的netlink policy*/
 static const struct nl_policy family_policy[CTRL_ATTR_MAX + 1] = {
     [CTRL_ATTR_FAMILY_ID] = {.type = NL_A_U16},
     [CTRL_ATTR_MCAST_GROUPS] = {.type = NL_A_NESTED, .optional = true},
@@ -1539,25 +1540,28 @@ genl_family_to_name(uint16_t id)
 }
 
 #ifndef _WIN32
+/*构造并发送genl对应的指定family名称对应的id*/
 static int
-do_lookup_genl_family(const char *name, struct nlattr **attrs,
-                      struct ofpbuf **replyp)
+do_lookup_genl_family(const char *name/*family名称*/, struct nlattr **attrs/*出参*/,
+                      struct ofpbuf **replyp/*出参，响应缓存区*/)
 {
     struct nl_sock *sock;
     struct ofpbuf request, *reply;
     int error;
 
     *replyp = NULL;
+    /*创建netlink_generic类型的socket*/
     error = nl_sock_create(NETLINK_GENERIC, &sock);
     if (error) {
         return error;
     }
 
     ofpbuf_init(&request, 0);
-    //发送取$name对应getfamily的请求
+    //构造并获取$name对应family id消息
     nl_msg_put_genlmsghdr(&request, 0, GENL_ID_CTRL, NLM_F_REQUEST,
                           CTRL_CMD_GETFAMILY, 1);
     nl_msg_put_string(&request, CTRL_ATTR_FAMILY_NAME, name);
+    //发送请求，并获取响应
     error = nl_sock_transact(sock, &request, &reply);
     ofpbuf_uninit(&request);
     if (error) {
@@ -1565,6 +1569,7 @@ do_lookup_genl_family(const char *name, struct nlattr **attrs,
         return error;
     }
 
+    /*解析响应，并将结果存入到attrs中*/
     if (!nl_policy_parse(reply, NLMSG_HDRLEN + GENL_HDRLEN,
                          family_policy, attrs, ARRAY_SIZE(family_policy))
         || nl_attr_get_u16(attrs[CTRL_ATTR_FAMILY_ID]) == 0) {
@@ -1733,9 +1738,10 @@ exit:
  * may use '*number' as the family number.  On failure, returns a positive
  * errno value and '*number' caches the errno value. */
 int
-nl_lookup_genl_family(const char *name, int *number)
+nl_lookup_genl_family(const char *name/*family名称*/, int *number/*出参，family名称对应的id*/)
 {
     if (*number == 0) {
+        /*如果number未初始化，则尝试自kernel中进行获取*/
         struct nlattr *attrs[ARRAY_SIZE(family_policy)];
         struct ofpbuf *reply;
         int error;

@@ -134,6 +134,7 @@ struct dpif_ipfix_exporter {
     uint32_t cache_active_timeout;  /* In seconds. */
     uint32_t cache_max_flows;
     char *virtual_obs_id;
+    /*virtual_obs_id的长度*/
     uint8_t virtual_obs_len;
 
     ofproto_ipfix_stats ofproto_stats;
@@ -142,6 +143,7 @@ struct dpif_ipfix_exporter {
 
 struct dpif_ipfix_bridge_exporter {
     struct dpif_ipfix_exporter exporter;
+    /*对应的配置*/
     struct ofproto_ipfix_bridge_exporter_options *options;
     uint32_t probability;
 };
@@ -152,7 +154,7 @@ struct dpif_ipfix_flow_exporter {
 };
 
 struct dpif_ipfix_flow_exporter_map_node {
-    struct hmap_node node;
+    struct hmap_node node;/*用于挂在hashtable上*/
     struct dpif_ipfix_flow_exporter exporter;
 };
 
@@ -694,6 +696,7 @@ ofproto_ipfix_flow_exporter_options_destroy(
 static void
 dpif_ipfix_exporter_init(struct dpif_ipfix_exporter *exporter)
 {
+    /*分配exporter id号*/
     exporter->exporter_id = ++exporter_total_count;
     exporter->collectors = NULL;
     exporter->seq_number = 1;
@@ -746,6 +749,7 @@ dpif_ipfix_exporter_set_options(struct dpif_ipfix_exporter *exporter,
 {
     size_t virtual_obs_len;
     collectors_destroy(exporter->collectors);
+    /*与targets数组指定的远端建立连接，初始化exporter->collectors*/
     collectors_create(targets, IPFIX_DEFAULT_COLLECTOR_PORT,
                       &exporter->collectors);
     if (exporter->collectors == NULL) {
@@ -758,6 +762,7 @@ dpif_ipfix_exporter_set_options(struct dpif_ipfix_exporter *exporter,
     exporter->cache_max_flows = cache_max_flows;
     virtual_obs_len = virtual_obs_id ? strlen(virtual_obs_id) : 0;
     if (virtual_obs_len > IPFIX_VIRTUAL_OBS_MAX_LEN) {
+        /*vbos id不能过长*/
         VLOG_WARN_RL(&rl, "Virtual obsevation ID too long (%d bytes), "
                      "should not be longer than %d bytes.",
                      exporter->virtual_obs_len, IPFIX_VIRTUAL_OBS_MAX_LEN);
@@ -930,12 +935,14 @@ dpif_ipfix_bridge_exporter_set_options(
 {
     bool options_changed;
 
+    /*选项为空*/
     if (!options || sset_is_empty(&options->targets)) {
         /* No point in doing any work if there are no targets. */
         dpif_ipfix_bridge_exporter_clear(exporter);
         return;
     }
 
+    /*配置是否发生变更*/
     options_changed = (
         !exporter->options
         || !ofproto_ipfix_bridge_exporter_options_equal(
@@ -948,6 +955,7 @@ dpif_ipfix_bridge_exporter_set_options(
     if (options_changed
         || collectors_count(exporter->exporter.collectors)
             < sset_count(&options->targets)) {
+        /*更新exporter->exporter配置*/
         if (!dpif_ipfix_exporter_set_options(
                 &exporter->exporter, &options->targets,
                 options->cache_active_timeout, options->cache_max_flows,
@@ -978,6 +986,7 @@ dpif_ipfix_find_flow_exporter_map_node(
 {
     struct dpif_ipfix_flow_exporter_map_node *exporter_node;
 
+    //遍历di->flow_exporter_map，其上第一个与collector_set_id相等的返回
     HMAP_FOR_EACH_WITH_HASH (exporter_node, node,
                              hash_int(collector_set_id, 0),
                              &di->flow_exporter_map) {
@@ -994,6 +1003,7 @@ static void
 dpif_ipfix_flow_exporter_init(struct dpif_ipfix_flow_exporter *exporter)
 {
     dpif_ipfix_exporter_init(&exporter->exporter);
+    /*配置设置为null*/
     exporter->options = NULL;
 }
 
@@ -1195,6 +1205,7 @@ dpif_ipfix_get_bridge_exporter_tunnel_sampling(const struct dpif_ipfix *di)
     return ret;
 }
 
+/*检查是否开启了tunnel采样（通过collector_set_id找到exporter,再确定是否开启）*/
 bool
 dpif_ipfix_get_flow_exporter_tunnel_sampling(const struct dpif_ipfix *di,
                                              const uint32_t collector_set_id)

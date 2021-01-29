@@ -333,17 +333,23 @@ enum {
 /* A flow classifier. */
 //流分类
 struct classifier {
-    int n_rules;                    /* Total number of rules. */ //总规则数
-    uint8_t n_flow_segments;//分成的段数
+    //总规则数
+    int n_rules;                    /* Total number of rules. */
+    //分成的段数，即flow_segments的有效下标
+    uint8_t n_flow_segments;
     //按第一段是从0到flow_segments[0],第2段是从flow_segments[0]到flow_segments[1]...
     //用于指出不同的mask段
     uint8_t flow_segments[CLS_MAX_INDICES]; /* Flow segment boundaries to use
                                              * for staged lookup. */
-    struct cmap subtables_map;      /* Contains "struct cls_subtable"s.  */ //按掩码对应不同的子表（方便查询）
-    struct pvector subtables;//存储子表
+    //按掩码对应不同的子表（方便查询）
+    struct cmap subtables_map;      /* Contains "struct cls_subtable"s.  */
+    //存储子表
+    struct pvector subtables;
     struct cmap partitions;         /* Contains "struct cls_partition"s. */
-    struct cls_trie tries[CLS_MAX_TRIES]; /* Prefix tries. */ //多棵前缀树，作用？（用来确定是否存在mask对应的规则）
-    unsigned int n_tries;//tires的数目，用于指出tries成员中有效的最大元素下标
+    //多棵前缀树，作用？（用来确定是否存在mask对应的规则）
+    struct cls_trie tries[CLS_MAX_TRIES]; /* Prefix tries. */
+    //tires的数目，用于指出tries成员中有效的最大元素下标
+    unsigned int n_tries;
     bool publish;                   /* Make changes visible to lookups? */
 };
 
@@ -356,6 +362,7 @@ struct cls_conjunction {
 /* A rule to be inserted to the classifier. */
 struct cls_rule {
     struct rculist node;          /* In struct cls_subtable 'rules_list'. */
+    /*指定规则的优先级*/
     const int priority;           /* Larger numbers are higher priorities. */
     //指明规则从属于那个cls_match
     OVSRCU_TYPE(struct cls_match *) cls_match;  /* NULL if not in a

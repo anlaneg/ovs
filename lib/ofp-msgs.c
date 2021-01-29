@@ -1329,9 +1329,11 @@ ofpraw_from_ofphdrs(enum ofpraw *raw, const struct ofphdrs *hdrs)
 
     ofpmsgs_init();
 
+    /*查询hdrs是否在raw_intance_map中已定义*/
     hash = ofphdrs_hash(hdrs);
     HMAP_FOR_EACH_WITH_HASH (raw_hdrs, hmap_node, hash, &raw_instance_map) {
         if (ofphdrs_equal(hdrs, &raw_hdrs->hdrs)) {
+            /*hdr匹配，指明使用哪个raw*/
             *raw = raw_hdrs->raw;
             return 0;
         }
@@ -1369,6 +1371,7 @@ ofpmsgs_init(void)
         return;
     }
 
+    /*将raw_infos中的内容加入到raw_instance_map中*/
     hmap_init(&raw_instance_map);
     for (info = raw_infos; info < &raw_infos[ARRAY_SIZE(raw_infos)]; info++)
     {

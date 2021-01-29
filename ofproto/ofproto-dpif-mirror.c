@@ -49,7 +49,9 @@ struct mbundle {
 };
 
 struct mirror {
+    /*mirror对应的bridge*/
     struct mbridge *mbridge;    /* Owning ofproto. */
+    /*在mbridge->mirror数组中对应的下标*/
     size_t idx;                 /* In ofproto's "mirrors" array. */
     void *aux;                  /* Key supplied by ofproto's client. */
 
@@ -206,13 +208,14 @@ mirror_bundle_dst(struct mbridge *mbridge, struct ofbundle *ofbundle)
     return mbundle ? mbundle->dst_mirrors : 0;
 }
 
+/*设置mirror配置*/
 int
 mirror_set(struct mbridge *mbridge, void *aux, const char *name,
-           struct ofbundle **srcs, size_t n_srcs,
+           struct ofbundle **srcs/*ingress方向bundle*/, size_t n_srcs/*ingress方向bundle数目*/,
            struct ofbundle **dsts, size_t n_dsts,
-           unsigned long *src_vlans, struct ofbundle *out_bundle,
-           uint16_t snaplen,
-           uint16_t out_vlan)
+           unsigned long *src_vlans, struct ofbundle *out_bundle/*mirror目的端口*/,
+           uint16_t snaplen/*mirror报文长度*/,
+           uint16_t out_vlan/*mirror目的vlan*/)
 {
     struct mbundle *mbundle, *out;
     mirror_mask_t mirror_bit;
@@ -220,10 +223,12 @@ mirror_set(struct mbridge *mbridge, void *aux, const char *name,
     struct hmapx srcs_map;          /* Contains "struct ofbundle *"s. */
     struct hmapx dsts_map;          /* Contains "struct ofbundle *"s. */
 
+    /*取对应的mirror*/
     mirror = mirror_lookup(mbridge, aux);
     if (!mirror) {
         int idx;
 
+        /*mirror不存在，找一个空闲的空间，把mirror创建出来*/
         idx = mirror_scan(mbridge);
         if (idx < 0) {
             VLOG_WARN("maximum of %d port mirrors reached, cannot create %s",
@@ -494,6 +499,7 @@ mirror_lookup(struct mbridge *mbridge, void *aux)
 {
     int i;
 
+    /*最多容许32个mirror*/
     for (i = 0; i < MAX_MIRRORS; i++) {
         struct mirror *mirror = mbridge->mirrors[i];
         if (mirror && mirror->aux == aux) {

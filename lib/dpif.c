@@ -67,7 +67,7 @@ COVERAGE_DEFINE(dpif_meter_set);
 COVERAGE_DEFINE(dpif_meter_get);
 COVERAGE_DEFINE(dpif_meter_del);
 
-//datapath接口类，目前支持两种，'system','netdev'
+//datapath接口类，目前支持两种datapath类型，'system','netdev'
 static const struct dpif_class *base_dpif_classes[] = {
 #if defined(__linux__) || defined(_WIN32)
     &dpif_netlink_class,
@@ -270,7 +270,7 @@ dp_class_unref(struct registered_dpif_class *rc)
     ovs_mutex_unlock(&dpif_mutex);
 }
 
-//通过类型查找对应注册的class,目前有两种system,netdev
+//通过类型查找对应注册的class,目前有两种system(dpif_netlink_class),netdev(dpif_netdev_class)
 static struct registered_dpif_class *
 dp_class_lookup(const char *type)
 {
@@ -348,7 +348,7 @@ dp_parse_name(const char *datapath_name_, char **name, char **type)
 
 //创建或者打开已存在的dpif
 static int
-do_open(const char *name, const char *type, bool create/*是否创建datapath*/, struct dpif **dpifp)
+do_open(const char *name/*datapath名称*/, const char *type/*datapath类型*/, bool create/*是否创建datapath*/, struct dpif **dpifp)
 {
     struct dpif *dpif = NULL;
     int error;
@@ -360,14 +360,14 @@ do_open(const char *name, const char *type, bool create/*是否创建datapath*/,
     type = dpif_normalize_type(type);
     registered_class = dp_class_lookup(type);
     if (!registered_class) {
-    		//如果此type没有注册dp class，则无法执行操作，退出
+    	//如果此type没有注册dp class，则无法执行操作，退出
         VLOG_WARN("could not create datapath %s of unknown type %s", name,
                   type);
         error = EAFNOSUPPORT;
         goto exit;
     }
 
-    //使用此类型的dpif_class,创建dp
+    //使用此类型的dpif_class,创建dp(例如dpif_netlink_class->open)
     error = registered_class->dpif_class->open(registered_class->dpif_class,
                                                name, create, &dpif);
     if (!error) {
@@ -444,7 +444,7 @@ dpif_create_and_open(const char *name, const char *type, struct dpif **dpifp/*�
     //创建后端对应的dpifp
     error = dpif_create(name, type, dpifp);
     if (error == EEXIST || error == EBUSY) {
-    		//如果已被创建，则失败，改为接受打开
+    	//如果已被创建，则失败，改为接受打开
         error = dpif_open(name, type, dpifp);
         if (error) {
             VLOG_WARN("datapath %s already exists but cannot be opened: %s",
@@ -545,8 +545,9 @@ dpif_cleanup_required(const struct dpif *dpif)
  * Normalized type string can be compared with strcmp().  Unnormalized type
  * string might be the same even if they have different spellings. */
 const char *
-dpif_normalize_type(const char *type)//datapath类型，如果没有指出默认为system
+dpif_normalize_type(const char *type)
 {
+    //datapath类型，如果没有指出默认为system
     return type && type[0] ? type : "system";
 }
 
@@ -648,7 +649,7 @@ dpif_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
             netdev_ports_insert(netdev, dpif_type_str, &dpif_port);
         }
     } else {
-    		//向datapath添加指定port失败
+    	//向datapath添加指定port失败
         VLOG_WARN_RL(&error_rl, "%s: failed to add %s as port: %s",
                      dpif_name(dpif), netdev_name, ovs_strerror(error));
         port_no = ODPP_NONE;
@@ -1177,7 +1178,7 @@ dpif_flow_dump_thread_destroy(struct dpif_flow_dump_thread *thread)
  *  - The next rcu quiescent period. */
 int
 dpif_flow_dump_next(struct dpif_flow_dump_thread *thread,
-                    struct dpif_flow *flows, int max_flows)
+                    struct dpif_flow *flows/*出参，获取datapath的dpif_flow*/, int max_flows)
 {
     struct dpif *dpif = thread->dpif;
     int n;
@@ -1411,7 +1412,8 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
         /* Count 'chunk', the number of ops that can be executed without
          * needing any help.  Ops that need help should be rare, so we
          * expect this to ordinarily be 'n_ops', that is, all the ops. */
-        //遍历每个op,如果遇到execute needs help,则跳出，跳出后，先执行前chunk个op,然后再执行execute
+        //遍历每个op,如果遇到execute needs help,则跳出，跳出后，先执行前chunk个op,
+        //然后再执行execute
         for (chunk = 0; chunk < n_ops; chunk++) {
             struct dpif_op *op = ops[chunk];
 
@@ -1429,6 +1431,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
             //对于netdev 执行dpif_netdev_operate，执行ops，恰执行chunk个
             dpif->dpif_class->operate(dpif, ops, chunk, offload_type);
 
+            //自0到chunk显示被操作的flow
             for (i = 0; i < chunk; i++) {
                 struct dpif_op *op = ops[i];
                 int error = op->error;
@@ -1461,6 +1464,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
                     struct dpif_flow_del *del = &op->flow_del;
 
                     COVERAGE_INC(dpif_flow_del);
+                    /*显示需要移除的规则,如果移除规则失败，则报错*/
                     log_flow_del_message(dpif, &this_module, del, error);
                     if (error && del->stats) {
                         memset(del->stats, 0, sizeof *del->stats);
@@ -1873,6 +1877,7 @@ log_flow_put_message(const struct dpif *dpif,
     }
 }
 
+/*显示flow_del消息*/
 void
 log_flow_del_message(const struct dpif *dpif,
                      const struct vlog_module *module,

@@ -98,9 +98,10 @@ struct iface {
 struct mirror {
     struct uuid uuid;           /* UUID of this "mirror" record in database. */
     struct hmap_node hmap_node; /* In struct bridge's "mirrors" hmap. */
+    /*mirror规则所生效的bridge*/
     struct bridge *bridge;
-    char *name;
-    const struct ovsrec_mirror *cfg;
+    char *name;/*mirror规则的名称*/
+    const struct ovsrec_mirror *cfg;/*mirror表中的配置项*/
 };
 
 struct port {
@@ -1604,6 +1605,7 @@ bridge_configure_ipfix(struct bridge *br)
     }
 
     if (!valid_be_cfg && n_fe_opts == 0) {
+        /*清空ipfix配置*/
         ofproto_set_ipfix(br->ofproto, NULL, NULL, 0);
         return;
     }
@@ -1659,6 +1661,7 @@ bridge_configure_ipfix(struct bridge *br)
                     ? *fe_cfg->ipfix->cache_active_timeout : 0;
                 opts->cache_max_flows = fe_cfg->ipfix->cache_max_flows
                     ? *fe_cfg->ipfix->cache_max_flows : 0;
+                /*记录是否开启tunnel采样*/
                 opts->enable_tunnel_sampling = smap_get_bool(
                                                    &fe_cfg->ipfix->other_config,
                                                   "enable-tunnel-sampling", true);
@@ -3431,6 +3434,7 @@ bridge_run(void)
     /* Once the value of flow-restore-wait is false, we no longer should
      * check its value from the database. */
     if (cfg && ofproto_get_flow_restore_wait()) {
+        //设置flow-restore-wait
         ofproto_set_flow_restore_wait(smap_get_bool(&cfg->other_config,
                                         "flow-restore-wait", false));
     }
@@ -5322,6 +5326,7 @@ mirror_configure(struct mirror *m)
                      m->bridge->name, m->name);
         }
     } else if (cfg->output_vlan) {
+        /*采用指定vlan方式输出*/
         /* The database should prevent invalid VLAN values. */
         s.out_bundle = NULL;
         s.out_vlan = *cfg->output_vlan;
@@ -5339,6 +5344,7 @@ mirror_configure(struct mirror *m)
 
     /* Get port selection. */
     if (cfg->select_all) {
+        /*指定要收集所有port ingress/egress,故列出当前已知的桥上的port*/
         size_t n_ports = hmap_count(&m->bridge->ports);
         void **ports = xmalloc(n_ports * sizeof *ports);
         struct port *port;
@@ -5355,6 +5361,7 @@ mirror_configure(struct mirror *m)
         s.dsts = ports;
         s.n_dsts = n_ports;
     } else {
+        /*非所有接口，仅收集配置指定的port*/
         /* Get ports, dropping ports that don't exist.
          * The IDL ensures that there are no duplicates. */
         mirror_collect_ports(m, cfg->select_src_port, cfg->n_select_src_port,
@@ -5367,6 +5374,7 @@ mirror_configure(struct mirror *m)
     s.src_vlans = vlan_bitmap_from_array(cfg->select_vlan, cfg->n_select_vlan);
 
     /* Configure. */
+    /*处理mirror配置*/
     ofproto_mirror_register(m->bridge->ofproto, m, &s);
 
     /* Clean up. */

@@ -159,12 +159,16 @@ static struct ovs_mutex ufid_lock = OVS_MUTEX_INITIALIZER;
  * @netdev: netdev associated with the tc rule
  */
 struct ufid_tc_data {
+    /*可通过ufid找到tc_node*/
     struct hmap_node ufid_to_tc_node;
+    /*可通过tc hash找到tc_node*/
     struct hmap_node tc_to_ufid_node;
     //ufid做为主键，查找ufid_node
-    ovs_u128 ufid;//规则对应的id
+    ovs_u128 ufid;
+    //tc规则对应的id(在哪个设备，哪条链上）
     struct tcf_id id;
-    struct netdev *netdev;//规则所属的设备
+    //规则所属的设备
+    struct netdev *netdev;
 };
 
 //删除ufid对应的tc规则
@@ -194,6 +198,7 @@ del_ufid_tc_mapping_unlocked(const ovs_u128 *ufid)
 static void
 del_ufid_tc_mapping(const ovs_u128 *ufid)
 {
+    /*移除ufid与tc之间的映射*/
     ovs_mutex_lock(&ufid_lock);
     del_ufid_tc_mapping_unlocked(ufid);
     ovs_mutex_unlock(&ufid_lock);
@@ -220,11 +225,13 @@ add_ufid_tc_mapping(struct netdev *netdev, const ovs_u128 *ufid,
     size_t ufid_hash = hash_bytes(ufid, sizeof *ufid, 0);
     size_t tc_hash;
 
+    /*计算tc_hash*/
     tc_hash = hash_int(hash_int(id->prio, id->handle), id->ifindex);
     tc_hash = hash_int(id->chain, tc_hash);
 
     new_data->ufid = *ufid;
     new_data->id = *id;
+    /*增加对netdev的引用*/
     new_data->netdev = netdev_ref(netdev);
 
     ovs_mutex_lock(&ufid_lock);
@@ -318,6 +325,7 @@ get_prio_for_tc_flower(struct tc_flower *flower)
      * different mask combination unless multi mask per prio is supported. */
     ovs_mutex_lock(&prios_lock);
     HMAP_FOR_EACH_WITH_HASH (data, node, hash, &prios) {
+        /*如果multi_mask_per_prio为ture,则返回首个元素*/
         if ((multi_mask_per_prio
              || !memcmp(&flower->mask, &data->mask, key_len))
             && data->protocol == flower->key.eth_type) {
@@ -336,9 +344,12 @@ get_prio_for_tc_flower(struct tc_flower *flower)
 
     new_data = xzalloc(sizeof *new_data);
     memcpy(&new_data->mask, &flower->mask, key_len);
-    new_data->prio = ++last_prio;//分配优先级
-    new_data->protocol = flower->key.eth_type;//设置以太报文类型
-    hmap_insert(&prios, &new_data->node, hash);//加入到prios表中
+    //分配优先级
+    new_data->prio = ++last_prio;
+    //设置以太报文类型
+    new_data->protocol = flower->key.eth_type;
+    //加入到prios表中
+    hmap_insert(&prios, &new_data->node, hash);
     ovs_mutex_unlock(&prios_lock);
 
     return new_data->prio;
@@ -565,12 +576,12 @@ parse_tc_flower_terse_to_match(struct tc_flower *flower,
 
 static int
 parse_tc_flower_to_match(struct tc_flower *flower,
-                         struct match *match,
-                         struct nlattr **actions,
-                         struct dpif_flow_stats *stats/*规则命中的数目*/,
-                         struct dpif_flow_attrs *attrs,
-                         struct ofpbuf *buf,
-                         bool terse)
+                         struct match *match/*出参，flower中的match信息*/,
+                         struct nlattr **actions/*出参，flower中的action信息*/,
+                         struct dpif_flow_stats *stats/*出参，规则命中的统计*/,
+                         struct dpif_flow_attrs *attrs/*出参，flow属性*/,
+                         struct ofpbuf *buf/*出参，action buffer*/,
+                         bool terse/*是否为简短型消息*/)
 {
     size_t act_off;
     struct tc_flower_key *key = &flower->key;
@@ -583,12 +594,15 @@ parse_tc_flower_to_match(struct tc_flower *flower,
         return parse_tc_flower_terse_to_match(flower, match, stats, attrs);
     }
 
+    /*清空buf内容，准备填充flower转换后的action*/
     ofpbuf_clear(buf);
 
     match_init_catchall(match);
+    //smac,dmac内容解析到key,mask中
     match_set_dl_src_masked(match, key->src_mac, mask->src_mac);
     match_set_dl_dst_masked(match, key->dst_mac, mask->dst_mac);
 
+    /*vlan的内容解析*/
     if (eth_type_vlan(key->eth_type)) {
         match->flow.vlans[0].tpid = key->eth_type;
         match->wc.masks.vlans[0].tpid = OVS_BE16_MAX;
@@ -606,10 +620,12 @@ parse_tc_flower_to_match(struct tc_flower *flower,
         }
         flow_fix_vlan_tpid(&match->flow);
     } else if (eth_type_mpls(key->eth_type)) {
+        /*mpls内容解析*/
         match->flow.mpls_lse[0] = key->mpls_lse & mask->mpls_lse;
         match->wc.masks.mpls_lse[0] = mask->mpls_lse;
         match_set_dl_type(match, key->encap_eth_type[0]);
     } else if (key->eth_type == htons(ETH_TYPE_ARP)) {
+        /*arp内容解析*/
         match_set_arp_sha_masked(match, key->arp.sha, mask->arp.sha);
         match_set_arp_tha_masked(match, key->arp.tha, mask->arp.tha);
         match_set_arp_spa_masked(match, key->arp.spa, mask->arp.spa);
@@ -618,17 +634,21 @@ parse_tc_flower_to_match(struct tc_flower *flower,
                                     mask->arp.opcode);
         match_set_dl_type(match, key->eth_type);
     } else {
+        /*其它以太类型解析*/
         match_set_dl_type(match, key->eth_type);
     }
 
     if (is_ip_any(&match->flow)) {
         if (key->ip_proto) {
+            /*无条件设置proto*/
             match_set_nw_proto(match, key->ip_proto);
         }
 
+        //tos,ttl解析
         match_set_nw_tos_masked(match, key->ip_tos, mask->ip_tos);
         match_set_nw_ttl_masked(match, key->ip_ttl, mask->ip_ttl);
 
+        //分片标记解析
         if (mask->flags) {
             uint8_t flags = 0;
             uint8_t flags_mask = 0;
@@ -650,6 +670,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
             match_set_nw_frag_masked(match, flags, flags_mask);
         }
 
+        //src-ip,dst-ip
         match_set_nw_src_masked(match, key->ipv4.ipv4_src, mask->ipv4.ipv4_src);
         match_set_nw_dst_masked(match, key->ipv4.ipv4_dst, mask->ipv4.ipv4_dst);
 
@@ -658,6 +679,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
         match_set_ipv6_dst_masked(match,
                                   &key->ipv6.ipv6_dst, &mask->ipv6.ipv6_dst);
 
+        //传输层解析
         if (key->ip_proto == IPPROTO_TCP) {
             match_set_tp_dst_masked(match, key->tcp_dst, mask->tcp_dst);
             match_set_tp_src_masked(match, key->tcp_src, mask->tcp_src);
@@ -670,6 +692,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
             match_set_tp_src_masked(match, key->sctp_src, mask->sctp_src);
         }
 
+        //ct状态解析
         if (mask->ct_state) {
             uint8_t ct_statev = 0, ct_statem = 0;
 
@@ -702,6 +725,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
         match_set_ct_label_masked(match, key->ct_label, mask->ct_label);
     }
 
+    //隧道内容解析
     if (flower->tunnel) {
         if (flower->mask.tunnel.id) {
             match_set_tun_id(match, flower->key.tunnel.id);
@@ -709,6 +733,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
         }
         if (flower->mask.tunnel.ipv4.ipv4_dst ||
             flower->mask.tunnel.ipv4.ipv4_src) {
+            //隧道ip解析
             match_set_tun_dst_masked(match,
                                      flower->key.tunnel.ipv4.ipv4_dst,
                                      flower->mask.tunnel.ipv4.ipv4_dst);
@@ -740,6 +765,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
         }
     }
 
+    //action内容解析
     act_off = nl_msg_start_nested(buf, OVS_FLOW_ATTR_ACTIONS);
     {
         action = flower->actions;
@@ -946,6 +972,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
 
     //取flower中的状态
     parse_tc_flower_to_stats(flower, stats);
+    /*指明flow属性，例如此处为tc*/
     parse_tc_flower_to_attrs(flower, attrs);
 
     return 0;
@@ -975,23 +1002,28 @@ netdev_tc_flow_dump_next(struct netdev_flow_dump *dump,
     while (nl_dump_next(dump->nl_dump, &nl_flow, rbuffer)) {
         struct tc_flower flower;
 
+        //将nl_flow解析为flower
         if (parse_netlink_to_tc_flower(&nl_flow, &id, &flower, dump->terse)) {
             continue;
         }
 
+        //将flower解析为match,action,stats,attr
         if (parse_tc_flower_to_match(&flower, match, actions, stats, attrs,
-                                     wbuffer, dump->terse)) {
+                                     wbuffer/*用于写action*/, dump->terse)) {
             continue;
         }
 
         if (flower.act_cookie.len) {
+            /*如果有cookie,则取cookie做为ufid*/
             *ufid = *((ovs_u128 *) flower.act_cookie.data);
         } else if (!find_ufid(netdev, &id, ufid)) {
+            /*如未提供cookie,则通过id查询ufid,这里没有查找，忽略此flow*/
             continue;
         }
 
         match->wc.masks.in_port.odp_port = u32_to_odp(UINT32_MAX);
         match->flow.in_port.odp_port = dump->port;
+        /*将chain id指定为recirc_id*/
         match_set_recirc_id(match, id.chain);
 
         return true;
@@ -1885,6 +1917,7 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
         info->tc_modify_flow_deleted = !del_filter_and_ufid_mapping(&id, ufid);
     }
 
+    /*取规则优化级*/
     prio = get_prio_for_tc_flower(&flower);
     if (prio == 0) {
         VLOG_ERR_RL(&rl, "couldn't get tc prio: %s", ovs_strerror(ENOSPC));

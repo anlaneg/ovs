@@ -202,6 +202,7 @@ static struct ofservice *ofservice_lookup(struct connmgr *,
 
 /* Connection manager for an OpenFlow switch. */
 struct connmgr {
+    /*连接对应的ofproto*/
     struct ofproto *ofproto;
     char *name;
     char *local_port_name;
@@ -360,7 +361,7 @@ connmgr_run(struct connmgr *mgr,
     }
 
     struct ofconn *ofconn, *next_ofconn;
-    //遍历每个连接，从每个连接处收取消息，并进行处理
+    //遍历每个连接，从每个连接处收取openflow消息，并进行处理
     //处理与每个controller间的收报文
     LIST_FOR_EACH_SAFE (ofconn, next_ofconn, connmgr_node, &mgr->conns) {
         ofconn_run(ofconn, handle_openflow);
@@ -1356,6 +1357,7 @@ ofconn_run(struct ofconn *ofconn,
             ofconn_send_error(ofconn, of_msg->data, error);
             ofpbuf_delete(of_msg);
         } else if (!ovs_list_is_empty(&msgs)) {
+            /*处理msgs链上的消息*/
             handle_openflow(ofconn, &msgs);
             ofpbuf_list_delete(&msgs);
         }

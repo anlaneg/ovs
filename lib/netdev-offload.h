@@ -62,7 +62,9 @@ struct netdev_flow_dump {
 
 /* Flow offloading. */
 struct offload_info {
+    /*tunnel口的目的port*/
     ovs_be16 tp_dst_port; /* Destination port for tunnel in SET action */
+    /*tunnel头是否有checksum*/
     uint8_t tunnel_csum_on; /* Tunnel header with checksum */
 
     bool recirc_id_shared_with_tc;  /* Indicates whever tc chains will be in

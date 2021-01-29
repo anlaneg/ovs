@@ -73,7 +73,9 @@ struct ofproto_sflow_options {
 };
 
 struct ofproto_ipfix_bridge_exporter_options {
+    /*远端地址*/
     struct sset targets;
+    /*采样率*/
     uint32_t sampling_rate;
     uint32_t obs_domain_id;  /* Bridge-wide Observation Domain ID. */
     uint32_t obs_point_id;  /* Bridge-wide Observation Point ID. */
@@ -90,6 +92,7 @@ struct ofproto_ipfix_flow_exporter_options {
     struct sset targets;
     uint32_t cache_active_timeout;
     uint32_t cache_max_flows;
+    /*tunnel采样开启*/
     bool enable_tunnel_sampling;
     char *virtual_obs_id;
 };
@@ -472,22 +475,30 @@ int ofproto_bundle_unregister(struct ofproto *, void *aux);
 /* Configuration of mirrors. */
 struct ofproto_mirror_settings {
     /* Name for log messages. */
-    char *name;
+    char *name;/*mirror规则名称*/
 
     /* Bundles that select packets for mirroring upon ingress.  */
+    /*mirror源方向接口数组*/
     void **srcs;                /* A set of registered ofbundle handles. */
+    /*mirror源方向接口数量*/
     size_t n_srcs;
 
     /* Bundles that select packets for mirroring upon egress.  */
+    /*mirror目的方向接口数组*/
     void **dsts;                /* A set of registered ofbundle handles. */
+    /*mirror目的方向接口数量*/
     size_t n_dsts;
 
     /* VLANs of packets to select for mirroring. */
+    /*哪些vlan的报文需要被镜像*/
     unsigned long *src_vlans;   /* vlan_bitmap, NULL selects all VLANs. */
 
     /* Output (mutually exclusive). */
+    /*mirror输出口*/
     void *out_bundle;           /* A registered ofbundle handle or NULL. */
+    /*当out_bundle为NULL时，指出out vlan*/
     uint16_t out_vlan;          /* Output VLAN, only if out_bundle is NULL. */
+    /*输出快照长度，0表示不限制*/
     uint16_t snaplen;           /* Max packet size of a mirrored packet
                                    in byte, set to 0 equals 65535. */
 };

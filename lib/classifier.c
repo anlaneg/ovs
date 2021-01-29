@@ -336,6 +336,8 @@ classifier_init(struct classifier *cls, const uint8_t *flow_segments)
             cls->flow_segments[cls->n_flow_segments++] = *flow_segments++;
         }
     }
+
+    /*初始化trie*/
     cls->n_tries = 0;
     for (int i = 0; i < CLS_MAX_TRIES; i++) {
         trie_init(cls, i, NULL);
@@ -667,6 +669,7 @@ classifier_replace(struct classifier *cls, const struct cls_rule *rule,
     if (n_rules == 1) {
         subtable->max_priority = rule->priority;
         subtable->max_count = 1;
+        /*添加subtable*/
         pvector_insert(&cls->subtables, subtable, rule->priority);
     } else if (rule->priority == subtable->max_priority) {
         ++subtable->max_count;
@@ -973,7 +976,8 @@ classifier_lookup__(const struct classifier *cls, ovs_version_t version,
     /* Main loop. */
     struct cls_subtable *subtable;
     //遍历cls->subtables表，subtable遍历得到的元素
-    PVECTOR_FOR_EACH_PRIORITY (subtable, hard_pri + 1, 2, sizeof *subtable,//参数2,sizeof *subtable是为预取服务的，可以忽略
+    PVECTOR_FOR_EACH_PRIORITY (subtable, hard_pri + 1, 2, sizeof *subtable,
+            //参数2,sizeof *subtable是为预取服务的，可以忽略
                                &cls->subtables) {
         struct cls_conjunction_set *conj_set;
 
@@ -981,7 +985,8 @@ classifier_lookup__(const struct classifier *cls, ovs_version_t version,
          * than some certain match we've already found. */
         match = find_match_wc(subtable, version, flow, trie_ctx, cls->n_tries,
                               wc);
-        if (!match || match->priority <= hard_pri) {//没有匹配上，换下一个子表
+        if (!match || match->priority <= hard_pri) {
+            //没有匹配上，换下一个子表
             continue;
         }
 

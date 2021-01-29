@@ -484,7 +484,7 @@ ofproto_enumerate_names(const char *type, struct sset *names)
     return class ? class->enumerate_names(type, names) : EAFNOSUPPORT;
 }
 
-//增加版本号，设置表版本号
+//增加ofproto版本号，设置表版本号
 static void
 ofproto_bump_tables_version(struct ofproto *ofproto)
 {
@@ -619,16 +619,19 @@ ofproto_create(const char *datapath_name, const char *datapath_type/*ofproto对�
 /* Must be called (only) by an ofproto implementation in its constructor
  * function.  See the large comment on 'construct' in struct ofproto_class for
  * details. */
+//ofproto初始化flow table
 void
-ofproto_init_tables(struct ofproto *ofproto, int n_tables)//ofproto初始化flow table
+ofproto_init_tables(struct ofproto *ofproto, int n_tables)
 {
     struct oftable *table;
 
     ovs_assert(!ofproto->n_tables);
-    ovs_assert(n_tables >= 1 && n_tables <= 255);//表的数量必须在1到255之间
+    //表的数量必须在1到255之间
+    ovs_assert(n_tables >= 1 && n_tables <= 255);
 
     ofproto->n_tables = n_tables;
     ofproto->tables = xmalloc(n_tables * sizeof *ofproto->tables);
+    /*初始化此ofproto的每个table*/
     OFPROTO_FOR_EACH_TABLE (table, ofproto) {
         oftable_init(table);
     }
@@ -982,12 +985,14 @@ handle_nxt_ct_flush_zone(struct ofconn *ofconn, const struct ofp_header *oh)
     return 0;
 }
 
+/*设置flow 是否等待恢复*/
 void
 ofproto_set_flow_restore_wait(bool flow_restore_wait_db)
 {
     flow_restore_wait = flow_restore_wait_db;
 }
 
+/*取当前flow restore配置，是否等待恢复*/
 bool
 ofproto_get_flow_restore_wait(void)
 {
@@ -1933,7 +1938,7 @@ ofproto_run(struct ofproto *p)
         p->change_seq = new_seq;
     }
 
-    //处理openflow的增删改
+    //处理openflow的消息的增删改
     connmgr_run(p->connmgr, handle_openflow);
 
     return error;
@@ -5175,7 +5180,8 @@ add_flow_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm/*出参，�
 
     /* Pick table. */
     if (fm->table_id == 0xff) {
-    	//将规则添加进255号表
+    	//将规则添加进255号表，如果有rule_choose_table回调，则调用
+        //否则使用table=0
         if (ofproto->ofproto_class->rule_choose_table) {
             error = ofproto->ofproto_class->rule_choose_table(ofproto,
                                                               &fm->match,
@@ -5195,6 +5201,7 @@ add_flow_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm/*出参，�
         return OFPERR_OFPBRC_BAD_TABLE_ID;
     }
 
+    //取规则要存入的table
     table = &ofproto->tables[table_id];
     //表只读，返回参数有误
     if (table->flags & OFTABLE_READONLY
@@ -5209,6 +5216,7 @@ add_flow_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm/*出参，�
         return OFPERR_OFPBRC_EPERM;
     }
 
+    /*未生成临时规则，这里产生临时规则*/
     if (!ofm->temp_rule) {
         cls_rule_init_from_minimatch(&cr, &fm->match, fm->priority);
 
@@ -5390,7 +5398,7 @@ ofproto_rule_create(struct ofproto *ofproto, struct cls_rule *cr,
     ovs_mutex_unlock(&rule->mutex);
 
     /* Construct rule, initializing derived state. */
-    //构造规则
+    //构造规则，初始化计数
     error = ofproto->ofproto_class->rule_construct(rule);
     if (error) {
         ofproto_rule_destroy__(rule);
@@ -6265,8 +6273,9 @@ ofproto_rule_reduce_timeouts(struct rule *rule,
     ovs_mutex_unlock(&rule->mutex);
 }
 
+/*处理openflow格式的flow规则修改*/
 static enum ofperr
-handle_flow_mod(struct ofconn *ofconn, const struct ofp_header *oh)
+handle_flow_mod(struct ofconn *ofconn, const struct ofp_header *oh/*openflow消息头*/)
     OVS_EXCLUDED(ofproto_mutex)
 {
     struct ofproto *ofproto = ofconn_get_ofproto(ofconn);
@@ -6313,7 +6322,9 @@ handle_flow_mod__(struct ofproto *ofproto, const struct ofputil_flow_mod *fm,
     }
 
     ovs_mutex_lock(&ofproto_mutex);
+    /*加锁变更table的版本号*/
     ofm.version = ofproto->tables_version + 1;
+    /*开始流表修改*/
     error = ofproto_flow_mod_start(ofproto, &ofm);
     if (!error) {
         ofproto_bump_tables_version(ofproto);
@@ -8114,10 +8125,12 @@ ofproto_flow_mod_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
 
     switch (ofm->command) {
     case OFPFC_ADD:
+        /*执行规则添加*/
         check_buffer_id = true;
         error = add_flow_init(ofproto, ofm, fm);
         break;
     case OFPFC_MODIFY:
+        /*执行规则修改*/
         check_buffer_id = true;
         error = modify_flows_init_loose(ofproto, ofm, fm);
         break;
@@ -8608,8 +8621,8 @@ handle_tlv_table_request(struct ofconn *ofconn, const struct ofp_header *oh)
  * 'ofconn'.  Returns an ofperr that, if nonzero, the caller should send back
  * to the controller. */
 static enum ofperr
-handle_single_part_openflow(struct ofconn *ofconn, const struct ofp_header *oh,
-                            enum ofptype type)
+handle_single_part_openflow(struct ofconn *ofconn, const struct ofp_header *oh/*openflow消息头*/,
+                            enum ofptype type/*openflow消息类型*/)
     OVS_EXCLUDED(ofproto_mutex)
 {
     switch (type) {
@@ -8635,6 +8648,7 @@ handle_single_part_openflow(struct ofconn *ofconn, const struct ofp_header *oh,
         return handle_set_config(ofconn, oh);
 
     case OFPTYPE_PACKET_OUT:
+        /*controller向ofproto发送报文*/
         return handle_packet_out(ofconn, oh);
 
     case OFPTYPE_PORT_MOD:
@@ -8808,6 +8822,7 @@ handle_single_part_openflow(struct ofconn *ofconn, const struct ofp_header *oh,
     }
 }
 
+/*处理openflow消息*/
 static void
 handle_openflow(struct ofconn *ofconn, const struct ovs_list *msgs)
     OVS_EXCLUDED(ofproto_mutex)
@@ -8825,6 +8840,7 @@ handle_openflow(struct ofconn *ofconn, const struct ovs_list *msgs)
         } else if (!ovs_list_is_short(msgs)) {
             error = OFPERR_OFPBRC_BAD_STAT;
         } else {
+            /*处理其它类型的openflow消息*/
             error = handle_single_part_openflow(ofconn, msg->data, type);
         }
     }
@@ -9116,12 +9132,13 @@ eviction_group_add_rule(struct rule *rule)
 /* oftables. */
 
 /* Initializes 'table'. */
-//流表的初始化
+//ofproto对应的table初始化
 static void
 oftable_init(struct oftable *table)
 {
     memset(table, 0, sizeof *table);
-    classifier_init(&table->cls, flow_segment_u64s);//创建表对应的分类器
+    //创建表对应的分类器
+    classifier_init(&table->cls, flow_segment_u64s);
     table->max_flows = UINT_MAX;
     table->n_flows = 0;
     hmap_init(&table->eviction_groups_by_id);

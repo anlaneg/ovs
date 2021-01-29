@@ -52,7 +52,7 @@ struct collectors {
  * '*collectorsp' is null, if 'target's is an empty sset. */
 //创建collector(当前采用udp连接对应的sockets)，并返回
 int
-collectors_create(const struct sset *targets, int default_port/*默认的端口号*/,
+collectors_create(const struct sset *targets/*target数组*/, int default_port/*默认的端口号*/,
                   struct collectors **collectorsp/*出参，与targets互联的fd信息*/)
 {
     struct collectors *c;
@@ -67,7 +67,7 @@ collectors_create(const struct sset *targets, int default_port/*默认的端口�
         int error;
         int fd;
 
-        //与其建立连接，并返回对应的fd
+        //与其建立udp连接，并返回对应的fd
         error = inet_open_active(SOCK_DGRAM, name, default_port, NULL, &fd, 0);
         if (fd >= 0) {
             c->fds[c->n_fds++] = fd;
@@ -97,6 +97,7 @@ collectors_create(const struct sset *targets, int default_port/*默认的端口�
 void
 collectors_destroy(struct collectors *c)
 {
+    //清空collectors
     if (c) {
         size_t i;
 

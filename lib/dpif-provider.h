@@ -36,8 +36,11 @@ extern "C" {
 struct dpif {
     //datapath的接口函数集，例如dpif_netlink_class，dpif_netdev_class
     const struct dpif_class *dpif_class;
+    /*datpath名称*/
     char *base_name;
+    /*包含datapath类型的datapath全名*/
     char *full_name;
+    /*engine类型及id(netlink情况下为dp的ifindex)*/
     uint8_t netflow_engine_type;
     uint8_t netflow_engine_id;
     long long int current_ms;

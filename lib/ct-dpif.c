@@ -714,13 +714,14 @@ ct_dpif_free_zone_limits(struct ovs_list *zone_limits)
  * and '*plimit'.  Returns true on success.  Otherwise, returns false and
  * and puts the error message in 'ds'. */
 bool
-ct_dpif_parse_zone_limit_tuple(const char *s, uint16_t *pzone,
-                               uint32_t *plimit, struct ds *ds)
+ct_dpif_parse_zone_limit_tuple(const char *s, uint16_t *pzone/*出参，zone编号*/,
+                               uint32_t *plimit/*出参，limit编号*/, struct ds *ds/*出参，错误信息*/)
 {
     char *pos, *key, *value, *copy, *err;
     bool parsed_limit = false, parsed_zone = false;
 
     pos = copy = xstrdup(s);
+    /*划分pos,得到key,value*/
     while (ofputil_parse_key_value(&pos, &key, &value)) {
         if (!*value) {
             ds_put_format(ds, "field %s missing value", key);
@@ -728,6 +729,7 @@ ct_dpif_parse_zone_limit_tuple(const char *s, uint16_t *pzone,
         }
 
         if (!strcmp(key, "zone")) {
+            /*解析zone配置*/
             err = str_to_u16(value, key, pzone);
             if (err) {
                 free(err);
@@ -735,6 +737,7 @@ ct_dpif_parse_zone_limit_tuple(const char *s, uint16_t *pzone,
             }
             parsed_zone = true;
         }  else if (!strcmp(key, "limit")) {
+            /*解析limit配置*/
             err = str_to_u32(value, plimit);
             if (err) {
                 free(err);
@@ -747,6 +750,7 @@ ct_dpif_parse_zone_limit_tuple(const char *s, uint16_t *pzone,
         }
     }
 
+    /*没有同时配置zone，limit,报错*/
     if (!parsed_zone || !parsed_limit) {
         ds_put_format(ds, "failed to parse zone limit");
         goto error;

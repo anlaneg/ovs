@@ -237,12 +237,12 @@ static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(9999, 5);
 /* Generic Netlink family numbers for OVS.
  *
  * Initialized by dpif_netlink_init(). */
-static int ovs_datapath_family;
-static int ovs_vport_family;
-static int ovs_flow_family;
-static int ovs_packet_family;
-static int ovs_meter_family;
-static int ovs_ct_limit_family;
+static int ovs_datapath_family;/*datapath消息对应的family*/
+static int ovs_vport_family;/*vport消息对应的family*/
+static int ovs_flow_family;/*flow消息对应的family*/
+static int ovs_packet_family;/*packet消息对应的family*/
+static int ovs_meter_family;/*meter消息对应的family*/
+static int ovs_ct_limit_family;/*ct_limit消息对应的family*/
 
 /* Generic Netlink multicast groups for OVS.
  *
@@ -344,7 +344,7 @@ dpif_netlink_enumerate(struct sset *all_dps,
 //创建或者打开netlink类型的datapath
 static int
 dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name/*要创建的datapath名称*/,
-                  bool create, struct dpif **dpifp)
+                  bool create/*是否创建*/, struct dpif **dpifp/*出参，创建的datapath interface*/)
 {
     struct dpif_netlink_dp dp_request, dp;
     struct ofpbuf *buf;
@@ -363,9 +363,10 @@ dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name/*�
     dp_request.name = name;
 
     if (create) {
-    		//发送datapath创建命令
+    	//发送datapath创建命令
         dp_request.cmd = OVS_DP_CMD_NEW;
     } else {
+        /*需要执行修改，首先执行get获得原有的数据，再设置*/
         dp_request.cmd = OVS_DP_CMD_GET;
 
         error = dpif_netlink_dp_transact(&dp_request, &dp, &buf);
@@ -375,7 +376,7 @@ dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name/*�
         dp_request.user_features = dp.user_features;
         ofpbuf_delete(buf);
 
-	//发送datapath更新命令
+        //发送datapath更新命令
         /* Use OVS_DP_CMD_SET to report user features */
         dp_request.cmd = OVS_DP_CMD_SET;
     }
@@ -387,14 +388,16 @@ dpif_netlink_open(const struct dpif_class *class OVS_UNUSED, const char *name/*�
         return error;
     }
 
-    //向kernel发送创建datapath成功，构造dpifp
+    //此时，向kernel发送创建datapath成功，构造dpifp
     error = open_dpif(&dp, dpifp);
+    /*设置recirc被tc共享功能*/
     dpif_netlink_set_features(*dpifp, OVS_DP_F_TC_RECIRC_SHARING);
     ofpbuf_delete(buf);
 
     return error;
 }
 
+/*通过dpif_netlink_dp构造dpif*/
 static int
 open_dpif(const struct dpif_netlink_dp *dp, struct dpif **dpifp)
 {
@@ -600,6 +603,7 @@ destroy_all_channels(struct dpif_netlink *dpif)
         return;
     }
 
+    //禁止ovs-kernel向上upcall,所有upcall报文将被丢弃
     for (i = 0; i < dpif->uc_array_size; i++ ) {
         struct dpif_netlink_vport vport_request;
         uint32_t upcall_pids = 0;
@@ -707,6 +711,7 @@ dpif_netlink_get_stats(const struct dpif *dpif_, struct dpif_dp_stats *stats)
     return error;
 }
 
+/*设置datapath的用户态功能*/
 static int
 dpif_netlink_set_features(struct dpif *dpif_, uint32_t new_features)
 {
@@ -835,7 +840,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name/*port名称*
     int error = 0;
 
     if (dpif->handlers) {
-    		//创建netlink socket
+    	//创建netlink socket
         error = create_nl_sock(dpif, &sock);
         if (error) {
             return error;
@@ -844,7 +849,8 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name/*port名称*
 
     dpif_netlink_vport_init(&request);
     request.cmd = OVS_VPORT_CMD_NEW;
-    request.dp_ifindex = dpif->dp_ifindex;//datapath对应的ifindex
+    //datapath对应的ifindex
+    request.dp_ifindex = dpif->dp_ifindex;
     request.type = type;//接口类型
     request.name = name;//接口名称
 
@@ -1015,11 +1021,11 @@ dpif_netlink_port_add(struct dpif *dpif_, struct netdev *netdev,
     fat_rwlock_wrlock(&dpif->upcall_lock);
     //依据此变量决定如何创建port
     if (!ovs_tunnels_out_of_tree) {
-    		//通过netlink rtnl消息创建port
+    	//通过netlink rtnl消息创建port
         error = dpif_netlink_rtnl_port_create_and_add(dpif, netdev, port_nop);
     }
     if (error) {
-    		//通过compat方式创建接口
+    	//通过compat方式创建接口
         error = dpif_netlink_port_add_compat(dpif, netdev, port_nop);
     }
     fat_rwlock_unlock(&dpif->upcall_lock);
@@ -1729,6 +1735,7 @@ dpif_netlink_netdev_match_to_dpif_flow(struct match *match,
                                        struct dpif_flow *flow,
                                        bool terse)
 {
+    /*将flow清空*/
     memset(flow, 0, sizeof *flow);
 
     if (!terse) {
@@ -1749,6 +1756,7 @@ dpif_netlink_netdev_match_to_dpif_flow(struct match *match,
         /* Key */
         offset = key_buf->size;
         flow->key = ofpbuf_tail(key_buf);
+        /*由odp_parms填充key_buf*/
         odp_flow_key_from_flow(&odp_parms, key_buf);
         flow->key_len = key_buf->size - offset;
 
@@ -1781,7 +1789,7 @@ dpif_netlink_netdev_match_to_dpif_flow(struct match *match,
 //获取下一组flow
 static int
 dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
-                            struct dpif_flow *flows/*出参，保存dump出来的flow*/, int max_flows/*最大的flows*/)
+                            struct dpif_flow *flows/*出参，保存dump出来的flow*/, int max_flows/*flows的数目*/)
 {
     struct dpif_netlink_flow_dump_thread *thread
         = dpif_netlink_flow_dump_thread_cast(thread_);
@@ -1822,6 +1830,7 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
                                         &thread->nl_flows,
                                         &act);
         if (has_next) {
+            /*完成到dpif_flow的转换*/
             dpif_netlink_netdev_match_to_dpif_flow(&match,
                                                    &key, &mask,
                                                    actions,
@@ -1943,13 +1952,13 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
                        struct dpif_op **ops, size_t n_ops)
 {
     struct op_auxdata {
-        struct nl_transaction txn;
+        struct nl_transaction txn;/*事务相关变量*/
 
-        struct ofpbuf request;
-        uint64_t request_stub[1024 / 8];
+        struct ofpbuf request;/*请求消息*/
+        uint64_t request_stub[1024 / 8];/*请求消息buffer*/
 
-        struct ofpbuf reply;
-        uint64_t reply_stub[1024 / 8];
+        struct ofpbuf reply;/*响应消息*/
+        uint64_t reply_stub[1024 / 8];/*响应消息buffer*/
     } auxes[OPERATE_MAX_OPS];
 
     struct nl_transaction *txnsp[OPERATE_MAX_OPS];
@@ -1965,6 +1974,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
         struct dpif_flow_get *get;
         struct dpif_netlink_flow flow;
 
+        //初始化当前op对应的request,reply buffer
         ofpbuf_use_stub(&aux->request,
                         aux->request_stub, sizeof aux->request_stub);
         aux->txn.request = &aux->request;
@@ -1986,6 +1996,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
             break;
 
         case DPIF_OP_FLOW_DEL:
+            //处理flow移除
             del = &op->flow_del;
             dpif_netlink_init_flow_del(dpif, del, &flow);
             if (del->stats) {
@@ -2018,6 +2029,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
             break;
 
         case DPIF_OP_FLOW_GET:
+            /*流表信息获取*/
             get = &op->flow_get;
             dpif_netlink_init_flow_get(dpif, get, &flow);
             aux->txn.reply = get->buffer;
@@ -2033,9 +2045,10 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
         txnsp[i] = &auxes[i].txn;
     }
 
-    //通过netlink下发给kernel
+    //通过generic netlink下发给openvswitch datapath
     nl_transact_multiple(NETLINK_GENERIC, txnsp, n_ops);
 
+    //响应结果处理
     for (i = 0; i < n_ops; i++) {
         struct op_auxdata *aux = &auxes[i];
         struct nl_transaction *txn = &auxes[i].txn;
@@ -2044,6 +2057,7 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
         struct dpif_flow_del *del;
         struct dpif_flow_get *get;
 
+        /*使用发送的error编号*/
         op->error = txn->error;
 
         switch (op->type) {
@@ -2051,11 +2065,13 @@ dpif_netlink_operate__(struct dpif_netlink *dpif,
             put = &op->flow_put;
             if (put->stats) {
                 if (!op->error) {
+                    /*发送请求成功，故执行响应消息解析*/
                     struct dpif_netlink_flow reply;
 
                     op->error = dpif_netlink_flow_from_ofpbuf(&reply,
                                                               txn->reply);
                     if (!op->error) {
+                        /*自响应消息中获取统计计数*/
                         dpif_netlink_flow_get_stats(&reply, put->stats);
                     }
                 }
@@ -2144,6 +2160,7 @@ parse_flow_get(struct dpif_netlink *dpif, struct dpif_flow_get *get)
     return 0;
 }
 
+//解析dpif_flow_put,并将其转发为flower,下发给kernel
 static int
 parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
 {
@@ -2163,6 +2180,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
         return EOPNOTSUPP;
     }
 
+    //由netlink消息转换key及mask
     err = parse_key_and_mask_to_match(put->key, put->key_len, put->mask,
                                       put->mask_len, &match);
     if (err) {
@@ -2194,9 +2212,11 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
             //如果此接口为tunnel dev,记录dst_port,csum_on
             tnl_cfg = netdev_get_tunnel_config(outdev);
             if (tnl_cfg && tnl_cfg->dst_port != 0) {
+                /*tunnel口对应的目的port*/
                 dst_port = tnl_cfg->dst_port;
             }
             if (tnl_cfg) {
+                /*tunnel口是否计算checksum*/
                 csum_on = tnl_cfg->csum;
             }
             netdev_close(outdev);
@@ -2208,7 +2228,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
     info.recirc_id_shared_with_tc = (dpif->user_features
                                      & OVS_DP_F_TC_RECIRC_SHARING);
     info.tc_modify_flow_deleted = false;
-    //netlink向硬件下发flow
+    //通过netlink向硬件下发flow
     err = netdev_flow_put(dev, &match,
                           CONST_CAST(struct nlattr *, put->actions),
                           put->actions_len,
@@ -2230,7 +2250,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
             op.flow_del.terse = false;
 
             opp = &op;
-            //知会kernel删除对应的flow
+            //已下发硬件成功，防止之前下发到kernel datapath,这里知会kernel删除对应的flow
             dpif_netlink_operate__(dpif, &opp, 1);
         }
 
@@ -2268,6 +2288,7 @@ out:
         int del_err = 0;
 
         if (!info.tc_modify_flow_deleted) {
+            /*修改，需要先移除，故自硬件中移除之前的规则，完成修改*/
             del_err = netdev_flow_del(dev, put->ufid, put->stats);
         }
 
@@ -2303,6 +2324,7 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
             break;
         }
 
+        //添加offload规则
         err = parse_flow_put(dpif, put);
         log_flow_put_message(&dpif->dpif, &this_module, put, 0);
         break;
@@ -2314,6 +2336,7 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
             break;
         }
 
+        //移除offload规则
         err = netdev_ports_flow_del(
                                 dpif_normalize_type(dpif_type(&dpif->dpif)),
                                 del->ufid,
@@ -2328,6 +2351,7 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
             break;
         }
 
+        //获取offload规则
         err = parse_flow_get(dpif, get);
         log_flow_get_message(&dpif->dpif, &this_module, get, 0);
         break;
@@ -2341,6 +2365,7 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
     return err;
 }
 
+//向openvswitch kernel datapath下发netlink generic消息
 static void
 dpif_netlink_operate_chunks(struct dpif_netlink *dpif, struct dpif_op **ops,
                             size_t n_ops)
@@ -2354,6 +2379,7 @@ dpif_netlink_operate_chunks(struct dpif_netlink *dpif, struct dpif_op **ops,
     }
 }
 
+/*如果op没有提供ufid,则在此处计考虑为其赋值*/
 static void
 dpif_netlink_try_update_ufid__(struct dpif_op *op, ovs_u128 *ufid)
 {
@@ -2385,6 +2411,7 @@ dpif_netlink_try_update_ufid__(struct dpif_op *op, ovs_u128 *ufid)
     }
 }
 
+//更新op的ufid
 static void
 dpif_netlink_try_update_ufid(struct dpif_op **ops, ovs_u128 *ufid,
                              size_t n_ops)
@@ -2407,7 +2434,7 @@ dpif_netlink_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops,
     int i = 0;
     int err = 0;
 
-    //指出always offload,但flow api没有开启，故直接返回
+    //指出always offload,但flow api没有开启，故直接返回(会导致流量不通）
     if (offload_type == DPIF_OFFLOAD_ALWAYS && !netdev_is_flow_api_enabled()) {
         VLOG_DBG("Invalid offload_type: %d", offload_type);
         return;
@@ -2626,15 +2653,17 @@ dpif_netlink_refresh_channels(struct dpif_netlink *dpif, uint32_t n_handlers)
 }
 
 static int
-dpif_netlink_recv_set__(struct dpif_netlink *dpif, bool enable)
+dpif_netlink_recv_set__(struct dpif_netlink *dpif, bool enable/*upcall能否开启*/)
     OVS_REQ_WRLOCK(dpif->upcall_lock)
 {
     if ((dpif->handlers != NULL) == enable) {
         return 0;
     } else if (!enable) {
+        /*如果enable为false,则禁止kernel upcall*/
         destroy_all_channels(dpif);
         return 0;
     } else {
+        /*enable为true,开启channel*/
         return dpif_netlink_refresh_channels(dpif, 1);
     }
 }
@@ -3108,6 +3137,7 @@ dpif_netlink_ct_flush(struct dpif *dpif OVS_UNUSED, const uint16_t *zone,
     }
 }
 
+/*设置多个ct zone limits配置*/
 static int
 dpif_netlink_ct_set_limits(struct dpif *dpif OVS_UNUSED,
                            const uint32_t *default_limits,
@@ -3120,6 +3150,7 @@ dpif_netlink_ct_set_limits(struct dpif *dpif OVS_UNUSED,
     }
 
     struct ofpbuf *request = ofpbuf_new(NL_DUMP_BUFSIZE);
+    /*构造ct limit set命令*/
     nl_msg_put_genlmsghdr(request, 0, ovs_ct_limit_family,
                           NLM_F_REQUEST | NLM_F_ECHO, OVS_CT_LIMIT_CMD_SET,
                           OVS_CT_LIMIT_VERSION);
@@ -3137,6 +3168,7 @@ dpif_netlink_ct_set_limits(struct dpif *dpif OVS_UNUSED,
     }
 
     if (!ovs_list_is_empty(zone_limits)) {
+        /*zone_limits参数不为空，设置要设置的zone limit*/
         struct ct_dpif_zone_limit *zone_limit;
 
         LIST_FOR_EACH (zone_limit, node, zone_limits) {
@@ -3202,6 +3234,7 @@ dpif_netlink_zone_limits_from_ofpbuf(const struct ofpbuf *buf,
     return 0;
 }
 
+/*获取ct limit配置*/
 static int
 dpif_netlink_ct_get_limits(struct dpif *dpif OVS_UNUSED,
                            uint32_t *default_limit,
@@ -3212,6 +3245,7 @@ dpif_netlink_ct_get_limits(struct dpif *dpif OVS_UNUSED,
         return EOPNOTSUPP;
     }
 
+    /*构造ct limit配置获取消息*/
     struct ofpbuf *request = ofpbuf_new(NL_DUMP_BUFSIZE);
     nl_msg_put_genlmsghdr(request, 0, ovs_ct_limit_family,
             NLM_F_REQUEST | NLM_F_ECHO, OVS_CT_LIMIT_CMD_GET,
@@ -3222,6 +3256,7 @@ dpif_netlink_ct_get_limits(struct dpif *dpif OVS_UNUSED,
     ovs_header->dp_ifindex = 0;
 
     if (!ovs_list_is_empty(zone_limits_request)) {
+        /*请求的limit不为空，填充要获取的zone_id*/
         size_t opt_offset = nl_msg_start_nested(request,
                                                 OVS_CT_LIMIT_ATTR_ZONE_LIMIT);
 
@@ -4144,7 +4179,7 @@ probe_broken_meters(struct dpif *dpif)
     return broken_meters;
 }
 
-//实现基于kernel datapatch转发（完成向kernel下发flow,配置，自kernel获取信息，报文等）
+//实现基于kernel datapath转发（完成向kernel下发flow,配置，自kernel获取信息，报文等）
 const struct dpif_class dpif_netlink_class = {
     "system",
     false,                      /* cleanup_required */
@@ -4234,6 +4269,7 @@ const struct dpif_class dpif_netlink_class = {
     NULL,                       /* bond_stats_get */
 };
 
+//datapath netlink family动态获取
 static int
 dpif_netlink_init(void)
 {
@@ -4556,6 +4592,7 @@ dpif_netlink_dp_to_ofpbuf(const struct dpif_netlink_dp *dp, struct ofpbuf *buf)
     }
 
     if (dp->upcall_pid) {
+        /*填写upcall_pid*/
         nl_msg_put_u32(buf, OVS_DP_ATTR_UPCALL_PID, *dp->upcall_pid);
     }
 

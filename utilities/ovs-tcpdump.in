@@ -1,4 +1,5 @@
 #! @PYTHON3@
+# encoding:utf-8
 #
 # Copyright (c) 2016 Red Hat, Inc.
 #
@@ -29,6 +30,7 @@ try:
 except ImportError:
     if sys.platform in ['linux', 'linux2']:
         def interfaces():
+            #导致module失败，定义列出系统中所有interfaces的方法
             devices = []
             with open("/proc/net/dev", "r") as f_netdev:
                 for line in f_netdev:
@@ -76,6 +78,7 @@ def _install_tap_linux(tap_name, mtu_value=None):
     TUNSETIFF = 0x400454CA  # This is derived by printf() of TUNSETIFF
     TUNSETOWNER = TUNSETIFF + 2
 
+    #创建tap口
     tapdev_fd = os.open('/dev/net/tun', os.O_RDWR)
     ifr = struct.pack('16sH', tap_name.encode('utf8'), IFF_TAP | IFF_NO_PI)
     fcntl.ioctl(tapdev_fd, TUNSETIFF, ifr)
@@ -83,17 +86,20 @@ def _install_tap_linux(tap_name, mtu_value=None):
 
     time.sleep(1)  # required to give the new device settling time
     if mtu_value is not None:
+        #为创建的tap口设置mtu
         pipe = _doexec(
             *(['ip', 'link', 'set', 'dev', str(tap_name), 'mtu',
                str(mtu_value)]))
         pipe.wait()
 
+    #设置tap口up
     pipe = _doexec(
         *(['ip', 'link', 'set', 'dev', str(tap_name), 'up']))
     pipe.wait()
 
 
 def _make_linux_mirror_name(interface_name):
+    #生成针对interface_name口的mirror接口
     if len(interface_name) > IFNAMSIZ_LINUX - 2:
         return "ovsmi%06d" % randint(1, 999999)
     return "mi%s" % interface_name
@@ -137,6 +143,7 @@ class OVSDBException(Exception):
 class OVSDB(object):
     @staticmethod
     def wait_for_db_change(idl):
+        #等待ovsdb发生变更
         seq = idl.change_seqno
         stop = time.time() + 10
         while idl.change_seqno == seq and not idl.run():
@@ -171,6 +178,7 @@ class OVSDB(object):
         return self._idl_conn.tables[table_name]
 
     def _start_txn(self):
+        #开启事务
         if self._txn is not None:
             raise OVSDBException("ERROR: A transaction was started already")
         self._idl_conn.change_seqno += 1
@@ -178,6 +186,7 @@ class OVSDB(object):
         return self._txn
 
     def _complete_txn(self, try_again_fn):
+        #完成事务
         if self._txn is None:
             raise OVSDBException("ERROR: Not in a transaction")
         status = self._txn.commit_block()
@@ -332,12 +341,15 @@ class OVSDB(object):
 
         txn = self._start_txn()
         mirror = txn.insert(self.get_table('Mirror'))
+        #mirror规则名称
         mirror.name = 'm_%s' % intf_name
 
+        #指定是否需收集所有src port
         mirror.select_all = mirror_select_all
 
         mirrored_port = self._find_row_by_name('Port', intf_name)
 
+        #指定mirrored_port的ingress/egress两个方向均需要mirror
         mirror.verify('select_dst_port')
         dst_port = getattr(mirror, 'select_dst_port', [])
         dst_port.append(mirrored_port)
@@ -350,11 +362,13 @@ class OVSDB(object):
 
         output_port = self._find_row_by_name('Port', mirror_intf_name)
 
+        #指定out_port为mirror重定向口
         mirror.verify('output_port')
         out_port = getattr(mirror, 'output_port', [])
         out_port.append(output_port.uuid)
         mirror.output_port = out_port
 
+        #指定mirror规则所属的bridge
         br = self._find_row_by_name('Bridge', br_name)
         br.verify('mirrors')
         mirrors = getattr(br, 'mirrors', [])
@@ -364,6 +378,7 @@ class OVSDB(object):
         def try_again(db_entity):
             db_entity.bridge_mirror(intf_name, mirror_intf_name, br_name)
 
+        #指定这条规则由ovs-tcpdump创建
         txn.add_comment("ovs-tcpdump: user=%s,create_mirror=%s"
                         % (username(), mirror.name))
         status = self._complete_txn(try_again)
@@ -415,18 +430,22 @@ def main():
             skip_next = True
             continue
         elif cur in ['--dump-cmd']:
+            #设置dump命令
             dump_cmd = nxt
             skip_next = True
             continue
         elif cur in ['-i', '--interface']:
+            #设置待dump的接口名称
             interface = nxt
             skip_next = True
             continue
         elif cur in ['--mirror-to']:
+            #设置要mirror到的接口
             mirror_interface = nxt
             skip_next = True
             continue
         elif cur in ['--span']:
+            #设置针对所有口进行mirror
             mirror_select_all = True
             continue
         tcpdargs.append(cur)
@@ -436,6 +455,7 @@ def main():
         sys.exit(1)
 
     if not py_which(dump_cmd):
+        #dump命令必须存在
         print("Error: unable to execute '%s' (check PATH)" % dump_cmd)
         sys.exit(1)
 
@@ -447,16 +467,20 @@ def main():
 
     ovsdb = OVSDB(db_sock)
     if mirror_interface is None:
+        #用户未指定要mirror的接口名称，这里自动生成mirror接口
         mirror_interface = "mi%s" % interface
         if sys.platform in _make_mirror_name:
+            #构造mirror接口名称
             mirror_interface = _make_mirror_name[sys.platform](interface)
 
     if sys.platform in _make_taps and \
        mirror_interface not in interfaces():
+        #当前系统不存在此mirror接口，这里创建tap口，并配置与interface相同的mtu
         _make_taps[sys.platform](mirror_interface,
                                  ovsdb.interface_mtu(interface))
 
     if mirror_interface not in interfaces():
+        #再次检查后，确认mirror_interface仍不存在，报错，返回
         print("ERROR: Please create an interface called `%s`" %
               mirror_interface)
         print("See your OS guide for how to do this.")
@@ -465,13 +489,17 @@ def main():
         sys.exit(1)
 
     if not ovsdb.port_exists(interface):
+        #源接口需在ovsdb中存在，否则直接退出。
         print("ERROR: Port %s does not exist." % interface)
         sys.exit(1)
+        
     if ovsdb.port_exists(mirror_interface):
+        #mirror接口必须不能在ovsdb中存在，否则退出
         print("ERROR: Mirror port (%s) exists for port %s." %
               (mirror_interface, interface))
         sys.exit(1)
     try:
+        #当mirror口加入到与interface对应的同一个bridge,并将mirror_interface送interface
         ovsdb.make_port(mirror_interface, ovsdb.port_bridge(interface))
         ovsdb.bridge_mirror(interface, mirror_interface,
                             ovsdb.port_bridge(interface),
@@ -484,6 +512,7 @@ def main():
             pass
         sys.exit(1)
 
+    #执行tcpdump 针对mirror接口进行抓包。
     pipes = _doexec(*([dump_cmd, '-i', mirror_interface] + tcpdargs))
     try:
         while pipes.poll() is None:
@@ -496,6 +525,7 @@ def main():
         if pipes.poll() is None:
             pipes.terminate()
 
+        #移除mirror规则
         ovsdb.destroy_mirror(interface, ovsdb.port_bridge(interface))
         ovsdb.destroy_port(mirror_interface, ovsdb.port_bridge(interface))
     except Exception:

@@ -63,7 +63,9 @@ nl_msg_genlmsghdr(const struct ofpbuf *msg)
 bool
 nl_msg_nlmsgerr(const struct ofpbuf *msg, int *errorp)
 {
+    /*消息类型为error消息，取error code*/
     if (nl_msg_nlmsghdr(msg)->nlmsg_type == NLMSG_ERROR) {
+        /*取error头*/
         struct nlmsgerr *err = ofpbuf_at(msg, NLMSG_HDRLEN, sizeof *err);
         int code = EPROTO;
         if (!err) {

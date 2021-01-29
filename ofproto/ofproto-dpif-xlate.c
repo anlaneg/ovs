@@ -988,6 +988,7 @@ xlate_xbridge_set(struct xbridge *xbridge,
         xbridge->sflow = dpif_sflow_ref(sflow);
     }
 
+    /*更新ipfix指针*/
     if (xbridge->ipfix != ipfix) {
         dpif_ipfix_unref(xbridge->ipfix);
         xbridge->ipfix = dpif_ipfix_ref(ipfix);
@@ -2060,6 +2061,7 @@ xbundle_mirror_out(const struct xbridge *xbridge, struct xbundle *xbundle)
         : 0;
 }
 
+/*检查所给的口是否配置有对应的ingress mirror*/
 static mirror_mask_t
 xbundle_mirror_src(const struct xbridge *xbridge, struct xbundle *xbundle)
 {
@@ -2068,6 +2070,7 @@ xbundle_mirror_src(const struct xbridge *xbridge, struct xbundle *xbundle)
         : 0;
 }
 
+/*检查所给的口是否配置有对应的egress mirror*/
 static mirror_mask_t
 xbundle_mirror_dst(const struct xbridge *xbridge, struct xbundle *xbundle)
 {
@@ -2200,6 +2203,7 @@ mirror_packet(struct xlate_ctx *ctx, struct xbundle *xbundle,
             }
         } else if (xvlan.v[0].vid != out_vlan
                    && !eth_addr_is_reserved(ctx->xin->flow.dl_dst)) {
+            /*需要进行vlan转换再发送出去*/
             struct xbundle *xb;
             uint16_t old_vid = xvlan.v[0].vid;
 
@@ -2238,6 +2242,7 @@ mirror_packet(struct xlate_ctx *ctx, struct xbundle *xbundle,
 static void
 mirror_ingress_packet(struct xlate_ctx *ctx)
 {
+    /*检查是否配置了mirror,考虑是否需要针对in_port做对应的mirror*/
     if (mbridge_has_mirrors(ctx->xbridge->mbridge)) {
         struct xbundle *xbundle = lookup_input_bundle(
             ctx, ctx->xin->flow.in_port.ofp_port, NULL);
@@ -3289,7 +3294,7 @@ compose_sample_action(struct xlate_ctx *ctx,
                                              OVS_SAMPLE_ATTR_ACTIONS);
     }
 
-    //存入meter id
+    //下发meter action,存入meter id
     if (meter_id != UINT32_MAX) {
         nl_msg_put_u32(ctx->odp_actions, OVS_ACTION_ATTR_METER, meter_id);
     }
@@ -3304,7 +3309,9 @@ compose_sample_action(struct xlate_ctx *ctx,
                                                     ctx->odp_actions);
 
     if (is_sample) {
+        /*指定sample附加action长度*/
         nl_msg_end_nested(ctx->odp_actions, actions_offset);
+        /*指定sample action长度*/
         nl_msg_end_nested(ctx->odp_actions, sample_offset);
     }
 
@@ -5823,6 +5830,7 @@ xlate_sample_action(struct xlate_ctx *ctx,
         }
     }
 
+    /*生成flow对应的cookie*/
     struct user_action_cookie cookie;
 
     memset(&cookie, 0, sizeof cookie);
@@ -7351,6 +7359,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
         }
 
         case OFPACT_SAMPLE:
+            //sample action转换
             xlate_sample_action(ctx, ofpact_get_SAMPLE(a));
             break;
 
@@ -7610,11 +7619,12 @@ xlate_wc_init(struct xlate_ctx *ctx)
     flow_wildcards_init_catchall(ctx->wc);
 
     /* Some fields we consider to always be examined. */
-    WC_MASK_FIELD(ctx->wc, packet_type);//标记in_port存在
-    WC_MASK_FIELD(ctx->wc, in_port);//标记链路层类型
-    WC_MASK_FIELD(ctx->wc, dl_type);
+    WC_MASK_FIELD(ctx->wc, packet_type);
+    WC_MASK_FIELD(ctx->wc, in_port);//标记in_port存在
+    WC_MASK_FIELD(ctx->wc, dl_type);//标记链路层类型
     if (is_ip_any(&ctx->xin->flow)) {
-        WC_MASK_FIELD_MASK(ctx->wc, nw_frag, FLOW_NW_FRAG_MASK);//设置分片处理标记
+        //设置分片处理标记
+        WC_MASK_FIELD_MASK(ctx->wc, nw_frag, FLOW_NW_FRAG_MASK);
     }
 
     if (ctx->xbridge->support.odp.recirc) {
@@ -7624,10 +7634,12 @@ xlate_wc_init(struct xlate_ctx *ctx)
     }
 
     if (ctx->xbridge->netflow) {
-        netflow_mask_wc(&ctx->xin->flow, ctx->wc);//按flow设置mask为严格匹配
+        //按flow设置mask为严格匹配
+        netflow_mask_wc(&ctx->xin->flow, ctx->wc);
     }
 
-    tnl_wc_init(&ctx->xin->flow, ctx->wc);//设置隧道是严格匹配
+    //设置隧道是严格匹配
+    tnl_wc_init(&ctx->xin->flow, ctx->wc);
 }
 
 static void

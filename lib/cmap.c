@@ -887,6 +887,7 @@ static bool
 cmap_replace__(struct cmap_impl *impl, struct cmap_node *node,
                struct cmap_node *replacement, uint32_t hash, uint32_t h)
 {
+    /*按h,获得hash桶*/
     struct cmap_bucket *b = &impl->buckets[h & impl->mask];
     int slot;
 

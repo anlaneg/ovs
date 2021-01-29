@@ -675,6 +675,7 @@ struct dpif_flow_put {
     const struct nlattr *mask;      /* Mask to put. */
     size_t mask_len;                /* Length of 'mask' in bytes. */
 
+    //要put的流对应的action
     const struct nlattr *actions;   /* Actions to perform on flow. */
     size_t actions_len;             /* Length of 'actions' in bytes. */
 
@@ -790,7 +791,7 @@ int dpif_execute(struct dpif *, struct dpif_execute *);
 
 struct dpif_op {
     enum dpif_op_type type;//指明操作类型，对应相应的u值
-    int error;
+    int error;/*指明操作结果，如果失败，ukey将被移除*/
     union {
         struct dpif_flow_put flow_put;//要添加的流
         struct dpif_flow_del flow_del;//要删除的流

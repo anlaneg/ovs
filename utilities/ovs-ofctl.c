@@ -1799,7 +1799,7 @@ ofctl_flow_mod(int argc, char *argv[], uint16_t command)
         char *error;
         enum ofputil_protocol usable_protocols;
 
-        //非文件规则添加
+        //非文件规则，执行规则解析
         error = parse_ofp_flow_mod_str(&fm, argc > 2 ? argv[2] : "",
                                        ports_to_accept(argv[1]),
                                        tables_to_accept(argv[1]), command,
@@ -1812,13 +1812,14 @@ ofctl_flow_mod(int argc, char *argv[], uint16_t command)
     }
 }
 
-//执行ovs规则添加
+//执行ofctl规则添加
 static void
 ofctl_add_flow(struct ovs_cmdl_context *ctx)
 {
     ofctl_flow_mod(ctx->argc, ctx->argv, OFPFC_ADD);
 }
 
+//执行ovs规则添加（从文件）
 static void
 ofctl_add_flows(struct ovs_cmdl_context *ctx)
 {

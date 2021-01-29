@@ -233,10 +233,10 @@ netdev_flow_dump_destroy(struct netdev_flow_dump *dump)
 
 /*dump已经offload的flow*/
 bool
-netdev_flow_dump_next(struct netdev_flow_dump *dump, struct match *match,
-                      struct nlattr **actions, struct dpif_flow_stats *stats,
-                      struct dpif_flow_attrs *attrs, ovs_u128 *ufid,
-                      struct ofpbuf *rbuffer, struct ofpbuf *wbuffer)
+netdev_flow_dump_next(struct netdev_flow_dump *dump, struct match *match/*出参，匹配信息*/,
+                      struct nlattr **actions/*出参，action信息*/, struct dpif_flow_stats *stats/*出参，flow统计信息*/,
+                      struct dpif_flow_attrs *attrs/*出参，flow属性信息*/, ovs_u128 *ufid/*出参，flow唯一标实*/,
+                      struct ofpbuf *rbuffer, struct ofpbuf *wbuffer/*辅助用可写buffer*/)
 {
     const struct netdev_flow_api *flow_api =
         ovsrcu_get(const struct netdev_flow_api *, &dump->netdev->flow_api);

@@ -434,7 +434,7 @@ netdev_open(const char *name/*netdev名称*/, const char *type/*netdev类型*/, 
 
             netdev = NULL;
         } else {
-        		//报已存在
+        	//报已存在
             error = EEXIST;
         }
     }
