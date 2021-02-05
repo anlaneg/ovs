@@ -443,9 +443,11 @@ ovs_thread_create(const char *name, void *(*start)(void *), void *arg)
         ovsthread_once_done(&once);
     }
 
-    multithreaded = true;//标明进入多线程环境
+    //标明进入多线程环境
+    multithreaded = true;
     aux = xmalloc(sizeof *aux);
-    aux->start = start;//设置线程入口
+    //设置线程入口
+    aux->start = start;
     aux->arg = arg;
     ovs_strlcpy(aux->name, name, sizeof aux->name);
 
@@ -458,6 +460,7 @@ ovs_thread_create(const char *name, void *(*start)(void *), void *arg)
     pthread_attr_init(&attr);
     set_min_stack_size(&attr, 512 * 1024);
 
+    /*创建ovs线程*/
     error = pthread_create(&thread, &attr, ovsthread_wrapper, aux);
     if (error) {
         ovs_abort(error, "pthread_create failed");

@@ -719,6 +719,7 @@ char *ip_parse_cidr_len(const char *s, int *n, ovs_be32 *ip,
 #define IP_DSCP_CS6 0xc0
 #define IP_DSCP_MASK 0xfc
 
+/*tos字段中ecn标记值为0x3*/
 static inline int
 IP_ECN_is_ce(uint8_t dsfield)
 {
@@ -1222,7 +1223,8 @@ bool in6_is_lla(struct in6_addr *addr);
 void ipv6_multicast_to_ethernet(struct eth_addr *eth,
                                 const struct in6_addr *ip6);
 
-static inline bool dl_type_is_ip_any(ovs_be16 dl_type)//必须为ipv4/ipv6两种中的一个
+//必须为ipv4/ipv6两种中的一个
+static inline bool dl_type_is_ip_any(ovs_be16 dl_type)
 {
     return dl_type == htons(ETH_TYPE_IP)
         || dl_type == htons(ETH_TYPE_IPV6);

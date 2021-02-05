@@ -32,6 +32,7 @@ struct oftrace_node *
 oftrace_report(struct ovs_list *super, enum oftrace_node_type type,
                const char *text)
 {
+    /*将text申请node并存入到链表super后面*/
     struct oftrace_node *node = xmalloc(sizeof *node);
     ovs_list_push_back(super, &node->node);
     node->type = type;

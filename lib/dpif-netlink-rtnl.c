@@ -389,6 +389,7 @@ dpif_netlink_rtnl_create(const struct netdev_tunnel_config *tnl_cfg,
     case OVS_VPORT_TYPE_ERSPAN:
     case OVS_VPORT_TYPE_IP6ERSPAN:
     case OVS_VPORT_TYPE_IP6GRE:
+        /*针对以上隧道，仅collect_metadata标记*/
         nl_msg_put_flag(&request, IFLA_GRE_COLLECT_METADATA);
         break;
     case OVS_VPORT_TYPE_GENEVE:
@@ -466,23 +467,27 @@ dpif_netlink_rtnl_port_create(struct netdev *netdev)
         return EOPNOTSUPP;
     }
 
-    //隧道名称必须给出
+    //准备创建隧道口，这里给出linux中对应的接口kind
     kind = vport_type_to_kind(type, tnl_cfg);
     if (!kind) {
         return EOPNOTSUPP;
     }
 
+    //以下仅处理隧道口创建处理
     name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
     flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_EXCL;
 
+    /*通过netlink消息，请求kernel创建相应隧道接口*/
     err = dpif_netlink_rtnl_create(tnl_cfg, name, type, kind, flags);
 
     /* If the device exists, validate and/or attempt to recreate it. */
     if (err == EEXIST) {
+        /*检查存在的接口是否合乎配置，如是，则返回*/
         err = dpif_netlink_rtnl_verify(tnl_cfg, type, name);
         if (!err) {
             return 0;
         }
+        /*接口已存在，但接口配置与之不符，移除后，重新创建*/
         err = dpif_netlink_rtnl_destroy(name);
         if (err) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);

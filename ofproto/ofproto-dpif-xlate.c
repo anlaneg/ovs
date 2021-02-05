@@ -1672,8 +1672,9 @@ xbridge_lookup(struct xlate_cfg *xcfg, const struct ofproto_dpif *ofproto)
 
     xbridges = &xcfg->xbridges;
 
+    //遍历所有xbridges，找匹配的ofproto
     HMAP_FOR_EACH_IN_BUCKET (xbridge, hmap_node, hash_pointer(ofproto, 0),
-                             xbridges) {//遍历所有xbridges
+                             xbridges) {
         if (xbridge->ofproto == ofproto) {
             return xbridge;
         }
@@ -2239,6 +2240,7 @@ mirror_packet(struct xlate_ctx *ctx, struct xbundle *xbundle,
     }
 }
 
+/*mirror ingress方向报文处理*/
 static void
 mirror_ingress_packet(struct xlate_ctx *ctx)
 {
@@ -3448,13 +3450,14 @@ process_special(struct xlate_ctx *ctx, const struct xport *xport)
     if (!xport) {
         slow = 0;
     } else if (xport->cfm && cfm_should_process_flow(xport->cfm, flow, wc)) {
+        //802.1ag处理
         if (packet) {
-            cfm_process_heartbeat(xport->cfm, packet);//802.1ag处理
+            cfm_process_heartbeat(xport->cfm, packet);
         }
         slow = SLOW_CFM;
     } else if (xport->bfd && bfd_should_process_flow(xport->bfd, flow, wc)) {
+        //双向转发检测bfd处理
         if (packet) {
-        	//双向转发检测处理
             bfd_process_packet(xport->bfd, flow, packet);
             /* If POLL received, immediately sends FINAL back. */
             if (bfd_should_send_packet(xport->bfd)) {
@@ -3464,7 +3467,7 @@ process_special(struct xlate_ctx *ctx, const struct xport *xport)
         slow = SLOW_BFD;
     } else if (xport->xbundle && xport->xbundle->lacp
                && flow->dl_type == htons(ETH_TYPE_LACP)) {
-    	    //此接口是xbundle,且开启了lacp,且收到lacp报文
+    	//此接口是xbundle,且开启了lacp,且收到lacp报文
         if (packet) {
             lacp_may_enable = lacp_process_packet(xport->xbundle->lacp,
                                                   xport->ofport, packet);//lacp协议处理
@@ -3478,15 +3481,17 @@ process_special(struct xlate_ctx *ctx, const struct xport *xport)
         slow = SLOW_LACP;
     } else if ((xbridge->stp || xbridge->rstp) &&
                stp_should_process_flow(flow, wc)) {
+        //stp,rstp协议处理
         if (packet) {
             xbridge->stp
                 ? stp_process_packet(xport, packet)
-                : rstp_process_packet(xport, packet);//stp,rstp协议处理
+                : rstp_process_packet(xport, packet);
         }
         slow = SLOW_STP;
     } else if (xport->lldp && lldp_should_process_flow(xport->lldp, flow)) {
+        //链路层发现协议处理
         if (packet) {
-            lldp_process_packet(xport->lldp, packet);//链路层发现协议处理
+            lldp_process_packet(xport->lldp, packet);
         }
         slow = SLOW_LLDP;
     } else {
@@ -3893,6 +3898,7 @@ xlate_commit_actions(struct xlate_ctx *ctx)
     ctx->encap_data = NULL;
 }
 
+/*清除ctx中的conntracked对应字段*/
 static void
 clear_conntrack(struct xlate_ctx *ctx)
 {
@@ -5042,8 +5048,10 @@ xlate_controller_action(struct xlate_ctx *ctx, int len,
         .userdata = CONST_CAST(uint8_t *, userdata),
         .userdata_len = userdata_len,
     };
+    /*记录metadata*/
     frozen_metadata_from_flow(&state.metadata, &ctx->xin->flow);
 
+    /*申请一个空闲的recirc_id(注意这里申请时会尝试查询，如有匹配会复用）*/
     uint32_t recirc_id = recirc_alloc_id_ctx(&state);
     if (!recirc_id) {
         xlate_report_error(ctx, "Failed to allocate recirculation id");
@@ -7436,7 +7444,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
 
 void
 xlate_in_init(struct xlate_in *xin, struct ofproto_dpif *ofproto/*upcall报文所属交换机*/,
-              ovs_version_t version, const struct flow *flow/*upcall报文对应的flow*/,
+              ovs_version_t version/*ofctl table版本号*/, const struct flow *flow/*upcall报文对应的flow*/,
               ofp_port_t in_port/*upcall报文入接口*/, struct rule_dpif *rule, uint16_t tcp_flags,
               const struct dp_packet *packet/*upcall报文*/, struct flow_wildcards *wc,
               struct ofpbuf *odp_actions)
@@ -7448,12 +7456,14 @@ xlate_in_init(struct xlate_in *xin, struct ofproto_dpif *ofproto/*upcall报文�
     xin->flow.in_port.ofp_port = in_port;
     xin->flow.actset_output = OFPP_UNSET;
     xin->packet = packet;
-    xin->allow_side_effects = packet != NULL;//是否真在在处理报文？
+    //是否正在处理报文？
+    xin->allow_side_effects = packet != NULL;
     xin->rule = rule;
     xin->xcache = NULL;
     xin->ofpacts = NULL;
     xin->ofpacts_len = 0;
-    xin->tcp_flags = tcp_flags;//报文进来时的tcp_flags
+    //报文进来时的tcp_flags
+    xin->tcp_flags = tcp_flags;
     xin->trace = NULL;
     xin->resubmit_stats = NULL;
     xin->depth = 0;
@@ -7733,7 +7743,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         .recircs = RECIRC_REFS_EMPTY_INITIALIZER,
     };
 
-    //取当前配置
+    //取当前数据库配置
     struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     //当前报文对应的bridge
     struct xbridge *xbridge = xbridge_lookup(xcfg, xin->ofproto);
@@ -7752,9 +7762,11 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     struct xlate_ctx ctx = {
         .xin = xin,
         .xout = xout,
-        .base_flow = *flow,//保存基准flow,生成action时用
+        //保存基准flow,生成action时用
+        .base_flow = *flow,
         .orig_tunnel_ipv6_dst = flow_tnl_dst(&flow->tunnel),
-        .xcfg = xcfg,//保存转换时使用的配置快照
+        //保存转换时使用的配置快照
+        .xcfg = xcfg,
         .xbridge = xbridge,
         .stack = OFPBUF_STUB_INITIALIZER(stack_stub),
         .rule = xin->rule,
@@ -7771,9 +7783,11 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         .pending_decap = false,
         .encap_data = NULL,
 
+        /*从0号表进行查询*/
         .table_id = 0,
         .rule_cookie = OVS_BE64_MAX,
-        .orig_skb_priority = flow->skb_priority,//保存原始skb_priority
+        /*保存原始skb_priority*/
+        .orig_skb_priority = flow->skb_priority,
         .sflow_n_outputs = 0,
         .sflow_odp_port = 0,
         .nf_output_iface = NF_OUT_DROP,
@@ -7783,7 +7797,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
         .freezing = false,
         .recirc_update_dp_hash = false,
-        .frozen_actions = OFPBUF_STUB_INITIALIZER(frozen_actions_stub),//构造空的frozen_actions
+        /*构造空的frozen_actions*/
+        .frozen_actions = OFPBUF_STUB_INITIALIZER(frozen_actions_stub),
         .pause = NULL,
 
         .was_mpls = false,
@@ -7792,7 +7807,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         .ct_nat_action = NULL,
 
         .action_set_has_group = false,
-        .action_set = OFPBUF_STUB_INITIALIZER(action_set_stub),//构造空的action_set
+        /*构造空的action_set*/
+        .action_set = OFPBUF_STUB_INITIALIZER(action_set_stub),
     };
 
     /* 'base_flow' reflects the packet as it came in, but we need it to reflect
@@ -7801,7 +7817,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
      * it, so clear the tunnel data.
      */
 
-    memset(&ctx.base_flow.tunnel, 0, sizeof ctx.base_flow.tunnel);//清空base中的tunnel结构
+    /*清空base中的tunnel结构*/
+    memset(&ctx.base_flow.tunnel, 0, sizeof ctx.base_flow.tunnel);
 
     ofpbuf_reserve(ctx.odp_actions, NL_A_U32_SIZE);
     xlate_wc_init(&ctx);
@@ -7810,6 +7827,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
     xin->trace = xlate_report(&ctx, OFT_BRIDGE, "bridge(\"%s\")",
                               xbridge->name);
+    /*有frozen_state,则将frozen_state状态还原到flow中*/
     if (xin->frozen_state) {
     	//当recirc_id不为0时，此变量有值
         const struct frozen_state *state = xin->frozen_state;
@@ -7826,16 +7844,19 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
         /* Set the bridge for post-recirculation processing if needed. */
         if (!uuid_equals(&ctx.xbridge->ofproto->uuid, &state->ofproto_uuid)) {
+            /*两者交换机uuid不相同，查找旧的交换机*/
             const struct xbridge *new_bridge
                 = xbridge_lookup_by_uuid(xcfg, &state->ofproto_uuid);
 
             if (OVS_UNLIKELY(!new_bridge)) {
+                /*对应交换机不存在,frozen的状态不可用*/
                 /* Drop the packet if the bridge cannot be found. */
                 xlate_report_error(&ctx, "Frozen bridge no longer exists.");
                 ctx.error = XLATE_BRIDGE_NOT_FOUND;
                 xin->trace = old_trace;
                 goto exit;
             }
+            /*旧的bridge存在，这里更新ctx*/
             ctx.xbridge = new_bridge;
             /* The bridge is now known so obtain its table version. */
             ctx.xin->tables_version
@@ -7844,17 +7865,20 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
         /* Set the thawed table id.  Note: A table lookup is done only if there
          * are no frozen actions. */
+        /*恢复从上一次冻结的位置继续使用table_id*/
         ctx.table_id = state->table_id;
         xlate_report(&ctx, OFT_THAW,
                      "Resuming from table %"PRIu8, ctx.table_id);
 
         ctx.conntracked = state->conntracked;
         if (!state->conntracked) {
+            /*冻结状态没有ct,这里清除ct中ct的赋值*/
             clear_conntrack(&ctx);
         }
 
         /* Restore pipeline metadata. May change flow's in_port and other
          * metadata to the values that existed when freezing was triggered. */
+        /*还原pipeline的metadata,这里可能会修改in_port*/
         frozen_metadata_to_flow(&ctx.xbridge->ofproto->up,
                                 &state->metadata, flow);
 
@@ -7963,7 +7987,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
     /* Tunnel stats only for not-thawed packets. */
     if (!xin->frozen_state && in_port && in_port->is_tunnel) {
-    	//如果有入接口，入接口是tunnel
+    	//非frozen情况，如果有入接口，入接口是tunnel
         if (ctx.xin->resubmit_stats) {
             netdev_vport_inc_rx(in_port->netdev, ctx.xin->resubmit_stats);
             if (in_port->bfd) {//bdf功能，不关注
@@ -7980,7 +8004,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     }
 
     if (!xin->frozen_state && process_special(&ctx, in_port)) {
-    	//是否处理了特殊协议
+    	//非frozen状态，是否处理了特殊协议
         /* process_special() did all the processing for this packet.
          *
          * We do not perform special processing on thawed packets, since that
@@ -7989,6 +8013,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
         mirror_ingress_packet(&ctx);
     } else if (in_port && in_port->xbundle
                && xbundle_mirror_out(xbridge, in_port->xbundle)) {
+        /*丢弃掉自mirror口收到的任何报文*/
         xlate_report_error(&ctx, "dropping packet received on port "
                            "%s, which is reserved exclusively for mirroring",
                            in_port->xbundle->name);
@@ -8006,7 +8031,6 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
         if (!ecn_drop
             && (!in_port || may_receive(in_port, &ctx))) {
-	    /*检查接口是否可以收取报文*/
 	    /*当前待执行的action*/
             const struct ofpact *ofpacts;
 	    /*当前待执行的action长度*/

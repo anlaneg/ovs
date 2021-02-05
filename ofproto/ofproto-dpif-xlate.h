@@ -65,7 +65,8 @@ struct xlate_out {
 
 struct xlate_in {
     struct ofproto_dpif *ofproto;//xlate_in对应的交换机
-    ovs_version_t        tables_version;   /* Lookup in this version. */ //要查的表的版本
+    //要查的表的版本
+    ovs_version_t        tables_version;   /* Lookup in this version. */
 
     /* Flow to which the OpenFlow actions apply.  xlate_actions() will modify
      * this flow when actions change header fields. */
@@ -100,7 +101,7 @@ struct xlate_in {
     /* Union of the set of TCP flags seen so far in this flow.  (Used only by
      * NXAST_FIN_TIMEOUT.  Set to zero to avoid updating updating rules'
      * timeouts.) */
-    uint16_t tcp_flags;
+    uint16_t tcp_flags;/*报文对应的tcp flags*/
 
     /* Set to nonnull to trace the translation.  See ofproto-dpif-trace.h for
      * more information.  This points to the list of oftrace nodes to which the
@@ -155,6 +156,7 @@ struct xlate_in {
     struct flow_wildcards *wc;
 
     /* The frozen state to be resumed, as returned by xlate_lookup(). */
+    /*报文upcall时，会带有recirc id,通过此recirc_id获得上次frozen时的状态，如无则为空*/
     const struct frozen_state *frozen_state;
 
     /* If true, the packet to be translated is from a packet_out msg. */

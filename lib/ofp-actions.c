@@ -6726,9 +6726,11 @@ parse_CT(char *arg, const struct ofpact_parse_params *pp)
                 error = xasprintf("invalid table %#"PRIx8, oc->recirc_table);
             }
         } else if (!strcmp(key, "zone")) {
+            /*尝试转换zone后面的数字value*/
             error = str_to_u16(value, "zone", &oc->zone_imm);
 
             if (error) {
+                /*转换失败，尝试将value转换为寄存器*/
                 free(error);
                 error = mf_parse_subfield(&oc->zone_src, value);
                 if (error) {

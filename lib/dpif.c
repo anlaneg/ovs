@@ -631,7 +631,7 @@ dpif_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
         port_no = *port_nop;
     }
 
-    //通过datapath interface创建此port
+    //通过datapath interface创建此port（指明由底层返回port_no)
     error = dpif->dpif_class->port_add(dpif, netdev, &port_no);
     if (!error) {
         VLOG_DBG_RL(&dpmsg_rl, "%s: added %s as port %"PRIu32,
@@ -1428,7 +1428,7 @@ dpif_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
              * handle itself, without help. */
             size_t i;
 
-            //对于netdev 执行dpif_netdev_operate，执行ops，恰执行chunk个
+            //对于netdev 执行dpif_netdev_operate/dpif_netlink_operate，执行ops，恰执行chunk个
             dpif->dpif_class->operate(dpif, ops, chunk, offload_type);
 
             //自0到chunk显示被操作的flow
@@ -1602,7 +1602,7 @@ dpif_print_packet(struct dpif *dpif, struct dpif_upcall *upcall)
         packet = ofp_dp_packet_to_string(&upcall->packet);
 
         ds_init(&flow);
-        //upcall报文的key
+        //格式化upcall报文的key
         odp_flow_key_format(upcall->key, upcall->key_len, &flow);
 
         VLOG_DBG("%s: %s upcall:\n%s\n%s",

@@ -501,7 +501,7 @@ struct dpif_flow_stats {
     uint64_t n_packets;//报文数量
     uint64_t n_bytes;//报文大小
     long long int used;//使用时的时间
-    uint16_t tcp_flags;//tcp标志位
+    uint16_t tcp_flags;//flow中的tcp标志位
 };
 
 /* more statistics info for offloaded packets and bytes */

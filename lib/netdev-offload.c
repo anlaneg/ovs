@@ -499,6 +499,7 @@ netdev_ports_flow_dump_create(const char *dpif_type, int *ports/*出参，dumps�
     return dumps;
 }
 
+/*通过ufid移除datapath规则*/
 int
 netdev_ports_flow_del(const char *dpif_type, const ovs_u128 *ufid,
                       struct dpif_flow_stats *stats)
@@ -507,7 +508,9 @@ netdev_ports_flow_del(const char *dpif_type, const ovs_u128 *ufid,
 
     ovs_rwlock_rdlock(&netdev_hmap_rwlock);
     HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
+        /*datapath类型*/
         if (netdev_get_dpif_type(data->netdev) == dpif_type
+                /*按照ufid移除datapath规则*/
             && !netdev_flow_del(data->netdev, ufid, stats)) {
             ovs_rwlock_unlock(&netdev_hmap_rwlock);
             return 0;

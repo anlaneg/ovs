@@ -835,7 +835,7 @@ static int
 dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name/*port名称*/,
                         enum ovs_vport_type type/*要创建的port类型*/,
                         struct ofpbuf *options/*接口对应的附加选项*/,
-                        odp_port_t *port_nop/*port在datapath中的编号*/)
+                        odp_port_t *port_nop/*出入参，port在datapath中的编号，0时为自动申请*/)
     OVS_REQ_WRLOCK(dpif->upcall_lock)
 {
     struct dpif_netlink_vport request, reply;
@@ -876,6 +876,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, const char *name/*port名称*
     //向kernel发送port create请求
     error = dpif_netlink_vport_transact(&request, &reply, &buf);
     if (!error) {
+        /*使用datapath返回的port_id*/
         *port_nop = reply.port_no;
     } else {
         if (error == EBUSY && *port_nop != ODPP_NONE) {
@@ -1952,6 +1953,7 @@ dpif_netlink_encode_execute(int dp_ifindex, const struct dpif_execute *d_exec,
 /* Executes, against 'dpif', up to the first 'n_ops' operations in 'ops'.
  * Returns the number actually executed (at least 1, if 'n_ops' is
  * positive). */
+//送规则到kernel datapath
 static size_t
 dpif_netlink_operate__(struct dpif_netlink *dpif,
                        struct dpif_op **ops, size_t n_ops)
@@ -2241,7 +2243,7 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
                           &info, put->stats);
 
     if (!err) {
-    	//如果向硬件下发成功，且为要修改的flow，则删除flow
+    	//向硬件下发成功，且为要修改的flow，则删除flow
         if (put->flags & DPIF_FP_MODIFY) {
             struct dpif_op *opp;
             struct dpif_op op;
@@ -2255,7 +2257,9 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
             op.flow_del.terse = false;
 
             opp = &op;
-            //已下发硬件成功，防止之前下发到kernel datapath,这里知会kernel删除对应的flow
+            //走到这里硬件下发成功，
+            //但为了防止之前普将此流下发到kernel datapath,
+            //故这里会知会kernel删除此flow
             dpif_netlink_operate__(dpif, &opp, 1);
         }
 
@@ -2288,16 +2292,22 @@ parse_flow_put(struct dpif_netlink *dpif, struct dpif_flow_put *put)
     }
 
 out:
+    /*向kernel下发失败，且失败值不为exist,且当前为modify方式下发，需要将其自硬件中移除掉*/
     if (err && err != EEXIST && (put->flags & DPIF_FP_MODIFY)) {
         /* Modified rule can't be offloaded, try and delete from HW */
         int del_err = 0;
 
+        /* 当前tc在更新规则时，采用的是先删除旧规则，再添加新规则的办法
+         * 我们执行到此处时，确认更新操作已失败（可能添加的规则不能卸载），
+         * 在此时，除非在删除旧规则时，我们也失败了，才执行netdev_flow_del(实际上
+         * 并不需要再执行删除，仅为了带回del_err),否则就不需要移除了*/
         if (!info.tc_modify_flow_deleted) {
-            /*修改，需要先移除，故自硬件中移除之前的规则，完成修改*/
+            /*修改flow，但没有移除，需要先移除，故自硬件中移除之前的规则，完成修改*/
             del_err = netdev_flow_del(dev, put->ufid, put->stats);
         }
 
         if (!del_err) {
+            /*由于我们从硬件里已移除了旧规则，当前又失败，故新规则需要存入kernel datapath中*/
             /* Delete from hw success, so old flow was offloaded.
              * Change flags to create the flow in kernel */
             put->flags &= ~DPIF_FP_MODIFY;
@@ -2315,6 +2325,7 @@ out:
     return err;
 }
 
+/*向dpif进行flow的增删查，必须通过ufid进行查询*/
 static int
 try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
 {
@@ -2338,6 +2349,7 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
         struct dpif_flow_del *del = &op->flow_del;
 
         if (!del->ufid) {
+            /*必须通过ufid移除掉*/
             break;
         }
 
@@ -2353,6 +2365,7 @@ try_send_to_netdev(struct dpif_netlink *dpif, struct dpif_op *op)
         struct dpif_flow_get *get = &op->flow_get;
 
         if (!op->flow_get.ufid) {
+            /*通过ufid获取*/
             break;
         }
 
@@ -2409,7 +2422,7 @@ dpif_netlink_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops,
             while (n_ops > 0 && count < OPERATE_MAX_OPS) {
                 struct dpif_op *op = ops[i++];
 
-                //尝试向网络设备(硬件）直接下发flow执行op
+                //尝试向网络设备(硬件）直接下发flow执行op（均通过ufid进行控制）
                 //（就不向kernel下发了，为什么，如果仍向kernel下发两者间还要考虑同步且仍然要miss）
                 err = try_send_to_netdev(dpif, op);
                 if (err && err != EEXIST) {
@@ -3088,8 +3101,10 @@ dpif_netlink_ct_flush(struct dpif *dpif OVS_UNUSED, const uint16_t *zone,
                       const struct ct_dpif_tuple *tuple)
 {
     if (tuple) {
+        /*删除指定五元组的ct*/
         return nl_ct_flush_tuple(tuple, zone ? *zone : 0);
     } else if (zone) {
+        /*按zone删除*/
         return nl_ct_flush_zone(*zone);
     } else {
         return nl_ct_flush();

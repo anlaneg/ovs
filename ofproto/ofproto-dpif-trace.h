@@ -62,7 +62,7 @@ struct oftrace_node {
     struct ovs_list subs;       /* List of "struct oftrace_node" children. */
 
     enum oftrace_node_type type;
-    char *text;
+    char *text;/*trace类型*/
 };
 
 /* A node within a recirculation queue. */

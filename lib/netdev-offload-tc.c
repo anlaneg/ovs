@@ -210,6 +210,7 @@ del_filter_and_ufid_mapping(struct tcf_id *id, const ovs_u128 *ufid)
 {
     int err;
 
+    /*向tc发送命令，删除对应filter*/
     err = tc_del_filter(id);
     if (!err) {
         del_ufid_tc_mapping(ufid);
@@ -1913,9 +1914,11 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
         return EOPNOTSUPP;
     }
 
+    /*通过ufid查询tcf_id,针对此id进行处理*/
     if (get_ufid_tc_mapping(ufid, &id) == 0) {
         VLOG_DBG_RL(&rl, "updating old handle: %d prio: %d",
                     id.handle, id.prio);
+        /*如果此ufid对应的id已存在，则删除此id对应的规则*/
         info->tc_modify_flow_deleted = !del_filter_and_ufid_mapping(&id, ufid);
     }
 

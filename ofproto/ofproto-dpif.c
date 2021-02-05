@@ -878,6 +878,7 @@ open_dpif_backer(const char *type, struct dpif_backer **backerp)
         return error;
     }
 
+    /*可收取报文，启动handler,revalidator线程*/
     if (backer->recv_set_enable) {
         udpif_set_threads(backer->udpif, n_handlers, n_revalidators);
     }
@@ -4439,8 +4440,9 @@ rule_set_recirc_id(struct rule *rule_, uint32_t id)
     ovs_mutex_unlock(&rule->up.mutex);
 }
 
+//获取此ofproto的ofctl表版本号
 ovs_version_t
-ofproto_dpif_get_tables_version(struct ofproto_dpif *ofproto)//获取ofproto的表版本号
+ofproto_dpif_get_tables_version(struct ofproto_dpif *ofproto)
 {
     ovs_version_t version;
 
@@ -4513,7 +4515,7 @@ ofproto_dpif_credit_table_stats(struct ofproto_dpif *ofproto, uint8_t table_id,
 //从table_id开始查flow表项，获得rule
 struct rule_dpif *
 rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto/*所属datapath*/,
-                            ovs_version_t version, struct flow *flow/*待查询的flow*/,
+                            ovs_version_t version/*ofctl表版本*/, struct flow *flow/*待查询的flow*/,
                             struct flow_wildcards *wc,
                             const struct dpif_flow_stats *stats,
                             uint8_t *table_id/*自哪个表开始查询*/, ofp_port_t in_port/*流的入接口*/,

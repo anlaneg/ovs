@@ -203,6 +203,7 @@ recirc_id_node_from_state(const struct frozen_state *state)
     return CONTAINER_OF(state, struct recirc_id_node, state);
 }
 
+/*增加recirc_id引用计数*/
 static inline bool recirc_id_node_try_ref_rcu(const struct recirc_id_node *n_)
 {
     struct recirc_id_node *node = CONST_CAST(struct recirc_id_node *, n_);
