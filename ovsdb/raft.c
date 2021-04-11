@@ -75,7 +75,8 @@ enum raft_failure_test {
     FT_CRASH_AFTER_SEND_EXEC_REQ,
     FT_CRASH_AFTER_RECV_APPEND_REQ_UPDATE,
     FT_DELAY_ELECTION,
-    FT_DONT_SEND_VOTE_REQUEST
+    FT_DONT_SEND_VOTE_REQUEST,
+    FT_STOP_RAFT_RPC,
 };
 static enum raft_failure_test failure_test;
 
@@ -941,6 +942,34 @@ raft_reset_ping_timer(struct raft *raft)
 }
 
 static void
+raft_conn_update_probe_interval(struct raft *raft, struct raft_conn *r_conn)
+{
+    /* Inactivity probe will be sent if connection will remain idle for the
+     * time of an election timeout.  Connection will be dropped if inactivity
+     * will last twice that time.
+     *
+     * It's not enough to just have heartbeats if connection is still
+     * established, but no packets received from the other side.  Without
+     * inactivity probe follower will just try to initiate election
+     * indefinitely staying in 'candidate' role.  And the leader will continue
+     * to send heartbeats to the dead connection thinking that remote server
+     * is still part of the cluster. */
+    int probe_interval = raft->election_timer + ELECTION_RANGE_MSEC;
+
+    jsonrpc_session_set_probe_interval(r_conn->js, probe_interval);
+}
+
+static void
+raft_update_probe_intervals(struct raft *raft)
+{
+    struct raft_conn *r_conn;
+
+    LIST_FOR_EACH (r_conn, list_node, &raft->conns) {
+        raft_conn_update_probe_interval(raft, r_conn);
+    }
+}
+
+static void
 raft_add_conn(struct raft *raft, struct jsonrpc_session *js,
               const struct uuid *sid, bool incoming)
 {
@@ -954,7 +983,7 @@ raft_add_conn(struct raft *raft, struct jsonrpc_session *js,
                                               &conn->sid);
     conn->incoming = incoming;
     conn->js_seqno = jsonrpc_session_get_seqno(conn->js);
-    jsonrpc_session_set_probe_interval(js, 0);
+    raft_conn_update_probe_interval(raft, conn);
     jsonrpc_session_set_backlog_threshold(js, raft->conn_backlog_max_n_msgs,
                                               raft->conn_backlog_max_n_bytes);
 }
@@ -1446,6 +1475,10 @@ raft_send_add_server_request(struct raft *raft, struct raft_conn *conn)
 static void
 raft_conn_run(struct raft *raft, struct raft_conn *conn)
 {
+    if (failure_test == FT_STOP_RAFT_RPC) {
+        return;
+    }
+
     jsonrpc_session_run(conn->js);
 
     unsigned int new_seqno = jsonrpc_session_get_seqno(conn->js);
@@ -1766,7 +1799,8 @@ static void
 raft_open_conn(struct raft *raft, const char *address, const struct uuid *sid)
 {
     if (strcmp(address, raft->local_address)
-        && !raft_find_conn_by_address(raft, address)) {
+        && !raft_find_conn_by_address(raft, address)
+        && failure_test != FT_STOP_RAFT_RPC) {
         raft_add_conn(raft, jsonrpc_session_open(address, true), sid, false);
     }
 }
@@ -1842,7 +1876,7 @@ raft_run(struct raft *raft)
         free(paddr);
     }
 
-    if (raft->listener) {
+    if (raft->listener && failure_test != FT_STOP_RAFT_RPC) {
         struct stream *stream;
         int error = pstream_accept(raft->listener, &stream);
         if (!error) {
@@ -1967,7 +2001,7 @@ raft_run(struct raft *raft)
 static void
 raft_wait_session(struct jsonrpc_session *js)
 {
-    if (js) {
+    if (js && failure_test != FT_STOP_RAFT_RPC) {
         jsonrpc_session_wait(js);
         jsonrpc_session_recv_wait(js);
     }
@@ -1984,10 +2018,12 @@ raft_wait(struct raft *raft)
 
     raft_waiters_wait(raft);
 
-    if (raft->listener) {
-        pstream_wait(raft->listener);
-    } else {
-        poll_timer_wait_until(raft->listen_backoff);
+    if (failure_test != FT_STOP_RAFT_RPC) {
+        if (raft->listener) {
+            pstream_wait(raft->listener);
+        } else {
+            poll_timer_wait_until(raft->listen_backoff);
+        }
     }
 
     struct raft_conn *conn;
@@ -2804,6 +2840,7 @@ raft_update_commit_index(struct raft *raft, uint64_t new_commit_index)
                           raft->election_timer, e->election_timer);
                 raft->election_timer = e->election_timer;
                 raft->election_timer_new = 0;
+                raft_update_probe_intervals(raft);
             }
             if (e->servers) {
                 /* raft_run_reconfigure() can write a new Raft entry, which can
@@ -2820,6 +2857,7 @@ raft_update_commit_index(struct raft *raft, uint64_t new_commit_index)
                 VLOG_INFO("Election timer changed from %"PRIu64" to %"PRIu64,
                           raft->election_timer, e->election_timer);
                 raft->election_timer = e->election_timer;
+                raft_update_probe_intervals(raft);
             }
         }
         /* Check if any pending command can be completed, and complete it.
@@ -4331,8 +4369,9 @@ raft_send_to_conn_at(struct raft *raft, const union raft_rpc *rpc,
                      struct raft_conn *conn, int line_number)
 {
     log_rpc(rpc, "-->", conn, line_number);
-    return !jsonrpc_session_send(
-        conn->js, raft_rpc_to_jsonrpc(&raft->cid, &raft->sid, rpc));
+    return failure_test == FT_STOP_RAFT_RPC
+           || !jsonrpc_session_send(
+                  conn->js, raft_rpc_to_jsonrpc(&raft->cid, &raft->sid, rpc));
 }
 
 static bool
@@ -4468,6 +4507,8 @@ raft_unixctl_status(struct unixctl_conn *conn,
                   : raft->leaving ? "leaving cluster"
                   : raft->left ? "left cluster"
                   : raft->failed ? "failed"
+                  : raft->candidate_retrying
+                      ? "disconnected from the cluster (election timeout)"
                   : "cluster member");
     if (raft->joining) {
         ds_put_format(&s, "Remotes for joining:");
@@ -4824,6 +4865,8 @@ raft_unixctl_failure_test(struct unixctl_conn *conn OVS_UNUSED,
         }
     } else if (!strcmp(test, "dont-send-vote-request")) {
         failure_test = FT_DONT_SEND_VOTE_REQUEST;
+    } else if (!strcmp(test, "stop-raft-rpc")) {
+        failure_test = FT_STOP_RAFT_RPC;
     } else if (!strcmp(test, "clear")) {
         failure_test = FT_NO_TEST;
         unixctl_command_reply(conn, "test dismissed");

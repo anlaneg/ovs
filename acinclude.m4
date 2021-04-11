@@ -209,10 +209,10 @@ dnl Configure Linux tc compat.
 AC_DEFUN([OVS_CHECK_LINUX_TC], [
   AC_COMPILE_IFELSE([
     AC_LANG_PROGRAM([#include <linux/pkt_cls.h>], [
-        int x = TCA_ACT_FLAGS;
+        int x = TCA_FLOWER_KEY_CT_FLAGS_REPLY;
     ])],
-    [AC_DEFINE([HAVE_TCA_ACT_FLAGS], [1],
-               [Define to 1 if TCA_ACT_FLAGS is available.])])
+    [AC_DEFINE([HAVE_TCA_FLOWER_KEY_CT_FLAGS_REPLY], [1],
+               [Define to 1 if TCA_FLOWER_KEY_CT_FLAGS_REPLY is available.])])
 
   AC_CHECK_MEMBERS([struct tcf_t.firstuse], [], [], [#include <linux/pkt_cls.h>])
 
@@ -350,16 +350,12 @@ AC_DEFUN([OVS_CHECK_DPDK], [
       "shared")
           PKG_CHECK_MODULES([DPDK], [libdpdk], [
               DPDK_INCLUDE="$DPDK_CFLAGS"
-              DPDK_LIB="$DPDK_LIBS"], [
-              DPDK_INCLUDE="-I/usr/local/include/dpdk -I/usr/include/dpdk"
-              DPDK_LIB="-ldpdk"])
+              DPDK_LIB="$DPDK_LIBS"])
               ;;
       "static" | "yes")
           PKG_CHECK_MODULES_STATIC([DPDK], [libdpdk], [
               DPDK_INCLUDE="$DPDK_CFLAGS"
-              DPDK_LIB="$DPDK_LIBS"], [
-              DPDK_INCLUDE="-I/usr/local/include/dpdk -I/usr/include/dpdk"
-              DPDK_LIB="-ldpdk"])
+              DPDK_LIB="$DPDK_LIBS"])
 
           dnl Statically linked private DPDK objects of form
           dnl -l:file.a must be positioned between

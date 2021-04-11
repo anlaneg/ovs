@@ -113,6 +113,9 @@ struct tc_flower_key {
     ovs_be16 sctp_src;
     ovs_be16 sctp_dst;
 
+    uint8_t icmp_code;
+    uint8_t icmp_type;
+
     //0层vlan,1层vlan
     uint16_t vlan_id[FLOW_MAX_VLAN_HEADERS];
     uint8_t vlan_prio[FLOW_MAX_VLAN_HEADERS];
@@ -373,10 +376,12 @@ int tc_replace_flower(struct tcf_id *id, struct tc_flower *flower);
 int tc_del_filter(struct tcf_id *id);
 int tc_get_flower(struct tcf_id *id, struct tc_flower *flower);
 int tc_dump_flower_start(struct tcf_id *id, struct nl_dump *dump, bool terse);
+int tc_dump_tc_chain_start(struct tcf_id *id, struct nl_dump *dump);
 int parse_netlink_to_tc_flower(struct ofpbuf *reply,
                                struct tcf_id *id,
                                struct tc_flower *flower,
                                bool terse);
+int parse_netlink_to_tc_chain(struct ofpbuf *reply, uint32_t *chain);
 void tc_set_policy(const char *policy);
 
 #endif /* tc.h */

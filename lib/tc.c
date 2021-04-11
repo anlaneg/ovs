@@ -61,6 +61,10 @@
 #define TCA_DUMP_FLAGS 15
 #endif
 
+#ifndef RTM_GETCHAIN
+#define RTM_GETCHAIN 102
+#endif
+
 VLOG_DEFINE_THIS_MODULE(tc);
 
 static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(60, 5);
@@ -310,6 +314,10 @@ static const struct nl_policy tca_policy[] = {
     [TCA_STATS2] = { .type = NL_A_NESTED, .optional = true, },
 };
 
+static const struct nl_policy tca_chain_policy[] = {
+    [TCA_CHAIN] = { .type = NL_A_U32, .optional = false, },
+};
+
 static const struct nl_policy tca_flower_policy[] = {
     [TCA_FLOWER_CLASSID] = { .type = NL_A_U32, .optional = true, },
     [TCA_FLOWER_INDEV] = { .type = NL_A_STRING, .max_len = IFNAMSIZ,
@@ -439,6 +447,22 @@ static const struct nl_policy tca_flower_policy[] = {
     [TCA_FLOWER_KEY_CT_LABELS] = { .type = NL_A_U128, .optional = true, },
     [TCA_FLOWER_KEY_CT_LABELS_MASK] = { .type = NL_A_U128,
                                         .optional = true, },
+    [TCA_FLOWER_KEY_ICMPV4_CODE] = { .type = NL_A_U8,
+                                     .optional = true, },
+    [TCA_FLOWER_KEY_ICMPV4_CODE_MASK] = { .type = NL_A_U8,
+                                          .optional = true, },
+    [TCA_FLOWER_KEY_ICMPV4_TYPE] = { .type = NL_A_U8,
+                                     .optional = true, },
+    [TCA_FLOWER_KEY_ICMPV4_TYPE_MASK] = { .type = NL_A_U8,
+                                          .optional = true, },
+    [TCA_FLOWER_KEY_ICMPV6_CODE] = { .type = NL_A_U8,
+                                     .optional = true, },
+    [TCA_FLOWER_KEY_ICMPV6_CODE_MASK] = { .type = NL_A_U8,
+                                          .optional = true, },
+    [TCA_FLOWER_KEY_ICMPV6_TYPE] = { .type = NL_A_U8,
+                                     .optional = true, },
+    [TCA_FLOWER_KEY_ICMPV6_TYPE_MASK] = { .type = NL_A_U8,
+                                          .optional = true, },
 };
 
 static const struct nl_policy tca_flower_terse_policy[] = {
@@ -533,7 +557,7 @@ nl_parse_flower_mpls(struct nlattr **attrs, struct tc_flower *flower)
     if (attrs[TCA_FLOWER_KEY_MPLS_BOS]) {
         bos = nl_attr_get_u8(attrs[TCA_FLOWER_KEY_MPLS_BOS]);
         set_mpls_lse_bos(&flower->key.mpls_lse, bos);
-        set_mpls_lse_ttl(&flower->mask.mpls_lse, 0xff);
+        set_mpls_lse_bos(&flower->mask.mpls_lse, 0xff);
     }
 
     if (attrs[TCA_FLOWER_KEY_MPLS_TC]) {
@@ -929,6 +953,32 @@ nl_parse_flower_ip(struct nlattr **attrs, struct tc_flower *flower) {
             key->sctp_dst = nl_attr_get_be16(attrs[TCA_FLOWER_KEY_SCTP_DST]);
             mask->sctp_dst =
                 nl_attr_get_be16(attrs[TCA_FLOWER_KEY_SCTP_DST_MASK]);
+        }
+    } else if (ip_proto == IPPROTO_ICMP) {
+        if (attrs[TCA_FLOWER_KEY_ICMPV4_CODE_MASK]) {
+            key->icmp_code =
+               nl_attr_get_u8(attrs[TCA_FLOWER_KEY_ICMPV4_CODE]);
+            mask->icmp_code =
+                nl_attr_get_u8(attrs[TCA_FLOWER_KEY_ICMPV4_CODE]);
+        }
+        if (attrs[TCA_FLOWER_KEY_ICMPV4_TYPE_MASK]) {
+            key->icmp_type =
+               nl_attr_get_u8(attrs[TCA_FLOWER_KEY_ICMPV4_TYPE_MASK]);
+            mask->icmp_type =
+                nl_attr_get_u8(attrs[TCA_FLOWER_KEY_ICMPV4_TYPE_MASK]);
+        }
+    } else if (ip_proto == IPPROTO_ICMPV6) {
+        if (attrs[TCA_FLOWER_KEY_ICMPV6_CODE_MASK]) {
+            key->icmp_code =
+               nl_attr_get_u8(attrs[TCA_FLOWER_KEY_ICMPV6_CODE]);
+            mask->icmp_code =
+                 nl_attr_get_u8(attrs[TCA_FLOWER_KEY_ICMPV6_CODE]);
+        }
+        if (attrs[TCA_FLOWER_KEY_ICMPV6_TYPE_MASK]) {
+            key->icmp_type =
+               nl_attr_get_u8(attrs[TCA_FLOWER_KEY_ICMPV6_TYPE_MASK]);
+            mask->icmp_type =
+                nl_attr_get_u8(attrs[TCA_FLOWER_KEY_ICMPV6_TYPE_MASK]);
         }
     }
 
@@ -1920,6 +1970,25 @@ parse_netlink_to_tc_flower(struct ofpbuf *reply, struct tcf_id *id,
 
 //构造tfilter dump请求，并向kernel发送
 int
+parse_netlink_to_tc_chain(struct ofpbuf *reply, uint32_t *chain)
+{
+    struct nlattr *ta[ARRAY_SIZE(tca_chain_policy)];
+    struct tcmsg *tc;
+
+    tc = ofpbuf_at_assert(reply, NLMSG_HDRLEN, sizeof *tc);
+
+    if (!nl_policy_parse(reply, NLMSG_HDRLEN + sizeof *tc,
+                         tca_chain_policy, ta, ARRAY_SIZE(ta))) {
+        VLOG_ERR_RL(&error_rl, "failed to parse tca chain policy");
+        return EINVAL;
+    }
+
+   *chain = nl_attr_get_u32(ta[TCA_CHAIN]);
+
+    return 0;
+}
+
+int
 tc_dump_flower_start(struct tcf_id *id, struct nl_dump *dump, bool terse)
 {
     struct ofpbuf request;
@@ -1933,6 +2002,18 @@ tc_dump_flower_start(struct tcf_id *id, struct nl_dump *dump, bool terse)
         nl_msg_put_unspec(&request, TCA_DUMP_FLAGS, &dump_flags,
                           sizeof dump_flags);
     }
+    nl_dump_start(dump, NETLINK_ROUTE, &request);
+    ofpbuf_uninit(&request);
+
+    return 0;
+}
+
+int
+tc_dump_tc_chain_start(struct tcf_id *id, struct nl_dump *dump)
+{
+    struct ofpbuf request;
+
+    request_from_tcf_id(id, 0, RTM_GETCHAIN, NLM_F_DUMP, &request);
     nl_dump_start(dump, NETLINK_ROUTE, &request);
     ofpbuf_uninit(&request);
 
@@ -2927,6 +3008,12 @@ nl_msg_put_flower_options(struct ofpbuf *request, struct tc_flower *flower)
         } else if (flower->key.ip_proto == IPPROTO_SCTP) {
             FLOWER_PUT_MASKED_VALUE(sctp_src, TCA_FLOWER_KEY_SCTP_SRC);
             FLOWER_PUT_MASKED_VALUE(sctp_dst, TCA_FLOWER_KEY_SCTP_DST);
+        } else if (flower->key.ip_proto == IPPROTO_ICMP) {
+            FLOWER_PUT_MASKED_VALUE(icmp_code, TCA_FLOWER_KEY_ICMPV4_CODE);
+            FLOWER_PUT_MASKED_VALUE(icmp_type, TCA_FLOWER_KEY_ICMPV4_TYPE);
+        } else if (flower->key.ip_proto == IPPROTO_ICMPV6) {
+            FLOWER_PUT_MASKED_VALUE(icmp_code, TCA_FLOWER_KEY_ICMPV6_CODE);
+            FLOWER_PUT_MASKED_VALUE(icmp_type, TCA_FLOWER_KEY_ICMPV6_TYPE);
         }
 
         //添加ct相关的mask,value

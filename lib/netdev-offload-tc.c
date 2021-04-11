@@ -49,11 +49,17 @@ static struct hmap tc_to_ufid = HMAP_INITIALIZER(&tc_to_ufid);
 static bool multi_mask_per_prio = false;
 //是否支持dev block(
 static bool block_support = false;
+static uint16_t ct_state_support;
 
 struct netlink_field {
     int offset;//字段在源结构体中的偏移量
     int flower_offset;//字段在目的结构体中的偏移量
     int size;//字段类型的大小
+};
+
+struct chain_node {
+    struct hmap_node node;
+    uint32_t chain;
 };
 
 static bool
@@ -367,6 +373,69 @@ get_block_id_from_netdev(struct netdev *netdev)
     }
 
     return 0;
+}
+
+static int
+get_chains_from_netdev(struct netdev *netdev, struct tcf_id *id,
+                       struct hmap *map)
+{
+    struct netdev_flow_dump *dump;
+    struct chain_node *chain_node;
+    struct ofpbuf rbuffer, reply;
+    uint32_t chain;
+    size_t hash;
+    int err;
+
+    dump = xzalloc(sizeof *dump);
+    dump->nl_dump = xzalloc(sizeof *dump->nl_dump);
+    dump->netdev = netdev_ref(netdev);
+
+    ofpbuf_init(&rbuffer, NL_DUMP_BUFSIZE);
+    tc_dump_tc_chain_start(id, dump->nl_dump);
+
+    while (nl_dump_next(dump->nl_dump, &reply, &rbuffer)) {
+        if (parse_netlink_to_tc_chain(&reply, &chain)) {
+            continue;
+        }
+
+        chain_node = xzalloc(sizeof *chain_node);
+        chain_node->chain = chain;
+        hash = hash_int(chain, 0);
+        hmap_insert(map, &chain_node->node, hash);
+    }
+
+    err = nl_dump_done(dump->nl_dump);
+    ofpbuf_uninit(&rbuffer);
+    netdev_close(netdev);
+    free(dump->nl_dump);
+    free(dump);
+
+    return err;
+}
+
+static int
+delete_chains_from_netdev(struct netdev *netdev, struct tcf_id *id)
+{
+    struct chain_node *chain_node;
+    struct hmap map;
+    int error;
+
+    hmap_init(&map);
+    error = get_chains_from_netdev(netdev, id, &map);
+
+    if (!error) {
+        /* Flush rules explicitly needed when we work with ingress_block,
+         * so we will not fail with reattaching block to bond iface, for ex.
+         */
+        HMAP_FOR_EACH_POP (chain_node, node, &map) {
+            id->chain = chain_node->chain;
+            tc_del_filter(id);
+            free(chain_node);
+        }
+    }
+
+    hmap_destroy(&map);
+    return error;
 }
 
 static int
@@ -693,6 +762,12 @@ parse_tc_flower_to_match(struct tc_flower *flower,
         } else if (key->ip_proto == IPPROTO_SCTP) {
             match_set_tp_dst_masked(match, key->sctp_dst, mask->sctp_dst);
             match_set_tp_src_masked(match, key->sctp_src, mask->sctp_src);
+        } else if (key->ip_proto == IPPROTO_ICMP ||
+                   key->ip_proto == IPPROTO_ICMPV6) {
+            match_set_tp_dst_masked(match, htons(key->icmp_code),
+                                    htons(mask->icmp_code));
+            match_set_tp_src_masked(match, htons(key->icmp_type),
+                                    htons(mask->icmp_type));
         }
 
         //ct状态解析
@@ -718,6 +793,20 @@ parse_tc_flower_to_match(struct tc_flower *flower,
                     ct_statev |= OVS_CS_F_TRACKED;
                 }
                 ct_statem |= OVS_CS_F_TRACKED;
+            }
+
+            if (mask->ct_state & TCA_FLOWER_KEY_CT_FLAGS_REPLY) {
+                if (key->ct_state & TCA_FLOWER_KEY_CT_FLAGS_REPLY) {
+                    ct_statev |= OVS_CS_F_REPLY_DIR;
+                }
+                ct_statem |= OVS_CS_F_REPLY_DIR;
+            }
+
+            if (mask->ct_state & TCA_FLOWER_KEY_CT_FLAGS_INVALID) {
+                if (key->ct_state & TCA_FLOWER_KEY_CT_FLAGS_INVALID) {
+                    ct_statev |= OVS_CS_F_INVALID;
+                }
+                ct_statem |= OVS_CS_F_INVALID;
             }
 
             match_set_ct_state_masked(match, ct_statev, ct_statem);
@@ -1404,18 +1493,6 @@ test_key_and_mask(struct match *match)
 
     //不支持icmp的type,code匹配
     if (key->dl_type == htons(ETH_TYPE_IP) &&
-        key->nw_proto == IPPROTO_ICMP) {
-        if (mask->tp_src) {
-            VLOG_DBG_RL(&rl,
-                        "offloading attribute icmp_type isn't supported");
-            return EOPNOTSUPP;
-        }
-        if (mask->tp_dst) {
-            VLOG_DBG_RL(&rl,
-                        "offloading attribute icmp_code isn't supported");
-            return EOPNOTSUPP;
-        }
-    } else if (key->dl_type == htons(ETH_TYPE_IP) &&
                key->nw_proto == IPPROTO_IGMP) {
         if (mask->tp_src) {
             VLOG_DBG_RL(&rl,
@@ -1425,18 +1502,6 @@ test_key_and_mask(struct match *match)
         if (mask->tp_dst) {
             VLOG_DBG_RL(&rl,
                         "offloading attribute igmp_code isn't supported");
-            return EOPNOTSUPP;
-        }
-    } else if (key->dl_type == htons(ETH_TYPE_IPV6) &&
-               key->nw_proto == IPPROTO_ICMPV6) {
-        if (mask->tp_src) {
-            VLOG_DBG_RL(&rl,
-                        "offloading attribute icmpv6_type isn't supported");
-            return EOPNOTSUPP;
-        }
-        if (mask->tp_dst) {
-            VLOG_DBG_RL(&rl,
-                        "offloading attribute icmpv6_code isn't supported");
             return EOPNOTSUPP;
         }
     } else if (key->dl_type == htons(OFP_DL_TYPE_NOT_ETH_TYPE)) {
@@ -1480,6 +1545,82 @@ flower_match_to_tun_opt(struct tc_flower *flower, const struct flow_tnl *tnl,
     }
 
     flower->mask.tunnel.metadata.present.len = tnl->metadata.present.len;
+}
+
+static void
+parse_match_ct_state_to_flower(struct tc_flower *flower, struct match *match)
+{
+    const struct flow *key = &match->flow;
+    struct flow *mask = &match->wc.masks;
+
+    if (!ct_state_support) {
+        return;
+    }
+
+    if ((ct_state_support & mask->ct_state) == mask->ct_state) {
+        if (mask->ct_state & OVS_CS_F_NEW) {
+            if (key->ct_state & OVS_CS_F_NEW) {
+                flower->key.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_NEW;
+            }
+            flower->mask.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_NEW;
+            mask->ct_state &= ~OVS_CS_F_NEW;
+        }
+
+        if (mask->ct_state & OVS_CS_F_ESTABLISHED) {
+            if (key->ct_state & OVS_CS_F_ESTABLISHED) {
+                flower->key.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_ESTABLISHED;
+            }
+            flower->mask.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_ESTABLISHED;
+            mask->ct_state &= ~OVS_CS_F_ESTABLISHED;
+        }
+
+        if (mask->ct_state & OVS_CS_F_TRACKED) {
+            if (key->ct_state & OVS_CS_F_TRACKED) {
+                flower->key.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_TRACKED;
+            }
+            flower->mask.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_TRACKED;
+            mask->ct_state &= ~OVS_CS_F_TRACKED;
+        }
+
+        if (mask->ct_state & OVS_CS_F_REPLY_DIR) {
+            if (key->ct_state & OVS_CS_F_REPLY_DIR) {
+                flower->key.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_REPLY;
+            }
+            flower->mask.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_REPLY;
+            mask->ct_state &= ~OVS_CS_F_REPLY_DIR;
+        }
+
+        if (mask->ct_state & OVS_CS_F_INVALID) {
+            if (key->ct_state & OVS_CS_F_INVALID) {
+                flower->key.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_INVALID;
+            }
+            flower->mask.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_INVALID;
+            mask->ct_state &= ~OVS_CS_F_INVALID;
+        }
+
+        if (flower->key.ct_state & TCA_FLOWER_KEY_CT_FLAGS_ESTABLISHED) {
+            flower->key.ct_state &= ~(TCA_FLOWER_KEY_CT_FLAGS_NEW);
+            flower->mask.ct_state &= ~(TCA_FLOWER_KEY_CT_FLAGS_NEW);
+        }
+    }
+
+    if (mask->ct_zone) {
+        flower->key.ct_zone = key->ct_zone;
+        flower->mask.ct_zone = mask->ct_zone;
+        mask->ct_zone = 0;
+    }
+
+    if (mask->ct_mark) {
+        flower->key.ct_mark = key->ct_mark;
+        flower->mask.ct_mark = mask->ct_mark;
+        mask->ct_mark = 0;
+    }
+
+    if (!ovs_u128_is_zero(mask->ct_label)) {
+        flower->key.ct_label = key->ct_label;
+        flower->mask.ct_label = mask->ct_label;
+        mask->ct_label = OVS_U128_ZERO;
+    }
 }
 
 //通过tc offload flow（创建或修改，完成对openvswitch规则映射为tc规则）
@@ -1727,6 +1868,14 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
             flower.mask.sctp_src = mask->tp_src;
             mask->tp_src = 0;
             mask->tp_dst = 0;
+        } else if (key->nw_proto == IPPROTO_ICMP ||
+                   key->nw_proto == IPPROTO_ICMPV6) {
+            flower.key.icmp_code = (uint8_t) ntohs(key->tp_dst);
+            flower.mask.icmp_code = (uint8_t) ntohs (mask->tp_dst);
+            flower.key.icmp_type = (uint8_t) ntohs(key->tp_src);
+            flower.mask.icmp_type = (uint8_t) ntohs(mask->tp_src);
+            mask->tp_src = 0;
+            mask->tp_dst = 0;
         }
 
         //ip地址填充
@@ -1747,53 +1896,7 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
         }
     }
 
-    if (mask->ct_state) {
-        if (mask->ct_state & OVS_CS_F_NEW) {
-            if (key->ct_state & OVS_CS_F_NEW) {
-                flower.key.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_NEW;
-            }
-            flower.mask.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_NEW;
-        }
-
-        if (mask->ct_state & OVS_CS_F_ESTABLISHED) {
-            if (key->ct_state & OVS_CS_F_ESTABLISHED) {
-                flower.key.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_ESTABLISHED;
-            }
-            flower.mask.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_ESTABLISHED;
-        }
-
-        if (mask->ct_state & OVS_CS_F_TRACKED) {
-            if (key->ct_state & OVS_CS_F_TRACKED) {
-                flower.key.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_TRACKED;
-            }
-            flower.mask.ct_state |= TCA_FLOWER_KEY_CT_FLAGS_TRACKED;
-        }
-
-        if (flower.key.ct_state & TCA_FLOWER_KEY_CT_FLAGS_ESTABLISHED) {
-            flower.key.ct_state &= ~(TCA_FLOWER_KEY_CT_FLAGS_NEW);
-            flower.mask.ct_state &= ~(TCA_FLOWER_KEY_CT_FLAGS_NEW);
-        }
-
-        mask->ct_state = 0;
-    }
-
-    if (mask->ct_zone) {
-        flower.key.ct_zone = key->ct_zone;
-        flower.mask.ct_zone = mask->ct_zone;
-        mask->ct_zone = 0;
-    }
-
-    if (mask->ct_mark) {
-        flower.key.ct_mark = key->ct_mark;
-        flower.mask.ct_mark = mask->ct_mark;
-        mask->ct_mark = 0;
-    }
-
-    if (!ovs_u128_is_zero(mask->ct_label)) {
-        flower.key.ct_label = key->ct_label;
-        flower.mask.ct_label = mask->ct_label;
-        mask->ct_label = OVS_U128_ZERO;
-    }
+    parse_match_ct_state_to_flower(&flower, match);
 
     /* ignore exact match on skb_mark of 0. */
     if (mask->pkt_mark == UINT32_MAX && !key->pkt_mark) {
@@ -1883,6 +1986,10 @@ netdev_tc_flow_put(struct netdev *netdev/*规则所属的设备*/, struct match 
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_CT) {
             const struct nlattr *ct = nl_attr_get(nla);
             const size_t ct_len = nl_attr_get_size(nla);
+
+            if (!ct_state_support) {
+                return -EOPNOTSUPP;
+            }
 
             err = parse_put_flow_ct_action(&flower, action, ct, ct_len);
             if (err) {
@@ -2092,6 +2199,96 @@ out:
     tc_add_del_qdisc(ifindex, false, block_id, TC_INGRESS);
 }
 
+
+static int
+probe_insert_ct_state_rule(int ifindex, uint16_t ct_state, struct tcf_id *id)
+{
+    int prio = TC_RESERVED_PRIORITY_MAX + 1;
+    struct tc_flower flower;
+
+    memset(&flower, 0, sizeof flower);
+    flower.key.ct_state = ct_state;
+    flower.mask.ct_state = ct_state;
+    flower.tc_policy = TC_POLICY_SKIP_HW;
+    flower.key.eth_type = htons(ETH_P_IP);
+    flower.mask.eth_type = OVS_BE16_MAX;
+
+    *id = tc_make_tcf_id(ifindex, 0, prio, TC_INGRESS);
+    return tc_replace_flower(id, &flower);
+}
+
+static void
+probe_ct_state_support(int ifindex)
+{
+    struct tc_flower flower;
+    uint16_t ct_state;
+    struct tcf_id id;
+    int error;
+
+    error = tc_add_del_qdisc(ifindex, true, 0, TC_INGRESS);
+    if (error) {
+        return;
+    }
+
+    /* Test for base ct_state match support */
+    ct_state = TCA_FLOWER_KEY_CT_FLAGS_NEW | TCA_FLOWER_KEY_CT_FLAGS_TRACKED;
+    error = probe_insert_ct_state_rule(ifindex, ct_state, &id);
+    if (error) {
+        goto out;
+    }
+
+    error = tc_get_flower(&id, &flower);
+    if (error || flower.mask.ct_state != ct_state) {
+        goto out_del;
+    }
+
+    tc_del_filter(&id);
+    ct_state_support = OVS_CS_F_NEW |
+                       OVS_CS_F_ESTABLISHED |
+                       OVS_CS_F_TRACKED |
+                       OVS_CS_F_RELATED;
+
+    /* Test for reject, ct_state >= MAX */
+    ct_state = ~0;
+    error = probe_insert_ct_state_rule(ifindex, ct_state, &id);
+    if (!error) {
+        /* No reject, can't continue probing other flags */
+        goto out_del;
+    }
+
+    tc_del_filter(&id);
+
+    /* Test for ct_state INVALID support */
+    memset(&flower, 0, sizeof flower);
+    ct_state = TCA_FLOWER_KEY_CT_FLAGS_TRACKED |
+               TCA_FLOWER_KEY_CT_FLAGS_INVALID;
+    error = probe_insert_ct_state_rule(ifindex, ct_state, &id);
+    if (error) {
+        goto out;
+    }
+
+    tc_del_filter(&id);
+    ct_state_support |= OVS_CS_F_INVALID;
+
+    /* Test for ct_state REPLY support */
+    memset(&flower, 0, sizeof flower);
+    ct_state = TCA_FLOWER_KEY_CT_FLAGS_TRACKED |
+               TCA_FLOWER_KEY_CT_FLAGS_ESTABLISHED |
+               TCA_FLOWER_KEY_CT_FLAGS_REPLY;
+    error = probe_insert_ct_state_rule(ifindex, ct_state, &id);
+    if (error) {
+        goto out;
+    }
+
+    ct_state_support |= OVS_CS_F_REPLY_DIR;
+
+out_del:
+    tc_del_filter(&id);
+out:
+    tc_add_del_qdisc(ifindex, false, 0, TC_INGRESS);
+    VLOG_INFO("probe tc: supported ovs ct_state bits: 0x%x", ct_state_support);
+}
+
 static void
 probe_tc_block_support(int ifindex)
 {
@@ -2135,6 +2332,7 @@ netdev_tc_init_flow_api(struct netdev *netdev)
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
     enum tc_qdisc_hook hook = get_tc_qdisc_hook(netdev);
+    static bool get_chain_supported = true;
     uint32_t block_id = 0;
     struct tcf_id id;
     int ifindex;
@@ -2150,12 +2348,18 @@ netdev_tc_init_flow_api(struct netdev *netdev)
 
     //添加ingress队列
     block_id = get_block_id_from_netdev(netdev);
-
-    /* Flush rules explicitly needed when we work with ingress_block,
-     * so we will not fail with reattaching block to bond iface, for ex.
-     */
     id = tc_make_tcf_id(ifindex, block_id, 0, hook);
-    tc_del_filter(&id);
+
+    if (get_chain_supported) {
+        if (delete_chains_from_netdev(netdev, &id)) {
+            get_chain_supported = false;
+        }
+    }
+
+    /* fallback here if delete chains fail */
+    if (!get_chain_supported) {
+        tc_del_filter(&id);
+    }
 
     /* make sure there is no ingress/egress qdisc */
     //删除ingress队列
@@ -2168,6 +2372,7 @@ netdev_tc_init_flow_api(struct netdev *netdev)
 
     	//环境检测
         probe_multi_mask_per_prio(ifindex);
+        probe_ct_state_support(ifindex);
         ovsthread_once_done(&once);
     }
 

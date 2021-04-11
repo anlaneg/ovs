@@ -127,7 +127,7 @@ struct dp_packet {
     /* All the following elements of this struct are copied in a single call
      * of memcpy in dp_packet_clone_with_headroom. */
     //l2层占用的size
-    uint8_t l2_pad_size;           /* Detected l2 padding size.
+    uint16_t l2_pad_size;          /* Detected l2 padding size.
                                     * Padding is non-pullable. */
     uint16_t l2_5_ofs;             /* MPLS label stack offset, or UINT16_MAX */ //2.5层协议
     uint16_t l3_ofs;               /* Network-level header offset,
@@ -164,8 +164,8 @@ void *dp_packet_resize_l2(struct dp_packet *, int increment);
 void *dp_packet_resize_l2_5(struct dp_packet *, int increment);
 static inline void *dp_packet_eth(const struct dp_packet *);
 static inline void dp_packet_reset_offsets(struct dp_packet *);
-static inline uint8_t dp_packet_l2_pad_size(const struct dp_packet *);
-static inline void dp_packet_set_l2_pad_size(struct dp_packet *, uint8_t);
+static inline uint16_t dp_packet_l2_pad_size(const struct dp_packet *);
+static inline void dp_packet_set_l2_pad_size(struct dp_packet *, uint16_t);
 static inline void *dp_packet_l2_5(const struct dp_packet *);
 static inline void dp_packet_set_l2_5(struct dp_packet *, void *);
 static inline void *dp_packet_l3(const struct dp_packet *);
@@ -375,15 +375,17 @@ dp_packet_reset_offsets(struct dp_packet *b)//将offset置为无效
     b->l4_ofs = UINT16_MAX;
 }
 
-static inline uint8_t
-dp_packet_l2_pad_size(const struct dp_packet *b)//返回l2层占用的字节数
+static inline uint16_t
+dp_packet_l2_pad_size(const struct dp_packet *b)
 {
+    //返回l2层占用的字节数
     return b->l2_pad_size;
 }
 
 static inline void
-dp_packet_set_l2_pad_size(struct dp_packet *b, uint8_t pad_size)//设置l2层占用的字节数
+dp_packet_set_l2_pad_size(struct dp_packet *b, uint16_t pad_size)
 {
+    //设置l2层占用的字节数
     ovs_assert(pad_size <= dp_packet_size(b));
     b->l2_pad_size = pad_size;
 }
@@ -468,6 +470,18 @@ dp_packet_get_tcp_payload(const struct dp_packet *b)//返回tcp数据部分
         }
     }
     return NULL;
+}
+
+static inline uint32_t
+dp_packet_get_tcp_payload_length(const struct dp_packet *pkt)
+{
+    const char *tcp_payload = dp_packet_get_tcp_payload(pkt);
+    if (tcp_payload) {
+        return ((char *) dp_packet_tail(pkt) - dp_packet_l2_pad_size(pkt)
+                - tcp_payload);
+    } else {
+        return 0;
+    }
 }
 
 static inline const void *

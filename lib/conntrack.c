@@ -840,7 +840,7 @@ static void
 reverse_nat_packet(struct dp_packet *pkt, const struct conn *conn)
 {
     char *tail = dp_packet_tail(pkt);
-    uint8_t pad = dp_packet_l2_pad_size(pkt);
+    uint16_t pad = dp_packet_l2_pad_size(pkt);
     struct conn_key inner_key;
     const char *inner_l4 = NULL;
     uint16_t orig_l3_ofs = pkt->l3_ofs;
@@ -3028,7 +3028,7 @@ get_ftp_ctl_msg(struct dp_packet *pkt, char *ftp_msg)
 {
     struct tcp_header *th = dp_packet_l4(pkt);
     char *tcp_hdr = (char *) th;
-    uint32_t tcp_payload_len = tcp_payload_length(pkt);
+    uint32_t tcp_payload_len = dp_packet_get_tcp_payload_length(pkt);
     size_t tcp_payload_of_interest = MIN(tcp_payload_len,
                                          LARGEST_FTP_MSG_OF_INTEREST);
     size_t tcp_hdr_len = TCP_OFFSET(th->tcp_ctl) * 4;

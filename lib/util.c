@@ -116,11 +116,10 @@ out_of_memory(void)
 }
 
 void *
-xcalloc(size_t count, size_t size)
+xcalloc__(size_t count, size_t size)
 {
     /*申请count个size大小的内存*/
     void *p = count && size ? calloc(count, size) : malloc(1);
-    COVERAGE_INC(util_xalloc);
     if (p == NULL) {
         out_of_memory();
     }
@@ -128,17 +127,16 @@ xcalloc(size_t count, size_t size)
 }
 
 void *
-xzalloc(size_t size)
+xzalloc__(size_t size)
 {
-    return xcalloc(1, size);
+    return xcalloc__(1, size);
 }
 
 //申请size字节的内存
 void *
-xmalloc(size_t size)
+xmalloc__(size_t size)
 {
     void *p = malloc(size ? size : 1);
-    COVERAGE_INC(util_xalloc);
     if (p == NULL) {
         out_of_memory();
     }
@@ -146,10 +144,9 @@ xmalloc(size_t size)
 }
 
 void *
-xrealloc(void *p, size_t size)//realloc的简单封装
+xrealloc__(void *p, size_t size)//realloc的简单封装
 {
     p = realloc(p, size ? size : 1);
-    COVERAGE_INC(util_xalloc);//调用次数统计
     if (p == NULL) {
         out_of_memory();
     }
@@ -157,6 +154,34 @@ xrealloc(void *p, size_t size)//realloc的简单封装
 }
 
 //申请一块内存，并将p_内存指向的前size字节，copy到新申请的内存里
+void *
+xcalloc(size_t count, size_t size)
+{
+    COVERAGE_INC(util_xalloc);//调用次数统计
+    return xcalloc__(count, size);
+}
+
+void *
+xzalloc(size_t size)
+{
+    COVERAGE_INC(util_xalloc);
+    return xzalloc__(size);
+}
+
+void *
+xmalloc(size_t size)
+{
+    COVERAGE_INC(util_xalloc);
+    return xmalloc__(size);
+}
+
+void *
+xrealloc(void *p, size_t size)
+{
+    COVERAGE_INC(util_xalloc);
+    return xrealloc__(p, size);
+}
+
 void *
 xmemdup(const void *p_, size_t size)
 {

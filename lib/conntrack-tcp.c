@@ -194,7 +194,8 @@ tcp_conn_update(struct conntrack *ct, struct conn *conn_,
 
     uint16_t win = ntohs(tcp->tcp_winsz);//窗口大小
     uint32_t ack, end, seq, orig_seq;
-    uint32_t p_len = tcp_payload_length(pkt);//此报文中包含的tcp负载（非ip total length - tcphdr length)
+    //此报文中包含的tcp负载（非ip total length - tcphdr length)
+    uint32_t p_len = dp_packet_get_tcp_payload_length(pkt);
 
     //如果tcp标记位有误，返回更新无效
     if (tcp_invalid_flags(tcp_flags)) {
@@ -501,7 +502,8 @@ tcp_new_conn(struct conntrack *ct, struct dp_packet *pkt, long long now,
 
     //记录seq number
     src->seqlo = ntohl(get_16aligned_be32(&tcp->tcp_seq));
-    src->seqhi = src->seqlo + tcp_payload_length(pkt) + 1;//对端响应时，响应此seq number
+    //对端响应时，响应此seq number
+    src->seqhi = src->seqlo + dp_packet_get_tcp_payload_length(pkt) + 1;
 
     if (tcp_flags & TCP_SYN) {
         src->seqhi++;//占用seq
