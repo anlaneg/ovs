@@ -231,8 +231,9 @@ poll_timer_wait_until_at(long long int when, const char *where)
  * poll_immediate_wake() to automatically provide the caller's source file and
  * line number for 'where'.) */
 void
-poll_immediate_wake_at(const char *where)//暗示poll_block可以返回了
+poll_immediate_wake_at(const char *where)
 {
+    //暗示poll_block可以返回了
     poll_timer_wait_at(0, where);
 }
 

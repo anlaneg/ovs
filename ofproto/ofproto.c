@@ -1886,7 +1886,7 @@ ofproto_run(struct ofproto *p)
                     if (!rule->eviction_group) {
                         eviction_group_add_rule(rule);
                     } else {
-                    	   //改变规则优先级
+                    	//改变规则优先级
                         heap_raw_change(&rule->evg_node,
                                         rule_eviction_priority(p, rule));
                     }
@@ -1971,14 +1971,17 @@ ofproto_get_memory_usage(const struct ofproto *ofproto, struct simap *usage)
     const struct oftable *table;
     unsigned int n_rules;
 
+    /*接口数目*/
     simap_increase(usage, "ports", hmap_count(&ofproto->ports));
 
+    /*遍历各table收集规则数目*/
     n_rules = 0;
     OFPROTO_FOR_EACH_TABLE (table, ofproto) {
         n_rules += table->n_flows;
     }
     simap_increase(usage, "rules", n_rules);
 
+    /*通过回调收集用量*/
     if (ofproto->ofproto_class->get_memory_usage) {
         ofproto->ofproto_class->get_memory_usage(ofproto, usage);
     }
@@ -1986,6 +1989,7 @@ ofproto_get_memory_usage(const struct ofproto *ofproto, struct simap *usage)
     connmgr_get_memory_usage(ofproto->connmgr, usage);
 }
 
+/*给定datapath_type收集内存用量*/
 void
 ofproto_type_get_memory_usage(const char *datapath_type, struct simap *usage)
 {
@@ -4763,6 +4767,7 @@ handle_flow_stats_request(struct ofconn *ofconn,
         return error;
     }
 
+    /*遍历rules*/
     ofpmp_init(&replies, request);
     struct rule *rule;
     RULE_COLLECTION_FOR_EACH (rule, &rules) {
@@ -4784,6 +4789,7 @@ handle_flow_stats_request(struct ofconn *ofconn,
         flags = rule->flags;
         ovs_mutex_unlock(&rule->mutex);
 
+        /*取规则rule的统计计数及used*/
         ofproto->ofproto_class->rule_get_stats(rule, &stats, &used);
         fs.packet_count = stats.n_packets;
         fs.byte_count = stats.n_bytes;
@@ -4798,6 +4804,7 @@ handle_flow_stats_request(struct ofconn *ofconn,
         fs.ofpacts_len = actions->ofpacts_len;
 
         fs.flags = flags;
+        /*格式化fs，并将其填充到replies中*/
         ofputil_append_flow_stats_reply(&fs, &replies,
                                         ofproto_get_tun_tab(ofproto));
     }
@@ -4805,6 +4812,7 @@ handle_flow_stats_request(struct ofconn *ofconn,
     rule_collection_unref(&rules);
     rule_collection_destroy(&rules);
 
+    /*向对端发送replies*/
     ofconn_send_replies(ofconn, &replies);
 
     return 0;
@@ -5552,6 +5560,7 @@ ofproto_flow_mod_learn_finish(struct ofproto_flow_mod *ofm,
     if (rule->ofproto != orig_ofproto) {
         ofproto_bump_tables_version(rule->ofproto);
     }
+    /*learn也会进行统计report*/
     error = ofproto_flow_mod_finish(rule->ofproto, ofm, NULL);
     if (rule->ofproto != orig_ofproto) {
         ofmonitor_flush(rule->ofproto->connmgr);
@@ -8255,6 +8264,7 @@ ofproto_flow_mod_finish(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
     rule_collection_destroy(&ofm->new_rules);
 
     if (req) {
+        //统计增删改数量
         ofconn_report_flow_mod(req->ofconn, ofm->command);
     }
 
@@ -8714,6 +8724,7 @@ handle_single_part_openflow(struct ofconn *ofconn, const struct ofp_header *oh/*
         return handle_desc_stats_request(ofconn, oh);
 
     case OFPTYPE_FLOW_STATS_REQUEST:
+        /*请求flow stats*/
         return handle_flow_stats_request(ofconn, oh);
 
     case OFPTYPE_AGGREGATE_STATS_REQUEST:
@@ -8861,6 +8872,7 @@ pick_datapath_id(const struct ofproto *ofproto)
         struct eth_addr ea;
         int error;
 
+        //取此port的mac地址
         error = netdev_get_etheraddr(port->netdev, &ea);
         if (!error) {
             return eth_addr_to_uint64(ea);

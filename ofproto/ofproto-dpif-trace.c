@@ -237,6 +237,7 @@ parse_flow_and_packet(int argc, const char *argv[],
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
         if (!strcmp(arg, "-generate") || !strcmp(arg, "--generate")) {
+            /*参数指明需要生成packet*/
             generate_packet = true;
         } else if (!strcmp(arg, "--l7")) {
             if (i + 1 >= argc) {
@@ -375,6 +376,7 @@ parse_flow_and_packet(int argc, const char *argv[],
             goto exit;
         }
 
+        /*利用odp_key，填充生成flow*/
         if (odp_flow_key_to_flow(odp_key.data, odp_key.size, flow, &error)
             == ODP_FIT_ERROR) {
             goto exit;
@@ -467,6 +469,7 @@ free_ct_states(struct ovs_list *ct_states)
     }
 }
 
+/*提供了字符串格式，将这些字符串转换为flow,然后采用flow去查询规则*/
 static void
 ofproto_unixctl_trace(struct unixctl_conn *conn, int argc, const char *argv[],
                       void *aux OVS_UNUSED)
@@ -825,6 +828,7 @@ ofproto_trace(struct ofproto_dpif *ofproto, const struct flow *flow,
     }
 }
 
+/*dpif支持的trace功能*/
 void
 ofproto_dpif_trace_init(void)
 {

@@ -97,7 +97,8 @@ main(int argc, char *argv[])
     //完成daemon创建
     daemonize_start(true);
 
-    if (want_mlockall) {//锁内存处理
+    if (want_mlockall) {
+        //锁内存处理
 #ifdef HAVE_MLOCKALL
         if (mlockall(MCL_CURRENT | MCL_FUTURE)) {
             VLOG_ERR("mlockall failed: %s", ovs_strerror(errno));
@@ -127,6 +128,7 @@ main(int argc, char *argv[])
     while (!exiting) {
         memory_run();
         if (memory_should_report()) {
+            /*收集内存用量*/
             struct simap usage;
 
             simap_init(&usage);
@@ -135,9 +137,14 @@ main(int argc, char *argv[])
             simap_destroy(&usage);
         }
 
+        /*桥配置更新*/
         bridge_run();
+        /*收集unixctl下所有连接消息*/
         unixctl_server_run(unixctl);
-        //由此函数下去，经dpif_netdev_run->reconfigure_datapath->...可到达pmd_thread_main
+        /*
+         * 由此函数下去，经
+         * dpif_netdev_run->reconfigure_datapath->...
+         * 可到达pmd_thread_main*/
         netdev_run();
 
         //wait代码段
@@ -146,15 +153,17 @@ main(int argc, char *argv[])
         unixctl_server_wait(unixctl);
         netdev_wait();
         if (exiting) {
-        	//立即触发poll_block()
+        	//进程需要退出，立即触发poll_block()
             poll_immediate_wake();
         }
+
         //阻塞等待事件
         poll_block();
         if (should_service_stop()) {
             exiting = true;
         }
     }
+
     bridge_exit(cleanup);
     unixctl_server_destroy(unixctl);
     service_stop();
@@ -165,9 +174,9 @@ main(int argc, char *argv[])
     return 0;
 }
 
+//解析命令行，设置相关全局配置，返回database路径
 static char *
 parse_options(int argc, char *argv[], char **unixctl_pathp)
-//解析命令行，设置相关全局配置，返回database路径
 {
     enum {
         OPT_PEER_CA_CERT = UCHAR_MAX + 1,

@@ -145,7 +145,7 @@ nxm_header_len(uint64_t header)
     return 4 + nxm_experimenter_len(header);
 }
 
-#define NXM_HEADER(VENDOR, CLASS, FIELD, HASMASK, LENGTH)       \
+#define NXM_HEADER(VENDOR/*占32 bits*/, CLASS, FIELD, HASMASK, LENGTH)       \
     (((uint64_t) (CLASS) << 48) |                               \
      ((uint64_t) (FIELD) << 41) |                               \
      ((uint64_t) (HASMASK) << 40) |                             \
@@ -805,16 +805,18 @@ nxm_put_entry_raw(struct ofpbuf *b,
                   const void *value, const void *mask, size_t n_bytes)
 {
     nx_put_header_len(b, field, version, !!mask, n_bytes);
+    /*向b中存入n_bytes字节的value*/
     ofpbuf_put(b, value, n_bytes);
     if (mask) {
+        /*向b中存入n_bytes字节的mask*/
         ofpbuf_put(b, mask, n_bytes);
     }
 }
 
 static void
 nxm_put__(struct nxm_put_ctx *ctx,
-          enum mf_field_id field, enum ofp_version version,
-          const void *value, const void *mask, size_t n_bytes)
+          enum mf_field_id field/*字段id*/, enum ofp_version version/*版本号*/,
+          const void *value/*字段id取值*/, const void *mask, size_t n_bytes/*字段id取值长度*/)
 {
     nxm_put_entry_raw(ctx->output, field, version, value, mask, n_bytes);
     if (!ctx->implied_ethernet && mf_from_id(field)->prereqs != MFP_NONE) {
@@ -873,7 +875,7 @@ nxm_put_32m(struct nxm_put_ctx *ctx,
 
 static void
 nxm_put_32(struct nxm_put_ctx *ctx,
-           enum mf_field_id field, enum ofp_version version, ovs_be32 value)
+           enum mf_field_id field/*字段id*/, enum ofp_version version/*版本号*/, ovs_be32 value/*字段取值*/)
 {
     nxm_put__(ctx, field, version, &value, NULL, sizeof value);
 }
@@ -1068,6 +1070,7 @@ nx_put_raw(struct ofpbuf *b, enum ofp_version oxm, const struct match *match,
                     htonl(flow->dp_hash), htonl(match->wc.masks.dp_hash));
     }
 
+    /*存入recirc_id到ctx*/
     if (match->wc.masks.recirc_id) {
         nxm_put_32(&ctx, MFF_RECIRC_ID, oxm, htonl(flow->recirc_id));
     }
@@ -1341,6 +1344,7 @@ oxm_put_match(struct ofpbuf *b, const struct match *match,
     ovs_be64 cookie = htonll(0), cookie_mask = htonll(0);
 
     ofpbuf_put_uninit(b, sizeof *omh);
+    /*存入match字段*/
     match_len = (nx_put_raw(b, version, match, cookie, cookie_mask)
                  + sizeof *omh);
     ofpbuf_put_zeros(b, PAD_SIZE(match_len, 8));
@@ -2250,8 +2254,11 @@ struct nxm_field_index {
 
 #include "nx-match.inc"
 
-static struct hmap nxm_header_map;//字段header与字段的映射表
-static struct hmap nxm_name_map;//字段名称与字段的映射表
+//字段header与字段的映射表
+static struct hmap nxm_header_map;
+//字段名称与字段的映射表
+static struct hmap nxm_name_map;
+/*按字段id构造struct nxm_field_index的链表*/
 static struct ovs_list nxm_mf_map[MFF_N_IDS];
 
 static void
@@ -2266,11 +2273,13 @@ nxm_init(void)
         }
         for (struct nxm_field_index *nfi = all_nxm_fields;
              nfi < &all_nxm_fields[ARRAY_SIZE(all_nxm_fields)]; nfi++) {
+            /*nfi->nf.header到nfi映射*/
             hmap_insert(&nxm_header_map, &nfi->header_node,
                         hash_uint64(nxm_no_len(nfi->nf.header)));
             //字段名称与字段的映射表
             hmap_insert(&nxm_name_map, &nfi->name_node,
                         hash_string(nfi->nf.name, 0));
+            /*id到nfi映射链表*/
             ovs_list_push_back(&nxm_mf_map[nfi->nf.id], &nfi->mf_node);
         }
         ovsthread_once_done(&once);
@@ -2326,7 +2335,7 @@ nxm_field_by_name(const char *name, size_t len)
     return NULL;
 }
 
-//通过版本及version查找到对应的field
+//通过field_id及version查找到对应的field
 static const struct nxm_field *
 nxm_field_by_mf_id(enum mf_field_id id, enum ofp_version version)
 {
@@ -2335,6 +2344,7 @@ nxm_field_by_mf_id(enum mf_field_id id, enum ofp_version version)
 
     nxm_init();
 
+    /*通过id,version获取field*/
     f = NULL;
     LIST_FOR_EACH (nfi, mf_node, &nxm_mf_map[id]) {
         if (!f || version >= nfi->nf.version) {

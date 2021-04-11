@@ -15,11 +15,15 @@
 # limitations under the License.
 
 case $0 in
+    #$0中如果包含目录符，则提供文件名前的目录
     */*) dir0=`echo "$0" | sed 's,/[^/]*$,,'` ;;
     *) dir0=./ ;;
 esac
+
+#加载ovs-lib
 . "$dir0/ovs-lib" || exit 1
 
+#显示用法
 usage() {
     UTIL=$(basename $0)
     cat <<EOF
@@ -37,12 +41,15 @@ This script is meant as a helper for the Open vSwitch init script commands.
 EOF
 }
 
+#生成当前interfaces的配置命令，并输出
 save_interfaces () {
+    #保证ip命令存在
     if (ip link show) > /dev/null 2>&1; then :; else
         echo "$0: ip not found in $PATH" >&2
         exit 1
     fi
 
+    #必须包含参数
     if test "$#" = 0; then
         exit 0
     fi
@@ -82,10 +89,12 @@ save_interfaces () {
             echo ip link set dev $dev $linkcmd
         fi
 
+        #为$dev配置原来的地址
         move_ip_address $dev $dev
 
         move_ip_routes $dev $dev
 
+        #输出一个空行
         echo
     done
 
@@ -105,6 +114,7 @@ get_highest_ofp_version() {
 }
 
 save_flows () {
+    #确定ovs-ofctl存在
     if (ovs-ofctl --version) > /dev/null 2>&1; then :; else
         echo "$0: ovs-ofctl not found in $PATH" >&2
         exit 1
@@ -126,6 +136,7 @@ save_flows () {
         # Get the highest enabled OpenFlow version
         ofp_version=$(get_highest_ofp_version "$bridge")
 
+        #输出需要添加的tlv-map
         printf "%s" "ovs-ofctl add-tlv-map ${bridge} '"
         ovs-ofctl dump-tlv-map ${bridge} | \
         awk '/^  *0x/ {if (cnt != 0) printf ","; \
@@ -135,17 +146,21 @@ save_flows () {
         # If possible use OpenFlow 1.4 atomic bundle txn for flows and groups
         [ ${ofp_version#OpenFlow} -ge 14 ] && bundle=" --bundle" || bundle=""
 
+        #输出需要添加的bridge.groups.dump
         echo "ovs-ofctl -O $ofp_version add-groups ${bridge} \
               \"$workdir/$bridge.groups.dump\" ${bundle}"
 
+        #输出需要添加的flows
         echo "ovs-ofctl -O $ofp_version replace-flows ${bridge} \
               \"$workdir/$bridge.flows.dump\" ${bundle}"
 
+        #生成需要dump-groups
         ovs-ofctl -O $ofp_version dump-groups "$bridge" | \
             sed -e '/^OFPST_GROUP_DESC/d' \
                 -e '/^NXST_GROUP_DESC/d' > \
                 "$workdir/$bridge.groups.dump"
 
+        #生成dump的流表
         ovs-ofctl -O $ofp_version dump-flows --no-names --no-stats "$bridge" | \
             sed -e '/NXST_FLOW/d' \
                 -e '/OFPST_FLOW/d' \
@@ -155,6 +170,7 @@ save_flows () {
     echo "rm -rf \"$workdir\""
 }
 
+#按需求保存流及interfaces配置
 while [ $# -ne 0 ]
 do
     case $1 in

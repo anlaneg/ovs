@@ -2037,6 +2037,7 @@ pre_cmd_show(struct ctl_context *ctx)
 {
     const struct cmd_show_table *show;
 
+    /*遍历show命令可显示的表*/
     for (show = cmd_show_tables; show->table; show++) {
         size_t i;
 
@@ -2235,6 +2236,7 @@ cmd_show(struct ctl_context *ctx)
     const struct ovsdb_idl_row *row;
     struct sset shown = SSET_INITIALIZER(&shown);
 
+    /*遍历显示回来的所有列*/
     for (row = ovsdb_idl_first_row(ctx->idl, cmd_show_tables[0].table);
          row; row = ovsdb_idl_next_row(row)) {
         cmd_show_row(ctx, row, 0, &shown);
@@ -2563,6 +2565,7 @@ ctl_init__(const struct ovsdb_idl_class *idl_class_,
 
     cmd_show_tables = cmd_show_tables_;
     if (cmd_show_tables) {
+        /*注册ovs-vsctl show命令*/
         static const struct ctl_command_syntax show =
             {"show", 0, 0, "", pre_cmd_show, cmd_show, NULL, "", RO};
         ctl_register_command(&show);

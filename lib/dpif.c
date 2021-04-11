@@ -414,8 +414,7 @@ exit:
 int
 dpif_open(const char *name, const char *type, struct dpif **dpifp)
 {
-	//false防创建
-    return do_open(name, type, false, dpifp);
+    return do_open(name, type, false/*指定false防止创建*/, dpifp);
 }
 
 /* Tries to create and open a new datapath with the given 'name' and 'type'.

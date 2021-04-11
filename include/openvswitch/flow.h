@@ -133,12 +133,18 @@ struct flow {
     ovs_be32 mpls_lse[ROUND_UP(FLOW_MAX_MPLS_LABELS, 2)]; /* MPLS label stack
                                                              (with padding). */
     /* L3 (64-bit aligned) */
-    ovs_be32 nw_src;            /* IPv4 source address or ARP SPA. */ //ipv4源地址
-    ovs_be32 nw_dst;            /* IPv4 destination address or ARP TPA. */ //ipv4目的地址
+    //ipv4源地址
+    ovs_be32 nw_src;            /* IPv4 source address or ARP SPA. */
+    //ipv4目的地址
+    ovs_be32 nw_dst;            /* IPv4 destination address or ARP TPA. */
+    //ct原srcip
     ovs_be32 ct_nw_src;         /* CT orig tuple IPv4 source address. */
+    //ct原dstip
     ovs_be32 ct_nw_dst;         /* CT orig tuple IPv4 destination address. */
-    struct in6_addr ipv6_src;   /* IPv6 source address. */ //ipv6源地址
-    struct in6_addr ipv6_dst;   /* IPv6 destination address. */ //ipv6目的地址
+    //ipv6源地址
+    struct in6_addr ipv6_src;   /* IPv6 source address. */
+    //ipv6目的地址
+    struct in6_addr ipv6_dst;   /* IPv6 destination address. */
     struct in6_addr ct_ipv6_src; /* CT orig tuple IPv6 source address. */
     struct in6_addr ct_ipv6_dst; /* CT orig tuple IPv6 destination address. */
     ovs_be32 ipv6_label;        /* IPv6 flow label. */
@@ -149,8 +155,9 @@ struct flow {
     struct in6_addr nd_target;  /* IPv6 neighbor discovery (ND) target. */
     struct eth_addr arp_sha;    /* ARP/ND source hardware address. */
     struct eth_addr arp_tha;    /* ARP/ND target hardware address. */
+    //tcp标记位
     ovs_be16 tcp_flags;         /* TCP flags/ICMPv6 ND options type.
-                                 * With L3 to avoid matching L4. *///tcp标记位
+                                 * With L3 to avoid matching L4. */
 
     ovs_be16 pad2;              /* Pad to 64 bits. */
     struct ovs_key_nsh nsh;     /* Network Service Header keys */

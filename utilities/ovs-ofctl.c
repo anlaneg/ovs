@@ -5074,6 +5074,7 @@ static const struct ovs_cmdl_command all_commands[] = {
       1, 2, ofctl_insert_bucket, OVS_RW },
     { "remove-buckets", "switch [group]",
       1, 2, ofctl_remove_bucket, OVS_RW },
+      /*显示所有配置的group*/
     { "dump-groups", "switch [group]",
       1, 2, ofctl_dump_group_desc, OVS_RO },
     { "dump-group-stats", "switch [group]",

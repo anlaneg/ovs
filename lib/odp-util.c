@@ -5530,14 +5530,17 @@ gtpu_to_attr(struct ofpbuf *a, const void *data_)
     {                                                             \
         unsigned long call_fn = (unsigned long)FUNC;              \
         if (call_fn) {                                            \
+            /*如果有call_fn，则执行调用*/\
             typedef void (*fn)(struct ofpbuf *, const void *);    \
             fn func = FUNC;                                       \
             func(BUF, &(DATA));                                   \
         } else {                                                  \
+            /*如果没有call_fn,则直接将attr加入到buf中*/\
             nl_msg_put_unspec(BUF, ATTR, &(DATA), sizeof (DATA)); \
         }                                                         \
     }
 
+/*当s指针指向的字符串，拥有NAME前缀时，使start指向s,且s跳过此前缀*/
 #define SCAN_IF(NAME)                           \
     if (strncmp(s, NAME, strlen(NAME)) == 0) {  \
         const char *start = s;                  \
@@ -5546,6 +5549,7 @@ gtpu_to_attr(struct ofpbuf *a, const void *data_)
         s += strlen(NAME)
 
 /* Usually no special initialization is needed. */
+/*定义scan需要的辅助变量*/
 #define SCAN_BEGIN(NAME, TYPE)                  \
     SCAN_IF(NAME);                              \
         TYPE skey, smask;                       \
@@ -5573,10 +5577,12 @@ gtpu_to_attr(struct ofpbuf *a, const void *data_)
 
 /* Scan unnamed entry as 'TYPE' */
 #define SCAN_TYPE(TYPE, KEY, MASK)              \
+    /*通过scan_$type方式，完成s中内容解析，解析有两个参数，key,mask,返回消费的字符串长度*/\
     len = scan_##TYPE(s, KEY, MASK);            \
     if (len == 0) {                             \
         return -EINVAL;                         \
     }                                           \
+    /*跳过解析过的内容*/\
     s += len
 
 /* Scan named ('NAME') entry 'FIELD' as 'TYPE'. */
@@ -5593,6 +5599,7 @@ gtpu_to_attr(struct ofpbuf *a, const void *data_)
             return -EINVAL;                     \
         }
 
+/*解析完key,mask后需要为')'*/
 #define SCAN_FINISH_SINGLE()                    \
         } while (false);                        \
         if (*s++ != ')') {                      \
@@ -5639,6 +5646,7 @@ gtpu_to_attr(struct ofpbuf *a, const void *data_)
 #define SCAN_FIELD_NESTED_FUNC(NAME, TYPE, SCAN_AS, FUNC)  \
         SCAN_FIELD_NESTED__(NAME, TYPE, SCAN_AS, 0, FUNC)
 
+/*如果有mask,也需要将mask加入到key及mask中*/
 #define SCAN_PUT(ATTR, FUNC)                            \
         SCAN_PUT_ATTR(key, ATTR, skey, FUNC);           \
         if (mask)                                       \
@@ -5869,6 +5877,7 @@ parse_odp_key_mask_attr(struct parse_odp_context *context, const char *s,
     return retval;
 }
 
+/*解析字符串s,将其内容转换输出到key,mask中*/
 static int
 parse_odp_key_mask_attr__(struct parse_odp_context *context, const char *s,
                           struct ofpbuf *key, struct ofpbuf *mask)

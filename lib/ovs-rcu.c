@@ -48,6 +48,7 @@ struct ovsrcu_perthread {
     struct ovs_list list_node;  /* In global list. */
 
     struct ovs_mutex mutex;
+    /*当前线程的seq编号，用于确定当前线程编号与全局编号是否有差异*/
     uint64_t seqno;
     //各线程提交的回调
     struct ovsrcu_cbset *cbset;
@@ -94,13 +95,14 @@ ovsrcu_perthread_get(void)
 
         perthread = xmalloc(sizeof *perthread);
         ovs_mutex_init(&perthread->mutex);
-        /*取全局seq中的序号*/
+        /*取全局seq中的序号,做为初始化*/
         perthread->seqno = seq_read(global_seqno);
         perthread->cbset = NULL;
         ovs_strlcpy(perthread->name, name[0] ? name : "main",
                     sizeof perthread->name);
 
         ovs_mutex_lock(&ovsrcu_threads_mutex);
+        //增加已知的ovsrcu-perthread
         ovs_list_push_back(&ovsrcu_threads, &perthread->list_node);
         ovs_mutex_unlock(&ovsrcu_threads_mutex);
 
@@ -202,7 +204,7 @@ ovsrcu_try_quiesce(void)
     ovs_assert(!single_threaded());
     perthread = ovsrcu_perthread_get();
     if (!seq_try_lock()) {
-        //更新当前系统seqno
+        //更新当前线程的seq为系统seqno
         perthread->seqno = seq_read_protected(global_seqno);
         if (perthread->cbset) {
         	//如果有回调集，就将其刷入到flushed_cbsets

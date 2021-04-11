@@ -171,10 +171,12 @@ void
 xlate_push_stats(struct xlate_cache *xcache,
                  struct dpif_flow_stats *stats, bool offloaded)
 {
+    /*包数为0，不更新*/
     if (!stats->n_packets) {
         return;
     }
 
+    /*遍历xcache中的所有entry*/
     struct xc_entry *entry;
     struct ofpbuf entries = xcache->entries;
     XC_ENTRY_FOR_EACH (entry, &entries) {

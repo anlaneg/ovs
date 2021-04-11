@@ -3552,11 +3552,13 @@ bridge_get_memory_usage(struct simap *usage)
 
     sset_init(&types);
     ofproto_enumerate_types(&types);
+    /*遍历所有datapath type，收集内存用量*/
     SSET_FOR_EACH (type, &types) {
         ofproto_type_get_memory_usage(type, usage);
     }
     sset_destroy(&types);
 
+    /*遍历所有bridge收集内存用量*/
     HMAP_FOR_EACH (br, node, &all_bridges) {
         ofproto_get_memory_usage(br->ofproto, usage);
     }

@@ -91,7 +91,8 @@ static struct ovs_mutex netdev_class_mutex OVS_ACQ_BEFORE(netdev_mutex)//保护n
 /* Contains 'struct netdev_registered_class'es. */
 //例如‘system','patch','tap','internal',‘vxlan'等tunnel类型，‘dpdk','dpdkr'等
 //'dummy','dummy-internal','dummy-pmd'等
-static struct cmap netdev_classes = CMAP_INITIALIZER;//全局变量，用于串连所有注册的netdev class
+//全局变量，用于串连所有注册的netdev class
+static struct cmap netdev_classes = CMAP_INITIALIZER;
 
 struct netdev_registered_class {
     struct cmap_node cmap_node; /* In 'netdev_classes', by class->type. */
@@ -190,8 +191,9 @@ netdev_initialize(void)
  *
  * If your program opens any netdevs, it must call this function within its
  * main poll loop. */
+//对所有class调用run函数（做周期性工作）＊＊＊run入口
 void
-netdev_run(void)//对所有class调用run函数（做周期性工作）＊＊＊run入口
+netdev_run(void)
     OVS_EXCLUDED(netdev_mutex)
 {
     netdev_initialize();

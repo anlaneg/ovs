@@ -157,6 +157,7 @@ struct frozen_state {
     struct uuid xport_uuid;       /* UUID of 1st port packet received on. */
 
     /* Actions to be translated when thawing. */
+    /*冻结的action,执行了一半，恢复后需要继续执行*/
     struct ofpact *ofpacts;
     size_t ofpacts_len;           /* Size of 'ofpacts', in bytes. */
     struct ofpact *action_set;

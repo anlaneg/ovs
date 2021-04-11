@@ -96,6 +96,7 @@ struct ofconn {
     /* Flow table operation logging. */
     int n_add, n_delete, n_modify; /* Number of unreported ops of each kind. */
     long long int first_op, last_op; /* Range of times for unreported ops. */
+    /*下次report时间*/
     long long int next_op_report;    /* Time to report ops, or LLONG_MAX. */
     long long int op_backoff;        /* Earliest time to report ops again. */
 
@@ -1118,7 +1119,9 @@ ofconn_report_flow_mod(struct ofconn *ofconn,
 
     long long int now = time_msec();
     if (ofconn->next_op_report == LLONG_MAX) {
+        /*第一次执行操作*/
         ofconn->first_op = now;
+        //指定每10秒后report一次
         ofconn->next_op_report = MAX(now + 10 * 1000, ofconn->op_backoff);
         ofconn->op_backoff = ofconn->next_op_report + 60 * 1000;
     }
@@ -1250,6 +1253,7 @@ ofconn_destroy(struct ofconn *ofconn)
         return;
     }
 
+    //连接断开时，显示一次情况。
     ofconn_log_flow_mods(ofconn);
 
     ovs_list_remove(&ofconn->connmgr_node);
@@ -1370,6 +1374,7 @@ ofconn_run(struct ofconn *ofconn,
         bundle_remove_expired(ofconn, now);
     }
 
+    //检查需要输出flow report
     if (now >= ofconn->next_op_report) {
         ofconn_log_flow_mods(ofconn);
     }
@@ -1405,6 +1410,7 @@ ofconn_wait(struct ofconn *ofconn)
     poll_timer_wait_until(ofpmp_assembler_wait(&ofconn->assembler));
 }
 
+/*此连接执行了多少次增删改*/
 static void
 ofconn_log_flow_mods(struct ofconn *ofconn)
 {
@@ -1422,9 +1428,11 @@ ofconn_log_flow_mods(struct ofconn *ofconn)
             ds_put_format(&s, "in the %lld s starting %lld s ago",
                           interval, ago);
         } else {
+            /*首次日志*/
             ds_put_format(&s, "%lld s ago", ago);
         }
 
+        /*指明连接:添加,删除，修改数目*/
         ds_put_cstr(&s, " (");
         if (ofconn->n_add) {
             ds_put_format(&s, "%d adds, ", ofconn->n_add);
@@ -1441,6 +1449,7 @@ ofconn_log_flow_mods(struct ofconn *ofconn)
         VLOG_INFO("%s: %s", rconn_get_name(ofconn->rconn), ds_cstr(&s));
         ds_destroy(&s);
 
+        /*清空本次统计*/
         ofconn->n_add = ofconn->n_delete = ofconn->n_modify = 0;
     }
     ofconn->next_op_report = LLONG_MAX;

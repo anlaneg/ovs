@@ -235,6 +235,7 @@ start_daemon () {
     fi
 }
 
+#停止指定的daemon
 stop_daemon () {
     if test -e "$rundir/$1.pid"; then
         if pid=`cat "$rundir/$1.pid"`; then
@@ -339,19 +340,23 @@ move_ip_address () {
     # IP addresses (including IPv6).
     echo "ip addr flush dev $dev 2>/dev/null" # Suppresses "Nothing to flush".
     ip addr show dev $dev | while read addr; do
+        #以空格划分，将各参数给到$1，$2....,$N
         set -- $addr
 
         # Check and trim family.
         family=$1
         shift
+        #跳过非inet/inet6行。
         case $family in
             inet | inet6) ;;
             *) continue ;;
         esac
 
         # Trim device off the end--"ip" insists on having "dev" precede it.
+        #遍历当前所有参数$N，分配dynamic,scope等情况
         addrcmd=
         while test $# != 0; do
+            #排除掉不能直接使用的情况
             case $1 in
                 dynamic)
                     # XXX: According to 'man ip-address', "dynamic" is only
@@ -381,6 +386,7 @@ move_ip_address () {
                     continue
                     ;;
             esac
+            #沿用之前的配置
             addrcmd="$addrcmd $1"
             shift
         done
@@ -388,6 +394,7 @@ move_ip_address () {
             addrcmd="$addrcmd $1"
         fi
 
+        #输出需要给$dst添加的地址配置
         echo ip -f $family addr add $addrcmd dev $dst
     done
 }
@@ -406,6 +413,7 @@ move_ip_routes () {
             *" proto kernel "*) continue ;;
         esac
 
+        #输出需要给dst配置的路由
         echo "ip route add $route dev $dst"
     done
 }
@@ -559,6 +567,7 @@ internal_interfaces () {
     done
 }
 
+#列出所有的桥，并针对所有的桥生成流表备份
 ovs_save () {
     bridges=`ovs_vsctl -- --real list-br`
     if [ -n "${bridges}" ] && \
@@ -569,23 +578,27 @@ ovs_save () {
     [ -z "${bridges}" ] && return 0
 }
 
+#检查如果配置delete_bridges 不为'yes'，则进行流表保存
 save_flows_if_required () {
     if test X"$DELETE_BRIDGES" != Xyes; then
         action "Saving flows" ovs_save save-flows "${script_flows}"
     fi
 }
 
+#保存接口配置到文件
 save_interfaces () {
     "$datadir/scripts/ovs-save" save-interfaces ${ifaces} \
         > "${script_interfaces}"
 }
 
+#设置等待flow-restore-wait为true
 flow_restore_wait () {
     if test X"${OVS_VSWITCHD:-yes}" = Xyes; then
         ovs_vsctl set open_vswitch . other_config:flow-restore-wait="true"
     fi
 }
 
+#移除flow-restart-wait配置
 flow_restore_complete () {
     if test X"${OVS_VSWITCHD:-yes}" = Xyes; then
         ovs_vsctl --if-exists remove open_vswitch . other_config \
@@ -593,6 +606,7 @@ flow_restore_complete () {
     fi
 }
 
+#执行script_flow完成flow恢复
 restore_flows () {
     [ -x "${script_flows}" ] && \
         action "Restoring saved flows" "${script_flows}"
@@ -612,12 +626,14 @@ restore_interfaces () {
     $log -f "$script_interfaces"
 }
 
+#定义interface脚本名称,flow脚本名称
 init_restore_scripts () {
     script_interfaces=`mktemp`
     script_flows=`mktemp`
     trap 'rm -f "${script_interfaces}" "${script_flows}"' 0
 }
 
+#重新加载kmod，并通过flow-restore-wait完成流表恢复
 force_reload_kmod () {
 
     if test X"${OVS_VSWITCHD:-yes}" != Xyes; then
@@ -629,6 +645,7 @@ force_reload_kmod () {
     action "Detected internal interfaces: $ifaces" true
 
     init_restore_scripts
+    #如有必要，进行流表保存
     save_flows_if_required
 
     # Restart the database first, since a large database may take a
@@ -636,11 +653,14 @@ force_reload_kmod () {
     stop_ovsdb
     start_ovsdb || return 1
 
+    #停止vswitchd
     stop_forwarding
 
+    #保存接口配置（是停止vswitchd之后的接口配置）
     if action "Saving interface configuration" save_interfaces; then
         :
     else
+        #保存配置失败，不替换kernel module，开启vswitchd,退出处理
         log_warning_msg "Failed to save configuration, not replacing kernel module"
         start_forwarding
         add_managers
@@ -648,10 +668,12 @@ force_reload_kmod () {
     fi
     chmod +x "$script_interfaces"
 
+    #遍历所有dp，并将其移除掉（在ovs-vswitchd不运行时直接移除）
     for dp in `ovs-dpctl dump-dps`; do
         action "Removing datapath: $dp" ovs-dpctl del-dp "$dp"
     done
 
+    #完成module移除
     if test -e /sys/module/ip_gre; then
         action "Forcing removal of ip_gre module" rmmod ip_gre
     fi
@@ -660,17 +682,22 @@ force_reload_kmod () {
         action "Forcing removal of gre module" rmmod gre
     fi
 
+    #移除ovs使用的所有vport
     ovs_kmod_ctl remove
 
     # Start vswitchd by asking it to wait till flow restore is finished.
+    # 修改db,使flow-restore-wait为true
     flow_restore_wait
+    # 开启vswitchd
     start_forwarding || return 1
 
     # Restore saved flows and inform vswitchd that we are done.
     restore_flows
+    #修改db,使flow-restore-wait变更为false
     flow_restore_complete
     add_managers
 
+    #恢复接口配置
     restore_interfaces
 
     action "Finding processes on dead interfaces" timeout 5 \
@@ -681,10 +708,12 @@ force_reload_kmod () {
 ## restart ##
 ## ------- ##
 
+#restart默认通过flow_restore_wait完成流表恢复
 restart () {
     if daemon_is_running ovsdb-server && daemon_is_running ovs-vswitchd; then
         init_restore_scripts
         if test X"${OVS_VSWITCHD:-yes}" = Xyes; then
+            #如有必要，进行流表保存
             save_flows_if_required
         fi
     fi

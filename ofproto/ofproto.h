@@ -254,8 +254,11 @@ void ofproto_parse_name(const char *name, char **dp_name, char **dp_type);
 /* An interface hint element, which is used by ofproto_init() to
  * describe the caller's understanding of the startup state. */
 struct iface_hint {
+    /*所属桥的名称*/
     char *br_name;              /* Name of owning bridge. */
+    /*所属桥的类型*/
     char *br_type;              /* Type of owning bridge. */
+    /*接口对应的openflow端口号*/
     ofp_port_t ofp_port;        /* OpenFlow port number. */
 };
 

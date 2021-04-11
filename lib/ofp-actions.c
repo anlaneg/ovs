@@ -7880,6 +7880,7 @@ ofpact_copy(struct ofpbuf *out, const struct ofpact *a)
 
 /* The order in which actions in an action set get executed.  This is only for
  * the actions where only the last instance added is used. */
+/*这此action需要按顺序执行*/
 #define ACTION_SET_ORDER                        \
     SLOT(OFPACT_STRIP_VLAN)                     \
     SLOT(OFPACT_POP_MPLS)                       \
@@ -7895,6 +7896,7 @@ ofpact_copy(struct ofpbuf *out, const struct ofpact *a)
  * executed at all if at least one of these actions is present.  If more than
  * one is present, then only the one later in this list is executed (and if
  * more than one of a given type, the one later in the action set). */
+/*互斥的action,这些action同时存在时，最后一个生效*/
 #define ACTION_SET_FINAL_PRIORITY               \
     FINAL(OFPACT_CT)                            \
     FINAL(OFPACT_CT_CLEAR)                      \
@@ -7917,7 +7919,7 @@ enum action_set_class {
 
     /* Actions that can appear in an action set more than once and are executed
      * in order. */
-    ACTION_SLOT_SET_OR_MOVE,
+    ACTION_SLOT_SET_OR_MOVE,/*这类action只容许执行一次*/
 
     /* Actions that shouldn't appear in the action set at all. */
     ACTION_SLOT_INVALID
@@ -7928,6 +7930,7 @@ enum action_set_class {
 enum { N_ACTION_SLOTS = ACTION_SET_ORDER };
 #undef SLOT
 
+/*区分action type*/
 static enum action_set_class
 action_set_classify(const struct ofpact *a)
 {
@@ -8023,6 +8026,7 @@ void
 ofpacts_execute_action_set(struct ofpbuf *action_list,
                            const struct ofpbuf *action_set)
 {
+    /*将action_set转换为action_list(有序）*/
     const struct ofpact *slots[N_ACTION_SLOTS] = {NULL, };
 
     struct ofpbuf set_or_move;
@@ -8034,22 +8038,27 @@ ofpacts_execute_action_set(struct ofpbuf *action_list,
     const struct ofpact *cursor;
     //
     OFPACT_FOR_EACH (cursor, action_set->data, action_set->size) {
-    		//区分action类型
+    	//区分action类型
         int class = action_set_classify(cursor);
         if (class < N_ACTION_SLOTS) {
+            //遇到ACTION_SET_ORDER类action,记录
             slots[class] = cursor;
         } else if (class < ACTION_SLOT_SET_OR_MOVE) {
             if (class >= final_class) {
+                /*final类action*/
                 final_action = cursor;
                 final_class = class;
             }
         } else if (class == ACTION_SLOT_SET_OR_MOVE) {
+            /*记录set,move类型的action*/
             ofpact_copy(&set_or_move, cursor);
         } else {
+            /*针对invalid的action进行报文*/
             ovs_assert(class == ACTION_SLOT_INVALID);
         }
     }
 
+    /*有set_order的action,按序生成，先order类，再set_or_move类，再final类*/
     if (final_action) {
         for (int i = 0; i < N_ACTION_SLOTS; i++) {
             if (slots[i]) {

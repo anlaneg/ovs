@@ -591,9 +591,11 @@ run_IDLE(struct rconn *rc)
     OVS_REQUIRES(rc->mutex)
 {
     if (timed_out(rc)) {
+        /*双方连接超时，告警*/
         VLOG_ERR("%s: no response to inactivity probe after %lld "
                  "seconds, disconnecting",
                  rc->name, elapsed_in_this_state(rc) / 1000);
+        /*断开连接*/
         disconnect(rc, ETIMEDOUT);
     } else {
         do_tx_work(rc);
@@ -656,6 +658,7 @@ rconn_run(struct rconn *rc)
 
     do {
         old_state = rc->state;
+        /*按连接的当前状态进行函数处理*/
         switch (rc->state) {
 #define STATE(NAME, VALUE) case S_##NAME: run_##NAME(rc); break;
             STATES

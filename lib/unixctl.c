@@ -61,7 +61,8 @@ struct unixctl_server {
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
 
-static struct shash commands = SHASH_INITIALIZER(&commands);//保存所有的command(unixctl命令）
+//保存所有的command(unixctl命令）
+static struct shash commands = SHASH_INITIALIZER(&commands);
 
 //列出所有命令
 static void
@@ -111,9 +112,9 @@ unixctl_version(struct unixctl_conn *conn, int argc OVS_UNUSED,
  * made eventually to avoid blocking that connection. */
 //实现命令注册
 void
-unixctl_command_register(const char *name/*命令*/, const char *usage,
-                         int min_args, int max_args,
-                         unixctl_cb_func *cb, void *aux)
+unixctl_command_register(const char *name/*命令名*/, const char *usage/*用法说明*/,
+                         int min_args/*最小参数数*/, int max_args/*最大参数数*/,
+                         unixctl_cb_func *cb/*命令处理回调*/, void *aux)
 {
     struct unixctl_command *command;
     struct unixctl_command *lookup = shash_find_data(&commands, name);
@@ -356,11 +357,13 @@ run_connection(struct unixctl_conn *conn)//自此连接收取并处理消息
 
     jsonrpc_run(conn->rpc);
     error = jsonrpc_get_status(conn->rpc);
-    if (error || jsonrpc_get_backlog(conn->rpc)) {//处理时出错或者状态有误
+    if (error || jsonrpc_get_backlog(conn->rpc)) {
+        //处理时出错或者状态有误
         return error;
     }
 
-    for (i = 0; i < 10; i++) {//尝试收取10次
+    for (i = 0; i < 10; i++) {
+        //尝试收取10次
         struct jsonrpc_msg *msg;
 
         if (error || conn->request_id) {
@@ -405,7 +408,8 @@ unixctl_server_run(struct unixctl_server *server)//unixctl-server处理
         return;
     }
 
-    for (int i = 0; i < 10; i++) {//尝试着接入几个unixctl客户端
+    for (int i = 0; i < 10; i++) {
+        //尝试着接入几个unixctl客户端
         struct stream *stream;
         int error;
 
@@ -428,10 +432,11 @@ unixctl_server_run(struct unixctl_server *server)//unixctl-server处理
     struct unixctl_conn *conn, *next;
     //遍历server管理的connect
     LIST_FOR_EACH_SAFE (conn, next, node, &server->conns) {
-    //处理unixctl消息
+        //处理unixctl消息
         int error = run_connection(conn);
         if (error && error != EAGAIN) {
-            kill_connection(conn);//发生错误，中断连接
+            //发生错误，中断连接
+            kill_connection(conn);
         }
     }
 }
@@ -537,7 +542,9 @@ unixctl_client_transact(struct jsonrpc *client, const char *command, int argc,
     for (i = 0; i < argc; i++) {
         json_args[i] = json_string_create(argv[i]);
     }
-    params = json_array_create(json_args, argc);//json字符串数组
+
+    //json字符串数组
+    params = json_array_create(json_args, argc);
     request = jsonrpc_create_request(command, params, NULL);
 
     error = jsonrpc_transact_block(client, request, &reply);

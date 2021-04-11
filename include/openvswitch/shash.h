@@ -24,7 +24,7 @@
 extern "C" {
 #endif
 
-//hmap_node只有节点，没有定义数据，在其上通过支持string类型的key,，就可以提供map功能了
+//hmap_node只有节点，没有定义数据，在其上通过支持string类型的key,就可以提供map功能了
 //data指针指向外面传入的数据
 struct shash_node {
     struct hmap_node node;

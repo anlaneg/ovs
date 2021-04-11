@@ -65,7 +65,7 @@ enum xc_type {
  * struct ofproto_dpif.  ofproto_dpif pointers are explicitly protected by
  * destroying all xlate caches before the ofproto is destroyed. */
 struct xc_entry {
-    enum xc_type type;
+    enum xc_type type;/*指定各entry类型*/
     union {
         struct {
             struct ofproto_dpif *ofproto;
@@ -130,6 +130,7 @@ struct xc_entry {
     };
 };
 
+/*自ENTRIES中提取sizeof *ENTRY内容*/
 #define XC_ENTRY_FOR_EACH(ENTRY, ENTRIES)                       \
     for (ENTRY = ofpbuf_try_pull(ENTRIES, sizeof *ENTRY);       \
          ENTRY;                                                 \

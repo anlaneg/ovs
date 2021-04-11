@@ -61,6 +61,7 @@ insert_kmods_if_required() {
 }
 
 remove_kmods() {
+    #移除所有"vport_"开头的module
     for vport in `awk '/^vport_/ { print $1 }' /proc/modules`; do
         action "Removing $vport module" rmmod $vport
     done
@@ -73,6 +74,7 @@ remove_kmods() {
         action "Forcing removal of gre module" rmmod gre
     fi
 
+    #移除openvswitch module
     if test -e /sys/module/openvswitch; then
         action "Removing openvswitch module" rmmod openvswitch
     fi
@@ -84,6 +86,8 @@ remove_kmods() {
         action "Removing geneve device" \
                 ip link del link genev_sys_6081 dev genev_sys_6081
     fi
+    
+    #这里的检查少了 8472 一种，这里应考虑使用其它port的vxlan
     if test -e /sys/class/net/vxlan_sys_4789; then
         action "Removing vxlan device" \
                 ip link del link vxlan_sys_4789 dev vxlan_sys_4789
@@ -187,6 +191,7 @@ do
 done
 case $command in
     remove)
+        #移除所有openvswitch对应的kmods
         remove_kmods
         ;;
     insert)

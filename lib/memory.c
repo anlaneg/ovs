@@ -71,12 +71,15 @@ memory_run(void)
     next_check = now + MEMORY_CHECK_INTERVAL;
 
     /* Time for a report? */
+    /*取当前进程资源用量*/
     getrusage(RUSAGE_SELF, &usage);
     if (!last_reported_maxrss) {
+        /*首次报告*/
         VLOG_INFO("%lu kB peak resident set size after %.1f seconds",
                   (unsigned long int) usage.ru_maxrss,
                   (now - time_boot_msec()) / 1000.0);
     } else if (usage.ru_maxrss >= last_reported_maxrss * 1.5) {
+        /*生成一个report*/
         VLOG_INFO("peak resident set size grew %.0f%% in last %.1f seconds, "
                   "from %lu kB to %lu kB",
                   ((double) usage.ru_maxrss / last_reported_maxrss - 1) * 100,
@@ -87,6 +90,7 @@ memory_run(void)
     }
 
     /* Request a report. */
+    /*需要进行report*/
     want_report = true;
     last_report = now;
     last_reported_maxrss = usage.ru_maxrss;
@@ -96,6 +100,7 @@ memory_run(void)
 void
 memory_wait(void)
 {
+    /*如果需要report，则指明为立即唤醒*/
     if (memory_should_report()) {
         poll_immediate_wake();
     }
@@ -138,6 +143,7 @@ memory_report(const struct simap *usage)
     size_t i;
 
     ds_init(&s);
+    /*将usage合并成字符串*/
     compose_report(usage, &s);
 
     if (want_report) {
@@ -147,6 +153,7 @@ memory_report(const struct simap *usage)
         want_report = false;
     }
     if (n_conns) {
+        /*为每个conns中响应memory report*/
         for (i = 0; i < n_conns; i++) {
             unixctl_command_reply(conns[i], ds_cstr(&s));
         }
@@ -173,6 +180,7 @@ memory_init(void)
 
     if (!inited) {
         inited = true;
+        /*注册memory/show命令*/
         unixctl_command_register("memory/show", "", 0, 0,
                                  memory_unixctl_show, NULL);
 

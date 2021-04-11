@@ -622,6 +622,7 @@ netdev_linux_notify_sock(void)
     if (ovsthread_once_start(&once)) {
         int error;
 
+        /*创建netlink socket 并加入组播组*/
         error = nl_sock_create(NETLINK_ROUTE, &sock);
         if (!error) {
             size_t i;
@@ -718,6 +719,7 @@ netdev_linux_update_lag(struct rtnetlink_change *change)
     }
 }
 
+/*linux netdev执行函数，负责netlink事件解析更新*/
 void
 netdev_linux_run(const struct netdev_class *netdev_class OVS_UNUSED)
 {
@@ -738,12 +740,13 @@ netdev_linux_run(const struct netdev_class *netdev_class OVS_UNUSED)
         int nsid;
         struct ofpbuf buf;
 
+        /*自组播组收取信息*/
         ofpbuf_use_stub(&buf, buf_stub, sizeof buf_stub);
         error = nl_sock_recv(sock, &buf, &nsid, false);
         if (!error) {
             struct rtnetlink_change change;
 
-            //解析数据
+            //解析netlink事件数据
             if (rtnetlink_parse(&buf, &change)) {
                 struct netdev *netdev_ = NULL;
                 char dev_name[IFNAMSIZ];

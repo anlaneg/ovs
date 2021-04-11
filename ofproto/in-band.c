@@ -239,6 +239,7 @@ refresh_local(struct in_band *ib)
 bool
 in_band_must_output_to_local_port(const struct flow *flow)
 {
+    /*dhcp server端发送给dhcp client端的报文*/
     return (flow->dl_type == htons(ETH_TYPE_IP)
             && flow->nw_proto == IPPROTO_UDP
             && flow->tp_src == htons(DHCP_SERVER_PORT)

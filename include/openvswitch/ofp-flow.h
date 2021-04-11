@@ -188,7 +188,7 @@ void ofputil_flow_stats_request_format(
 struct ofputil_flow_stats {
     struct match match;
     ovs_be64 cookie;
-    uint8_t table_id;
+    uint8_t table_id;/*规则对应的table_id*/
     uint16_t priority;
     uint16_t idle_timeout;
     uint16_t hard_timeout;

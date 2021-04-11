@@ -1438,6 +1438,7 @@ validate_ct_state(uint32_t state, struct ds *ds)
 void
 flow_clear_conntrack(struct flow *flow)
 {
+    /*清除flow中ct相关的字段*/
     flow->ct_state = 0;
     flow->ct_zone = 0;
     flow->ct_mark = 0;
@@ -2814,16 +2815,18 @@ flow_skip_common_vlan_headers(const struct flow *a, int *p_an,
     *p_bn = bn;
 }
 
+/*将vlan剥离，如果无vlan则忽略*/
 void
 flow_pop_vlan(struct flow *flow, struct flow_wildcards *wc)
 {
     int n = flow_count_vlan_headers(flow);
     if (n > 1) {
-    	//把内层的copy出来
         if (wc) {
+            //内层的被修改，需要检查，故打上mask
             memset(&wc->masks.vlans[1], 0xff,
-                   sizeof(union flow_vlan_hdr) * (n - 1));//内层的需要匹配，故打上mask
+                   sizeof(union flow_vlan_hdr) * (n - 1));
         }
+        //把内层的vlan信息copy出来
         memmove(&flow->vlans[0], &flow->vlans[1],
                 sizeof(union flow_vlan_hdr) * (n - 1));
     }
@@ -2833,14 +2836,15 @@ flow_pop_vlan(struct flow *flow, struct flow_wildcards *wc)
     }
 }
 
-//空出一个vlan段
+//空出一个vlan段,待填充
 void
 flow_push_vlan_uninit(struct flow *flow, struct flow_wildcards *wc)
 {
     if (wc) {
+        /*如果之前有vlan,则设置其mask*/
         int n = flow_count_vlan_headers(flow);
         if (n) {
-            memset(wc->masks.vlans, 0xff, sizeof(union flow_vlan_hdr) * n);//为对应层的vlan加上mask
+            memset(wc->masks.vlans, 0xff, sizeof(union flow_vlan_hdr) * n);
         }
     }
 
@@ -3309,6 +3313,7 @@ flow_compose(struct dp_packet *p, const struct flow *flow,
     if (flow->dl_type == htons(ETH_TYPE_IP)) {
         struct ip_header *ip;
 
+        /*填充ipv4头部*/
         ip = dp_packet_put_zeros(p, sizeof *ip);
         ip->ip_ihl_ver = IP_IHL_VER(5, 4);
         ip->ip_tos = flow->nw_tos;

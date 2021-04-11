@@ -262,6 +262,7 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         {"peer-ca-cert", required_argument, NULL, OPT_PEER_CA_CERT},
         {NULL, 0, NULL, 0},
     };
+
     //长选项的数目
     const int n_global_long_options = ARRAY_SIZE(global_long_options) - 1;
     char *tmp, *short_options;
@@ -3180,7 +3181,7 @@ static const struct ctl_command_syntax vsctl_commands[] = {
 static void
 vsctl_cmd_init(void)
 {
-    //例如注册db相关的操作命令
+    //例如注册db相关的操作命令(例如ovs-vsctl show命令）
     ctl_init(&ovsrec_idl_class, ovsrec_table_classes, tables, cmd_show_tables,
              vsctl_exit);
     ctl_register_commands(vsctl_commands);

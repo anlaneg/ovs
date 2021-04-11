@@ -385,8 +385,9 @@ ofpbuf_put_zeros(struct ofpbuf *b, size_t size)
 /* Appends the 'size' bytes of data in 'p' to the tail end of 'b'.  Data in 'b'
  * is reallocated and copied if necessary.  Returns a pointer to the first
  * byte of the data's location in the ofpbuf. */
+//在写当读写头位置用p来填充size个字节,返回填充后的起始位置
 void *
-ofpbuf_put(struct ofpbuf *b, const void *p, size_t size)//在写当读写头位置用p来填充size个字节,返回填充后的起始位置
+ofpbuf_put(struct ofpbuf *b, const void *p, size_t size)
 {
     void *dst = ofpbuf_put_uninit(b, size);
     memcpy(dst, p, size);

@@ -65,12 +65,14 @@ main(int argc, char *argv[])
         ovs_fatal(error, "%s: transaction error", target);
     }
 
-    if (cmd_error) {//出错
+    if (cmd_error) {
+        //出错
         jsonrpc_close(client);//关闭连接
         fputs(cmd_error, stderr);//打出错信息
         ovs_error(0, "%s: server returned an error", target);
         exit(2);
-    } else if (cmd_result) {//成功
+    } else if (cmd_result) {
+        //成功
         fputs(cmd_result, stdout);
     } else {
         OVS_NOT_REACHED();

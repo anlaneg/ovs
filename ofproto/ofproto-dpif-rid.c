@@ -256,7 +256,7 @@ recirc_alloc_id__(const struct frozen_state *state, uint32_t hash)
            allocation to succeed at the first try.  We do skip the first
            RECIRC_POOL_STATIC_IDS IDs on the later rounds, though, as some of
            the initial allocations may be for long term uses (like bonds). */
-        node->id = next_id++;
+        node->id = next_id++;/*分配recirc_id*/
         if (OVS_UNLIKELY(!node->id)) {
             next_id = RECIRC_POOL_STATIC_IDS + 1;
             node->id = next_id++;

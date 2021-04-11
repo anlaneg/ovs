@@ -122,6 +122,7 @@ unsigned int
 simap_increase(struct simap *simap, const char *name, unsigned int amt)
 {
     if (amt) {
+        /*向simap中添加{key,value}*/
         size_t length = strlen(name);
         size_t hash = hash_name(name, length);
         struct simap_node *node;

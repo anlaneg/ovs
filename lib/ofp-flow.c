@@ -1175,10 +1175,13 @@ ofputil_append_flow_stats_reply(const struct ofputil_flow_stats *fs,
         struct ofp11_flow_stats *ofs;
 
         ofpbuf_put_uninit(reply, sizeof *ofs);
+        /*向reply中存入match*/
         oxm_put_match(reply, &fs->match, version);
+        /*向reply中存入action*/
         ofpacts_put_openflow_instructions(fs->ofpacts, fs->ofpacts_len, reply,
                                           version);
 
+        /*向reply中存入其它信息*/
         ofs = ofpbuf_at_assert(reply, start_ofs, sizeof *ofs);
         ofs->length = htons(reply->size - start_ofs);
         ofs->table_id = fs->table_id;

@@ -3104,7 +3104,7 @@ dpif_netlink_ct_flush(struct dpif *dpif OVS_UNUSED, const uint16_t *zone,
         /*删除指定五元组的ct*/
         return nl_ct_flush_tuple(tuple, zone ? *zone : 0);
     } else if (zone) {
-        /*按zone删除*/
+        /*按zone删除ct*/
         return nl_ct_flush_zone(*zone);
     } else {
         return nl_ct_flush();

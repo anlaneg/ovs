@@ -213,6 +213,7 @@ struct xlate_ctx {
 
     /* Stack for the push and pop actions.  See comment above nx_stack_push()
      * in nx-match.c for info on how the stack is stored. */
+    //处理stack的push,pop action完成内存压弹栈
     struct ofpbuf stack;
 
     /* The rule that we are currently translating, or NULL. */
@@ -388,6 +389,7 @@ struct xlate_ctx {
                                     * dp_hash after recirculation. */
     uint32_t dp_hash_alg;
     uint32_t dp_hash_basis;
+    /*执行了一半的action需要冻结，故保存*/
     struct ofpbuf frozen_actions;
     const struct ofpact_controller *pause;
 
@@ -786,6 +788,7 @@ xlate_report_action_set(const struct xlate_ctx *ctx, const char *verb)
     if (OVS_UNLIKELY(ctx->xin->trace)) {
         struct ofpbuf action_list;
         ofpbuf_init(&action_list, 0);
+        /*将action_set转换为action_list*/
         ofpacts_execute_action_set(&action_list, &ctx->action_set);
         if (action_list.size) {
             struct ds s = DS_EMPTY_INITIALIZER;
@@ -4314,10 +4317,13 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
             entry = xlate_cache_add_entry(ctx->xin->xcache, XC_NETDEV);
             entry->dev.tx = netdev_ref(xport->netdev);
         }
-        out_port = odp_port;//从这个口输出
+
+        //从这个口输出
+        out_port = odp_port;
         if (ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {
             xlate_report(ctx, OFT_DETAIL, "output to native tunnel");
-            is_native_tunnel = true;//本地进行tunnel处理
+            //本地进行tunnel处理
+            is_native_tunnel = true;
 
         } else {
             const char *tnl_type;
@@ -4640,9 +4646,11 @@ xlate_group_bucket(struct xlate_ctx *ctx, struct ofputil_bucket *bucket,
     //将action_set初始化为bucket对应的actions
     struct ofpbuf action_set = ofpbuf_const_initializer(bucket->ofpacts,
                                                         bucket->ofpacts_len);
-    struct flow old_flow = ctx->xin->flow;//先保存
+    //先保存
+    struct flow old_flow = ctx->xin->flow;
     bool old_was_mpls = ctx->was_mpls;
-    ofpacts_execute_action_set(&action_list, &action_set);//用action_set填充action_list
+    //用action_set填充action_list
+    ofpacts_execute_action_set(&action_list, &action_set);
     ctx->depth++;
     //做group的转换
     do_xlate_actions(action_list.data, action_list.size, ctx, is_last_action,
@@ -4848,7 +4856,7 @@ xlate_group_action__(struct xlate_ctx *ctx, struct group_dpif *group,
                      bool is_last_action/*是否为最后一个action*/)
 {
     if (group->up.type == OFPGT11_ALL || group->up.type == OFPGT11_INDIRECT) {
-    		//取最后一个bucket
+    	//取最后一个bucket
         struct ovs_list *last_bucket = group->up.buckets.prev;
         struct ofputil_bucket *bucket;
         //遍历所有bucket，执行其对应的所有action
@@ -4860,23 +4868,23 @@ xlate_group_action__(struct xlate_ctx *ctx, struct group_dpif *group,
     } else {
         struct ofputil_bucket *bucket;
         if (group->up.type == OFPGT11_SELECT) {
-        		//select型的group,选择一个bucket
+        	//select型的group,选择一个bucket
             bucket = pick_select_group(ctx, group);
         } else if (group->up.type == OFPGT11_FF) {
-        		//选择第一个可用的bucket
+        	//选择第一个可用的bucket
             bucket = pick_ff_group(ctx, group);
         } else {
             OVS_NOT_REACHED();
         }
 
         if (bucket) {
-        		//选择了合适的bucket,执行bucket对应的action
+        	//选择了合适的bucket,执行bucket对应的action
             xlate_report(ctx, OFT_DETAIL, "using bucket %"PRIu32,
                          bucket->bucket_id);
             xlate_group_bucket(ctx, bucket, is_last_action);
             xlate_group_stats(ctx, group, bucket);
         } else {
-        		//没有找到合适的bucket
+        	//没有找到合适的bucket
             xlate_report(ctx, OFT_DETAIL, "no live bucket");
             if (ctx->xin->xcache) {
                 ofproto_group_unref(&group->up);
@@ -4891,7 +4899,7 @@ xlate_group_action(struct xlate_ctx *ctx, uint32_t group_id/*要执行的group�
                    bool is_last_action)
 {
     if (xlate_resubmit_resource_check(ctx)) {
-    		//资源检查通过，开始执行group转换
+    	//资源检查通过，开始执行group转换
         struct group_dpif *group;
 
         /* Take ref only if xcache exists. */
@@ -5036,6 +5044,7 @@ xlate_controller_action(struct xlate_ctx *ctx, int len,
     struct frozen_state state = {
         .table_id = ctx->table_id,
         .ofproto_uuid = ctx->xbridge->ofproto->uuid,
+        /*记录stack情况*/
         .stack = ctx->stack.data,
         .stack_size = ctx->stack.size,
         .mirrors = ctx->mirrors,
@@ -5119,6 +5128,7 @@ finish_freezing__(struct xlate_ctx *ctx, uint8_t table)
         .conntracked = ctx->conntracked,
         .was_mpls = ctx->was_mpls,
         .xport_uuid = ctx->xin->xport_uuid,
+        /*冻结的action,执行了一半*/
         .ofpacts = ctx->frozen_actions.data,
         .ofpacts_len = ctx->frozen_actions.size,
         .action_set = ctx->action_set.data,
@@ -5554,10 +5564,10 @@ xlate_enqueue_action(struct xlate_ctx *ctx,
 
     /* Check output port. */
     if (ofp_port == OFPP_IN_PORT) {
-    		/*指定为in_port,使用当前上来文对应的in_port*/
+    	/*指定为in_port,使用当前上来文对应的in_port*/
         ofp_port = ctx->xin->flow.in_port.ofp_port;
     } else if (ofp_port == ctx->xin->flow.in_port.ofp_port) {
-    		/*与in_port相等，直接返回*/
+    	/*与in_port相等，直接返回*/
         return;
     }
 
@@ -6163,6 +6173,7 @@ static void
 freeze_unroll_actions(const struct ofpact *a, const struct ofpact *end,
                       struct xlate_ctx *ctx)
 {
+    /*遍历a到end之间的所有action*/
     for (; a < end; a = ofpact_next(a)) {
         switch (a->type) {
         case OFPACT_OUTPUT_REG:
@@ -6387,6 +6398,7 @@ put_ct_nat(struct xlate_ctx *ctx)
     nl_msg_end_nested(ctx->odp_actions, nat_offset);
 }
 
+/*conntrack action处理*/
 static void
 compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc,
                          bool is_last_action)
@@ -6409,13 +6421,17 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc,
                      is_last_action, false);
 
     if (ofc->zone_src.field) {
+        /*如果指定的zone_src，则自flow中提取zone*/
         zone = mf_get_subfield(&ofc->zone_src, &ctx->xin->flow);
     } else {
+        /*如果未指定zonee_src，则自zone立即数中提取*/
         zone = ofc->zone_imm;
     }
 
+    /*指明开始存入ct action*/
     ct_offset = nl_msg_start_nested(ctx->odp_actions, OVS_ACTION_ATTR_CT);
     if (ofc->flags & NX_CT_F_COMMIT) {
+        /*存入commit标记*/
         nl_msg_put_flag(ctx->odp_actions, ofc->flags & NX_CT_F_FORCE ?
                         OVS_CT_ATTR_FORCE_COMMIT : OVS_CT_ATTR_COMMIT);
         if (ctx->xbridge->support.ct_eventmask) {
@@ -6441,7 +6457,7 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc,
     ctx->wc->masks.ct_mark = old_ct_mark_mask;
     ctx->wc->masks.ct_label = old_ct_label_mask;
 
-    //需要等待ct完成后再做下一步处理，故freezen
+    //需要等待ct完成后再做下一步处理，故froenze
     if (ofc->recirc_table != NX_CT_RECIRC_NONE) {
         ctx->conntracked = true;
         compose_recirculate_and_fork(ctx, ofc->recirc_table, zone);
@@ -6457,6 +6473,7 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc,
     ctx->conntracked = false;
 }
 
+/*指明ct_clear标记到action*/
 static void
 compose_ct_clear_action(struct xlate_ctx *ctx)
 {
@@ -6942,7 +6959,7 @@ xlate_ofpact_unroll_xlate(struct xlate_ctx *ctx,
                  "cookie=%#"PRIx64, a->rule_table_id, a->rule_cookie);
 }
 
-//处理动作转换
+//处理ofctl rule动作转换
 static void
 do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpacts_len/*待处理的action长度*/,
                  struct xlate_ctx *ctx/*转换上下文*/, bool is_last_action,
@@ -6961,7 +6978,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
         return;
     }
 
-    //遍历actions集合
+    //遍历actions集合，按action进行转换
     OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
         struct ofpact_controller *controller;
         const struct ofpact_metadata *metadata;
@@ -6981,7 +6998,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             /* Check if need to store the remaining actions for later
              * execution. */
             if (ctx->freezing) {
-                freeze_unroll_actions(a, ofpact_end(ofpacts, ofpacts_len),
+                freeze_unroll_actions(a/*action当前位置*/, ofpact_end(ofpacts, ofpacts_len)/*action结尾*/,
                                       ctx);
             }
             break;
@@ -6998,7 +7015,14 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             ds_destroy(&s);
         }
 
-        //按action类型，直接对flow进行变更
+        //按action类型，进行flow处理及action生成，以下action将触发action生成
+        //output,controller,enqueue,resubmit
+        //以下action将触发递归action生成
+        //group,
+        //以下action将触发flow设置
+        //set_vlan_vid,set_vlan_pcp，strip_vlan，push_vlan,set_eth_src
+        //set_eth_dst,set_ipv4_src,set_ipv4_dst,set_ip_dscp,set_ip_ecn,
+        //set_ip_ttl,set_l4_src_port,set_l4_dst_port,set_tunnel
         switch (a->type) {
         case OFPACT_OUTPUT:
         	//output操作（output时再做action,其它操作不需要保存）
@@ -7009,7 +7033,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_GROUP:
-        		//要求报文发送给group,处理此组转换
+        	//要求报文发送给group,处理此组转换
             if (xlate_group_action(ctx, ofpact_get_GROUP(a)->group_id, last)) {
                 /* Group could not be found. */
 
@@ -7036,7 +7060,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_ENQUEUE:
-        		//遇到enqueue，将skb_priority置为0xff
+        	//遇到enqueue，将skb_priority置为0xff
             memset(&wc->masks.skb_priority, 0xff,
                    sizeof wc->masks.skb_priority);
             xlate_enqueue_action(ctx, ofpact_get_ENQUEUE(a), last,
@@ -7044,15 +7068,17 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_SET_VLAN_VID:
-        	//设置vlan及vlan对应的vlan mask
+        	//设置vlan,cfi对应的mask
             wc->masks.vlans[0].tci |= htons(VLAN_VID_MASK | VLAN_CFI);
+            //设置vlan,cfi
             if (flow->vlans[0].tci & htons(VLAN_CFI) ||
                 ofpact_get_SET_VLAN_VID(a)->push_vlan_if_needed) {
                 if (!flow->vlans[0].tpid) {
-                	//之前没有vlan,设置它
+                	//之前没有vlan,指明首个vlan的eth_type_vlan
                     flow->vlans[0].tpid = htons(ETH_TYPE_VLAN);
                 }
-                flow->vlans[0].tci &= ~htons(VLAN_VID_MASK);//清掉vlan对应的几位
+                //丢弃掉原有的vlan位，存入新的vlan及cfi
+                flow->vlans[0].tci &= ~htons(VLAN_VID_MASK);
                 flow->vlans[0].tci |=
                     (htons(ofpact_get_SET_VLAN_VID(a)->vlan_vid) |
                      htons(VLAN_CFI));
@@ -7060,15 +7086,15 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_SET_VLAN_PCP:
-        		//只能设置最外层的vlan,故只设置外层wc
+        	//设置最外层的vlan pcp,cfi mask
             wc->masks.vlans[0].tci |= htons(VLAN_PCP_MASK | VLAN_CFI);
+            //设置优先级，设置VLAN_CFI=1
             if (flow->vlans[0].tci & htons(VLAN_CFI) ||
                 ofpact_get_SET_VLAN_PCP(a)->push_vlan_if_needed) {
                 if (!flow->vlans[0].tpid) {
-                	//之前没有设置tpid,设置它
+                    //之前没有vlan,指明首个vlan的eth_type_vlan
                     flow->vlans[0].tpid = htons(ETH_TYPE_VLAN);
                 }
-                //设置优先级，最是设置VLAN_CFI=1
                 flow->vlans[0].tci &= ~htons(VLAN_PCP_MASK);
                 flow->vlans[0].tci |=
                     htons((ofpact_get_SET_VLAN_PCP(a)->vlan_pcp
@@ -7077,20 +7103,19 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_STRIP_VLAN:
-        	//去除vlan（如果内层有vlan,则需要设置wc匹配内层vlan？？？对吗？)
+        	//去除vlan（内层有vlan,则需要设置wc标明内层被修改)
             flow_pop_vlan(flow, wc);
             break;
 
         case OFPACT_PUSH_VLAN:
-        	//设置vlan(由于这个vlan信息不来源于报文，故不设置wc？？？对吗？)
+        	//新增一层vlan,并设置
             flow_push_vlan_uninit(flow, wc);
             flow->vlans[0].tpid = ofpact_get_PUSH_VLAN(a)->ethertype;
             flow->vlans[0].tci = htons(VLAN_CFI);
             break;
 
         case OFPACT_SET_ETH_SRC:
-        	//设置src mac
-        	//置dl_src的mask为全1
+        	//设置src mac，dl_src的mask为全1
             WC_MASK_FIELD(wc, dl_src);
             flow->dl_src = ofpact_get_SET_ETH_SRC(a)->mac;
             break;
@@ -7102,7 +7127,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_SET_IPV4_SRC:
-        	//设置ip源
+        	//必须为ip报文才设置src-ip
             if (flow->dl_type == htons(ETH_TYPE_IP)) {
                 memset(&wc->masks.nw_src, 0xff, sizeof wc->masks.nw_src);
                 flow->nw_src = ofpact_get_SET_IPV4_SRC(a)->ipv4;
@@ -7110,7 +7135,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_SET_IPV4_DST:
-        	//设置目的ip
+        	//必须为ip报文才设置dst-ip
             if (flow->dl_type == htons(ETH_TYPE_IP)) {
                 memset(&wc->masks.nw_dst, 0xff, sizeof wc->masks.nw_dst);
                 flow->nw_dst = ofpact_get_SET_IPV4_DST(a)->ipv4;
@@ -7118,36 +7143,34 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_SET_IP_DSCP:
-        	//tos中的dscp字段
+        	//必须为ip报文才设置tos中的dscp字段
             if (is_ip_any(flow)) {
                 wc->masks.nw_tos |= IP_DSCP_MASK;
-                //设置flow的dscp值
                 flow->nw_tos &= ~IP_DSCP_MASK;
                 flow->nw_tos |= ofpact_get_SET_IP_DSCP(a)->dscp;
             }
             break;
 
         case OFPACT_SET_IP_ECN:
+            //必须为ip报文，才设置flow的enc值
             if (is_ip_any(flow)) {
                 wc->masks.nw_tos |= IP_ECN_MASK;
-                //设置flow的enc值
                 flow->nw_tos &= ~IP_ECN_MASK;
                 flow->nw_tos |= ofpact_get_SET_IP_ECN(a)->ecn;
             }
             break;
 
         case OFPACT_SET_IP_TTL:
+            //必须为ip报文，设置ttl
             if (is_ip_any(flow)) {
                 wc->masks.nw_ttl = 0xff;
-                //设置ttl
                 flow->nw_ttl = ofpact_get_SET_IP_TTL(a)->ttl;
             }
             break;
 
         case OFPACT_SET_L4_SRC_PORT:
-        	//设置源port
+        	//如果是ipv4或ipv6报文，并且非首片报文，则设置传输层src port,同时设置mask设置源port
             if (is_ip_any(flow) && !(flow->nw_frag & FLOW_NW_FRAG_LATER)) {
-            	//如果是ipv4或ipv6报文，并且非首片报文，则设置传输层src port,同时设置mask
                 memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);
                 memset(&wc->masks.tp_src, 0xff, sizeof wc->masks.tp_src);
                 flow->tp_src = htons(ofpact_get_SET_L4_SRC_PORT(a)->port);
@@ -7155,7 +7178,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_SET_L4_DST_PORT:
-        	//设置目的port
+        	//如果是ipv4或ipv6报文，并且非首片报文，则设置目的port,同时设置mask设置源port
             if (is_ip_any(flow) && !(flow->nw_frag & FLOW_NW_FRAG_LATER)) {
                 memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);
                 memset(&wc->masks.tp_dst, 0xff, sizeof wc->masks.tp_dst);
@@ -7173,7 +7196,8 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
              */
             //修改inport,table_id后重查，重做
             xlate_ofpact_resubmit(ctx, ofpact_get_RESUBMIT(a), last);
-            continue;//继续resubmit后面的动作
+            //继续resubmit后面的动作
+            continue;
 
         case OFPACT_SET_TUNNEL:
         	//设置tun_id(无mask关联，只是不是0，就说明设置了）
@@ -7211,7 +7235,8 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             mf = set_field->field;
 
             /* Set the field only if the packet actually has it. */
-            if (mf_are_prereqs_ok(mf, flow, wc)) {//如果mf的先决条件ok
+            if (mf_are_prereqs_ok(mf, flow, wc)) {
+                //如果mf的先决条件ok
                 mf_mask_field_masked(mf, ofpact_set_field_mask(set_field), wc);
                 mf_set_flow_value_masked(mf, set_field->value,
                                          ofpact_set_field_mask(set_field),
@@ -7224,12 +7249,14 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             }
             break;
 
-        case OFPACT_STACK_PUSH://修改某个字段的值，并将修改后的结果放入ctx->stack中
+        case OFPACT_STACK_PUSH:
+            //修改某个字段的值，并将修改后的结果放入ctx->stack中
             nxm_execute_stack_push(ofpact_get_STACK_PUSH(a), flow, wc,
                                    &ctx->stack);
             break;
 
-        case OFPACT_STACK_POP://stack_push的反操作
+        case OFPACT_STACK_POP:
+            //stack_push的反操作
             xlate_ofpact_stack_pop(ctx, ofpact_get_STACK_POP(a));
             break;
 
@@ -7279,13 +7306,13 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_MULTIPATH:
-        		//按multipath指定的算法及字段计算hashcode,并计算出link将其存放在dst中
+        	//按multipath指定的算法及字段计算hashcode,并计算出link将其存放在dst中
             multipath_execute(ofpact_get_MULTIPATH(a), flow, wc);
             xlate_report_subfield(ctx, &ofpact_get_MULTIPATH(a)->dst);
             break;
 
         case OFPACT_BUNDLE:
-        		//针对bundle口，选择出具体的port,并针对port生成action
+        	//针对bundle口，选择出具体的port,并针对port生成action
             xlate_bundle_action(ctx, ofpact_get_BUNDLE(a), last,
                                 group_bucket_action);
             break;
@@ -7295,7 +7322,8 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
                     group_bucket_action);
             break;
 
-        case OFPACT_OUTPUT_TRUNC://等同与output,仅去向controller时，max_len生效。
+        case OFPACT_OUTPUT_TRUNC:
+            //等同与output,仅去向controller时，max_len生效。
             xlate_output_trunc_action(ctx, ofpact_get_OUTPUT_TRUNC(a)->port,
                                 ofpact_get_OUTPUT_TRUNC(a)->max_len, last,
                                 group_bucket_action);
@@ -7316,6 +7344,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_EXIT:
+            /*指明匹配结束*/
             ctx->exit = true;
             break;
 
@@ -7340,7 +7369,8 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             ctx->action_set_has_group = false;
             break;
 
-        case OFPACT_WRITE_ACTIONS://提前写action到ctx.action_set
+        case OFPACT_WRITE_ACTIONS:
+            //提前写action到ctx.action_set
             xlate_write_actions(ctx, ofpact_get_WRITE_ACTIONS(a));
             xlate_report_action_set(ctx, "is");
             break;
@@ -7356,8 +7386,9 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             xlate_meter_action(ctx, ofpact_get_METER(a));
             break;
 
-        case OFPACT_GOTO_TABLE: {//表切换
-            struct ofpact_goto_table *ogt = ofpact_get_GOTO_TABLE(a);//要切到哪个表？
+        case OFPACT_GOTO_TABLE: {
+            //表切换，要切到哪个表（需要切到后面的表，不容许切到前面的表）
+            struct ofpact_goto_table *ogt = ofpact_get_GOTO_TABLE(a);
 
             ovs_assert(ctx->table_id < ogt->table_id);
 
@@ -7373,6 +7404,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_CLONE:
+            //clone action转换
             compose_clone(ctx, ofpact_get_CLONE(a), last);
             break;
 
@@ -7884,6 +7916,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
         /* Restore stack, if any. */
         if (state->stack) {
+            /*还原recirc记录的当时stack情况*/
             ofpbuf_put(&ctx.stack, state->stack, state->stack_size);
         }
 
@@ -7892,6 +7925,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
         /* Restore action set, if any. */
         if (state->action_set_len) {
+            /*recirc中有action_set，需要先将action_set中的动作执行完成。*/
             xlate_report_actions(&ctx, OFT_THAW, "Restoring action set",
                                  state->action_set, state->action_set_len);
 
@@ -8031,17 +8065,15 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
         if (!ecn_drop
             && (!in_port || may_receive(in_port, &ctx))) {
-	    /*当前待执行的action*/
+            /*当前待执行的action,待执行的action长度*/
             const struct ofpact *ofpacts;
-	    /*当前待执行的action长度*/
             size_t ofpacts_len;
             if (xin->ofpacts) {
             	//如果xin中已有action
                 ofpacts = xin->ofpacts;
                 ofpacts_len = xin->ofpacts_len;
             } else if (ctx.rule) {
-            	//未指定action,但已经命中了规则
-            	//取出对应actions
+            	//未指定action,但已经命中了规则,取出对应actions
                 const struct rule_actions *actions
                     = rule_get_actions(&ctx.rule->up);
                 ofpacts = actions->ofpacts;
@@ -8054,9 +8086,10 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
             //mirror处理
             mirror_ingress_packet(&ctx);
 
-            //执行action转换（完成在ctx中的动作合并）
+            //执行ofctl rule action转换（完成在ctx中的动作合并）
             do_xlate_actions(ofpacts, ofpacts_len, &ctx, true, false);
-            if (ctx.error) {//转换有错误
+            if (ctx.error) {
+                //转换有错误
                 goto exit;
             }
 
@@ -8065,7 +8098,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
              * disabled. */
             if (in_port && (!xport_stp_forward_state(in_port) ||
                             !xport_rstp_forward_state(in_port))) {
-            	//有入接口，且入接口可转发
+            	//有入接口，且入接口不可转发
                 ctx.odp_actions->size = sample_actions_len;
                 ctx_cancel_freeze(&ctx);
                 ofpbuf_clear(&ctx.action_set);
@@ -8093,8 +8126,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
             WC_MASK_FIELD(ctx.wc, dl_type);
             xlate_report(&ctx, OFT_DETAIL, "outputting DHCP packet "
                          "to local port for in-band control");
-            //针对dpcp报文进行处理
-            //输出到本地端口
+            //针对dhcp报文进行处理,输出到本地端口
             compose_output_action(&ctx, OFPP_LOCAL, NULL, false, false);
         }
 

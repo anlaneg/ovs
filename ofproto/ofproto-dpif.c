@@ -294,6 +294,7 @@ init(const struct shash *iface_hints)
 
     //注册命令行，这一层已支持fdb,mdb等，故直接调用初始化
     ofproto_unixctl_init();
+    /*trace命令初始化*/
     ofproto_dpif_trace_init();
     udpif_init();
 }
@@ -2034,11 +2035,13 @@ ofproto_dpif_wait(struct ofproto *ofproto_)
     seq_wait(ofproto->ams_seq, ofproto->ams_seqno);
 }
 
+/*给定backer的type,收集内存用量*/
 static void
 type_get_memory_usage(const char *type, struct simap *usage)
 {
     struct dpif_backer *backer;
 
+    /*通过type查找backer*/
     backer = shash_find_data(&all_dpif_backers, type);
     if (backer) {
         udpif_get_memory_usage(backer->udpif, usage);
@@ -4384,21 +4387,24 @@ ofproto_dpif_execute_actions(struct ofproto_dpif *ofproto,
 static void
 rule_dpif_credit_stats__(struct rule_dpif *rule,
                          const struct dpif_flow_stats *stats,
-                         bool credit_counts, bool offloaded)
+                         bool credit_counts, bool offloaded/*是否卸载情况*/)
     OVS_REQUIRES(rule->stats_mutex)
 {
     if (credit_counts) {
         if (offloaded) {
-            rule->stats.n_offload_packets += stats->n_packets;//增加命中的报文数量
-            rule->stats.n_offload_bytes += stats->n_bytes;//增加命中的字节数量
+            //增加命中的报文数量
+            rule->stats.n_offload_packets += stats->n_packets;
+            //增加命中的字节数量
+            rule->stats.n_offload_bytes += stats->n_bytes;
         }
         rule->stats.n_packets += stats->n_packets;
         rule->stats.n_bytes += stats->n_bytes;
     }
-    rule->stats.used = MAX(rule->stats.used, stats->used);//更新规则的touch时间
+    //更新规则的touch时间
+    rule->stats.used = MAX(rule->stats.used, stats->used);
 }
 
-//更新规则对应的统计信息
+//更新ofctl规则对应的统计信息
 void
 rule_dpif_credit_stats(struct rule_dpif *rule,
                        const struct dpif_flow_stats *stats, bool offloaded)
@@ -4883,15 +4889,17 @@ rule_destruct(struct rule *rule_)
 
 //自rule中直接取rule->stats
 static void
-rule_get_stats(struct rule *rule_, struct pkt_stats *stats,
-               long long int *used)
+rule_get_stats(struct rule *rule_, struct pkt_stats *stats/*出参*/,
+               long long int *used/*出参，时间*/)
 {
     struct rule_dpif *rule = rule_dpif_cast(rule_);
 
     ovs_mutex_lock(&rule->stats_mutex);
     if (OVS_UNLIKELY(rule->new_rule)) {
+        /*取rule->new_rule中的统计*/
         rule_get_stats(&rule->new_rule->up, stats, used);
     } else {
+        /*取规则中的计数*/
         stats->n_packets = rule->stats.n_packets;
         stats->n_bytes = rule->stats.n_bytes;
         stats->n_offload_packets = rule->stats.n_offload_packets;
@@ -6568,6 +6576,7 @@ ofproto_unixctl_init(void)
     }
     registered = true;
 
+    /*fdb操作命令*/
     unixctl_command_register("fdb/flush", "[bridge]", 0, 1,
                              ofproto_unixctl_fdb_flush, NULL);
     unixctl_command_register("fdb/show", "bridge", 1, 1,
@@ -6576,6 +6585,7 @@ ofproto_unixctl_init(void)
                              ofproto_unixctl_fdb_stats_clear, NULL);
     unixctl_command_register("fdb/stats-show", "bridge", 1, 1,
                              ofproto_unixctl_fdb_stats_show, NULL);
+    /*mdb操作命令*/
     unixctl_command_register("mdb/flush", "[bridge]", 0, 1,
                              ofproto_unixctl_mcast_snooping_flush, NULL);
     unixctl_command_register("mdb/show", "bridge", 1, 1,
@@ -6805,6 +6815,7 @@ meter_del(struct ofproto *ofproto_, ofproto_meter_id meter_id)
 
 //当前系统唯一的ofproto实现
 const struct ofproto_class ofproto_dpif_class = {
+    /*ofproto初始化*/
     init,
 	//所以ofproto的datapath对应的类型，目前有system,netdev
     enumerate_types,
@@ -6828,6 +6839,7 @@ const struct ofproto_class ofproto_dpif_class = {
     run,
     ofproto_dpif_wait,
     NULL,                       /* get_memory_usage. */
+    /*按type收集memory用量*/
     type_get_memory_usage,
     flush,
     query_tables,
@@ -6841,15 +6853,18 @@ const struct ofproto_class ofproto_dpif_class = {
     port_modified,
     port_reconfigured,
     port_query_by_name,
-    port_add,//向ofproto中添加netdev
+    //向ofproto中添加netdev
+    port_add,
     port_del,
     port_set_config,
     port_get_stats,
     vport_get_status,
-    port_dump_start,//对ofproto所有port进行遍历的起始函数
-    port_dump_next,//对ofproto所有port进行遍历的next函数
-    //port_dump_next,//对ofproto所有port进行遍历的next函数
-    port_dump_done,//对ofproto所有port进行遍历的完成函数
+    //对ofproto所有port进行遍历的起始函数
+    port_dump_start,
+    //对ofproto所有port进行遍历的next函数
+    port_dump_next,
+    //对ofproto所有port进行遍历的完成函数
+    port_dump_done,
     port_poll,
     port_poll_wait,
     port_is_lacp_current,
@@ -6899,9 +6914,12 @@ const struct ofproto_class ofproto_dpif_class = {
     set_rstp_port,
     get_rstp_port_status,
     set_queues,
-    bundle_set,//bundle口更新(增，删除，改）
-    bundle_remove,//自bundle口中移除一个成员口
-    mirror_set__,/*配置mirror*/
+    //bundle口更新(增，删除，改）
+    bundle_set,
+    //自bundle口中移除一个成员口
+    bundle_remove,
+    /*配置mirror*/
+    mirror_set__,
     mirror_get_stats__,
     set_flood_vlans,
     is_mirror_output_bundle,
@@ -6910,8 +6928,10 @@ const struct ofproto_class ofproto_dpif_class = {
     set_mcast_snooping,
     set_mcast_snooping_port,
     meter_get_features,
-    meter_set,/*meter添加修改*/
-    meter_get,/*meter统计信息获取*/
+    /*meter添加修改*/
+    meter_set,
+    /*meter统计信息获取*/
+    meter_get,
     meter_del,
     group_alloc,                /* group_alloc */
     group_construct,            /* group_construct */

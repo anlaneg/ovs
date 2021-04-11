@@ -731,6 +731,7 @@ udpif_dump_seq(struct udpif *udpif)
     return udpif->dump_seq;
 }
 
+/*收集handler数目，revalidator数目，udpif keys数目*/
 void
 udpif_get_memory_usage(struct udpif *udpif, struct simap *usage)
 {
@@ -2612,6 +2613,7 @@ push_dp_ops(struct udpif *udpif, struct ukey_op *ops, size_t n_ops)
     for (i = 0; i < n_ops; i++) {
         opsp[i] = &ops[i].dop;
     }
+
     /*按opsp中指定方式处理n_ops个datapath规则*/
     dpif_operate(udpif->dpif, opsp, n_ops, DPIF_OFFLOAD_AUTO);
 
