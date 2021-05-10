@@ -1329,10 +1329,10 @@ dpif_sflow_received(struct dpif_sflow *ds, const struct dp_packet *packet/*采�
 
     ovs_mutex_lock(&mutex);
     //如果没有sampler，则直接退出
-    sampler = ds->sflow_agent->samplers;
-    if (!sampler) {
+    if (!ds->sflow_agent || !ds->sflow_agent->samplers) {
         goto out;
     }
+    sampler = ds->sflow_agent->samplers;
 
     /* Build a flow sample. */
     memset(&fs, 0, sizeof fs);

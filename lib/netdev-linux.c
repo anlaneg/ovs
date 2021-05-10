@@ -747,7 +747,7 @@ netdev_linux_run(const struct netdev_class *netdev_class OVS_UNUSED)
             struct rtnetlink_change change;
 
             //解析netlink事件数据
-            if (rtnetlink_parse(&buf, &change)) {
+            if (rtnetlink_parse(&buf, &change) && !change.irrelevant) {
                 struct netdev *netdev_ = NULL;
                 char dev_name[IFNAMSIZ];
 
@@ -2589,7 +2589,7 @@ exit:
 static struct tc_police
 tc_matchall_fill_police(uint32_t kbits_rate, uint32_t kbits_burst)
 {
-    unsigned int bsize = MIN(UINT32_MAX / 1024, kbits_burst) * 1024 / 64;
+    unsigned int bsize = MIN(UINT32_MAX / 1024, kbits_burst) * 1024 / 8;
     unsigned int bps = ((uint64_t) kbits_rate * 1000) / 8;
     struct tc_police police;
     struct tc_ratespec rate;
@@ -6387,6 +6387,7 @@ netdev_linux_update_via_netlink(struct netdev_linux *netdev)
     }
 
     if (rtnetlink_parse(reply, change)
+        && !change->irrelevant
         && change->nlmsg_type == RTM_NEWLINK) {
         bool changed = false;
         error = 0;

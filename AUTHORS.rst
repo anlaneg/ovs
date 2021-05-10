@@ -66,6 +66,7 @@ Ansis Atteka                       aatteka@vmware.com
 Anton Ivanov                       anton.ivanov@cambridgegreys.com
 Antonio Fischetti                  antonio.fischetti@intel.com
 Anupam Chanda
+Ariel Levkovich                    lariel@nvidia.com
 Ariel Tubaltsev                    atubaltsev@vmware.com
 Arnoldo Lutz                       arnoldo.lutz.guevara@hpe.com
 Arun Sharma                        arun.sharma@calsoftinc.com
@@ -281,6 +282,7 @@ Mauricio Vásquez                   mauricio.vasquezbernal@studenti.polito.it
 Maxime Coquelin                    maxime.coquelin@redhat.com
 Mehak Mahajan
 Michael Arnaldi                    arnaldimichael@gmail.com
+Michal Kazior                      michal@plume.com
 Michal Weglicki                    michalx.weglicki@intel.com
 Michele Baldessari                 michele@acksyn.org
 Mickey Spiegel                     mickeys.dev@gmail.com
