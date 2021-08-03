@@ -1245,10 +1245,12 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
     case OVS_ACTION_ATTR_CT_CLEAR:
         ds_put_cstr(ds, "ct_clear");
         break;
-    case OVS_ACTION_ATTR_CLONE://clone输出
+    case OVS_ACTION_ATTR_CLONE:
+        //clone输出
         format_odp_clone_action(ds, a, portno_names);
         break;
     case OVS_ACTION_ATTR_PUSH_NSH: {
+        /*push nsh命令格式化*/
         uint32_t buffer[NSH_HDR_MAX_LEN / 4];
         struct nsh_hdr *nsh_hdr = ALIGNED_CAST(struct nsh_hdr *, buffer);
         nsh_reset_ver_flags_ttl_len(nsh_hdr);
@@ -2152,7 +2154,7 @@ nsh_key_to_attr(struct ofpbuf *buf, const struct ovs_key_nsh *nsh,
     nl_msg_end_nested(buf, nsh_key_ofs);
 }
 
-
+/*解析push nsh动作*/
 static int
 parse_odp_push_nsh_action(const char *s, struct ofpbuf *actions)
 {
@@ -8767,6 +8769,7 @@ commit_odp_actions(const struct flow *flow, struct flow *base,
     enum slow_path_reason slow1, slow2;
     bool mpls_done = false;
 
+    /*encap,decap动作处理*/
     commit_encap_decap_action(flow, base, odp_actions, wc,
                               pending_encap, pending_decap, encap_data);
     //生成源目的mac变更action

@@ -1048,6 +1048,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             break;
 
         case OVS_ACTION_ATTR_PUSH_NSH: {
+            /*为报文添加nsh头部*/
             uint32_t buffer[NSH_HDR_MAX_LEN / 4];
             struct nsh_hdr *nsh_hdr = ALIGNED_CAST(struct nsh_hdr *, buffer);
             nsh_reset_ver_flags_ttl_len(nsh_hdr);
