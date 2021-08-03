@@ -62,6 +62,7 @@ TESTSUITE_AT = \
 	tests/jsonrpc.at \
 	tests/jsonrpc-py.at \
 	tests/pmd.at \
+	tests/alb.at \
 	tests/tunnel.at \
 	tests/tunnel-push-pop.at \
 	tests/tunnel-push-pop-ipv6.at \
@@ -141,6 +142,11 @@ $(srcdir)/tests/fuzz-regression-list.at: tests/automake.mk
             basename=`echo $$name | sed 's,^.*/,,'`; \
 	    echo "TEST_FUZZ_REGRESSION([$$basename])"; \
 	done > $@.tmp && mv $@.tmp $@
+
+EXTRA_DIST += $(MFEX_AUTOVALIDATOR_TESTS)
+MFEX_AUTOVALIDATOR_TESTS = \
+	tests/pcap/mfex_test.pcap \
+	tests/mfex_fuzzy.py
 
 OVSDB_CLUSTER_TESTSUITE_AT = \
 	tests/ovsdb-cluster-testsuite.at \
@@ -511,6 +517,7 @@ tests_test_type_props_SOURCES = tests/test-type-props.c
 CHECK_PYFILES = \
 	tests/appctl.py \
 	tests/flowgen.py \
+	tests/mfex_fuzzy.py \
 	tests/ovsdb-monitor-sort.py \
 	tests/test-daemon.py \
 	tests/test-json.py \

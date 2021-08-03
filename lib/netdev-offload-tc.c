@@ -31,6 +31,7 @@
 #include "netdev-linux.h"
 #include "netdev-offload-provider.h"
 #include "netdev-provider.h"
+#include "netdev-vport.h"
 #include "netlink.h"
 #include "netlink-socket.h"
 #include "odp-netlink.h"
@@ -963,8 +964,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
                                     action->encap.tp_dst);
                 }
                 if (!action->encap.no_csum) {
-                    nl_msg_put_u8(buf, OVS_TUNNEL_KEY_ATTR_CSUM,
-                                  !action->encap.no_csum);
+                    nl_msg_put_flag(buf, OVS_TUNNEL_KEY_ATTR_CSUM);
                 }
 
                 parse_tc_flower_geneve_opts(action, buf);
@@ -2352,6 +2352,13 @@ netdev_tc_init_flow_api(struct netdev *netdev)
     struct tcf_id id;
     int ifindex;
     int error;
+
+    if (netdev_vport_is_vport_class(netdev->netdev_class)
+        && strcmp(netdev_get_dpif_type(netdev), "system")) {
+        VLOG_DBG("%s: vport doesn't belong to the system datapath. Skipping.",
+                 netdev_get_name(netdev));
+        return EOPNOTSUPP;
+    }
 
     //获取netdev对应的ifindex
     ifindex = netdev_get_ifindex(netdev);

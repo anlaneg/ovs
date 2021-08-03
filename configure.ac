@@ -13,7 +13,7 @@
 # limitations under the License.
 
 AC_PREREQ(2.63)
-AC_INIT(openvswitch, 2.15.90, bugs@openvswitch.org)
+AC_INIT(openvswitch, 2.16.90, bugs@openvswitch.org)
 AC_CONFIG_SRCDIR([datapath/datapath.c])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_AUX_DIR([build-aux])
@@ -185,6 +185,8 @@ OVS_ENABLE_WERROR
 OVS_ENABLE_SPARSE
 OVS_CTAGS_IDENTIFIERS
 OVS_CHECK_DPCLS_AUTOVALIDATOR
+OVS_CHECK_DPIF_AVX512_DEFAULT
+OVS_CHECK_MFEX_AUTOVALIDATOR
 OVS_CHECK_BINUTILS_AVX512
 
 AC_ARG_VAR(KARCH, [Kernel Architecture String])

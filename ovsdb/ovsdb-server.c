@@ -36,6 +36,7 @@
 #include "openvswitch/list.h"
 #include "memory.h"
 #include "monitor.h"
+#include "ovs-replay.h"
 #include "ovsdb.h"
 #include "ovsdb-data.h"
 #include "ovsdb-types.h"
@@ -43,6 +44,7 @@
 #include "openvswitch/poll-loop.h"
 #include "process.h"
 #include "replication.h"
+#include "relay.h"
 #include "row.h"
 #include "simap.h"
 #include "openvswitch/shash.h"
@@ -230,6 +232,8 @@ main_loop(struct server_config *config,
             }
         }
 
+        ovsdb_relay_run();
+
         struct shash_node *next;
         SHASH_FOR_EACH_SAFE (node, next, all_dbs) {
             struct db *db = node->data;
@@ -264,8 +268,10 @@ main_loop(struct server_config *config,
             }
         }
 
-        /* update Manager status(es) every 2.5 seconds */
-        if (time_msec() >= status_timer) {
+        /* update Manager status(es) every 2.5 seconds.  Don't update if we're
+         * recording or performing replay. */
+        if (status_timer == LLONG_MIN ||
+             (!ovs_replay_is_active() && time_msec() >= status_timer)) {
             status_timer = time_msec() + 2500;
             update_remote_status(jsonrpc, remotes, all_dbs);
         }
@@ -276,6 +282,8 @@ main_loop(struct server_config *config,
         if (*is_backup) {
             replication_wait();
         }
+
+        ovsdb_relay_wait();
 
         ovsdb_jsonrpc_server_wait(jsonrpc);
         unixctl_server_wait(unixctl);
@@ -291,7 +299,9 @@ main_loop(struct server_config *config,
         if (*exiting) {
             poll_immediate_wake();
         }
-        poll_timer_wait_until(status_timer);
+        if (!ovs_replay_is_active()) {
+            poll_timer_wait_until(status_timer);
+        }
         poll_block();//尝试poll阻塞
         if (should_service_stop()) {
             *exiting = true;
@@ -560,11 +570,36 @@ close_db(struct server_config *config, struct db *db, char *comment)
 {
     if (db) {
         ovsdb_jsonrpc_server_remove_db(config->jsonrpc, db->db, comment);
+        if (db->db->is_relay) {
+            ovsdb_relay_del_db(db->db);
+        }
         ovsdb_destroy(db->db);
         free(db->filename);
         free(db);
     } else {
         free(comment);
+    }
+}
+
+static void
+update_schema(struct ovsdb *db, const struct ovsdb_schema *schema, void *aux)
+{
+    struct server_config *config = aux;
+
+    if (!db->schema || strcmp(schema->version, db->schema->version)) {
+        ovsdb_jsonrpc_server_reconnect(
+            config->jsonrpc, false,
+            (db->schema
+            ? xasprintf("database %s schema changed", db->name)
+            : xasprintf("database %s connected to storage", db->name)));
+    }
+
+    ovsdb_replace(db, ovsdb_create(ovsdb_schema_clone(schema), NULL));
+
+    /* Force update to schema in _Server database. */
+    struct db *dbp = shash_find_data(config->all_dbs, db->name);
+    if (dbp) {
+        dbp->row_uuid = UUID_ZERO;
     }
 }
 
@@ -590,21 +625,7 @@ parse_txn(struct server_config *config, struct db *db,
         if (error) {
             return error;
         }
-
-        if (!db->db->schema ||
-            strcmp(schema->version, db->db->schema->version)) {
-            ovsdb_jsonrpc_server_reconnect(
-                config->jsonrpc, false,
-                (db->db->schema
-                ? xasprintf("database %s schema changed", db->db->name)
-                : xasprintf("database %s connected to storage",
-                            db->db->name)));
-        }
-
-        ovsdb_replace(db->db, ovsdb_create(ovsdb_schema_clone(schema), NULL));
-
-        /* Force update to schema in _Server database. */
-        db->row_uuid = UUID_ZERO;
+        update_schema(db->db, schema, config);
     }
 
     if (txn_json) {
@@ -675,37 +696,56 @@ add_db(struct server_config *config, struct db *db)
 static struct ovsdb_error * OVS_WARN_UNUSED_RESULT
 open_db(struct server_config *config, const char *filename)
 {
-    struct db *db;
-
-    /* If we know that the file is already open, return a good error message.
-     * Otherwise, if the file is open, we'll fail later on with a harder to
-     * interpret file locking error. */
-    if (is_already_open(config, filename)) {//检查是否已打开
-        return ovsdb_error(NULL, "%s: already open", filename);
-    }
-
+    const char *relay_prefix = "relay:";
+    const char *relay_remotes = NULL;
+    const int relay_prefix_len = strlen(relay_prefix);
     struct ovsdb_storage *storage;
     struct ovsdb_error *error;
-    error = ovsdb_storage_open(filename, true, &storage);
-    if (error) {
-        return error;
+    bool is_relay;
+    char *name;
+
+    is_relay = !strncmp(filename, relay_prefix, relay_prefix_len);
+    if (!is_relay) {
+        /* If we know that the file is already open, return a good error
+         * message.  Otherwise, if the file is open, we'll fail later on with
+         * a harder to interpret file locking error. */
+        if (is_already_open(config, filename)) {
+            return ovsdb_error(NULL, "%s: already open", filename);
+        }
+
+        error = ovsdb_storage_open(filename, true, &storage);
+        if (error) {
+            return error;
+        }
+        name = xstrdup(filename);
+    } else {
+        /* Parsing the relay in format 'relay:DB_NAME:<list of remotes>'*/
+        relay_remotes = strchr(filename + relay_prefix_len, ':');
+
+        if (!relay_remotes || relay_remotes[0] == '\0') {
+            return ovsdb_error(NULL, "%s: invalid syntax", filename);
+        }
+        name = xmemdup0(filename, relay_remotes - filename);
+        storage = ovsdb_storage_create_unbacked(name + relay_prefix_len);
+        relay_remotes++; /* Skip the ':'. */
     }
 
-    db = xzalloc(sizeof *db);
-    db->filename = xstrdup(filename);
-
     struct ovsdb_schema *schema;
-    if (ovsdb_storage_is_clustered(storage)) {
+    if (is_relay || ovsdb_storage_is_clustered(storage)) {
         schema = NULL;
     } else {
         struct json *txn_json;
         error = ovsdb_storage_read(storage, &schema, &txn_json, NULL);
         if (error) {
             ovsdb_storage_close(storage);
+            free(name);
             return error;
         }
         ovs_assert(schema && !txn_json);
     }
+
+    struct db *db = xzalloc(sizeof *db);
+    db->filename = name;
     db->db = ovsdb_create(schema, storage);
     ovsdb_jsonrpc_server_add_db(config->jsonrpc, db->db);
 
@@ -731,6 +771,10 @@ open_db(struct server_config *config, const char *filename)
     }
 
     add_db(config, db);
+
+    if (is_relay) {
+        ovsdb_relay_add_db(db->db, relay_remotes, update_schema, config);
+    }
     return NULL;
 }
 
@@ -753,7 +797,7 @@ add_server_db(struct server_config *config)
     /* We don't need txn_history for server_db. */
 
     db->filename = xstrdup("<internal>");
-    db->db = ovsdb_create(schema, ovsdb_storage_create_unbacked());
+    db->db = ovsdb_create(schema, ovsdb_storage_create_unbacked(NULL));
     bool ok OVS_UNUSED = ovsdb_jsonrpc_server_add_db(config->jsonrpc, db->db);
     ovs_assert(ok);
     add_db(config, db);
@@ -1183,11 +1227,12 @@ update_database_status(struct ovsdb_row *row, struct db *db)
 {
     ovsdb_util_write_string_column(row, "name", db->db->name);
     ovsdb_util_write_string_column(row, "model",
-                                   ovsdb_storage_get_model(db->db->storage));
+        db->db->is_relay ? "relay" : ovsdb_storage_get_model(db->db->storage));
     ovsdb_util_write_bool_column(row, "connected",
-                                 ovsdb_storage_is_connected(db->db->storage));
+        db->db->is_relay ? ovsdb_relay_is_connected(db->db)
+                         : ovsdb_storage_is_connected(db->db->storage));
     ovsdb_util_write_bool_column(row, "leader",
-                                 ovsdb_storage_is_leader(db->db->storage));
+        db->db->is_relay ? false : ovsdb_storage_is_leader(db->db->storage));
     ovsdb_util_write_uuid_column(row, "cid",
                                  ovsdb_storage_get_cid(db->db->storage));
     ovsdb_util_write_uuid_column(row, "sid",
@@ -1835,6 +1880,7 @@ parse_options(int argc, char *argv[],
         VLOG_OPTION_ENUMS,
         DAEMON_OPTION_ENUMS,
         SSL_OPTION_ENUMS,
+        OVS_REPLAY_OPTION_ENUMS,
     };
 
     static const struct option long_options[] = {
@@ -1850,6 +1896,7 @@ parse_options(int argc, char *argv[],
         {"bootstrap-ca-cert", required_argument, NULL, OPT_BOOTSTRAP_CA_CERT},
         {"peer-ca-cert", required_argument, NULL, OPT_PEER_CA_CERT},
         STREAM_SSL_LONG_OPTIONS,
+        OVS_REPLAY_LONG_OPTIONS,
         {"sync-from",   required_argument, NULL, OPT_SYNC_FROM},
         {"sync-exclude-tables", required_argument, NULL, OPT_SYNC_EXCLUDE},
         {"active", no_argument, NULL, OPT_ACTIVE},
@@ -1925,6 +1972,8 @@ parse_options(int argc, char *argv[],
             stream_ssl_set_peer_ca_cert_file(optarg);
             break;
 
+        OVS_REPLAY_OPTION_HANDLERS
+
         case OPT_SYNC_FROM://sync_from指定
             *sync_from = xstrdup(optarg);
             break;
@@ -1983,6 +2032,7 @@ usage(void)
     daemon_usage();
     vlog_usage();
     replication_usage();
+    ovs_replay_usage();
     printf("\nOther options:\n"
            "  --run COMMAND           run COMMAND as subprocess then exit\n"
            "  --unixctl=SOCKET        override default control socket name\n"

@@ -38,6 +38,7 @@ OVSDB_UPDATE = 0
 OVSDB_UPDATE2 = 1
 
 CLUSTERED = "clustered"
+RELAY = "relay"
 
 
 Notice = collections.namedtuple('Notice', ('event', 'row', 'updates'))
@@ -101,6 +102,7 @@ class Idl(object):
     IDL_S_SERVER_MONITOR_REQUESTED = 2
     IDL_S_DATA_MONITOR_REQUESTED = 3
     IDL_S_DATA_MONITOR_COND_REQUESTED = 4
+    IDL_S_MONITORING = 5
 
     def __init__(self, remote, schema_helper, probe_interval=None,
                  leader_only=True):
@@ -246,6 +248,7 @@ class Idl(object):
         i = 0
         while i < 50:
             i += 1
+            previous_change_seqno = self.change_seqno
             if not self._session.is_connected():
                 break
 
@@ -274,7 +277,7 @@ class Idl(object):
                 if msg.params[0] == str(self.server_monitor_uuid):
                     self.__parse_update(msg.params[1], OVSDB_UPDATE,
                                         tables=self.server_tables)
-                    self.change_seqno = initial_change_seqno
+                    self.change_seqno = previous_change_seqno
                     if not self.__check_server_db():
                         self.force_reconnect()
                         break
@@ -293,6 +296,7 @@ class Idl(object):
                     else:
                         assert self.state == self.IDL_S_DATA_MONITOR_REQUESTED
                         self.__parse_update(msg.result, OVSDB_UPDATE)
+                    self.state = self.IDL_S_MONITORING
 
                 except error.Error as e:
                     vlog.err("%s: parse error in received schema: %s"
@@ -317,7 +321,7 @@ class Idl(object):
                         self.__error()
                         break
                     else:
-                        self.change_seqno = initial_change_seqno
+                        self.change_seqno = previous_change_seqno
                         self.__send_monitor_request()
             elif (msg.type == ovs.jsonrpc.Message.T_REPLY
                   and self._server_monitor_request_id is not None
@@ -327,7 +331,7 @@ class Idl(object):
                     self._server_monitor_request_id = None
                     self.__parse_update(msg.result, OVSDB_UPDATE,
                                         tables=self.server_tables)
-                    self.change_seqno = initial_change_seqno
+                    self.change_seqno = previous_change_seqno
                     if self.__check_server_db():
                         self.__send_monitor_request()
                         self.__send_db_change_aware()
@@ -341,7 +345,7 @@ class Idl(object):
                         self.__error()
                         break
                     else:
-                        self.change_seqno = initial_change_seqno
+                        self.change_seqno = previous_change_seqno
                         self.__send_monitor_request()
             elif (msg.type == ovs.jsonrpc.Message.T_REPLY
                   and self._db_change_aware_request_id is not None
@@ -377,7 +381,7 @@ class Idl(object):
                     self.force_reconnect()
                     break
                 else:
-                    self.change_seqno = initial_change_seqno
+                    self.change_seqno = previous_change_seqno
                     self.__send_monitor_request()
             elif (msg.type in (ovs.jsonrpc.Message.T_ERROR,
                                ovs.jsonrpc.Message.T_REPLY)
@@ -440,6 +444,15 @@ class Idl(object):
     def force_reconnect(self):
         """Forces the IDL to drop its connection to the database and reconnect.
         In the meantime, the contents of the IDL will not change."""
+        if self.state == self.IDL_S_MONITORING:
+            # The IDL was in MONITORING state, so we either had data
+            # inconsistency on this server, or it stopped being the cluster
+            # leader, or the user requested to re-connect.  Avoiding backoff
+            # in these cases, as we need to re-connect as soon as possible.
+            # Connections that are not in MONITORING state should have their
+            # backoff to avoid constant flood of re-connection attempts in
+            # case there is no suitable database server.
+            self._session.reset_backoff()
         self._session.force_reconnect()
 
     def session_name(self):
@@ -477,6 +490,15 @@ class Idl(object):
         :param updates: For updates, row with only old values of the changed
                         columns
         :type updates:  Row
+        """
+
+    def cooperative_yield(self):
+        """Hook for cooperatively yielding to eventlet/gevent/asyncio/etc.
+
+        When a block of code is going to spend a lot of time cpu-bound without
+        doing any I/O, it can cause greenthread/coroutine libraries to block.
+        This call should be added to code where this can happen, but defaults
+        to doing nothing to avoid overhead where it is not needed.
         """
 
     def __send_cond_change(self, table, cond):
@@ -644,6 +666,8 @@ class Idl(object):
                                       'is not an object'
                                       % (table_name, uuid_string))
 
+                self.cooperative_yield()
+
                 if version == OVSDB_UPDATE2:
                     changes = self.__process_update2(table, uuid, row_update)
                     if changes:
@@ -777,8 +801,7 @@ class Idl(object):
                       % (session_name, self._db.name))
             return False
 
-        if (database.model == CLUSTERED and
-            self._session.get_num_of_remotes() > 1):
+        if database.model == CLUSTERED:
             if not database.schema:
                 vlog.info('%s: clustered database server has not yet joined '
                           'cluster; trying another server' % session_name)
@@ -798,6 +821,21 @@ class Idl(object):
                               'trying another server' % session_name)
                     return False
                 self._min_index = database.index[0]
+        elif database.model == RELAY:
+            if not database.schema:
+                vlog.info('%s: relay database server has not yet connected '
+                          'to the relay source; trying another server'
+                          % session_name)
+                return False
+            if not database.connected:
+                vlog.info('%s: relay database server is disconnected '
+                          'from the relay source; trying another server'
+                          % session_name)
+                return False
+            if self.leader_only:
+                vlog.info('%s: relay database server cannot be a leader; '
+                          'trying another server' % session_name)
+                return False
 
         return True
 

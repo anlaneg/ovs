@@ -852,20 +852,20 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
     COVERAGE_INC(bridge_reconfigure);
 
     //设置全局变量，如果未提供配置，则使用默认值
-    ofproto_set_flow_limit(smap_get_int(&ovs_cfg->other_config, "flow-limit",
+    ofproto_set_flow_limit(smap_get_uint(&ovs_cfg->other_config, "flow-limit",
                                         OFPROTO_FLOW_LIMIT_DEFAULT));
     //流规则对应的idle时间
-    ofproto_set_max_idle(smap_get_int(&ovs_cfg->other_config, "max-idle",
+    ofproto_set_max_idle(smap_get_uint(&ovs_cfg->other_config, "max-idle",
                                       OFPROTO_MAX_IDLE_DEFAULT/*默认10S*/));
-    ofproto_set_max_revalidator(smap_get_int(&ovs_cfg->other_config,
+    ofproto_set_max_revalidator(smap_get_uint(&ovs_cfg->other_config,
                                              "max-revalidator",
                                              OFPROTO_MAX_REVALIDATOR_DEFAULT));
     ofproto_set_min_revalidate_pps(
-        smap_get_int(&ovs_cfg->other_config, "min-revalidate-pps",
+        smap_get_uint(&ovs_cfg->other_config, "min-revalidate-pps",
                      OFPROTO_MIN_REVALIDATE_PPS_DEFAULT));
     ofproto_set_vlan_limit(smap_get_int(&ovs_cfg->other_config, "vlan-limit",
                                        LEGACY_MAX_VLAN_HEADERS));
-    ofproto_set_bundle_idle_timeout(smap_get_int(&ovs_cfg->other_config,
+    ofproto_set_bundle_idle_timeout(smap_get_uint(&ovs_cfg->other_config,
                                                  "bundle-idle-timeout", 0));
     ofproto_set_threads(
         smap_get_int(&ovs_cfg->other_config, "n-handler-threads", 0),
@@ -3138,9 +3138,9 @@ ofp12_controller_role_to_str(enum ofp12_controller_role role)
     case OFPCR12_ROLE_EQUAL:
         return "other";
     case OFPCR12_ROLE_PRIMARY:
-        return "primary";
+        return "master";
     case OFPCR12_ROLE_SECONDARY:
-        return "secondary";
+        return "slave";
     case OFPCR12_ROLE_NOCHANGE:
     default:
         return NULL;
@@ -4142,8 +4142,10 @@ bridge_configure_remotes(struct bridge *br,
         *oc = (struct ofproto_controller) {
             .type = get_controller_ofconn_type(c->target, c->type),
             .max_backoff = c->max_backoff ? *c->max_backoff / 1000 : 8,
-            .probe_interval = (c->inactivity_probe
-                               ? *c->inactivity_probe / 1000 : 5),
+            .probe_interval = (!c->inactivity_probe ? 5
+                               : !*c->inactivity_probe ? 0
+                               : *c->inactivity_probe < 1000 ? 1
+                               : *c->inactivity_probe / 1000),
             .band = ((!c->connection_mode
                       || !strcmp(c->connection_mode, "in-band"))
                      && !disable_in_band
@@ -5094,8 +5096,10 @@ iface_configure_qos(struct iface *iface, const struct ovsrec_qos *qos)
     }
 
     netdev_set_policing(iface->netdev,
-                        MIN(UINT32_MAX, iface->cfg->ingress_policing_rate),
-                        MIN(UINT32_MAX, iface->cfg->ingress_policing_burst));
+                MIN(UINT32_MAX, iface->cfg->ingress_policing_rate),
+                MIN(UINT32_MAX, iface->cfg->ingress_policing_burst),
+                MIN(UINT32_MAX, iface->cfg->ingress_policing_kpkts_rate),
+                MIN(UINT32_MAX, iface->cfg->ingress_policing_kpkts_burst));
 
     ofpbuf_uninit(&queues_buf);
 }

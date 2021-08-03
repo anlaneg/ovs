@@ -201,6 +201,8 @@ struct raft {
 
 #define ELECTION_BASE_MSEC 1000
 #define ELECTION_RANGE_MSEC 1000
+#define ELECTION_MIN_MSEC 100
+#define ELECTION_MAX_MSEC 600000
     /* The election timeout base value for leader election, in milliseconds.
      * It can be set by unixctl cluster/change-election-timer. Default value is
      * ELECTION_BASE_MSEC. */
@@ -446,16 +448,29 @@ raft_alloc(void)
  * This only creates the on-disk file.  Use raft_open() to start operating the
  * new server.
  *
+ * The optional election_timer argument, when greater than zero, sets the given
+ * leader election timer for the new cluster, in miliseconds. If non-zero, it
+ * must be between 100 and 600000 inclusive.
+ *
  * Returns null if successful, otherwise an ovsdb_error describing the
  * problem. */
 struct ovsdb_error * OVS_WARN_UNUSED_RESULT
 raft_create_cluster(const char *file_name, const char *name,
-                    const char *local_address, const struct json *data)
+                    const char *local_address, const struct json *data,
+                    const uint64_t election_timer)
 {
     /* Parse and verify validity of the local address. */
     struct ovsdb_error *error = raft_address_validate(local_address);
     if (error) {
         return error;
+    }
+
+    /* Validate optional election timer */
+    if (election_timer > 0) {
+        error = raft_validate_election_timer(election_timer);
+        if (error) {
+            return error;
+        }
     }
 
     /* Create log file. */
@@ -467,6 +482,8 @@ raft_create_cluster(const char *file_name, const char *name,
     }
 
     /* Write log file. */
+    const uint64_t term = 1;
+    uint64_t index = 1;
     struct raft_header h = {
         .sid = uuid_random(),
         .cid = uuid_random(),
@@ -474,9 +491,9 @@ raft_create_cluster(const char *file_name, const char *name,
         .local_address = xstrdup(local_address),
         .joining = false,
         .remote_addresses = SSET_INITIALIZER(&h.remote_addresses),
-        .snap_index = 1,
+        .snap_index = index++,
         .snap = {
-            .term = 1,
+            .term = term,
             .data = json_nullable_clone(data),
             .eid = uuid_random(),
             .servers = json_object_create(),
@@ -487,11 +504,33 @@ raft_create_cluster(const char *file_name, const char *name,
                      json_string_create(local_address));
     error = ovsdb_log_write_and_free(log, raft_header_to_json(&h));
     raft_header_uninit(&h);
-    if (!error) {
-        error = ovsdb_log_commit_block(log);
+    if (error) {
+        goto error;
     }
-    ovsdb_log_close(log);
 
+    if (election_timer > 0) {
+        struct raft_record r = {
+            .type = RAFT_REC_ENTRY,
+            .term = term,
+            .entry = {
+                .index = index,
+                .data = NULL,
+                .servers = NULL,
+                .election_timer = election_timer,
+                .eid = UUID_ZERO,
+            },
+        };
+        error = ovsdb_log_write_and_free(log, raft_record_to_json(&r));
+        raft_record_uninit(&r);
+        if (error) {
+            goto error;
+        }
+    }
+
+    error = ovsdb_log_commit_block(log);
+
+error:
+    ovsdb_log_close(log);
     return error;
 }
 
@@ -1026,6 +1065,8 @@ raft_open(struct ovsdb_log *log, struct raft **raftp)
     raft_reset_ping_timer(raft);
     raft_reset_election_timer(raft);
 
+    VLOG_INFO("local server ID is "SID_FMT, SID_ARGS(&raft->sid));
+
     *raftp = raft;
     hmap_insert(&all_rafts, &raft->hmap_node, hash_string(raft->name, 0));
     return NULL;
@@ -1076,6 +1117,21 @@ raft_get_memory_usage(const struct raft *raft, struct simap *usage)
     simap_increase(usage, "raft-backlog-kB", backlog / 1000);
     simap_increase(usage, "raft-connections", cnt);
     simap_increase(usage, "raft-log", raft->log_end - raft->log_start);
+}
+
+/* Returns an error if the election timer (in miliseconds) is out of bounds.
+ * Values smaller than 100ms or bigger than 10min don't make sense.
+ */
+struct ovsdb_error *
+raft_validate_election_timer(const uint64_t ms)
+{
+    /* Validate optional election timer */
+    if (ms < ELECTION_MIN_MSEC || ms > ELECTION_MAX_MSEC) {
+        return ovsdb_error(NULL, "election timer must be between %d and "
+                           "%d, in msec.", ELECTION_MIN_MSEC,
+                           ELECTION_MAX_MSEC);
+    }
+    return NULL;
 }
 
 /* Returns true if 'raft' has completed joining its cluster, has not left or
@@ -1925,7 +1981,7 @@ raft_run(struct raft *raft)
              * follower.
              *
              * Raft paper section 6.2: Leaders: A server might be in the leader
-             * state, but if it isn’t the current leader, it could be
+             * state, but if it isn't the current leader, it could be
              * needlessly delaying client requests. For example, suppose a
              * leader is partitioned from the rest of the cluster, but it can
              * still communicate with a particular client. Without additional
@@ -1933,7 +1989,7 @@ raft_run(struct raft *raft)
              * being unable to replicate a log entry to any other servers.
              * Meanwhile, there might be another leader of a newer term that is
              * able to communicate with a majority of the cluster and would be
-             * able to commit the client’s request. Thus, a leader in Raft
+             * able to commit the client's request. Thus, a leader in Raft
              * steps down if an election timeout elapses without a successful
              * round of heartbeats to a majority of its cluster; this allows
              * clients to retry their requests with another server.  */
@@ -2677,8 +2733,8 @@ raft_become_leader(struct raft *raft)
      *     which those are.  To find out, it needs to commit an entry from its
      *     term.  Raft handles this by having each leader commit a blank no-op
      *     entry into the log at the start of its term.  As soon as this no-op
-     *     entry is committed, the leader’s commit index will be at least as
-     *     large as any other servers’ during its term.
+     *     entry is committed, the leader's commit index will be at least as
+     *     large as any other servers' during its term.
      */
     raft_command_unref(raft_command_execute__(raft, NULL, NULL, 0, NULL,
                                               NULL));
@@ -2694,7 +2750,7 @@ raft_receive_term__(struct raft *raft, const struct raft_rpc_common *common,
     /* Section 3.3 says:
      *
      *     Current terms are exchanged whenever servers communicate; if one
-     *     server’s current term is smaller than the other’s, then it updates
+     *     server's current term is smaller than the other's, then it updates
      *     its current term to the larger value.  If a candidate or leader
      *     discovers that its term is out of date, it immediately reverts to
      *     follower state.  If a server receives a request with a stale term
@@ -3074,8 +3130,8 @@ raft_update_leader(struct raft *raft, const struct uuid *sid)
     if (raft->role == RAFT_CANDIDATE) {
         /* Section 3.4: While waiting for votes, a candidate may
          * receive an AppendEntries RPC from another server claiming to
-         * be leader. If the leader’s term (included in its RPC) is at
-         * least as large as the candidate’s current term, then the
+         * be leader. If the leader's term (included in its RPC) is at
+         * least as large as the candidate's current term, then the
          * candidate recognizes the leader as legitimate and returns to
          * follower state. */
         raft->role = RAFT_FOLLOWER;
@@ -3089,7 +3145,7 @@ raft_handle_append_request(struct raft *raft,
 {
     /* We do not check whether the server that sent the request is part of the
      * cluster.  As section 4.1 says, "A server accepts AppendEntries requests
-     * from a leader that is not part of the server’s latest configuration.
+     * from a leader that is not part of the server's latest configuration.
      * Otherwise, a new server could never be added to the cluster (it would
      * never accept any log entries preceding the configuration entry that adds
      * the server)." */
@@ -3436,7 +3492,7 @@ raft_handle_append_reply(struct raft *raft,
          * more quickly, including those described in Chapter 3. The simplest
          * approach to solving this particular problem of adding a new server,
          * however, is to have followers return the length of their logs in the
-         * AppendEntries response; this allows the leader to cap the follower’s
+         * AppendEntries response; this allows the leader to cap the follower's
          * nextIndex accordingly." */
         s->next_index = (s->next_index > 0
                          ? MIN(s->next_index - 1, rpy->log_end)
@@ -3501,8 +3557,8 @@ raft_should_suppress_disruptive_server(struct raft *raft,
      *    election without waiting an election timeout.  In that case,
      *    RequestVote messages should be processed by other servers even when
      *    they believe a current cluster leader exists.  Those RequestVote
-     *    requests can include a special flag to indicate this behavior (“I
-     *    have permission to disrupt the leader--it told me to!”).
+     *    requests can include a special flag to indicate this behavior ("I
+     *    have permission to disrupt the leader--it told me to!").
      *
      * This clearly describes how the followers should act, but not the leader.
      * We just ignore vote requests that arrive at a current leader.  This
@@ -3557,7 +3613,7 @@ raft_handle_vote_request__(struct raft *raft,
     }
 
     /* Section 3.6.1: "The RequestVote RPC implements this restriction: the RPC
-     * includes information about the candidate’s log, and the voter denies its
+     * includes information about the candidate's log, and the voter denies its
      * vote if its own log is more up-to-date than that of the candidate.  Raft
      * determines which of two logs is more up-to-date by comparing the index
      * and term of the last entries in the logs.  If the logs have last entries
@@ -4160,7 +4216,22 @@ raft_may_snapshot(const struct raft *raft)
             && !raft->leaving
             && !raft->left
             && !raft->failed
+            && raft->role != RAFT_LEADER
             && raft->last_applied >= raft->log_start);
+}
+
+/* Prepares for soon snapshotting. */
+void
+raft_notify_snapshot_recommended(struct raft *raft)
+{
+    if (raft->role == RAFT_LEADER) {
+        /* Leader is about to write database snapshot to the disk and this
+         * might take significant amount of time.  Stepping back from the
+         * leadership to keep the cluster functional during this process.  */
+        VLOG_INFO("Transferring leadership to write a snapshot.");
+        raft_transfer_leadership(raft, "preparing to write snapshot");
+        raft_become_follower(raft);
+    }
 }
 
 /* Replaces the log for 'raft', up to the last log entry read, by

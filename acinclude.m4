@@ -14,6 +14,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+dnl Set OVS MFEX Autovalidator as default miniflow extract at compile time?
+dnl This enables automatically running all unit tests with all MFEX
+dnl implementations.
+AC_DEFUN([OVS_CHECK_MFEX_AUTOVALIDATOR], [
+  AC_ARG_ENABLE([mfex-default-autovalidator],
+                [AC_HELP_STRING([--enable-mfex-default-autovalidator], [Enable MFEX autovalidator as default miniflow_extract implementation.])],
+                [autovalidator=yes],[autovalidator=no])
+  AC_MSG_CHECKING([whether MFEX Autovalidator is default implementation])
+  if test "$autovalidator" != yes; then
+    AC_MSG_RESULT([no])
+  else
+    OVS_CFLAGS="$OVS_CFLAGS -DMFEX_AUTOVALIDATOR_DEFAULT"
+    AC_MSG_RESULT([yes])
+  fi
+])
+
 dnl Set OVS DPCLS Autovalidator as default subtable search at compile time?
 dnl This enables automatically running all unit tests with all DPCLS
 dnl implementations.
@@ -26,6 +42,21 @@ AC_DEFUN([OVS_CHECK_DPCLS_AUTOVALIDATOR], [
     AC_MSG_RESULT([no])
   else
     OVS_CFLAGS="$OVS_CFLAGS -DDPCLS_AUTOVALIDATOR_DEFAULT"
+    AC_MSG_RESULT([yes])
+  fi
+])
+
+dnl Set OVS DPIF default implementation at configure time for running the unit
+dnl tests on the whole codebase without modifying tests per DPIF impl
+AC_DEFUN([OVS_CHECK_DPIF_AVX512_DEFAULT], [
+  AC_ARG_ENABLE([dpif-default-avx512],
+                [AC_HELP_STRING([--enable-dpif-default-avx512], [Enable DPIF AVX512 implementation as default.])],
+                [dpifavx512=yes],[dpifavx512=no])
+  AC_MSG_CHECKING([whether DPIF AVX512 is default implementation])
+  if test "$dpifavx512" != yes; then
+    AC_MSG_RESULT([no])
+  else
+    OVS_CFLAGS="$OVS_CFLAGS -DDPIF_AVX512_DEFAULT"
     AC_MSG_RESULT([yes])
   fi
 ])
@@ -209,10 +240,10 @@ dnl Configure Linux tc compat.
 AC_DEFUN([OVS_CHECK_LINUX_TC], [
   AC_COMPILE_IFELSE([
     AC_LANG_PROGRAM([#include <linux/pkt_cls.h>], [
-        int x = TCA_FLOWER_KEY_CT_FLAGS_REPLY;
+        int x = TCA_POLICE_PKTRATE64;
     ])],
-    [AC_DEFINE([HAVE_TCA_FLOWER_KEY_CT_FLAGS_REPLY], [1],
-               [Define to 1 if TCA_FLOWER_KEY_CT_FLAGS_REPLY is available.])])
+    [AC_DEFINE([HAVE_TCA_POLICE_PKTRATE64], [1],
+               [Define to 1 if TCA_POLICE_PKTRATE64 is available.])])
 
   AC_CHECK_MEMBERS([struct tcf_t.firstuse], [], [], [#include <linux/pkt_cls.h>])
 

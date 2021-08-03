@@ -101,15 +101,20 @@ like so:
 - Queue #2 not pinned
 - Queue #3 pinned to core 8
 
-PMD threads on cores where Rx queues are *pinned* will become *isolated*. This
-means that this thread will only poll the *pinned* Rx queues.
+PMD threads on cores where Rx queues are *pinned* will become *isolated* by
+default. This means that this thread will only poll the *pinned* Rx queues.
+
+If using ``pmd-rxq-assign=group`` PMD threads with *pinned* Rxqs can be
+*non-isolated* by setting::
+
+  $ ovs-vsctl set Open_vSwitch . other_config:pmd-rxq-isolate=false
 
 .. warning::
 
    If there are no *non-isolated* PMD threads, *non-pinned* RX queues will not
-   be polled. Also, if the provided ``<core-id>`` is not available (e.g. the
-   ``<core-id>`` is not in ``pmd-cpu-mask``), the RX queue will not be polled
-   by any PMD thread.
+   be polled. If the provided ``<core-id>`` is not available (e.g. the
+   ``<core-id>`` is not in ``pmd-cpu-mask``), the RX queue will be assigned to
+   a *non-isolated* PMD, that will remain *non-isolated*.
 
 If ``pmd-rxq-affinity`` is not set for Rx queues, they will be assigned to PMDs
 (cores) automatically.
@@ -135,6 +140,32 @@ The Rx queues will be assigned to the cores in the following order::
     Core 3: Q1 (80%) |
     Core 7: Q4 (70%) | Q5 (10%)
     Core 8: Q3 (60%) | Q0 (30%)
+
+``group`` assignment is similar to ``cycles`` in that the Rxqs will be
+ordered by their measured processing cycles before being assigned to PMDs.
+It differs from ``cycles`` in that it uses a running estimate of the cycles
+that will be on each PMD to select the PMD with the lowest load for each Rxq.
+
+This means that there can be a group of low traffic Rxqs on one PMD, while a
+high traffic Rxq may have a PMD to itself. Where ``cycles`` kept as close to
+the same number of Rxqs per PMD as possible, with ``group`` this restriction is
+removed for a better balance of the workload across PMDs.
+
+For example, where there are five Rx queues and three cores - 3, 7, and 8 -
+available and the measured usage of core cycles per Rx queue over the last
+interval is seen to be:
+
+- Queue #0: 10%
+- Queue #1: 80%
+- Queue #3: 50%
+- Queue #4: 70%
+- Queue #5: 10%
+
+The Rx queues will be assigned to the cores in the following order::
+
+    Core 3: Q1 (80%) |
+    Core 7: Q4 (70%) |
+    Core 8: Q3 (50%) | Q0 (10%) | Q5 (10%)
 
 Alternatively, ``roundrobin`` assignment can be used, where the Rxqs are
 assigned to PMDs in a round-robined fashion. This algorithm was used by
@@ -163,6 +194,11 @@ queue::
    traffic pattern spikes. Any changes in the Rx queue's PMD core cycles usage,
    due to traffic pattern or reconfig changes, will take one minute to be fully
    reflected in the stats.
+
+.. versionchanged:: 2.16.0
+
+   A ``overhead`` statistics is shown per PMD: it represents the number of
+   cycles inherently consumed by the OVS PMD processing loop.
 
 Rx queue to PMD assignment takes place whenever there are configuration changes
 or can be triggered by using::

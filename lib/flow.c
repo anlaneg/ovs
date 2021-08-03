@@ -44,8 +44,15 @@
 #include "openvswitch/nsh.h"
 #include "ovs-router.h"
 #include "lib/netdev-provider.h"
+#include "openvswitch/vlog.h"
+
+VLOG_DEFINE_THIS_MODULE(flow);
 
 COVERAGE_DEFINE(flow_extract);
+COVERAGE_DEFINE(miniflow_extract_ipv4_pkt_len_error);
+COVERAGE_DEFINE(miniflow_extract_ipv4_pkt_too_short);
+COVERAGE_DEFINE(miniflow_extract_ipv6_pkt_len_error);
+COVERAGE_DEFINE(miniflow_extract_ipv6_pkt_too_short);
 COVERAGE_DEFINE(miniflow_malloc);
 
 /* U64 indices for segmented flow classification. */
@@ -673,6 +680,7 @@ ipv4_sanity_check(const struct ip_header *nh, size_t size,
 
     //长度不足标准ip头
     if (OVS_UNLIKELY(size < IP_HEADER_LEN)) {
+        COVERAGE_INC(miniflow_extract_ipv4_pkt_too_short);
         return false;
     }
     ip_len = IP_IHL(nh->ip_ihl_ver) * 4;//ip头长度
@@ -680,6 +688,7 @@ ipv4_sanity_check(const struct ip_header *nh, size_t size,
     //错误的报文长度小于20
     //错误的报文，宣称的长度与实际长度不符
     if (OVS_UNLIKELY(ip_len < IP_HEADER_LEN || size < ip_len)) {
+        COVERAGE_INC(miniflow_extract_ipv4_pkt_len_error);
         return false;
     }
 
@@ -688,6 +697,7 @@ ipv4_sanity_check(const struct ip_header *nh, size_t size,
     tot_len = ntohs(nh->ip_tot_len);
     if (OVS_UNLIKELY(tot_len > size || ip_len > tot_len ||
                 size - tot_len > UINT16_MAX)) {
+        COVERAGE_INC(miniflow_extract_ipv4_pkt_len_error);
         return false;
     }
 
@@ -718,19 +728,39 @@ ipv6_sanity_check(const struct ovs_16aligned_ip6_hdr *nh, size_t size)
     uint16_t plen;
 
     if (OVS_UNLIKELY(size < sizeof *nh)) {
+        COVERAGE_INC(miniflow_extract_ipv6_pkt_too_short);
         return false;
     }
 
     plen = ntohs(nh->ip6_plen);
     if (OVS_UNLIKELY(plen + IPV6_HEADER_LEN > size)) {
+        COVERAGE_INC(miniflow_extract_ipv6_pkt_len_error);
         return false;
     }
 
     if (OVS_UNLIKELY(size - (plen + IPV6_HEADER_LEN) > UINT16_MAX)) {
+        COVERAGE_INC(miniflow_extract_ipv6_pkt_len_error);
         return false;
     }
 
     return true;
+}
+
+static void
+dump_invalid_packet(struct dp_packet *packet, const char *reason)
+{
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+    struct ds ds = DS_EMPTY_INITIALIZER;
+    size_t size;
+
+    if (VLOG_DROP_DBG(&rl)) {
+        return;
+    }
+    size = dp_packet_size(packet);
+    ds_put_hex_dump(&ds, dp_packet_data(packet), size, 0, false);
+    VLOG_DBG("invalid packet for %s: port %"PRIu32", size %"PRIuSIZE"\n%s",
+             reason, packet->md.in_port.odp_port, size, ds_cstr(&ds));
+    ds_destroy(&ds);
 }
 
 /* Initializes 'dst' from 'packet' and 'md', taking the packet type into
@@ -897,6 +927,9 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
         uint16_t tot_len;
 
         if (OVS_UNLIKELY(!ipv4_sanity_check(nh, size, &ip_len, &tot_len))) {
+            if (OVS_UNLIKELY(VLOG_IS_DBG_ENABLED())) {
+                dump_invalid_packet(packet, "ipv4_sanity_check");
+            }
             goto out;
         }
         dp_packet_set_l2_pad_size(packet, size - tot_len);
@@ -928,6 +961,9 @@ miniflow_extract(struct dp_packet *packet, struct miniflow *dst)
         uint16_t plen;
 
         if (OVS_UNLIKELY(!ipv6_sanity_check(nh, size))) {
+            if (OVS_UNLIKELY(VLOG_IS_DBG_ENABLED())) {
+                dump_invalid_packet(packet, "ipv6_sanity_check");
+            }
             goto out;
         }
         data_pull(&data, &size, sizeof *nh);
@@ -1167,6 +1203,9 @@ parse_tcp_flags(struct dp_packet *packet)
         uint16_t tot_len;
 
         if (OVS_UNLIKELY(!ipv4_sanity_check(nh, size, &ip_len, &tot_len))) {
+            if (OVS_UNLIKELY(VLOG_IS_DBG_ENABLED())) {
+                dump_invalid_packet(packet, "ipv4_sanity_check");
+            }
             return 0;
         }
         dp_packet_set_l2_pad_size(packet, size - tot_len);
@@ -1180,6 +1219,9 @@ parse_tcp_flags(struct dp_packet *packet)
         uint16_t plen;
 
         if (OVS_UNLIKELY(!ipv6_sanity_check(nh, size))) {
+            if (OVS_UNLIKELY(VLOG_IS_DBG_ENABLED())) {
+                dump_invalid_packet(packet, "ipv6_sanity_check");
+            }
             return 0;
         }
         data_pull(&data, &size, sizeof *nh);

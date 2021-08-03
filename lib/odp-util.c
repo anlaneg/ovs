@@ -2657,6 +2657,10 @@ odp_actions_from_string(const char *s, const struct simap *port_names,
 
         retval = parse_odp_action(&context, s, actions);
 
+        if (retval >= 0 && nl_attr_oversized(actions->size - NLA_HDRLEN)) {
+            retval = -E2BIG;
+        }
+
         if (retval < 0 || !strchr(delimiters, s[retval])) {
             actions->size = old_size;
             return -retval;
@@ -6130,6 +6134,15 @@ odp_flow_from_string(const char *s, const struct simap *port_names,
         }
 
         retval = parse_odp_key_mask_attr(&context, s, key, mask);
+
+        if (retval >= 0) {
+            if (nl_attr_oversized(key->size - NLA_HDRLEN)) {
+                retval = -E2BIG;
+            } else if (mask && nl_attr_oversized(mask->size - NLA_HDRLEN)) {
+                retval = -E2BIG;
+            }
+        }
+
         if (retval < 0) {
             if (errorp) {
                 *errorp = xasprintf("syntax error at %s", s);
@@ -7945,7 +7958,8 @@ commit_set_ether_action(const struct flow *flow, struct flow *base_flow,
     struct offsetof_sizeof ovs_key_ethernet_offsetof_sizeof_arr[] =
         OVS_KEY_ETHERNET_OFFSETOF_SIZEOF_ARR;
 
-    if (flow->packet_type != htonl(PT_ETH)) {
+    if (flow->packet_type != htonl(PT_ETH) ||
+        base_flow->packet_type != htonl(PT_ETH)) {
         return;
     }
 

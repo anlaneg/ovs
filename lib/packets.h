@@ -116,6 +116,7 @@ PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline0,
     uint32_t ct_mark;           /* Connection mark. */
     ovs_u128 ct_label;          /* Connection label. */
     union flow_in_port in_port; /* Input port. */
+    odp_port_t orig_in_port;    /* Originating in_port for tunneled packets */
     struct conn *conn;          /* Cached conntrack connection. */
     bool reply;                 /* True if reply direction. */
     bool icmp_related;          /* True if ICMP related. */
@@ -145,11 +146,15 @@ BUILD_ASSERT_DECL(offsetof(struct pkt_metadata, cacheline2) ==
 static inline void
 pkt_metadata_init_tnl(struct pkt_metadata *md)
 {
+    odp_port_t orig_in_port;
+
     /* Zero up through the tunnel metadata options. The length and table
      * are before this and as long as they are empty, the options won't
-     * be looked at. */
-    memset(md, 0, offsetof(struct pkt_metadata, tunnel.metadata.opts));
+     * be looked at. Keep the orig_in_port field. */
+    orig_in_port = md->in_port.odp_port;
     //清空md结构中的前半部分内容(tunnel.metadata.opts后的内容不清空（含））
+    memset(md, 0, offsetof(struct pkt_metadata, tunnel.metadata.opts));
+    md->orig_in_port = orig_in_port;
 }
 
 //将结构清０，主要是设置入接口
@@ -178,6 +183,7 @@ pkt_metadata_init(struct pkt_metadata *md, odp_port_t port)
     md->tunnel.ip_dst = 0;
     md->tunnel.ipv6_dst = in6addr_any;//清空dst-ip
     md->in_port.odp_port = port;//设置报文入接口
+    md->orig_in_port = port;
     md->conn = NULL;
 }
 

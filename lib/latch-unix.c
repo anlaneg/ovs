@@ -43,9 +43,18 @@ latch_destroy(struct latch *latch)//销毁latch
 bool
 latch_poll(struct latch *latch)//是否有数据
 {
-    char buffer[_POSIX_PIPE_BUF];
+    char latch_buffer[16];
+    bool result = false;
+    int ret;
 
-    return read(latch->fds[0], buffer, sizeof buffer) > 0;//表明读到了数据
+    do {
+	//表明读到了数据
+        ret = read(latch->fds[0], &latch_buffer, sizeof latch_buffer);
+        result |= ret > 0;
+    /* Repeat as long as read() reads a full buffer. */
+    } while (ret == sizeof latch_buffer);
+
+    return result;
 }
 
 /* Sets 'latch'.
