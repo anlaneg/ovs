@@ -41,7 +41,7 @@ VLOG_DEFINE_THIS_MODULE(stream_fd);
 struct stream_fd
 {
     struct stream stream;
-    int fd;
+    int fd;/*描述符*/
     int fd_type;//fd类型，例如AF_INET
 };
 
@@ -82,8 +82,9 @@ stream_fd_cast(struct stream *stream)
     return CONTAINER_OF(stream, struct stream_fd, stream);
 }
 
+//关闭fd，并释放结构
 static void
-fd_close(struct stream *stream)//关闭fd，并释放结构
+fd_close(struct stream *stream)
 {
     struct stream_fd *s = stream_fd_cast(stream);
     closesocket(s->fd);

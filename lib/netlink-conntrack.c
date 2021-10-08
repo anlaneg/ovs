@@ -1028,6 +1028,7 @@ nl_ct_timeout_policy_from_ofpbuf(struct ofpbuf *buf,
     return nl_ct_parse_timeout_policy_data(attrs[CTA_TIMEOUT_DATA], nl_tp);
 }
 
+/*将构造好的netlink消息发送出去*/
 int
 nl_ct_set_timeout_policy(const struct nl_ct_timeout_policy *nl_tp)
 {
@@ -1051,6 +1052,7 @@ nl_ct_set_timeout_policy(const struct nl_ct_timeout_policy *nl_tp)
     }
     nl_msg_end_nested(&buf, offset);
 
+    /*netfilter 配置*/
     int err = nl_transact(NETLINK_NETFILTER, &buf, NULL);
     ofpbuf_uninit(&buf);
     return err;

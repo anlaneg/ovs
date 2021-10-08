@@ -646,8 +646,9 @@ rconn_run(struct rconn *rc)
         vconn_run(rc->monitors[i]);
 
         /* Drain any stray message that came in on the monitor connection. */
-        retval = vconn_recv(rc->monitors[i], &msg);
+        retval = vconn_recv(rc->monitors[i], &msg/*收取到的消息*/);
         if (!retval) {
+            /*成功，移除收到的消息*/
             ofpbuf_delete(msg);
         } else if (retval != EAGAIN) {
             close_monitor(rc, i, retval);
@@ -703,6 +704,7 @@ rconn_recv(struct rconn *rc)
 
     ovs_mutex_lock(&rc->mutex);
     if (rc->state & (S_ACTIVE | S_IDLE)) {
+        /*收一个包*/
         int error = vconn_recv(rc->vconn, &buffer);
         if (!error) {
             copy_to_monitor(rc, buffer);
@@ -722,6 +724,7 @@ rconn_recv(struct rconn *rc)
     }
     ovs_mutex_unlock(&rc->mutex);
 
+    /*返回消息*/
     return buffer;
 }
 

@@ -1162,6 +1162,7 @@ static const struct ofputil_port_map *
 get_port_map(const char *vconn_name)
 {
     static struct shash port_maps = SHASH_INITIALIZER(&port_maps);
+    /*每个vconn_name一个hash map*/
     struct ofputil_port_map *map = shash_find_data(&port_maps, vconn_name);
     if (!map) {
         map = xmalloc(sizeof *map);
@@ -1179,6 +1180,7 @@ get_port_map(const char *vconn_name)
             struct ofputil_phy_port pp;
             for (port_iterator_init(&pi, vconn);
                  port_iterator_next(&pi, &pp); ) {
+                /*获取port名称*/
                 ofputil_port_map_put(map, pp.port_no, pp.name);
             }
             port_iterator_destroy(&pi);
@@ -1308,6 +1310,7 @@ table_iterator_destroy(struct table_iterator *ti)
     }
 }
 
+/*获取表名*/
 static const struct ofputil_table_map *
 get_table_map(const char *vconn_name)
 {
@@ -1792,7 +1795,7 @@ static void
 ofctl_flow_mod(int argc, char *argv[], uint16_t command)
 {
     if (argc > 2 && !strcmp(argv[2], "-")) {
-    	//自文件中读取规则并添加
+    	//自标准输入文件中读取规则并添加
         ofctl_flow_mod_file(argc, argv, command);
     } else {
         struct ofputil_flow_mod fm;
@@ -2154,6 +2157,7 @@ monitor_vconn(struct vconn *vconn, bool reply_to_echo_requests,
         while (!blocked) {
             enum ofptype type;
 
+            /*收取消息*/
             retval = vconn_recv(vconn, &b);
             if (retval == EAGAIN) {
                 break;

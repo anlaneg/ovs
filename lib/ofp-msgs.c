@@ -1177,7 +1177,7 @@ ofpmp_assembler_wait(struct hmap *assembler)
  * 'now' should be the current time as returned by time_msec(). */
 enum ofperr
 ofpmp_assembler_execute(struct hmap *assembler, struct ofpbuf *msg,
-                        struct ovs_list *out, long long int now)
+                        struct ovs_list *out/*出参，汇总的消息*/, long long int now)
 {
     ovs_list_init(out);
 

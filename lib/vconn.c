@@ -611,6 +611,7 @@ vconn_recv(struct vconn *vconn, struct ofpbuf **msgp)
 
     retval = vconn_connect(vconn);
     if (!retval) {
+        /*自vconn收取消息*/
         retval = do_recv(vconn, &msg);
     }
     if (!retval && !vconn->recv_any_version) {
@@ -653,6 +654,7 @@ vconn_recv(struct vconn *vconn, struct ofpbuf **msgp)
 static int
 do_recv(struct vconn *vconn, struct ofpbuf **msgp)
 {
+    /*自此连接收取数据*/
     int retval = (vconn->vclass->recv)(vconn, msgp);
     if (!retval) {
         COVERAGE_INC(vconn_received);

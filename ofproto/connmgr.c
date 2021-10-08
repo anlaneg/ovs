@@ -365,7 +365,7 @@ connmgr_run(struct connmgr *mgr,
     //遍历每个连接，从每个连接处收取openflow消息，并进行处理
     //处理与每个controller间的收报文
     LIST_FOR_EACH_SAFE (ofconn, next_ofconn, connmgr_node, &mgr->conns) {
-        ofconn_run(ofconn, handle_openflow);
+        ofconn_run(ofconn, handle_openflow/*处理openflow消息的函数*/);
     }
     ofmonitor_run(mgr);
 

@@ -8646,6 +8646,7 @@ ofpacts_check(struct ofpact ofpacts[], size_t ofpacts_len,
     enum ofperr error = 0;
     struct ofpact *a;
     OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
+        /*触发action check*/
         error = ofpact_check__(a, cp);
         if (error) {
             break;

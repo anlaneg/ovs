@@ -3448,6 +3448,7 @@ dpif_netlink_ct_set_limits(struct dpif *dpif OVS_UNUSED,
         /*zone_limits参数不为空，设置要设置的zone limit*/
         struct ct_dpif_zone_limit *zone_limit;
 
+        /*遍历每个zone_limits,填充并写入request*/
         LIST_FOR_EACH (zone_limit, node, zone_limits) {
             struct ovs_zone_limit req_zone_limit = {
                 .zone_id = zone_limit->zone,
@@ -3635,11 +3636,13 @@ static struct dpif_netlink_timeout_policy_protocol tp_protos[] = {
                                      .l4num = IPPROTO_ICMPV6 },
 };
 
+/*生成tp名称*/
 static void
 dpif_netlink_format_tp_name(uint32_t id, uint16_t l3num, uint8_t l4num,
                             char **tp_name)
 {
     struct ds ds = DS_EMPTY_INITIALIZER;
+    /*格式化ovs_tp_$id*/
     ds_put_format(&ds, "%s%"PRIu32"_", NL_TP_NAME_PREFIX, id);
     ct_dpif_format_ipproto(&ds, l4num);
 
@@ -3716,6 +3719,7 @@ static void
 dpif_netlink_get_nl_tp_tcp_attrs(const struct ct_dpif_timeout_policy *tp,
                                  struct nl_ct_timeout_policy *nl_tp)
 {
+    /*自tp中读取tcp各timeout,并填充到nl_tp中*/
     CT_DPIF_NL_TP_TCP_MAPPINGS
 }
 
@@ -3723,6 +3727,7 @@ static void
 dpif_netlink_get_nl_tp_udp_attrs(const struct ct_dpif_timeout_policy *tp,
                                  struct nl_ct_timeout_policy *nl_tp)
 {
+    /*自nl_tp中读取udp各timeout,并填充到tp中*/
     CT_DPIF_NL_TP_UDP_MAPPINGS
 }
 
@@ -3730,6 +3735,7 @@ static void
 dpif_netlink_get_nl_tp_icmp_attrs(const struct ct_dpif_timeout_policy *tp,
                                   struct nl_ct_timeout_policy *nl_tp)
 {
+    /*自nl_tp中读取icmp各timeout,并填充到tp中*/
     CT_DPIF_NL_TP_ICMP_MAPPINGS
 }
 
@@ -3743,8 +3749,8 @@ dpif_netlink_get_nl_tp_icmpv6_attrs(const struct ct_dpif_timeout_policy *tp,
 #undef CT_DPIF_NL_TP_MAPPING
 
 static void
-dpif_netlink_get_nl_tp_attrs(const struct ct_dpif_timeout_policy *tp,
-                             uint8_t l4num, struct nl_ct_timeout_policy *nl_tp)
+dpif_netlink_get_nl_tp_attrs(const struct ct_dpif_timeout_policy *tp/*设置的policy*/,
+                             uint8_t l4num, struct nl_ct_timeout_policy *nl_tp/*netlink消息给出的配置*/)
 {
     nl_tp->present = 0;
 
@@ -3761,6 +3767,7 @@ dpif_netlink_get_nl_tp_attrs(const struct ct_dpif_timeout_policy *tp,
 
 #define CT_DPIF_NL_TP_MAPPING(PROTO1, PROTO2, ATTR1, ATTR2)                 \
 if (nl_tp->present & (1 << CTA_TIMEOUT_##PROTO2##_##ATTR2)) {               \
+    /*检查CTA_TIMEOUT_$PROTO2_$ATTR2标记是否被包含*/\
     if (tp->present & (1 << CT_DPIF_TP_ATTR_##PROTO1##_##ATTR1)) {          \
         if (tp->attrs[CT_DPIF_TP_ATTR_##PROTO1##_##ATTR1] !=                \
             nl_tp->attrs[CTA_TIMEOUT_##PROTO2##_##ATTR2]) {                 \
@@ -3772,6 +3779,7 @@ if (nl_tp->present & (1 << CTA_TIMEOUT_##PROTO2##_##ATTR2)) {               \
                          tp->attrs[CT_DPIF_TP_ATTR_##PROTO1##_##ATTR1]);    \
         }                                                                   \
     } else {                                                                \
+        /*CTA_TIMEOUT_$PROTO2_$ATTR2标记不存在，读取CT_DPIF_TP_ATTR_$PROTO1_$ATTR1*/\
         tp->present |= 1 << CT_DPIF_TP_ATTR_##PROTO1##_##ATTR1;             \
         tp->attrs[CT_DPIF_TP_ATTR_##PROTO1##_##ATTR1] =                     \
             nl_tp->attrs[CTA_TIMEOUT_##PROTO2##_##ATTR2];                   \
@@ -4539,9 +4547,9 @@ const struct dpif_class dpif_netlink_class = {
     NULL,                       /* ct_get_nconns */
     NULL,                       /* ct_set_tcp_seq_chk */
     NULL,                       /* ct_get_tcp_seq_chk */
-    dpif_netlink_ct_set_limits,
-    dpif_netlink_ct_get_limits,
-    dpif_netlink_ct_del_limits,
+    dpif_netlink_ct_set_limits,/*ct limit配置设置*/
+    dpif_netlink_ct_get_limits,/*ct limit配置获取*/
+    dpif_netlink_ct_del_limits,/*ct limit配置移除*/
     dpif_netlink_ct_set_timeout_policy,
     dpif_netlink_ct_get_timeout_policy,
     dpif_netlink_ct_del_timeout_policy,

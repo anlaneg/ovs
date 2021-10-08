@@ -243,7 +243,7 @@ ofp_parse_field(const struct mf_field *mf, const char *s,
 char *
 ofp_extract_actions(char *s)
 {
-	//查找action,并将其自s中分离，返回action的key
+	//查找action,并将其自s中分离，返回action的起始位置
     s = strstr(s, "action");
     if (s) {
         *s = '\0';

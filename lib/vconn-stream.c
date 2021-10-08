@@ -146,7 +146,7 @@ vconn_stream_recv__(struct vconn_stream *s, int rx_len)
 }
 
 static int
-vconn_stream_recv(struct vconn *vconn, struct ofpbuf **bufferp)
+vconn_stream_recv(struct vconn *vconn, struct ofpbuf **bufferp/*出参，收取到的消息*/)
 {
     struct vconn_stream *s = vconn_stream_cast(vconn);
     const struct ofp_header *oh;
@@ -159,6 +159,7 @@ vconn_stream_recv(struct vconn *vconn, struct ofpbuf **bufferp)
 
     /* Read ofp_header. */
     if (s->rxbuf->size < sizeof(struct ofp_header)) {
+        /*先收取ofp_header*/
         int retval = vconn_stream_recv__(s, sizeof(struct ofp_header));
         if (retval) {
             return retval;
@@ -167,11 +168,13 @@ vconn_stream_recv(struct vconn *vconn, struct ofpbuf **bufferp)
 
     /* Read payload. */
     oh = s->rxbuf->data;
-    rx_len = ntohs(oh->length);
+    rx_len = ntohs(oh->length);/*取消息长度*/
     if (rx_len < sizeof(struct ofp_header)) {
+        /*数据问题，报错*/
         VLOG_ERR_RL(&rl, "received too-short ofp_header (%d bytes)", rx_len);
         return EPROTO;
     } else if (s->rxbuf->size < rx_len) {
+        /*收取消息*/
         int retval = vconn_stream_recv__(s, rx_len);
         if (retval) {
             return retval;

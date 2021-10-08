@@ -3536,6 +3536,7 @@ miniflow_expand(const struct miniflow *src, struct flow *dst)
 bool
 miniflow_equal(const struct miniflow *a, const struct miniflow *b)
 {
+    /*比对两个miniflow是否相等*/
     const uint64_t *ap = miniflow_get_values(a);
     const uint64_t *bp = miniflow_get_values(b);
 

@@ -145,7 +145,7 @@ ofputil_flow_mod_flags_format(struct ds *s, enum ofputil_flow_mod_flags flags)
  * Does not validate the flow_mod actions.  The caller should do that, with
  * ofpacts_check(). */
 enum ofperr
-ofputil_decode_flow_mod(struct ofputil_flow_mod *fm,
+ofputil_decode_flow_mod(struct ofputil_flow_mod *fm/*出参，转换消息为fm*/,
                         const struct ofp_header *oh,
                         enum ofputil_protocol protocol,
                         const struct tun_table *tun_table,
@@ -1481,9 +1481,9 @@ parse_subfield(const char *name, const char *str_value, struct match *match,
 }
 
 static char * OVS_WARN_UNUSED_RESULT
-parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string/*规则*/,
-                const struct ofputil_port_map *port_map,
-                const struct ofputil_table_map *table_map,
+parse_ofp_str__(struct ofputil_flow_mod *fm/*出参，解析字符串规则后生成*/, int command, char *string/*规则*/,
+                const struct ofputil_port_map *port_map/*port number与port名称的映射*/,
+                const struct ofputil_table_map *table_map/*table number与table名称的映射*/,
                 enum ofputil_protocol *usable_protocols)
 {
     enum {
@@ -1564,11 +1564,11 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string/*规则*/
     };
     /* For modify, by default, don't update the cookie. */
     if (command == OFPFC_MODIFY || command == OFPFC_MODIFY_STRICT) {
-        fm->new_cookie = OVS_BE64_MAX;
+        fm->new_cookie = OVS_BE64_MAX;/*modify时不容许变更cookie*/
     }
 
     if (fields & F_ACTIONS) {
-    	//如果有action,则解析action
+    	//如果有action,则返回action起始位置
         act_str = ofp_extract_actions(string);
         if (!act_str) {
         	//没有找到合法的action value,报错
@@ -1576,21 +1576,21 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string/*规则*/
         }
     }
 
+    //当前string指向的是filter配置，开始解析一个key,value
     struct match match = MATCH_CATCHALL_INITIALIZER;
-    //自string中解析一个key,value
     while (ofputil_parse_key_value(&string, &name, &value)) {
         const struct ofp_protocol *p;
         const struct mf_field *mf;
         char *error = NULL;
 
         if (ofp_parse_protocol(name, &p)) {
-        	//用户指定了协议,设置链路层协议
+            //用户指定了协议,设置链路层协议
             match_set_dl_type(&match, htons(p->dl_type));
             if (p->nw_proto) {
             	//设置网络层协议
                 match_set_nw_proto(&match, p->nw_proto);
             }
-            //设置报文类型
+            //设置报文类型必须是以太包
             match_set_default_packet_type(&match);
         } else if (!strcmp(name, "eth")) {
         	//置报文类型为以太网帧
@@ -1616,6 +1616,7 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string/*规则*/
             error = ofp_parse_field(mf, value, port_map,
                                     &match, usable_protocols);
         } else if (strchr(name, '[')) {
+            /*name包含'[',采用subfield模式进行匹配*/
             error = parse_subfield(name, value, &match, usable_protocols);
         } else {
             if (!*value) {
@@ -1623,6 +1624,7 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string/*规则*/
             }
 
             if (!strcmp(name, "table")) {
+                /*匹配的表名*/
                 if (!ofputil_table_from_string(value, table_map,
                                                &fm->table_id)) {
                     return xasprintf("unknown table \"%s\"", value);
@@ -1631,18 +1633,21 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string/*规则*/
                     *usable_protocols &= OFPUTIL_P_TID;
                 }
             } else if (fields & F_OUT_PORT && !strcmp(name, "out_port")) {
+                /*匹配出接口*/
                 if (!ofputil_port_from_string(value, port_map,
                                               &fm->out_port)) {
                     error = xasprintf("%s is not a valid OpenFlow port",
                                       value);
                 }
             } else if (fields & F_OUT_PORT && !strcmp(name, "out_group")) {
+                /*匹配输出group*/
                 *usable_protocols &= OFPUTIL_P_OF11_UP;
                 if (!ofputil_group_from_string(value, &fm->out_group)) {
                     error = xasprintf("%s is not a valid OpenFlow group",
                                       value);
                 }
             } else if (fields & F_PRIORITY && !strcmp(name, "priority")) {
+                /*优先级*/
                 uint16_t priority = 0;
 
                 error = str_to_u16(value, name, &priority);
@@ -1654,6 +1659,7 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string/*规则*/
             } else if (fields & F_IMPORTANCE && !strcmp(name, "importance")) {
                 error = str_to_u16(value, name, &fm->importance);
             } else if (!strcmp(name, "cookie")) {
+                /*填充cookie/cookie-mask*/
                 char *mask = strchr(value, '/');
 
                 if (mask) {
@@ -1729,6 +1735,8 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string/*规则*/
          * default of zero. */
         fm->new_cookie = htonll(0);
     }
+
+    /*容许带actions,这里解析action*/
     if (fields & F_ACTIONS) {
         enum ofputil_protocol action_usable_protocols;
         struct ofpbuf ofpacts;
@@ -1800,7 +1808,7 @@ parse_ofp_str__(struct ofputil_flow_mod *fm, int command, char *string/*规则*/
  * fm->match. */
 char * OVS_WARN_UNUSED_RESULT
 parse_ofp_str(struct ofputil_flow_mod *fm, int command, const char *str_,
-              const struct ofputil_port_map *port_map,
+              const struct ofputil_port_map *port_map/*port名称与port number映射*/,
               const struct ofputil_table_map *table_map,
               enum ofputil_protocol *usable_protocols)
 {
@@ -1828,10 +1836,10 @@ parse_ofp_str(struct ofputil_flow_mod *fm, int command, const char *str_,
  * Returns NULL if successful, otherwise a malloc()'d string describing the
  * error.  The caller is responsible for freeing the returned string. */
 char * OVS_WARN_UNUSED_RESULT
-parse_ofp_flow_mod_str(struct ofputil_flow_mod *fm, const char *string,
+parse_ofp_flow_mod_str(struct ofputil_flow_mod *fm, const char *string/*规则*/,
                        const struct ofputil_port_map *port_map,
                        const struct ofputil_table_map *table_map,
-                       int command/*规则操作符*/,
+                       int command/*规则操作命令*/,
                        enum ofputil_protocol *usable_protocols)
 {
     //解析规则字符串
@@ -1878,6 +1886,8 @@ parse_ofp_flow_mod_file(const char *file_name,
     *fms = NULL;
     *n_fms = 0;
 
+
+    /*取对应的规则文件*/
     stream = !strcmp(file_name, "-") ? stdin : fopen(file_name, "r");
     if (stream == NULL) {
         return xasprintf("%s: open failed (%s)",
@@ -1887,6 +1897,7 @@ parse_ofp_flow_mod_file(const char *file_name,
     allocated_fms = *n_fms;
     ds_init(&s);
     line_number = 0;
+    /*自stream中获取一行数据，移除注释*/
     while (!ds_get_preprocessed_line(&s, stream, &line_number)) {
         char *error;
         enum ofputil_protocol usable;

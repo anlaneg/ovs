@@ -27,7 +27,7 @@
  *
  * This structure should be treated as opaque by implementation. */
 struct stream {
-    const struct stream_class *class;
+    const struct stream_class *class;/*fd使用stream_fd_class，*/
     int state;
     int error;
     replay_file_t replay_wfd;

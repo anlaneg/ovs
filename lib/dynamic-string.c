@@ -251,23 +251,24 @@ ds_get_line(struct ds *ds, FILE *file)
 int
 ds_get_preprocessed_line(struct ds *ds, FILE *file, int *line_numberp)
 {
+    /*自文件中读取一行数据*/
     while (!ds_get_line(ds, file)) {
         char *line = ds_cstr(ds);
         char *comment;
 
         if (line_numberp) {
-            ++*line_numberp;
+            ++*line_numberp;/*增加行号*/
         }
 
         /* Delete comments. */
         comment = strchr(line, '#');
         if (comment) {
-            *comment = '\0';
+            *comment = '\0';/*移除注释部分*/
         }
 
         /* Return successfully unless the line is all spaces. */
         if (line[strspn(line, " \t\n")] != '\0') {
-            return 0;
+            return 0;/*查找到合适的行*/
         }
     }
     return EOF;

@@ -147,7 +147,7 @@ ofputil_port_to_ofp11(ofp_port_t ofp10_port)
  * range as described in include/openflow/openflow-1.1.h. */
 bool
 ofputil_port_from_string(const char *s,
-                         const struct ofputil_port_map *port_map,
+                         const struct ofputil_port_map *port_map/*名称与port_num映射*/,
                          ofp_port_t *portp)
 {
     unsigned int port32; /* int is at least 32 bits wide. */
@@ -161,10 +161,12 @@ ofputil_port_from_string(const char *s,
         if (port32 < ofp_to_u16(OFPP_MAX)) {
             /* Pass. */
         } else if (port32 < ofp_to_u16(OFPP_FIRST_RESV)) {
+            /*大于OFPP_MAX,但小于OFPP_FIRST_RESV，则报错，预留范围。*/
             VLOG_WARN("port %u is a reserved OF1.0 port number that will "
                       "be translated to %u when talking to an OF1.1 or "
                       "later controller", port32, port32 + OFPP11_OFFSET);
         } else if (port32 <= ofp_to_u16(OFPP_LAST_RESV)) {
+            /*这类转换为预留名称，例如OFPP_LOCAL*/
             char name[OFP_MAX_PORT_NAME_LEN];
 
             ofputil_port_to_string(u16_to_ofp(port32), NULL,
@@ -181,6 +183,7 @@ ofputil_port_from_string(const char *s,
             port32 -= OFPP11_OFFSET;
         }
 
+        /*转为port号*/
         *portp = u16_to_ofp(port32);
         return true;
     } else {
@@ -195,6 +198,7 @@ ofputil_port_from_string(const char *s,
         };
         const struct pair *p;
 
+        /*检查是否为预留名称*/
         for (p = pairs; p < &pairs[ARRAY_SIZE(pairs)]; p++) {
             if (!strcasecmp(s, p->name)) {
                 *portp = p->value;
@@ -204,8 +208,10 @@ ofputil_port_from_string(const char *s,
 
         ofp_port_t ofp_port = OFPP_NONE;
         if (s[0] != '"') {
+            /*名称不能引号开头，在port_map中查询*/
             ofp_port = ofputil_port_map_get_number(port_map, s);
         } else {
+            /*名称中有引号，去除引号，在port_map中查询*/
             size_t length = strlen(s);
             char *name = NULL;
             if (length > 1

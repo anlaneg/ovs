@@ -1928,7 +1928,7 @@ ofproto_run(struct ofproto *p)
     }
 
     //处理openflow的消息的增删改
-    connmgr_run(p->connmgr, handle_openflow);
+    connmgr_run(p->connmgr, handle_openflow/*处理openflow*/);
 
     return error;
 }
@@ -4384,6 +4384,7 @@ hash_cookie(ovs_be64 cookie)
     return hash_uint64((OVS_FORCE uint64_t)cookie);
 }
 
+/*向cookies hash表中加入，方便通过cookie进行hash查询*/
 static void
 cookies_insert(struct ofproto *ofproto, struct rule *rule)
     OVS_REQUIRES(ofproto_mutex)
@@ -4392,6 +4393,7 @@ cookies_insert(struct ofproto *ofproto, struct rule *rule)
                   hash_cookie(rule->flow_cookie));
 }
 
+/*移除cookies hash表中的规则*/
 static void
 cookies_remove(struct ofproto *ofproto, struct rule *rule)
     OVS_REQUIRES(ofproto_mutex)
@@ -5241,12 +5243,13 @@ add_flow_start(struct ofproto *ofproto, struct ofproto_flow_mod *ofm)
 {
     struct rule *old_rule = NULL;
     struct rule *new_rule = ofm->temp_rule;
+    /*规则对应的action与table*/
     const struct rule_actions *actions = rule_get_actions(new_rule);
     struct oftable *table = &ofproto->tables[new_rule->table_id];
     enum ofperr error;
 
     /* Must check actions while holding ofproto_mutex to avoid a race. */
-    //合法性检查
+    //action合法性检查
     error = ofproto_check_ofpacts(ofproto, actions->ofpacts,
                                   actions->ofpacts_len);
     if (error) {
@@ -5260,7 +5263,7 @@ add_flow_start(struct ofproto *ofproto, struct ofproto_flow_mod *ofm)
                                                                ofm->version));
     if (!old_rule) {
         /* Check for overlap, if requested. */
-    	//如果要求检查overlap就检查
+    	//不存在旧的规则，如果要求检查overlap就检查
         if (new_rule->flags & OFPUTIL_FF_CHECK_OVERLAP
             && classifier_rule_overlaps(&table->cls, &new_rule->cr,
                                         ofm->version)) {
@@ -5284,9 +5287,11 @@ add_flow_start(struct ofproto *ofproto, struct ofproto_flow_mod *ofm)
     }
 
     if (old_rule) {
+        /*记录需要移除的规则*/
         rule_collection_add(&ofm->old_rules, old_rule);
     }
     /* Take ownership of the temp_rule. */
+    /*记录需要添加的规则*/
     rule_collection_add(&ofm->new_rules, new_rule);
     ofm->temp_rule = NULL;
 
@@ -6276,6 +6281,7 @@ static enum ofperr
 handle_flow_mod(struct ofconn *ofconn, const struct ofp_header *oh/*openflow消息头*/)
     OVS_EXCLUDED(ofproto_mutex)
 {
+    /*连接对应的ofproto*/
     struct ofproto *ofproto = ofconn_get_ofproto(ofconn);
     struct ofputil_flow_mod fm;
     uint64_t ofpacts_stub[1024 / 8];
@@ -6307,7 +6313,7 @@ handle_flow_mod(struct ofconn *ofconn, const struct ofp_header *oh/*openflow消�
 
 //处理流表的修改
 static enum ofperr
-handle_flow_mod__(struct ofproto *ofproto, const struct ofputil_flow_mod *fm,
+handle_flow_mod__(struct ofproto *ofproto, const struct ofputil_flow_mod *fm/*待处理的flow*/,
                   const struct openflow_mod_requester *req)
     OVS_EXCLUDED(ofproto_mutex)
 {
@@ -6325,6 +6331,7 @@ handle_flow_mod__(struct ofproto *ofproto, const struct ofputil_flow_mod *fm,
     /*开始流表修改*/
     error = ofproto_flow_mod_start(ofproto, &ofm);
     if (!error) {
+        /*变更table version*/
         ofproto_bump_tables_version(ofproto);
         error = ofproto_flow_mod_finish(ofproto, &ofm, req);        
         ofmonitor_flush(ofproto->connmgr);
@@ -8123,12 +8130,12 @@ ofproto_flow_mod_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
 
     switch (ofm->command) {
     case OFPFC_ADD:
-        /*执行规则添加*/
+        /*初始化规则添加*/
         check_buffer_id = true;
         error = add_flow_init(ofproto, ofm, fm);
         break;
     case OFPFC_MODIFY:
-        /*执行规则修改*/
+        /*初始化规则修改*/
         check_buffer_id = true;
         error = modify_flows_init_loose(ofproto, ofm, fm);
         break;
@@ -8168,15 +8175,18 @@ ofproto_flow_mod_start(struct ofproto *ofproto, struct ofproto_flow_mod *ofm)
 
     switch (ofm->command) {
     case OFPFC_ADD:
+        /*规则添加*/
         error = add_flow_start(ofproto, ofm);
         break;
     case OFPFC_MODIFY:
+        /*规则修改*/
         error = modify_flows_start_loose(ofproto, ofm);
         break;
     case OFPFC_MODIFY_STRICT:
         error = modify_flow_start_strict(ofproto, ofm);
         break;
     case OFPFC_DELETE:
+        /*规则删除*/
         error = delete_flows_start_loose(ofproto, ofm);
         break;
     case OFPFC_DELETE_STRICT:
@@ -9291,6 +9301,7 @@ ofproto_rule_insert__(struct ofproto *ofproto, struct rule *rule)
     if (rule->hard_timeout || rule->idle_timeout) {
         ovs_list_insert(&ofproto->expirable, &rule->expirable);
     }
+    /*向cookie hashtable中查询*/
     cookies_insert(ofproto, rule);
     eviction_group_add_rule(rule);
     if (actions->has_meter) {

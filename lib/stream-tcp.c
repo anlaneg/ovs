@@ -42,6 +42,7 @@ static int
 new_tcp_stream(char *name, int fd, int connect_status, struct stream **streamp)
 {
     if (connect_status == 0) {
+        /*设置tcp不delay*/
         setsockopt_tcp_nodelay(fd);
     }
 
@@ -53,6 +54,7 @@ tcp_open(const char *name, char *suffix, struct stream **streamp, uint8_t dscp)
 {
     int fd, error;
 
+    /*打开tcp socket，并返回fd*/
     error = inet_open_active(SOCK_STREAM, suffix, -1, NULL, &fd, dscp);
     if (fd >= 0) {
         return new_tcp_stream(xstrdup(name), fd, error, streamp);
@@ -62,6 +64,7 @@ tcp_open(const char *name, char *suffix, struct stream **streamp, uint8_t dscp)
     }
 }
 
+/*tcp stream class*/
 const struct stream_class tcp_stream_class = {
     "tcp",                      /* name */
     true,                       /* needs_probes */

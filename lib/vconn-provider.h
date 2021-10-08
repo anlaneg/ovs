@@ -54,7 +54,7 @@ static inline void vconn_assert_class(const struct vconn *vconn,
 
 struct vconn_class {
     /* Prefix for connection names, e.g. "nl", "tcp". */
-    const char *name;
+    const char *name;/*连接名称*/
 
     /* Attempts to connect to an OpenFlow device.  'name' is the full
      * connection name provided by the user, e.g. "tcp:1.2.3.4".  This name is
@@ -99,7 +99,7 @@ struct vconn_class {
      *
      * The recv function must not block waiting for a packet to arrive.  If no
      * packets have been received, it should return EAGAIN. */
-    int (*recv)(struct vconn *vconn, struct ofpbuf **msgp);
+    int (*recv)(struct vconn *vconn, struct ofpbuf **msgp/*出参，收取到的消息*/);
 
     /* Tries to queue 'msg' for transmission on 'vconn'.  If successful,
      * returns 0, in which case ownership of 'msg' is transferred to the vconn.

@@ -341,7 +341,7 @@ struct classifier {
     //用于指出不同的mask段
     uint8_t flow_segments[CLS_MAX_INDICES]; /* Flow segment boundaries to use
                                              * for staged lookup. */
-    //按掩码对应不同的子表（方便查询）
+    //按掩码对应不同的子表（hashtable 方便查询）
     struct cmap subtables_map;      /* Contains "struct cls_subtable"s.  */
     //存储子表
     struct pvector subtables;

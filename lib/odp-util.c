@@ -5484,6 +5484,7 @@ tun_flags_to_attr(struct ofpbuf *a, const void *data_)
         nl_msg_put_flag(a, OVS_TUNNEL_KEY_ATTR_DONT_FRAGMENT);
     }
     if (*flags & FLOW_TNL_F_CSUM) {
+        /*填入tunnel csum flags*/
         nl_msg_put_flag(a, OVS_TUNNEL_KEY_ATTR_CSUM);
     }
     if (*flags & FLOW_TNL_F_OAM) {

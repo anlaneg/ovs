@@ -543,7 +543,8 @@ classifier_replace(struct classifier *cls, const struct cls_rule *rule,
     //查找此rule应从属于哪个子表
     subtable = find_subtable(cls, rule->match.mask);
     if (!subtable) {
-        subtable = insert_subtable(cls, rule->match.mask);//创建一张新的子表插入
+        //创建一张新的子表插入
+        subtable = insert_subtable(cls, rule->match.mask);
     }
 
     /* Compute hashes in segments. */
@@ -1201,6 +1202,7 @@ classifier_find_rule_exactly(const struct classifier *cls,
         return NULL;
     }
 
+    /*检查target是否在subtable中存在*/
     head = find_equal(subtable, target->match.flow,
                       miniflow_hash_in_minimask(target->match.flow,
                                                 target->match.mask, 0));
@@ -1212,6 +1214,7 @@ classifier_find_rule_exactly(const struct classifier *cls,
     //发现对应的rule，如果与target优先级相等，且可见，则可以返回
     CLS_MATCH_FOR_EACH (rule, head) {
         if (rule->priority < target->priority) {
+            /*发现的规则优先级不如target,认为没查找到*/
             break; /* Not found. */
         }
         if (rule->priority == target->priority
@@ -1288,7 +1291,7 @@ classifier_rule_overlaps(const struct classifier *cls,
         minimask_combine(&m.mask, target->match.mask, &subtable->mask,
                          m.storage);
 
-        //检查是否会冲突(冲突的前提是两个flow按位与不相等时，对应的key恰好为０）
+        //检查是否会冲突(冲突的前提是两个flow按位异或相等时，对应的key恰好为０）
         RCULIST_FOR_EACH (rule, node, &subtable->rules_list) {
             if (rule->priority == target->priority
                 && miniflow_equal_in_minimask(target->match.flow,
@@ -1454,7 +1457,8 @@ find_subtable(const struct classifier *cls, const struct minimask *mask)
     //遍历挂接在subtables_map上的cls_subtable
     CMAP_FOR_EACH_WITH_HASH (subtable, cmap_node, minimask_hash(mask, 0),
                              &cls->subtables_map) {
-        if (minimask_equal(mask, &subtable->mask)) {//如果当前的master与此子表对应的mask相等，则返回此子表
+        //如果当前的master与此子表对应的mask相等，则返回此子表
+        if (minimask_equal(mask, &subtable->mask)) {
             return subtable;
         }
     }

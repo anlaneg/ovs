@@ -2115,6 +2115,7 @@ dpctl_ct_set_limits(int argc, const char *argv[],
     while (i < argc) {
         uint16_t zone;
         uint32_t limit;
+        /*每一个参数，对应一个zone/limit配置*/
         if (!ct_dpif_parse_zone_limit_tuple(argv[i++], &zone, &limit, &ds)) {
             error = EINVAL;
             goto error;
@@ -2180,16 +2181,19 @@ dpctl_ct_del_limits(int argc, const char *argv[],
     int i =  dp_arg_exists(argc, argv) ? 2 : 1;
     struct ovs_list zone_limits = OVS_LIST_INITIALIZER(&zone_limits);
 
+    /*打开dpif*/
     error = opt_dpif_open(argc, argv, dpctl_p, 3, &dpif);
     if (error) {
         return error;
     }
 
+    /*解析一个zone limit配置*/
     error = parse_ct_limit_zones(argv[i], &zone_limits, &ds);
     if (error) {
         goto error;
     }
 
+    /*移除配置的zone_limit*/
     error = ct_dpif_del_limits(dpif, &zone_limits);
     if (!error) {
         goto out;
@@ -2217,11 +2221,13 @@ dpctl_ct_get_limits(int argc, const char *argv[],
     struct ovs_list list_query = OVS_LIST_INITIALIZER(&list_query);
     struct ovs_list list_reply = OVS_LIST_INITIALIZER(&list_reply);
 
+    /*打开dpif*/
     int error = opt_dpif_open(argc, argv, dpctl_p, 3, &dpif);
     if (error) {
         return error;
     }
 
+    /*解析一个zone查询*/
     if (argc > i) {
         error = parse_ct_limit_zones(argv[i], &list_query, &ds);
         if (error) {
@@ -2229,6 +2235,7 @@ dpctl_ct_get_limits(int argc, const char *argv[],
         }
     }
 
+    /*向dp请求limit配置*/
     error = ct_dpif_get_limits(dpif, &default_limit, &list_query,
                                &list_reply);
     if (!error) {

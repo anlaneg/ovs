@@ -384,6 +384,7 @@ stream_recv(struct stream *stream, void *buffer, size_t n)
 
     retval = retval ? -retval
              : n == 0 ? 0
+             /*收取数据*/
              : (stream->class->recv)(stream, buffer, n);
 
     stream_replay_write(stream, buffer, retval, true);
@@ -761,6 +762,7 @@ stream_open_with_default_port(const char *name_,
         //使用默认地址，并拼新串
         name = xasprintf("%s:%d", name_, default_port);
     } else {
+        /*指定了端口，直接复制name*/
         name = xstrdup(name_);
     }
 

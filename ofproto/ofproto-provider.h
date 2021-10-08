@@ -104,8 +104,8 @@ struct ofproto {//openflow 交换机
 
     /* Flow tables. */
     long long int eviction_group_timer; /* For rate limited reheapification. */
-    struct oftable *tables;//指向n个表，
-    int n_tables;//有多少个表
+    struct oftable *tables;//指向规则表
+    int n_tables;//有多少个规则表
     //当前表版本号（只要有一个表发生变化，版本号就发生变化）
     ovs_version_t tables_version;  /* Controls which rules are visible to
                                     * table lookups. */
@@ -206,6 +206,7 @@ void ofproto_port_set_state(struct ofport *, enum ofputil_port_state);
  */
 enum oftable_flags {
     OFTABLE_HIDDEN = 1 << 0,   /* Hide from most OpenFlow operations. */
+    /*表内容为只读*/
     OFTABLE_READONLY = 1 << 1  /* Don't allow OpenFlow controller to change
                                   this table. */
 };

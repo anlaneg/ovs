@@ -179,6 +179,7 @@ ct_dpif_get_tcp_seq_chk(struct dpif *dpif, bool *enabled)
             : EOPNOTSUPP);
 }
 
+/*向dp设置ct limit*/
 int
 ct_dpif_set_limits(struct dpif *dpif, const uint32_t *default_limit,
                    const struct ovs_list *zone_limits)
@@ -189,6 +190,7 @@ ct_dpif_set_limits(struct dpif *dpif, const uint32_t *default_limit,
             : EOPNOTSUPP);
 }
 
+/*自dp获取ct limit配置*/
 int
 ct_dpif_get_limits(struct dpif *dpif, uint32_t *default_limit,
                    const struct ovs_list *zone_limits_in,
@@ -201,6 +203,7 @@ ct_dpif_get_limits(struct dpif *dpif, uint32_t *default_limit,
             : EOPNOTSUPP);
 }
 
+/*自dp移除ct limit配置*/
 int
 ct_dpif_del_limits(struct dpif *dpif, const struct ovs_list *zone_limits)
 {
@@ -330,6 +333,7 @@ ct_dpif_format_entry(const struct ct_dpif_entry *entry, struct ds *ds,
     }
 }
 
+/*从ipproto格式化协议号或者协议名*/
 void
 ct_dpif_format_ipproto(struct ds *ds, uint16_t ipproto)
 {

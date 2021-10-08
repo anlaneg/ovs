@@ -150,8 +150,8 @@ nl_msg_put_nlmsghdr(struct ofpbuf *msg,
  * nl_msg_put_nlmsghdr() should be used to compose Netlink messages that are
  * not Generic Netlink messages. */
 void
-nl_msg_put_genlmsghdr(struct ofpbuf *msg, size_t expected_payload,
-                      int family, uint32_t flags, uint8_t cmd, uint8_t version)
+nl_msg_put_genlmsghdr(struct ofpbuf *msg/*消息buffer*/, size_t expected_payload,
+                      int family, uint32_t flags, uint8_t cmd/*消息命令*/, uint8_t version/*版本号*/)
 {
     struct genlmsghdr *genlmsghdr;
 

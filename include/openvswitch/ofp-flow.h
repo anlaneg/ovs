@@ -109,7 +109,7 @@ struct ofputil_flow_mod {
     uint32_t buffer_id;
     ofp_port_t out_port;
     uint32_t out_group;
-    enum ofputil_flow_mod_flags flags;
+    enum ofputil_flow_mod_flags flags;/*规则的配置标记，例如reset记数等*/
     uint16_t importance;     /* Eviction precedence. */
     /*flow对应的action*/
     struct ofpact *ofpacts;  /* Series of "struct ofpact"s. */

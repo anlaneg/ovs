@@ -1965,6 +1965,7 @@ minimatch_to_string(const struct minimatch *match,
     return match_to_string(&megamatch, port_map, priority);
 }
 
+/*minimatch要求匹配recirc_id*/
 static bool
 minimatch_has_default_recirc_id(const struct minimatch *m)
 {
@@ -1974,6 +1975,7 @@ minimatch_has_default_recirc_id(const struct minimatch *m)
                                    mask_recirc_id == 0);
 }
 
+/*minimatch要求匹配dp_hash*/
 static bool
 minimatch_has_default_dp_hash(const struct minimatch *m)
 {
@@ -1986,6 +1988,7 @@ minimatch_has_default_dp_hash(const struct minimatch *m)
 bool
 minimatch_has_default_hidden_fields(const struct minimatch *m)
 {
+    /*是否有hidden fields*/
     return (minimatch_has_default_recirc_id(m)
             && minimatch_has_default_dp_hash(m));
 }

@@ -4493,6 +4493,7 @@ rule_dpif_lookup_in_table(struct ofproto_dpif *ofproto, ovs_version_t version,
 {
 	//取出此表对应的分类器
     struct classifier *cls = &ofproto->up.tables[table_id].cls;
+    /*执行查询*/
     return rule_dpif_cast(rule_from_cls_rule(classifier_lookup(cls, version,
                                                                flow, wc)));
 }
