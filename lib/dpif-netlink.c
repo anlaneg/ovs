@@ -772,6 +772,7 @@ dpif_netlink_get_stats(const struct dpif *dpif_, struct dpif_dp_stats *stats)
             stats->n_hit    = get_32aligned_u64(&dp.stats->n_hit);
             stats->n_missed = get_32aligned_u64(&dp.stats->n_missed);
             stats->n_lost   = get_32aligned_u64(&dp.stats->n_lost);
+            //记录取到的flows总数
             stats->n_flows  = get_32aligned_u64(&dp.stats->n_flows);
         }
 
@@ -4865,6 +4866,7 @@ dpif_netlink_dp_from_ofpbuf(struct dpif_netlink_dp *dp/*出参，解析buf获得
     dp->dp_ifindex = ovs_header->dp_ifindex;
     dp->name = nl_attr_get_string(a[OVS_DP_ATTR_NAME]);
     if (a[OVS_DP_ATTR_STATS]) {
+        //取datapath的状态统计信息
         dp->stats = nl_attr_get(a[OVS_DP_ATTR_STATS]);
     }
 

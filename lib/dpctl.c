@@ -622,12 +622,13 @@ show_dpif(struct dpif *dpif, struct dpctl_params *dpctl_p)
     struct dpif_dp_stats stats;
     struct netdev *netdev;
 
+    //显示datapath名称
     dpctl_print(dpctl_p, "%s:\n", dpif_name(dpif));
     if (!dpif_get_dp_stats(dpif, &stats)) {
     	//显示datapath统计信息
         dpctl_print(dpctl_p, "  lookups: hit:%"PRIu64" missed:%"PRIu64
                              " lost:%"PRIu64"\n  flows: %"PRIu64"\n",
-                    stats.n_hit, stats.n_missed, stats.n_lost, stats.n_flows);
+                    stats.n_hit, stats.n_missed, stats.n_lost, stats.n_flows/*流表总数*/);
         if (stats.n_masks != UINT32_MAX) {
             uint64_t n_pkts = stats.n_hit + stats.n_missed;
             double avg = n_pkts ? (double) stats.n_mask_hit / n_pkts : 0.0;
