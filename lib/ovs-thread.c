@@ -357,9 +357,9 @@ ovs_barrier_block(struct ovs_barrier *barrier)
 DEFINE_EXTERN_PER_THREAD_DATA(ovsthread_id, OVSTHREAD_ID_UNSET);
 
 struct ovsthread_aux {
-    void *(*start)(void *);
-    void *arg;
-    char name[16];
+    void *(*start)(void *);/*线程入口函数*/
+    void *arg;/*线程参数*/
+    char name[16];/*线程名称*/
 };
 
 //通过原子变量next_id对thread_id赋值
@@ -372,6 +372,7 @@ ovsthread_id_init(void)
     return *ovsthread_id_get() = atomic_count_inc(&next_id);
 }
 
+/*运行ovs线程*/
 static void *
 ovsthread_wrapper(void *aux_)
 {
@@ -392,9 +393,11 @@ ovsthread_wrapper(void *aux_)
     //设置线程名称
     set_subprogram_name(subprogram_name);
     free(subprogram_name);
+    /*线程名称变更，重新获取rcu私有变量*/
     ovsrcu_quiesce_end();
 
-    return aux.start(aux.arg);//执行线程函数
+    //执行线程函数
+    return aux.start(aux.arg);
 }
 
 static void
@@ -418,8 +421,9 @@ set_min_stack_size(pthread_attr_t *attr, size_t min_stacksize)
 
 /* Starts a thread that calls 'start(arg)'.  Sets the thread's name to 'name'
  * (suffixed by its ovsthread_id()).  Returns the new thread's pthread_t. */
+/*ovs线程创建*/
 pthread_t
-ovs_thread_create(const char *name, void *(*start)(void *), void *arg)
+ovs_thread_create(const char *name/*线程名称*/, void *(*start/*线程执行函数*/)(void *), void *arg/*线程参数*/)
 {
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
     struct ovsthread_aux *aux;
@@ -446,7 +450,7 @@ ovs_thread_create(const char *name, void *(*start)(void *), void *arg)
     //标明进入多线程环境
     multithreaded = true;
     aux = xmalloc(sizeof *aux);
-    //设置线程入口
+    //初始化aux,设置线程入口,参数，名称
     aux->start = start;
     aux->arg = arg;
     ovs_strlcpy(aux->name, name, sizeof aux->name);
@@ -460,7 +464,7 @@ ovs_thread_create(const char *name, void *(*start)(void *), void *arg)
     pthread_attr_init(&attr);
     set_min_stack_size(&attr, 512 * 1024);
 
-    /*创建ovs线程*/
+    /*创建ovs线程，并运行*/
     error = pthread_create(&thread, &attr, ovsthread_wrapper, aux);
     if (error) {
         ovs_abort(error, "pthread_create failed");

@@ -51,6 +51,7 @@ struct ovsrcu_perthread {
     uint64_t seqno;
     //各线程提交的回调
     struct ovsrcu_cbset *cbset;
+    /*当前线程名称*/
     char name[16];              /* This thread's name. */
 };
 
@@ -61,10 +62,10 @@ static struct seq *global_seqno;
 static pthread_key_t perthread_key;
 //存储所有ovsrcu-thread
 static struct ovs_list ovsrcu_threads;
-//保护ovsrcu-threads锁
+//保护ovsrcu-threads，采用此锁
 static struct ovs_mutex ovsrcu_threads_mutex;
 
-//全局等待执行的cbsets，（在这个之前先在pthread中的cbset中保存）
+//全局等待执行的cbsets，（在存放到这个之前，先在pthread中的cbset中保存）
 static struct guarded_list flushed_cbsets;
 //用于代表flushed_cbsets是否有变更,此seq有变更，则等待此seq的就可被wakeup,然后执行相应回调集合
 static struct seq *flushed_cbsets_seq;
@@ -87,9 +88,10 @@ ovsrcu_perthread_get(void)
 
     ovsrcu_init_module();
 
+    /*取当前线程的ovsrcu-perthread，如果其不存在，则创建它*/
     perthread = pthread_getspecific(perthread_key);
     if (!perthread) {
-        //当前线程的ovsrcu-perthead不存在，创建它
+        //取当前线程名称
         const char *name = get_subprogram_name();
 
         perthread = xmalloc(sizeof *perthread);
@@ -240,7 +242,7 @@ ovsrcu_synchronize(void)
         return;
     }
 
-    /*系统当前的全局seq*/
+    /*读系统当前的全局seq*/
     target_seqno = seq_read(global_seqno);
     //将当前线程cbset刷入全局cbset通知waiter干活，并销毁当前线程的记录
     ovsrcu_quiesce_start();
@@ -277,7 +279,7 @@ ovsrcu_synchronize(void)
             warning_threshold *= 2;
         }
 
-        //设置此线程的建意到期时间为当前时间+warning_threshold
+        //设置此线程的建议到期时间为当前时间+warning_threshold
         poll_timer_wait_until(start + warning_threshold);
 
         //添加seq waiter，如果global_seqno变更再醒过来

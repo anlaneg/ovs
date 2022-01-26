@@ -58,7 +58,7 @@ char *program_name;//保存进程名称
 
 /* Name for the currently running thread or process, for log messages, process
  * listings, and debuggers. */
-DEFINE_PER_THREAD_MALLOCED_DATA(char *, subprogram_name);
+DEFINE_PER_THREAD_MALLOCED_DATA(char *, subprogram_name);/*当前线程名称（per thread变量）*/
 
 /* --version option output. */
 static char *program_version;//进程版本号
@@ -636,6 +636,7 @@ ovs_set_program_name(const char *argv0, const char *version)
 const char *
 get_subprogram_name(void)
 {
+    /*取当前线程名称*/
     const char *name = subprogram_name_get();
     return name ? name : "";
 }

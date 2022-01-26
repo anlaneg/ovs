@@ -384,6 +384,7 @@ void xpthread_join(pthread_t, void **);
     static void                                         \
     NAME##_once_init(void)                              \
     {                                                   \
+        /*创建per thread变量*/\
         if (pthread_key_create(&NAME##_key, free)) {    \
             abort();                                    \
         }                                               \
@@ -392,6 +393,7 @@ void xpthread_join(pthread_t, void **);
     static void                                         \
     NAME##_init(void)                                   \
     {                                                   \
+        /*初始化per thread变量（只做一次）*/\
         static pthread_once_t once = PTHREAD_ONCE_INIT; \
         pthread_once(&once, NAME##_once_init);          \
     }                                                   \
@@ -399,12 +401,14 @@ void xpthread_join(pthread_t, void **);
     static TYPE                                         \
     NAME##_get_unsafe(void)                             \
     {                                                   \
+        /*取此thread对应的name变量（未考虑时否初始化）*/\
         return pthread_getspecific(NAME##_key);         \
     }                                                   \
                                                         \
     static OVS_UNUSED TYPE                              \
     NAME##_get(void)                                    \
     {                                                   \
+        /*取此thread对应的变量（如未初始化，则执行）*/\
         NAME##_init();                                  \
         return NAME##_get_unsafe();                     \
     }                                                   \
@@ -412,6 +416,7 @@ void xpthread_join(pthread_t, void **);
     static TYPE                                         \
     NAME##_set_unsafe(TYPE value)                       \
     {                                                   \
+        /*更新此thread对应的变量（未考虑初始化）*/\
         TYPE old_value = NAME##_get_unsafe();           \
         xpthread_setspecific(NAME##_key, value);        \
         return old_value;                               \
@@ -420,6 +425,7 @@ void xpthread_join(pthread_t, void **);
     static OVS_UNUSED TYPE                              \
     NAME##_set(TYPE value)                              \
     {                                                   \
+        /*更新此thread对应的变量*/\
         NAME##_init();                                  \
         return NAME##_set_unsafe(value);                \
     }

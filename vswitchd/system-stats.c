@@ -280,7 +280,9 @@ get_filesys_stats(struct smap *stats OVS_UNUSED)
 static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 static struct latch latch OVS_GUARDED_BY(mutex);
+/*记录当前system_stats的开启关闭情况*/
 static bool enabled;
+/*标记system_stats线程是否已创建*/
 static bool started OVS_GUARDED_BY(mutex);
 static struct smap *system_stats OVS_GUARDED_BY(mutex);
 
@@ -294,10 +296,13 @@ system_stats_enable(bool enable)
     if (enabled != enable) {
         ovs_mutex_lock(&mutex);
         if (enable) {
+            /*当前指明开启system_stats*/
             if (!started) {
+                /*之前还未开启，执行线程创建*/
                 ovs_thread_create("system_stats",
                                   system_stats_thread_func, NULL);
                 latch_init(&latch);
+                /*标记已创建*/
                 started = true;
             }
             discard_stats();
@@ -357,9 +362,11 @@ discard_stats(void) OVS_REQUIRES(mutex)
     }
 }
 
+/*system_stats线程运行函数*/
 static void *
 system_stats_thread_func(void *arg OVS_UNUSED)
 {
+    /*detach掉当前线程*/
     pthread_detach(pthread_self());
 
     for (;;) {
@@ -367,7 +374,7 @@ system_stats_thread_func(void *arg OVS_UNUSED)
         struct smap *stats;
 
         ovs_mutex_lock(&mutex);
-        while (!enabled) {
+        while (!enabled/*此功能之前未开启*/) {
             /* The thread is sleeping, potentially for a long time, and it's
              * not holding RCU protected references, so it makes sense to
              * quiesce */
