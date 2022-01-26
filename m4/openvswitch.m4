@@ -60,6 +60,34 @@ AC_DEFUN([OVS_CHECK_NDEBUG],
      [ndebug=false])
    AM_CONDITIONAL([NDEBUG], [test x$ndebug = xtrue])])
 
+dnl Checks for --enable-usdt-probes and defines HAVE_USDT if it is specified.
+AC_DEFUN([OVS_CHECK_USDT], [
+  AC_ARG_ENABLE(
+    [usdt-probes],
+    [AC_HELP_STRING([--enable-usdt-probes],
+                    [Enable User Statically Defined Tracing (USDT) probes])],
+    [case "${enableval}" in
+       (yes) usdt=true ;;
+       (no)  usdt=false ;;
+       (*) AC_MSG_ERROR([bad value ${enableval} for --enable-usdt-probes]) ;;
+     esac],
+    [usdt=false])
+
+  AC_MSG_CHECKING([whether USDT probes are enabled])
+  if test "$usdt" != true; then
+    AC_MSG_RESULT([no])
+  else
+    AC_MSG_RESULT([yes])
+
+    AC_CHECK_HEADER([sys/sdt.h], [],
+      [AC_MSG_ERROR([unable to find sys/sdt.h needed for USDT support])])
+
+    AC_DEFINE([HAVE_USDT_PROBES], [1],
+              [Define to 1 if USDT probes are enabled.])
+  fi
+  AM_CONDITIONAL([HAVE_USDT_PROBES], [test $usdt = true])
+])
+
 dnl Checks for MSVC x64 compiler.
 AC_DEFUN([OVS_CHECK_WIN64],
   [AC_CACHE_CHECK(
@@ -412,7 +440,6 @@ AC_DEFUN([OVS_CHECK_BINUTILS_AVX512],
      if ($CC -dumpmachine | grep x86_64) >/dev/null 2>&1; then
        if (objdump -d  --no-show-raw-insn $OBJFILE | grep -q $GATHER_PARAMS) >/dev/null 2>&1; then
          ovs_cv_binutils_avx512_good=yes
-         CFLAGS="$CFLAGS -DHAVE_LD_AVX512_GOOD"
        else
          ovs_cv_binutils_avx512_good=no
          dnl Explicitly disallow avx512f to stop compiler auto-vectorizing
@@ -424,6 +451,10 @@ AC_DEFUN([OVS_CHECK_BINUTILS_AVX512],
        ovs_cv_binutils_avx512_good=no
      fi])
      rm $OBJFILE
+   if test "$ovs_cv_binutils_avx512_good" = yes; then
+     AC_DEFINE([HAVE_LD_AVX512_GOOD], [1],
+               [Define to 1 if binutils correctly supports AVX512.])
+   fi
    AM_CONDITIONAL([HAVE_LD_AVX512_GOOD],
                   [test "$ovs_cv_binutils_avx512_good" = yes])])
 

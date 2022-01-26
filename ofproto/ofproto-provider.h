@@ -66,6 +66,7 @@ struct bfd_cfg;
 struct meter;
 struct ofoperation;
 struct ofproto_packet_out;
+struct rule_collection;
 struct smap;
 
 extern struct ovs_mutex ofproto_mutex;
@@ -118,6 +119,9 @@ struct ofproto {//openflow 交换机
     /* List of expirable flows, in all flow tables. */
     //列出会过期的规则
     struct ovs_list expirable OVS_GUARDED_BY(ofproto_mutex);
+
+    /* List of flows to remove from flow tables. */
+    struct rule_collection *to_remove OVS_GUARDED_BY(ofproto_mutex);
 
     /* Meter table.  */
     struct ofputil_meter_features meter_features;
@@ -1993,6 +1997,7 @@ struct ofproto_flow_mod {
     bool modify_may_add_flow;
     bool modify_keep_counts;
     enum nx_flow_update_event event;
+    uint8_t table_id;
 
     /* These are only used during commit execution.
      * ofproto_flow_mod_uninit() does NOT clean these up. */

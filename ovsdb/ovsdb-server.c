@@ -931,8 +931,9 @@ query_db_string(const struct shash *all_dbs, const char *name,
 
             datum = &row->fields[column->index];
             for (i = 0; i < datum->n; i++) {
-                if (datum->keys[i].string[0]) {
-                    return datum->keys[i].string;
+                const char *key = json_string(datum->keys[i].s);
+                if (key[0]) {
+                    return key;
                 }
             }
         }
@@ -1051,7 +1052,7 @@ query_db_remotes(const char *name, const struct shash *all_dbs,
 
             datum = &row->fields[column->index];
             for (i = 0; i < datum->n; i++) {
-                add_remote(remotes, datum->keys[i].string);
+                add_remote(remotes, json_string(datum->keys[i].s));
             }
         }
     } else if (column->type.key.type == OVSDB_TYPE_UUID

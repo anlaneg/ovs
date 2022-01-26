@@ -58,29 +58,31 @@ enum OVS_PACKED_ENUM dp_packet_source {
 enum dp_packet_offload_mask {
     /* Value 0 is not used. */
     /* Is the 'rss_hash' valid? */
-    DEF_OL_FLAG(DP_PACKET_OL_RSS_HASH, PKT_RX_RSS_HASH, 0x1),
+    DEF_OL_FLAG(DP_PACKET_OL_RSS_HASH, RTE_MBUF_F_RX_RSS_HASH, 0x1),
     /* Is the 'flow_mark' valid? */
-    DEF_OL_FLAG(DP_PACKET_OL_FLOW_MARK, PKT_RX_FDIR_ID, 0x2),
+    DEF_OL_FLAG(DP_PACKET_OL_FLOW_MARK, RTE_MBUF_F_RX_FDIR_ID, 0x2),
     /* Bad L4 checksum in the packet. */
-    DEF_OL_FLAG(DP_PACKET_OL_RX_L4_CKSUM_BAD, PKT_RX_L4_CKSUM_BAD, 0x4),
+    DEF_OL_FLAG(DP_PACKET_OL_RX_L4_CKSUM_BAD, RTE_MBUF_F_RX_L4_CKSUM_BAD, 0x4),
     /* Bad IP checksum in the packet. */
-    DEF_OL_FLAG(DP_PACKET_OL_RX_IP_CKSUM_BAD, PKT_RX_IP_CKSUM_BAD, 0x8),
+    DEF_OL_FLAG(DP_PACKET_OL_RX_IP_CKSUM_BAD, RTE_MBUF_F_RX_IP_CKSUM_BAD, 0x8),
     /* Valid L4 checksum in the packet. */
-    DEF_OL_FLAG(DP_PACKET_OL_RX_L4_CKSUM_GOOD, PKT_RX_L4_CKSUM_GOOD, 0x10),
+    DEF_OL_FLAG(DP_PACKET_OL_RX_L4_CKSUM_GOOD, RTE_MBUF_F_RX_L4_CKSUM_GOOD,
+                0x10),
     /* Valid IP checksum in the packet. */
-    DEF_OL_FLAG(DP_PACKET_OL_RX_IP_CKSUM_GOOD, PKT_RX_IP_CKSUM_GOOD, 0x20),
+    DEF_OL_FLAG(DP_PACKET_OL_RX_IP_CKSUM_GOOD, RTE_MBUF_F_RX_IP_CKSUM_GOOD,
+                0x20),
     /* TCP Segmentation Offload. */
-    DEF_OL_FLAG(DP_PACKET_OL_TX_TCP_SEG, PKT_TX_TCP_SEG, 0x40),
+    DEF_OL_FLAG(DP_PACKET_OL_TX_TCP_SEG, RTE_MBUF_F_TX_TCP_SEG, 0x40),
     /* Offloaded packet is IPv4. */
-    DEF_OL_FLAG(DP_PACKET_OL_TX_IPV4, PKT_TX_IPV4, 0x80),
+    DEF_OL_FLAG(DP_PACKET_OL_TX_IPV4, RTE_MBUF_F_TX_IPV4, 0x80),
     /* Offloaded packet is IPv6. */
-    DEF_OL_FLAG(DP_PACKET_OL_TX_IPV6, PKT_TX_IPV6, 0x100),
+    DEF_OL_FLAG(DP_PACKET_OL_TX_IPV6, RTE_MBUF_F_TX_IPV6, 0x100),
     /* Offload TCP checksum. */
-    DEF_OL_FLAG(DP_PACKET_OL_TX_TCP_CKSUM, PKT_TX_TCP_CKSUM, 0x200),
+    DEF_OL_FLAG(DP_PACKET_OL_TX_TCP_CKSUM, RTE_MBUF_F_TX_TCP_CKSUM, 0x200),
     /* Offload UDP checksum. */
-    DEF_OL_FLAG(DP_PACKET_OL_TX_UDP_CKSUM, PKT_TX_UDP_CKSUM, 0x400),
+    DEF_OL_FLAG(DP_PACKET_OL_TX_UDP_CKSUM, RTE_MBUF_F_TX_UDP_CKSUM, 0x400),
     /* Offload SCTP checksum. */
-    DEF_OL_FLAG(DP_PACKET_OL_TX_SCTP_CKSUM, PKT_TX_SCTP_CKSUM, 0x800),
+    DEF_OL_FLAG(DP_PACKET_OL_TX_SCTP_CKSUM, RTE_MBUF_F_TX_SCTP_CKSUM, 0x800),
     /* Adding new field requires adding to DP_PACKET_OL_SUPPORTED_MASK. */
 };
 
@@ -201,6 +203,7 @@ struct dp_packet *dp_packet_clone_data_with_headroom(const void *, size_t,
 void dp_packet_resize(struct dp_packet *b, size_t new_headroom,
                       size_t new_tailroom);
 static inline void dp_packet_delete(struct dp_packet *);
+static inline void dp_packet_swap(struct dp_packet *, struct dp_packet *);
 
 static inline void *dp_packet_at(const struct dp_packet *, size_t offset,
                                  size_t size);
@@ -256,6 +259,18 @@ dp_packet_delete(struct dp_packet *b)
         dp_packet_uninit(b);
         free(b);
     }
+}
+
+/* Swaps content of two packets. */
+static inline void
+dp_packet_swap(struct dp_packet *a, struct dp_packet *b)
+{
+    ovs_assert(a->source == DPBUF_MALLOC || a->source == DPBUF_STUB);
+    ovs_assert(b->source == DPBUF_MALLOC || b->source == DPBUF_STUB);
+    struct dp_packet c = *a;
+
+    *a = *b;
+    *b = c;
 }
 
 /* If 'b' contains at least 'offset + size' bytes of data, returns a pointer to

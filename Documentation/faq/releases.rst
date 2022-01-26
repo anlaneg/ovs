@@ -74,6 +74,7 @@ Q: What Linux kernel versions does each Open vSwitch release work with?
     2.14.x       3.16 to 5.5
     2.15.x       3.16 to 5.8
     2.16.x       3.16 to 5.8
+    2.17.x       3.16 to 5.8
     ============ ==============
 
     Open vSwitch userspace should also work with the Linux kernel module built
@@ -205,10 +206,11 @@ Q: What DPDK version does each Open vSwitch release work with?
     2.10.x       17.11.10
     2.11.x       18.11.9
     2.12.x       18.11.9
-    2.13.x       19.11.8
-    2.14.x       19.11.8
+    2.13.x       19.11.10
+    2.14.x       19.11.10
     2.15.x       20.11.1
     2.16.x       20.11.1
+    2.17.x       21.11.0
     ============ ========
 
 Q: Are all the DPDK releases that OVS versions work with maintained?
@@ -225,7 +227,7 @@ Q: Are all the DPDK releases that OVS versions work with maintained?
     The latest information about DPDK stable and LTS releases can be found
     at `DPDK stable`_.
 
-.. _DPDK stable: http://doc.dpdk.org/guides-20.11/contributing/stable.html
+.. _DPDK stable: http://doc.dpdk.org/guides-21.11/contributing/stable.html
 
 Q: I get an error like this when I configure Open vSwitch:
 

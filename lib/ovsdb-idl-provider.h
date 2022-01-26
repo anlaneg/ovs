@@ -24,6 +24,7 @@
 #include "ovsdb-set-op.h"
 #include "ovsdb-types.h"
 #include "openvswitch/shash.h"
+#include "sset.h"
 #include "uuid.h"
 
 #ifdef __cplusplus
@@ -75,6 +76,8 @@ struct ovsdb_idl_row {
     //当新插入时，old,new指向同一块数据，更新时，new指向新的数据,old指向原来的数据，删除时new指向null，old指向原来的数据
     struct ovsdb_datum *old_datum; /* Committed data (null if orphaned). */
     bool parsed; /* Whether the row is parsed. */
+    struct ovs_list reparse_node; /* Rows that needs to be re-parsed due to
+                                   * insertion of a referenced row. */
 
     /* Transactional data. *///更新或者新插入行时，此字符不为null
     struct ovsdb_datum *new_datum; /* Modified data (null to delete row). */
@@ -118,10 +121,15 @@ struct ovsdb_idl_table {
     unsigned char *modes;    /* OVSDB_IDL_* bitmasks, indexed by column. *///表模式
     bool need_table;         /* Monitor table even if no columns are selected
                               * for replication. */
-    struct shash columns;    /* Contains "const struct ovsdb_idl_column *"s. *///按列名称索引列struct ovsdb_idl_column
-    struct hmap rows;        /* Contains "struct ovsdb_idl_row"s. *///数据行hashtable（osdb_idl_row结构）
+    //按列名称索引列struct ovsdb_idl_column
+    struct shash columns;    /* Contains "const struct ovsdb_idl_column *"s. */
+    struct sset schema_columns; /* Column names from schema. */
+    //数据行hashtable（osdb_idl_row结构）
+    struct hmap rows;        /* Contains "struct ovsdb_idl_row"s. */
     struct ovsdb_idl *idl;   /* Containing IDL instance. */
     unsigned int change_seqno[OVSDB_IDL_CHANGE_MAX];
+    bool in_server_schema;   /* Indicates if this table is in the server schema
+                              * or not. */
     struct ovs_list indexes;    /* Contains "struct ovsdb_idl_index"s */
     struct ovs_list track_list; /* Tracked rows (ovsdb_idl_row.track_node). */
 };

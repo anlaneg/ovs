@@ -19,6 +19,7 @@
 #include <sys/types.h>
 #include <netinet/ip6.h>
 #include <rte_flow.h>
+#include <rte_gre.h>
 
 #include "cmap.h"
 #include "dpif-netdev.h"
@@ -28,6 +29,7 @@
 #include "odp-util.h"
 #include "openvswitch/match.h"
 #include "openvswitch/vlog.h"
+#include "ovs-rcu.h"
 #include "packets.h"
 #include "uuid.h"
 
@@ -39,23 +41,18 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(600, 600);
  *
  * Below API is NOT thread safe in following terms:
  *
- *  - The caller must be sure that none of these functions will be called
- *    simultaneously.  Even for different 'netdev's.
- *
  *  - The caller must be sure that 'netdev' will not be destructed/deallocated.
  *
  *  - The caller must be sure that 'netdev' configuration will not be changed.
  *    For example, simultaneous call of 'netdev_reconfigure()' for the same
  *    'netdev' is forbidden.
  *
- * For current implementation all above restrictions could be fulfilled by
- * taking the datapath 'port_mutex' in lib/dpif-netdev.c.  */
+ * For current implementation all above restrictions are fulfilled by
+ * read-locking the datapath 'port_rwlock' in lib/dpif-netdev.c.  */
 
 /*
  * A mapping from ufid to dpdk rte_flow.
  */
-//hashtable，采用ufid查找rte_flow
-static struct cmap ufid_to_rte_flow = CMAP_INITIALIZER;
 
 struct ufid_to_rte_flow_data {
     struct cmap_node node;
@@ -66,17 +63,122 @@ struct ufid_to_rte_flow_data {
     bool actions_offloaded;
     struct dpif_flow_stats stats;
     struct netdev *physdev;
+    struct ovs_mutex lock;
+    unsigned int creation_tid;
+    bool dead;
 };
+
+struct netdev_offload_dpdk_data {
+    struct cmap ufid_to_rte_flow;
+    uint64_t *rte_flow_counters;
+    struct ovs_mutex map_lock;
+};
+
+static int
+offload_data_init(struct netdev *netdev)
+{
+    struct netdev_offload_dpdk_data *data;
+
+    data = xzalloc(sizeof *data);
+    ovs_mutex_init(&data->map_lock);
+    cmap_init(&data->ufid_to_rte_flow);
+    data->rte_flow_counters = xcalloc(netdev_offload_thread_nb(),
+                                      sizeof *data->rte_flow_counters);
+
+    ovsrcu_set(&netdev->hw_info.offload_data, (void *) data);
+
+    return 0;
+}
+
+static void
+offload_data_destroy__(struct netdev_offload_dpdk_data *data)
+{
+    ovs_mutex_destroy(&data->map_lock);
+    free(data->rte_flow_counters);
+    free(data);
+}
+
+static void
+offload_data_destroy(struct netdev *netdev)
+{
+    struct netdev_offload_dpdk_data *data;
+    struct ufid_to_rte_flow_data *node;
+
+    data = (struct netdev_offload_dpdk_data *)
+        ovsrcu_get(void *, &netdev->hw_info.offload_data);
+    if (data == NULL) {
+        return;
+    }
+
+    if (!cmap_is_empty(&data->ufid_to_rte_flow)) {
+        VLOG_ERR("Incomplete flush: %s contains rte_flow elements",
+                 netdev_get_name(netdev));
+    }
+
+    CMAP_FOR_EACH (node, node, &data->ufid_to_rte_flow) {
+        ovsrcu_postpone(free, node);
+    }
+
+    cmap_destroy(&data->ufid_to_rte_flow);
+    ovsrcu_postpone(offload_data_destroy__, data);
+
+    ovsrcu_set(&netdev->hw_info.offload_data, NULL);
+}
+
+static void
+offload_data_lock(struct netdev *netdev)
+    OVS_NO_THREAD_SAFETY_ANALYSIS
+{
+    struct netdev_offload_dpdk_data *data;
+
+    data = (struct netdev_offload_dpdk_data *)
+        ovsrcu_get(void *, &netdev->hw_info.offload_data);
+    if (!data) {
+        return;
+    }
+    ovs_mutex_lock(&data->map_lock);
+}
+
+static void
+offload_data_unlock(struct netdev *netdev)
+    OVS_NO_THREAD_SAFETY_ANALYSIS
+{
+    struct netdev_offload_dpdk_data *data;
+
+    data = (struct netdev_offload_dpdk_data *)
+        ovsrcu_get(void *, &netdev->hw_info.offload_data);
+    if (!data) {
+        return;
+    }
+    ovs_mutex_unlock(&data->map_lock);
+}
+
+static struct cmap *
+offload_data_map(struct netdev *netdev)
+{
+    struct netdev_offload_dpdk_data *data;
+
+    data = (struct netdev_offload_dpdk_data *)
+        ovsrcu_get(void *, &netdev->hw_info.offload_data);
+
+    return data ? &data->ufid_to_rte_flow : NULL;
+}
 
 /* Find rte_flow with @ufid. */
 static struct ufid_to_rte_flow_data *
-ufid_to_rte_flow_data_find(const ovs_u128 *ufid, bool warn)
+ufid_to_rte_flow_data_find(struct netdev *netdev,
+                           const ovs_u128 *ufid, bool warn)
 {
+    //通过ufid查找rte_flow
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
     struct ufid_to_rte_flow_data *data;
+    struct cmap *map = offload_data_map(netdev);
 
-    //通过ufid查找rte_flow
-    CMAP_FOR_EACH_WITH_HASH (data, node, hash, &ufid_to_rte_flow) {
+    if (!map) {
+        return NULL;
+    }
+
+    CMAP_FOR_EACH_WITH_HASH (data, node, hash, map) {
         if (ovs_u128_equals(*ufid, data->ufid)) {
             return data;
         }
@@ -90,14 +192,41 @@ ufid_to_rte_flow_data_find(const ovs_u128 *ufid, bool warn)
     return NULL;
 }
 
+/* Find rte_flow with @ufid, lock-protected. */
+static struct ufid_to_rte_flow_data *
+ufid_to_rte_flow_data_find_protected(struct netdev *netdev,
+                                     const ovs_u128 *ufid)
+{
+    size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
+    struct ufid_to_rte_flow_data *data;
+    struct cmap *map = offload_data_map(netdev);
+
+    CMAP_FOR_EACH_WITH_HASH_PROTECTED (data, node, hash, map) {
+        if (ovs_u128_equals(*ufid, data->ufid)) {
+            return data;
+        }
+    }
+
+    return NULL;
+}
+
 static inline struct ufid_to_rte_flow_data *
 ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
                            struct netdev *physdev, struct rte_flow *rte_flow,
                            bool actions_offloaded)
 {
     size_t hash = hash_bytes(ufid, sizeof *ufid, 0);
-    struct ufid_to_rte_flow_data *data = xzalloc(sizeof *data);
+    struct cmap *map = offload_data_map(netdev);
     struct ufid_to_rte_flow_data *data_prev;
+    struct ufid_to_rte_flow_data *data;
+
+    if (!map) {
+        return NULL;
+    }
+
+    data = xzalloc(sizeof *data);
+
+    offload_data_lock(netdev);
 
     /*
      * We should not simply overwrite an existing rte flow.
@@ -105,7 +234,7 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
      * Thus, if following assert triggers, something is wrong:
      * the rte_flow is not destroyed.
      */
-    data_prev = ufid_to_rte_flow_data_find(ufid, false);
+    data_prev = ufid_to_rte_flow_data_find_protected(netdev, ufid);
     if (data_prev) {
         ovs_assert(data_prev->rte_flow == NULL);
     }
@@ -115,24 +244,42 @@ ufid_to_rte_flow_associate(const ovs_u128 *ufid, struct netdev *netdev,
     data->physdev = netdev != physdev ? netdev_ref(physdev) : physdev;
     data->rte_flow = rte_flow;
     data->actions_offloaded = actions_offloaded;
+    data->creation_tid = netdev_offload_thread_id();
+    ovs_mutex_init(&data->lock);
 
-    cmap_insert(&ufid_to_rte_flow,
-                CONST_CAST(struct cmap_node *, &data->node), hash);
+    cmap_insert(map, CONST_CAST(struct cmap_node *, &data->node), hash);
+
+    offload_data_unlock(netdev);
     return data;
+}
+
+static void
+rte_flow_data_unref(struct ufid_to_rte_flow_data *data)
+{
+    ovs_mutex_destroy(&data->lock);
+    free(data);
 }
 
 static inline void
 ufid_to_rte_flow_disassociate(struct ufid_to_rte_flow_data *data)
+    OVS_REQUIRES(data->lock)
 {
     size_t hash = hash_bytes(&data->ufid, sizeof data->ufid, 0);
+    struct cmap *map = offload_data_map(data->netdev);
 
-    cmap_remove(&ufid_to_rte_flow,
-                CONST_CAST(struct cmap_node *, &data->node), hash);
+    if (!map) {
+        return;
+    }
+
+    offload_data_lock(data->netdev);
+    cmap_remove(map, CONST_CAST(struct cmap_node *, &data->node), hash);
+    offload_data_unlock(data->netdev);
+
     if (data->netdev != data->physdev) {
         netdev_close(data->netdev);
     }
     netdev_close(data->physdev);
-    ovsrcu_postpone(free, data);
+    ovsrcu_postpone(rte_flow_data_unref, data);
 }
 
 /*
@@ -187,8 +334,12 @@ dump_flow_attr(struct ds *s, struct ds *s_extra,
 
 /* Adds one pattern item 'field' with the 'mask' to dynamic string 's' using
  * 'testpmd command'-like format. */
-#define DUMP_PATTERN_ITEM(mask, field, fmt, spec_pri, mask_pri) \
-    if (is_all_ones(&mask, sizeof mask)) { \
+#define DUMP_PATTERN_ITEM(mask, has_last, field, fmt, spec_pri, mask_pri, \
+                          last_pri) \
+    if (has_last) { \
+        ds_put_format(s, field " spec " fmt " " field " mask " fmt " " field \
+                      " last " fmt " ", spec_pri, mask_pri, last_pri); \
+    } else if (is_all_ones(&mask, sizeof mask)) { \
         ds_put_format(s, field " is " fmt " ", spec_pri); \
     } else if (!is_all_zeros(&mask, sizeof mask)) { \
         ds_put_format(s, field " spec " fmt " " field " mask " fmt " ", \
@@ -210,21 +361,24 @@ dump_flow_pattern(struct ds *s,
     } else if (item->type == RTE_FLOW_ITEM_TYPE_ETH) {
         const struct rte_flow_item_eth *eth_spec = item->spec;
         const struct rte_flow_item_eth *eth_mask = item->mask;
+        uint8_t ea[ETH_ADDR_LEN];
 
         ds_put_cstr(s, "eth ");
         if (eth_spec) {
             if (!eth_mask) {
                 eth_mask = &rte_flow_item_eth_mask;
             }
-            DUMP_PATTERN_ITEM(eth_mask->src, "src", ETH_ADDR_FMT,
+            DUMP_PATTERN_ITEM(eth_mask->src, false, "src", ETH_ADDR_FMT,
                               ETH_ADDR_BYTES_ARGS(eth_spec->src.addr_bytes),
-                              ETH_ADDR_BYTES_ARGS(eth_mask->src.addr_bytes));
-            DUMP_PATTERN_ITEM(eth_mask->dst, "dst", ETH_ADDR_FMT,
+                              ETH_ADDR_BYTES_ARGS(eth_mask->src.addr_bytes),
+                              ETH_ADDR_BYTES_ARGS(ea));
+            DUMP_PATTERN_ITEM(eth_mask->dst, false, "dst", ETH_ADDR_FMT,
                               ETH_ADDR_BYTES_ARGS(eth_spec->dst.addr_bytes),
-                              ETH_ADDR_BYTES_ARGS(eth_mask->dst.addr_bytes));
-            DUMP_PATTERN_ITEM(eth_mask->type, "type", "0x%04"PRIx16,
+                              ETH_ADDR_BYTES_ARGS(eth_mask->dst.addr_bytes),
+                              ETH_ADDR_BYTES_ARGS(ea));
+            DUMP_PATTERN_ITEM(eth_mask->type, false, "type", "0x%04"PRIx16,
                               ntohs(eth_spec->type),
-                              ntohs(eth_mask->type));
+                              ntohs(eth_mask->type), 0);
         }
         ds_put_cstr(s, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_VLAN) {
@@ -236,37 +390,53 @@ dump_flow_pattern(struct ds *s,
             if (!vlan_mask) {
                 vlan_mask = &rte_flow_item_vlan_mask;
             }
-            DUMP_PATTERN_ITEM(vlan_mask->inner_type, "inner_type", "0x%"PRIx16,
-                              ntohs(vlan_spec->inner_type),
-                              ntohs(vlan_mask->inner_type));
-            DUMP_PATTERN_ITEM(vlan_mask->tci, "tci", "0x%"PRIx16,
-                              ntohs(vlan_spec->tci), ntohs(vlan_mask->tci));
+            DUMP_PATTERN_ITEM(vlan_mask->inner_type, false, "inner_type",
+                              "0x%"PRIx16, ntohs(vlan_spec->inner_type),
+                              ntohs(vlan_mask->inner_type), 0);
+            DUMP_PATTERN_ITEM(vlan_mask->tci, false, "tci", "0x%"PRIx16,
+                              ntohs(vlan_spec->tci), ntohs(vlan_mask->tci), 0);
         }
         ds_put_cstr(s, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_IPV4) {
         const struct rte_flow_item_ipv4 *ipv4_spec = item->spec;
         const struct rte_flow_item_ipv4 *ipv4_mask = item->mask;
+        const struct rte_flow_item_ipv4 *ipv4_last = item->last;
 
         ds_put_cstr(s, "ipv4 ");
         if (ipv4_spec) {
+            ovs_be16 fragment_offset_mask;
+
             if (!ipv4_mask) {
                 ipv4_mask = &rte_flow_item_ipv4_mask;
             }
-            DUMP_PATTERN_ITEM(ipv4_mask->hdr.src_addr, "src", IP_FMT,
+            if (!ipv4_last) {
+                ipv4_last = &rte_flow_item_ipv4_mask;
+            }
+            DUMP_PATTERN_ITEM(ipv4_mask->hdr.src_addr, false, "src", IP_FMT,
                               IP_ARGS(ipv4_spec->hdr.src_addr),
-                              IP_ARGS(ipv4_mask->hdr.src_addr));
-            DUMP_PATTERN_ITEM(ipv4_mask->hdr.dst_addr, "dst", IP_FMT,
+                              IP_ARGS(ipv4_mask->hdr.src_addr), IP_ARGS(0));
+            DUMP_PATTERN_ITEM(ipv4_mask->hdr.dst_addr, false, "dst", IP_FMT,
                               IP_ARGS(ipv4_spec->hdr.dst_addr),
-                              IP_ARGS(ipv4_mask->hdr.dst_addr));
-            DUMP_PATTERN_ITEM(ipv4_mask->hdr.next_proto_id, "proto",
+                              IP_ARGS(ipv4_mask->hdr.dst_addr), IP_ARGS(0));
+            DUMP_PATTERN_ITEM(ipv4_mask->hdr.next_proto_id, false, "proto",
                               "0x%"PRIx8, ipv4_spec->hdr.next_proto_id,
-                              ipv4_mask->hdr.next_proto_id);
-            DUMP_PATTERN_ITEM(ipv4_mask->hdr.type_of_service, "tos",
+                              ipv4_mask->hdr.next_proto_id, 0);
+            DUMP_PATTERN_ITEM(ipv4_mask->hdr.type_of_service, false, "tos",
                               "0x%"PRIx8, ipv4_spec->hdr.type_of_service,
-                              ipv4_mask->hdr.type_of_service);
-            DUMP_PATTERN_ITEM(ipv4_mask->hdr.time_to_live, "ttl",
+                              ipv4_mask->hdr.type_of_service, 0);
+            DUMP_PATTERN_ITEM(ipv4_mask->hdr.time_to_live, false, "ttl",
                               "0x%"PRIx8, ipv4_spec->hdr.time_to_live,
-                              ipv4_mask->hdr.time_to_live);
+                              ipv4_mask->hdr.time_to_live, 0);
+            fragment_offset_mask = ipv4_mask->hdr.fragment_offset ==
+                                   htons(RTE_IPV4_HDR_OFFSET_MASK |
+                                         RTE_IPV4_HDR_MF_FLAG)
+                                   ? OVS_BE16_MAX
+                                   : ipv4_mask->hdr.fragment_offset;
+            DUMP_PATTERN_ITEM(fragment_offset_mask, item->last,
+                              "fragment_offset", "0x%"PRIx16,
+                              ntohs(ipv4_spec->hdr.fragment_offset),
+                              ntohs(ipv4_mask->hdr.fragment_offset),
+                              ntohs(ipv4_last->hdr.fragment_offset));
         }
         ds_put_cstr(s, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_UDP) {
@@ -278,12 +448,12 @@ dump_flow_pattern(struct ds *s,
             if (!udp_mask) {
                 udp_mask = &rte_flow_item_udp_mask;
             }
-            DUMP_PATTERN_ITEM(udp_mask->hdr.src_port, "src", "%"PRIu16,
+            DUMP_PATTERN_ITEM(udp_mask->hdr.src_port, false, "src", "%"PRIu16,
                               ntohs(udp_spec->hdr.src_port),
-                              ntohs(udp_mask->hdr.src_port));
-            DUMP_PATTERN_ITEM(udp_mask->hdr.dst_port, "dst", "%"PRIu16,
+                              ntohs(udp_mask->hdr.src_port), 0);
+            DUMP_PATTERN_ITEM(udp_mask->hdr.dst_port, false, "dst", "%"PRIu16,
                               ntohs(udp_spec->hdr.dst_port),
-                              ntohs(udp_mask->hdr.dst_port));
+                              ntohs(udp_mask->hdr.dst_port), 0);
         }
         ds_put_cstr(s, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_SCTP) {
@@ -295,12 +465,12 @@ dump_flow_pattern(struct ds *s,
             if (!sctp_mask) {
                 sctp_mask = &rte_flow_item_sctp_mask;
             }
-            DUMP_PATTERN_ITEM(sctp_mask->hdr.src_port, "src", "%"PRIu16,
+            DUMP_PATTERN_ITEM(sctp_mask->hdr.src_port, false, "src", "%"PRIu16,
                               ntohs(sctp_spec->hdr.src_port),
-                              ntohs(sctp_mask->hdr.src_port));
-            DUMP_PATTERN_ITEM(sctp_mask->hdr.dst_port, "dst", "%"PRIu16,
+                              ntohs(sctp_mask->hdr.src_port), 0);
+            DUMP_PATTERN_ITEM(sctp_mask->hdr.dst_port, false, "dst", "%"PRIu16,
                               ntohs(sctp_spec->hdr.dst_port),
-                              ntohs(sctp_mask->hdr.dst_port));
+                              ntohs(sctp_mask->hdr.dst_port), 0);
         }
         ds_put_cstr(s, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_ICMP) {
@@ -312,12 +482,12 @@ dump_flow_pattern(struct ds *s,
             if (!icmp_mask) {
                 icmp_mask = &rte_flow_item_icmp_mask;
             }
-            DUMP_PATTERN_ITEM(icmp_mask->hdr.icmp_type, "icmp_type", "%"PRIu8,
-                              icmp_spec->hdr.icmp_type,
-                              icmp_mask->hdr.icmp_type);
-            DUMP_PATTERN_ITEM(icmp_mask->hdr.icmp_code, "icmp_code", "%"PRIu8,
-                              icmp_spec->hdr.icmp_code,
-                              icmp_mask->hdr.icmp_code);
+            DUMP_PATTERN_ITEM(icmp_mask->hdr.icmp_type, false, "icmp_type",
+                              "%"PRIu8, icmp_spec->hdr.icmp_type,
+                              icmp_mask->hdr.icmp_type, 0);
+            DUMP_PATTERN_ITEM(icmp_mask->hdr.icmp_code, false, "icmp_code",
+                              "%"PRIu8, icmp_spec->hdr.icmp_code,
+                              icmp_mask->hdr.icmp_code, 0);
         }
         ds_put_cstr(s, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_TCP) {
@@ -329,15 +499,15 @@ dump_flow_pattern(struct ds *s,
             if (!tcp_mask) {
                 tcp_mask = &rte_flow_item_tcp_mask;
             }
-            DUMP_PATTERN_ITEM(tcp_mask->hdr.src_port, "src", "%"PRIu16,
+            DUMP_PATTERN_ITEM(tcp_mask->hdr.src_port, false, "src", "%"PRIu16,
                               ntohs(tcp_spec->hdr.src_port),
-                              ntohs(tcp_mask->hdr.src_port));
-            DUMP_PATTERN_ITEM(tcp_mask->hdr.dst_port, "dst", "%"PRIu16,
+                              ntohs(tcp_mask->hdr.src_port), 0);
+            DUMP_PATTERN_ITEM(tcp_mask->hdr.dst_port, false, "dst", "%"PRIu16,
                               ntohs(tcp_spec->hdr.dst_port),
-                              ntohs(tcp_mask->hdr.dst_port));
-            DUMP_PATTERN_ITEM(tcp_mask->hdr.tcp_flags, "flags", "0x%"PRIx8,
-                              tcp_spec->hdr.tcp_flags,
-                              tcp_mask->hdr.tcp_flags);
+                              ntohs(tcp_mask->hdr.dst_port), 0);
+            DUMP_PATTERN_ITEM(tcp_mask->hdr.tcp_flags, false, "flags",
+                              "0x%"PRIx8, tcp_spec->hdr.tcp_flags,
+                              tcp_mask->hdr.tcp_flags, 0);
         }
         ds_put_cstr(s, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_IPV6) {
@@ -350,6 +520,8 @@ dump_flow_pattern(struct ds *s,
 
         ds_put_cstr(s, "ipv6 ");
         if (ipv6_spec) {
+            uint8_t has_frag_ext_mask;
+
             if (!ipv6_mask) {
                 ipv6_mask = &rte_flow_item_ipv6_mask;
             }
@@ -357,22 +529,57 @@ dump_flow_pattern(struct ds *s,
             memcpy(&mask, ipv6_mask->hdr.src_addr, sizeof mask);
             ipv6_string_mapped(addr_str, &addr);
             ipv6_string_mapped(mask_str, &mask);
-            DUMP_PATTERN_ITEM(mask, "src", "%s", addr_str, mask_str);
+            DUMP_PATTERN_ITEM(mask, false, "src", "%s",
+                              addr_str, mask_str, "");
 
             memcpy(&addr, ipv6_spec->hdr.dst_addr, sizeof addr);
             memcpy(&mask, ipv6_mask->hdr.dst_addr, sizeof mask);
             ipv6_string_mapped(addr_str, &addr);
             ipv6_string_mapped(mask_str, &mask);
-            DUMP_PATTERN_ITEM(mask, "dst", "%s", addr_str, mask_str);
+            DUMP_PATTERN_ITEM(mask, false, "dst", "%s",
+                              addr_str, mask_str, "");
 
-            DUMP_PATTERN_ITEM(ipv6_mask->hdr.proto, "proto", "%"PRIu8,
-                              ipv6_spec->hdr.proto, ipv6_mask->hdr.proto);
-            DUMP_PATTERN_ITEM(ipv6_mask->hdr.vtc_flow, "tc", "0x%"PRIx32,
+            DUMP_PATTERN_ITEM(ipv6_mask->hdr.proto, false, "proto", "%"PRIu8,
+                              ipv6_spec->hdr.proto, ipv6_mask->hdr.proto, 0);
+            DUMP_PATTERN_ITEM(ipv6_mask->hdr.vtc_flow, false,
+                              "tc", "0x%"PRIx32,
                               ntohl(ipv6_spec->hdr.vtc_flow),
-                              ntohl(ipv6_mask->hdr.vtc_flow));
-            DUMP_PATTERN_ITEM(ipv6_mask->hdr.hop_limits, "hop", "%"PRIu8,
+                              ntohl(ipv6_mask->hdr.vtc_flow), 0);
+            DUMP_PATTERN_ITEM(ipv6_mask->hdr.hop_limits, false,
+                              "hop", "%"PRIu8,
                               ipv6_spec->hdr.hop_limits,
-                              ipv6_mask->hdr.hop_limits);
+                              ipv6_mask->hdr.hop_limits, 0);
+            has_frag_ext_mask = ipv6_mask->has_frag_ext ? UINT8_MAX : 0;
+            DUMP_PATTERN_ITEM(has_frag_ext_mask, false, "has_frag_ext",
+                              "%"PRIu8, ipv6_spec->has_frag_ext,
+                              ipv6_mask->has_frag_ext, 0);
+        }
+        ds_put_cstr(s, "/ ");
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_IPV6_FRAG_EXT) {
+        const struct rte_flow_item_ipv6_frag_ext *ipv6_frag_spec = item->spec;
+        const struct rte_flow_item_ipv6_frag_ext *ipv6_frag_mask = item->mask;
+        const struct rte_flow_item_ipv6_frag_ext *ipv6_frag_last = item->last;
+        const struct rte_flow_item_ipv6_frag_ext ipv6_frag_def = {
+            .hdr.next_header = 0, .hdr.frag_data = 0};
+
+        ds_put_cstr(s, "ipv6_frag_ext ");
+        if (ipv6_frag_spec) {
+            if (!ipv6_frag_mask) {
+                ipv6_frag_mask = &ipv6_frag_def;
+            }
+            if (!ipv6_frag_last) {
+                ipv6_frag_last = &ipv6_frag_def;
+            }
+            DUMP_PATTERN_ITEM(ipv6_frag_mask->hdr.next_header, item->last,
+                              "next_hdr", "%"PRIu8,
+                              ipv6_frag_spec->hdr.next_header,
+                              ipv6_frag_mask->hdr.next_header,
+                              ipv6_frag_last->hdr.next_header);
+            DUMP_PATTERN_ITEM(ipv6_frag_mask->hdr.frag_data, item->last,
+                              "frag_data", "0x%"PRIx16,
+                              ntohs(ipv6_frag_spec->hdr.frag_data),
+                              ntohs(ipv6_frag_mask->hdr.frag_data),
+                              ntohs(ipv6_frag_last->hdr.frag_data));
         }
         ds_put_cstr(s, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_VXLAN) {
@@ -389,8 +596,48 @@ dump_flow_pattern(struct ds *s,
                                                        vxlan_spec->vni));
             mask_vni = get_unaligned_be32(ALIGNED_CAST(ovs_be32 *,
                                                        vxlan_mask->vni));
-            DUMP_PATTERN_ITEM(vxlan_mask->vni, "vni", "%"PRIu32,
-                              ntohl(spec_vni) >> 8, ntohl(mask_vni) >> 8);
+            DUMP_PATTERN_ITEM(vxlan_mask->vni, false, "vni", "%"PRIu32,
+                              ntohl(spec_vni) >> 8, ntohl(mask_vni) >> 8, 0);
+        }
+        ds_put_cstr(s, "/ ");
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_GRE) {
+        const struct rte_flow_item_gre *gre_spec = item->spec;
+        const struct rte_flow_item_gre *gre_mask = item->mask;
+        const struct rte_gre_hdr *greh_spec, *greh_mask;
+        uint8_t c_bit_spec, c_bit_mask;
+        uint8_t k_bit_spec, k_bit_mask;
+
+        ds_put_cstr(s, "gre ");
+        if (gre_spec) {
+            if (!gre_mask) {
+                gre_mask = &rte_flow_item_gre_mask;
+            }
+            greh_spec = (struct rte_gre_hdr *) gre_spec;
+            greh_mask = (struct rte_gre_hdr *) gre_mask;
+
+            c_bit_spec = greh_spec->c;
+            c_bit_mask = greh_mask->c ? UINT8_MAX : 0;
+            DUMP_PATTERN_ITEM(c_bit_mask, false, "c_bit", "%"PRIu8,
+                              c_bit_spec, c_bit_mask, 0);
+
+            k_bit_spec = greh_spec->k;
+            k_bit_mask = greh_mask->k ? UINT8_MAX : 0;
+            DUMP_PATTERN_ITEM(k_bit_mask, false, "k_bit", "%"PRIu8,
+                              k_bit_spec, k_bit_mask, 0);
+        }
+        ds_put_cstr(s, "/ ");
+    } else if (item->type == RTE_FLOW_ITEM_TYPE_GRE_KEY) {
+        const rte_be32_t gre_mask = RTE_BE32(UINT32_MAX);
+        const rte_be32_t *key_spec = item->spec;
+        const rte_be32_t *key_mask = item->mask;
+
+        ds_put_cstr(s, "gre_key ");
+        if (key_spec) {
+            if (!key_mask) {
+                key_mask = &gre_mask;
+            }
+            DUMP_PATTERN_ITEM(*key_mask, false, "value", "%"PRIu32,
+                              ntohl(*key_spec), ntohl(*key_mask), 0);
         }
         ds_put_cstr(s, "/ ");
     } else {
@@ -657,6 +904,13 @@ netdev_offload_dpdk_flow_create(struct netdev *netdev,
 
     flow = netdev_dpdk_rte_flow_create(netdev, attr, items, actions, error);
     if (flow) {
+        struct netdev_offload_dpdk_data *data;
+        unsigned int tid = netdev_offload_thread_id();
+
+        data = (struct netdev_offload_dpdk_data *)
+            ovsrcu_get(void *, &netdev->hw_info.offload_data);
+        data->rte_flow_counters[tid]++;
+
         if (!VLOG_DROP_DBG(&rl)) {
             dump_flow(&s, &s_extra, attr, flow_patterns, flow_actions);
             extra_str = ds_cstr(&s_extra);
@@ -689,7 +943,7 @@ netdev_offload_dpdk_flow_create(struct netdev *netdev,
 //添加type类型的匹配项到patterns中
 static void
 add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type/*匹配类型*/,
-                 const void *spec/*匹配的value*/, const void *mask/*匹配的mask*/)
+                 const void *spec/*匹配的value*/, const void *mask/*匹配的mask*/, const void *last)
 {
     int cnt = patterns->cnt;
 
@@ -707,7 +961,7 @@ add_flow_pattern(struct flow_patterns *patterns, enum rte_flow_item_type type/*�
     patterns->items[cnt].type = type;/*要匹配的类型*/
     patterns->items[cnt].spec = spec;/*要匹配的flow*/
     patterns->items[cnt].mask = mask;/*要匹配的mask*/
-    patterns->items[cnt].last = NULL;
+    patterns->items[cnt].last = last;
     patterns->cnt++;
 }
 
@@ -764,7 +1018,7 @@ add_flow_tnl_items(struct flow_patterns *patterns,
     patterns->tnl_pmd_items_cnt = tnl_pmd_items_cnt;
     for (i = 0; i < tnl_pmd_items_cnt; i++) {
         add_flow_pattern(patterns, tnl_pmd_items[i].type,
-                         tnl_pmd_items[i].spec, tnl_pmd_items[i].mask);
+                         tnl_pmd_items[i].spec, tnl_pmd_items[i].mask, NULL);
     }
 }
 
@@ -795,10 +1049,14 @@ free_flow_patterns(struct flow_patterns *patterns)
         if (patterns->items[i].mask) {
             free(CONST_CAST(void *, patterns->items[i].mask));
         }
+        if (patterns->items[i].last) {
+            free(CONST_CAST(void *, patterns->items[i].last));
+        }
     }
     free(patterns->items);
     patterns->items = NULL;
     patterns->cnt = 0;
+    ds_destroy(&patterns->s_tnl);
 }
 
 static void
@@ -850,6 +1108,12 @@ vport_to_rte_tunnel(struct netdev *vport,
         tunnel->tp_dst = tnl_cfg->dst_port;
         if (!VLOG_DROP_DBG(&rl)) {
             ds_put_format(s_tnl, "flow tunnel create %d type vxlan; ",
+                          netdev_dpdk_get_port_id(netdev));
+        }
+    } else if (!strcmp(netdev_get_type(vport), "gre")) {
+        tunnel->type = RTE_FLOW_ITEM_TYPE_GRE;
+        if (!VLOG_DROP_DBG(&rl)) {
+            ds_put_format(s_tnl, "flow tunnel create %d type gre; ",
                           netdev_dpdk_get_port_id(netdev));
         }
     } else {
@@ -930,7 +1194,7 @@ parse_tnl_ip_match(struct flow_patterns *patterns,
         consumed_masks->tunnel.ip_src = 0;
         consumed_masks->tunnel.ip_dst = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, spec, mask, NULL);
     } else if (!is_all_zeros(&match->wc.masks.tunnel.ipv6_src,
                              sizeof(struct in6_addr)) ||
                !is_all_zeros(&match->wc.masks.tunnel.ipv6_dst,
@@ -966,7 +1230,7 @@ parse_tnl_ip_match(struct flow_patterns *patterns,
         memset(&consumed_masks->tunnel.ipv6_dst, 0,
                sizeof consumed_masks->tunnel.ipv6_dst);
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6, spec, mask, NULL);
     } else {
         VLOG_ERR_RL(&rl, "Tunnel L3 protocol is neither IPv4 nor IPv6");
         return -1;
@@ -996,7 +1260,7 @@ parse_tnl_udp_match(struct flow_patterns *patterns,
     consumed_masks->tunnel.tp_src = 0;
     consumed_masks->tunnel.tp_dst = 0;
 
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP, spec, mask);
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP, spec, mask, NULL);
 }
 
 static int
@@ -1026,7 +1290,61 @@ parse_vxlan_match(struct flow_patterns *patterns,
     consumed_masks->tunnel.tun_id = 0;
     consumed_masks->tunnel.flags = 0;
 
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VXLAN, vx_spec, vx_mask);
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VXLAN, vx_spec, vx_mask,
+                     NULL);
+    return 0;
+}
+
+static int
+parse_gre_match(struct flow_patterns *patterns,
+                struct match *match)
+{
+    struct rte_flow_item_gre *gre_spec, *gre_mask;
+    struct rte_gre_hdr *greh_spec, *greh_mask;
+    rte_be32_t *key_spec, *key_mask;
+    struct flow *consumed_masks;
+    int ret;
+
+
+    ret = parse_tnl_ip_match(patterns, match, IPPROTO_GRE);
+    if (ret) {
+        return -1;
+    }
+
+    gre_spec = xzalloc(sizeof *gre_spec);
+    gre_mask = xzalloc(sizeof *gre_mask);
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_GRE, gre_spec, gre_mask,
+                     NULL);
+
+    consumed_masks = &match->wc.masks;
+
+    greh_spec = (struct rte_gre_hdr *) gre_spec;
+    greh_mask = (struct rte_gre_hdr *) gre_mask;
+
+    if (match->wc.masks.tunnel.flags & FLOW_TNL_F_CSUM) {
+        greh_spec->c = !!(match->flow.tunnel.flags & FLOW_TNL_F_CSUM);
+        greh_mask->c = 1;
+        consumed_masks->tunnel.flags &= ~FLOW_TNL_F_CSUM;
+    }
+
+    if (match->wc.masks.tunnel.flags & FLOW_TNL_F_KEY) {
+        greh_spec->k = !!(match->flow.tunnel.flags & FLOW_TNL_F_KEY);
+        greh_mask->k = 1;
+
+        key_spec = xzalloc(sizeof *key_spec);
+        key_mask = xzalloc(sizeof *key_mask);
+
+        *key_spec = htonl(ntohll(match->flow.tunnel.tun_id));
+        *key_mask = htonl(ntohll(match->wc.masks.tunnel.tun_id));
+
+        consumed_masks->tunnel.tun_id = 0;
+        consumed_masks->tunnel.flags &= ~FLOW_TNL_F_KEY;
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_GRE_KEY, key_spec,
+                         key_mask, NULL);
+    }
+
+    consumed_masks->tunnel.flags &= ~FLOW_TNL_F_DONT_FRAGMENT;
+
     return 0;
 }
 
@@ -1045,6 +1363,9 @@ parse_flow_tnl_match(struct netdev *tnldev,
 
     if (!strcmp(netdev_get_type(tnldev), "vxlan")) {
         ret = parse_vxlan_match(patterns, match);
+    }
+    else if (!strcmp(netdev_get_type(tnldev), "gre")) {
+        ret = parse_gre_match(patterns, match);
     }
 
     return ret;
@@ -1104,7 +1425,7 @@ parse_flow_match(struct netdev *netdev,
         consumed_masks->dl_type = 0;
 
         //转换ether header的match
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, spec, mask, NULL);
     }
 
     /* VLAN */
@@ -1121,7 +1442,7 @@ parse_flow_match(struct netdev *netdev,
         /* Match any protocols. */
         mask->inner_type = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VLAN, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VLAN, spec, mask, NULL);
     }
     /* For untagged matching match->wc.masks.vlans[0].tci is 0xFFFF and
      * match->flow.vlans[0].tci is 0. Consuming is needed outside of the if
@@ -1131,7 +1452,7 @@ parse_flow_match(struct netdev *netdev,
 
     /* IP v4 */
     if (match->flow.dl_type == htons(ETH_TYPE_IP)) {
-        struct rte_flow_item_ipv4 *spec, *mask;
+        struct rte_flow_item_ipv4 *spec, *mask, *last = NULL;
 
         spec = xzalloc(sizeof *spec);
         mask = xzalloc(sizeof *mask);
@@ -1155,17 +1476,42 @@ parse_flow_match(struct netdev *netdev,
         consumed_masks->nw_dst = 0;
 
         //ipv4匹配
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, spec, mask);
+        if (match->wc.masks.nw_frag & FLOW_NW_FRAG_ANY) {
+            if (!(match->flow.nw_frag & FLOW_NW_FRAG_ANY)) {
+                /* frag=no. */
+                spec->hdr.fragment_offset = 0;
+                mask->hdr.fragment_offset = htons(RTE_IPV4_HDR_OFFSET_MASK
+                                                  | RTE_IPV4_HDR_MF_FLAG);
+            } else if (match->wc.masks.nw_frag & FLOW_NW_FRAG_LATER) {
+                if (!(match->flow.nw_frag & FLOW_NW_FRAG_LATER)) {
+                    /* frag=first. */
+                    spec->hdr.fragment_offset = htons(RTE_IPV4_HDR_MF_FLAG);
+                    mask->hdr.fragment_offset = htons(RTE_IPV4_HDR_OFFSET_MASK
+                                                      | RTE_IPV4_HDR_MF_FLAG);
+                } else {
+                    /* frag=later. */
+                    last = xzalloc(sizeof *last);
+                    spec->hdr.fragment_offset =
+                        htons(1 << RTE_IPV4_HDR_FO_SHIFT);
+                    mask->hdr.fragment_offset =
+                        htons(RTE_IPV4_HDR_OFFSET_MASK);
+                    last->hdr.fragment_offset =
+                        htons(RTE_IPV4_HDR_OFFSET_MASK);
+                }
+            } else {
+                VLOG_WARN_RL(&rl, "Unknown IPv4 frag (0x%x/0x%x)",
+                             match->flow.nw_frag, match->wc.masks.nw_frag);
+                return -1;
+            }
+            consumed_masks->nw_frag = 0;
+        }
+
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV4, spec, mask, last);
 
         /* Save proto for L4 protocol setup. */
         proto = spec->hdr.next_proto_id &
                 mask->hdr.next_proto_id;
     }
-    /* If fragmented, then don't HW accelerate - for now. */
-    if (match->wc.masks.nw_frag & match->flow.nw_frag) {
-        return -1;
-    }
-    consumed_masks->nw_frag = 0;
 
     /* IP v6 */
     if (match->flow.dl_type == htons(ETH_TYPE_IPV6)) {
@@ -1182,6 +1528,10 @@ parse_flow_match(struct netdev *netdev,
                sizeof spec->hdr.src_addr);
         memcpy(spec->hdr.dst_addr, &match->flow.ipv6_dst,
                sizeof spec->hdr.dst_addr);
+        if ((match->wc.masks.nw_frag & FLOW_NW_FRAG_ANY)
+            && (match->flow.nw_frag & FLOW_NW_FRAG_ANY)) {
+            spec->has_frag_ext = 1;
+        }
 
         mask->hdr.proto = match->wc.masks.nw_proto;
         mask->hdr.hop_limits = match->wc.masks.nw_ttl;
@@ -1192,16 +1542,60 @@ parse_flow_match(struct netdev *netdev,
         memcpy(mask->hdr.dst_addr, &match->wc.masks.ipv6_dst,
                sizeof mask->hdr.dst_addr);
 
-        consumed_masks->nw_proto = 0;
         consumed_masks->nw_ttl = 0;
         consumed_masks->nw_tos = 0;
         memset(&consumed_masks->ipv6_src, 0, sizeof consumed_masks->ipv6_src);
         memset(&consumed_masks->ipv6_dst, 0, sizeof consumed_masks->ipv6_dst);
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6, spec, mask, NULL);
 
         /* Save proto for L4 protocol setup. */
         proto = spec->hdr.proto & mask->hdr.proto;
+
+        if (spec->has_frag_ext) {
+            struct rte_flow_item_ipv6_frag_ext *frag_spec, *frag_mask,
+                *frag_last = NULL;
+
+            frag_spec = xzalloc(sizeof *frag_spec);
+            frag_mask = xzalloc(sizeof *frag_mask);
+
+            if (match->wc.masks.nw_frag & FLOW_NW_FRAG_LATER) {
+                if (!(match->flow.nw_frag & FLOW_NW_FRAG_LATER)) {
+                    /* frag=first. */
+                    frag_spec->hdr.frag_data = htons(RTE_IPV6_EHDR_MF_MASK);
+                    frag_mask->hdr.frag_data = htons(RTE_IPV6_EHDR_MF_MASK |
+                                                     RTE_IPV6_EHDR_FO_MASK);
+                    /* Move the proto match to the extension item. */
+                    frag_spec->hdr.next_header = match->flow.nw_proto;
+                    frag_mask->hdr.next_header = match->wc.masks.nw_proto;
+                    spec->hdr.proto = 0;
+                    mask->hdr.proto = 0;
+                } else {
+                    /* frag=later. */
+                    frag_last = xzalloc(sizeof *frag_last);
+                    frag_spec->hdr.frag_data =
+                        htons(1 << RTE_IPV6_EHDR_FO_SHIFT);
+                    frag_mask->hdr.frag_data = htons(RTE_IPV6_EHDR_FO_MASK);
+                    frag_last->hdr.frag_data = htons(RTE_IPV6_EHDR_FO_MASK);
+                    /* There can't be a proto for later frags. */
+                    spec->hdr.proto = 0;
+                    mask->hdr.proto = 0;
+                }
+            } else {
+                VLOG_WARN_RL(&rl, "Unknown IPv6 frag (0x%x/0x%x)",
+                             match->flow.nw_frag, match->wc.masks.nw_frag);
+                return -1;
+            }
+
+            add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_IPV6_FRAG_EXT,
+                             frag_spec, frag_mask, frag_last);
+        }
+        if (match->wc.masks.nw_frag) {
+            /* frag=no is indicated by spec->has_frag_ext=0. */
+            mask->has_frag_ext = 1;
+            consumed_masks->nw_frag = 0;
+        }
+        consumed_masks->nw_proto = 0;
     }
 
     if (proto != IPPROTO_ICMP && proto != IPPROTO_UDP  &&
@@ -1233,7 +1627,7 @@ parse_flow_match(struct netdev *netdev,
         consumed_masks->tp_dst = 0;
         consumed_masks->tcp_flags = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TCP, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_TCP, spec, mask, NULL);
     } else if (proto == IPPROTO_UDP) {
         struct rte_flow_item_udp *spec, *mask;
 
@@ -1249,7 +1643,7 @@ parse_flow_match(struct netdev *netdev,
         consumed_masks->tp_src = 0;
         consumed_masks->tp_dst = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_UDP, spec, mask, NULL);
     } else if (proto == IPPROTO_SCTP) {
         struct rte_flow_item_sctp *spec, *mask;
 
@@ -1265,7 +1659,7 @@ parse_flow_match(struct netdev *netdev,
         consumed_masks->tp_src = 0;
         consumed_masks->tp_dst = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_SCTP, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_SCTP, spec, mask, NULL);
     } else if (proto == IPPROTO_ICMP) {
         struct rte_flow_item_icmp *spec, *mask;
 
@@ -1281,10 +1675,10 @@ parse_flow_match(struct netdev *netdev,
         consumed_masks->tp_src = 0;
         consumed_masks->tp_dst = 0;
 
-        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ICMP, spec, mask);
+        add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ICMP, spec, mask, NULL);
     }
 
-    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
+    add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL, NULL);
 
     if (!is_all_zeros(consumed_masks, sizeof *consumed_masks)) {
         return -1;
@@ -1338,7 +1732,11 @@ netdev_offload_dpdk_mark_rss(struct flow_patterns *patterns,
                              struct netdev *netdev,
                              uint32_t flow_mark)
 {
-    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
+    struct flow_actions actions = {
+        .actions = NULL,
+        .cnt = 0,
+        .s_tnl = DS_EMPTY_INITIALIZER,
+    };
     const struct rte_flow_attr flow_attr = {
         .group = 0,
         .priority = 0,
@@ -1845,7 +2243,11 @@ netdev_offload_dpdk_actions(struct netdev *netdev,
                             size_t actions_len/*action长度*/)
 {
     const struct rte_flow_attr flow_attr = { .ingress = 1, .transfer = 1 };
-    struct flow_actions actions = { .actions = NULL, .cnt = 0 };
+    struct flow_actions actions = {
+        .actions = NULL,
+        .cnt = 0,
+        .s_tnl = DS_EMPTY_INITIALIZER,
+    };
     struct rte_flow *flow = NULL;
     struct rte_flow_error error;
     int ret;
@@ -1874,7 +2276,11 @@ netdev_offload_dpdk_add_flow(struct netdev *netdev,
                              struct offload_info *info)
 {
     //保存flow的match
-    struct flow_patterns patterns = { .items = NULL, .cnt = 0 };
+    struct flow_patterns patterns = {
+        .items = NULL,
+        .cnt = 0,
+        .s_tnl = DS_EMPTY_INITIALIZER,
+    };
     struct ufid_to_rte_flow_data *flows_data = NULL;
     bool actions_offloaded = true;
     struct rte_flow *flow;
@@ -1924,6 +2330,15 @@ netdev_offload_dpdk_flow_destroy(struct ufid_to_rte_flow_data *rte_flow_data)
     ovs_u128 *ufid;
     int ret;
 
+    ovs_mutex_lock(&rte_flow_data->lock);
+
+    if (rte_flow_data->dead) {
+        ovs_mutex_unlock(&rte_flow_data->lock);
+        return 0;
+    }
+
+    rte_flow_data->dead = true;
+
     rte_flow = rte_flow_data->rte_flow;
     physdev = rte_flow_data->physdev;
     netdev = rte_flow_data->netdev;
@@ -1932,6 +2347,13 @@ netdev_offload_dpdk_flow_destroy(struct ufid_to_rte_flow_data *rte_flow_data)
     ret = netdev_dpdk_rte_flow_destroy(physdev, rte_flow, &error);
 
     if (ret == 0) {
+        struct netdev_offload_dpdk_data *data;
+        unsigned int tid = netdev_offload_thread_id();
+
+        data = (struct netdev_offload_dpdk_data *)
+            ovsrcu_get(void *, &netdev->hw_info.offload_data);
+        data->rte_flow_counters[tid]--;
+
         //移除ufid与rte_flow之间的映射
         ufid_to_rte_flow_disassociate(rte_flow_data);
         VLOG_DBG_RL(&rl, "%s/%s: rte_flow 0x%"PRIxPTR
@@ -1946,6 +2368,8 @@ netdev_offload_dpdk_flow_destroy(struct ufid_to_rte_flow_data *rte_flow_data)
                  netdev_dpdk_get_port_id(physdev),
                  UUID_ARGS((struct uuid *) ufid));
     }
+
+    ovs_mutex_unlock(&rte_flow_data->lock);
 
     return ret;
 }
@@ -1986,7 +2410,7 @@ netdev_offload_dpdk_flow_put(struct netdev *netdev, struct match *match,
      * Here destroy the old rte flow first before adding a new one.
      * Keep the stats for the newly created rule.
      */
-    rte_flow_data = ufid_to_rte_flow_data_find(ufid, false);
+    rte_flow_data = ufid_to_rte_flow_data_find(netdev, ufid, false);
     if (rte_flow_data && rte_flow_data->rte_flow) {
         struct get_netdev_odp_aux aux = {
             .netdev = rte_flow_data->physdev,
@@ -2029,7 +2453,7 @@ netdev_offload_dpdk_flow_del(struct netdev *netdev OVS_UNUSED,
 {
     struct ufid_to_rte_flow_data *rte_flow_data;
 
-    rte_flow_data = ufid_to_rte_flow_data_find(ufid, true);
+    rte_flow_data = ufid_to_rte_flow_data_find(netdev, ufid, true);
     if (!rte_flow_data || !rte_flow_data->rte_flow) {
         return -1;
     }
@@ -2043,6 +2467,8 @@ netdev_offload_dpdk_flow_del(struct netdev *netdev OVS_UNUSED,
 static int
 netdev_offload_dpdk_init_flow_api(struct netdev *netdev)
 {
+    int ret = EOPNOTSUPP;
+
     if (netdev_vport_is_vport_class(netdev->netdev_class)
         && !strcmp(netdev_get_dpif_type(netdev), "system")) {
         VLOG_DBG("%s: vport belongs to the system datapath. Skipping.",
@@ -2050,7 +2476,19 @@ netdev_offload_dpdk_init_flow_api(struct netdev *netdev)
         return EOPNOTSUPP;
     }
 
-    return netdev_dpdk_flow_api_supported(netdev) ? 0 : EOPNOTSUPP;
+    if (netdev_dpdk_flow_api_supported(netdev)) {
+        ret = offload_data_init(netdev);
+    }
+
+    return ret;
+}
+
+static void
+netdev_offload_dpdk_uninit_flow_api(struct netdev *netdev)
+{
+    if (netdev_dpdk_flow_api_supported(netdev)) {
+        offload_data_destroy(netdev);
+    }
 }
 
 static int
@@ -2067,8 +2505,19 @@ netdev_offload_dpdk_flow_get(struct netdev *netdev,
     struct rte_flow_error error;
     int ret = 0;
 
-    rte_flow_data = ufid_to_rte_flow_data_find(ufid, false);
-    if (!rte_flow_data || !rte_flow_data->rte_flow) {
+    attrs->dp_extra_info = NULL;
+
+    rte_flow_data = ufid_to_rte_flow_data_find(netdev, ufid, false);
+    if (!rte_flow_data || !rte_flow_data->rte_flow ||
+        rte_flow_data->dead || ovs_mutex_trylock(&rte_flow_data->lock)) {
+        return -1;
+    }
+
+    /* Check again whether the data is dead, as it could have been
+     * updated while the lock was not yet taken. The first check above
+     * was only to avoid unnecessary locking if possible.
+     */
+    if (rte_flow_data->dead) {
         ret = -1;
         goto out;
     }
@@ -2096,21 +2545,28 @@ netdev_offload_dpdk_flow_get(struct netdev *netdev,
     }
     memcpy(stats, &rte_flow_data->stats, sizeof *stats);
 out:
-    attrs->dp_extra_info = NULL;
+    ovs_mutex_unlock(&rte_flow_data->lock);
     return ret;
 }
 
 static int
 netdev_offload_dpdk_flow_flush(struct netdev *netdev)
 {
+    struct cmap *map = offload_data_map(netdev);
     struct ufid_to_rte_flow_data *data;
+    unsigned int tid = netdev_offload_thread_id();
 
-    CMAP_FOR_EACH (data, node, &ufid_to_rte_flow) {
+    if (!map) {
+        return -1;
+    }
+
+    CMAP_FOR_EACH (data, node, map) {
         if (data->netdev != netdev && data->physdev != netdev) {
             continue;
         }
-
-        netdev_offload_dpdk_flow_destroy(data);
+        if (data->creation_tid == tid) {
+            netdev_offload_dpdk_flow_destroy(data);
+        }
     }
 
     return 0;
@@ -2120,18 +2576,22 @@ struct get_vport_netdev_aux {
     struct rte_flow_tunnel *tunnel;
     odp_port_t *odp_port;
     struct netdev *vport;
+    const char *type;
 };
 
 static bool
-get_vxlan_netdev_cb(struct netdev *netdev,
+get_vport_netdev_cb(struct netdev *netdev,
                     odp_port_t odp_port,
                     void *aux_)
 {
     const struct netdev_tunnel_config *tnl_cfg;
     struct get_vport_netdev_aux *aux = aux_;
 
-    if (strcmp(netdev_get_type(netdev), "vxlan")) {
+    if (!aux->type || strcmp(netdev_get_type(netdev), aux->type)) {
         return false;
+    }
+    if (!strcmp(netdev_get_type(netdev), "gre")) {
+        goto out;
     }
 
     tnl_cfg = netdev_get_tunnel_config(netdev);
@@ -2141,29 +2601,16 @@ get_vxlan_netdev_cb(struct netdev *netdev,
         return false;
     }
 
-    if (tnl_cfg->dst_port == aux->tunnel->tp_dst) {
-        /* Found the netdev. Store the results and stop the traversing. */
-        aux->vport = netdev_ref(netdev);
-        *aux->odp_port = odp_port;
-        return true;
+    if (tnl_cfg->dst_port != aux->tunnel->tp_dst) {
+        return false;
     }
 
-    return false;
-}
+out:
+    /* Found the netdev. Store the results and stop the traversing. */
+    aux->vport = netdev_ref(netdev);
+    *aux->odp_port = odp_port;
 
-static struct netdev *
-get_vxlan_netdev(const char *dpif_type,
-                 struct rte_flow_tunnel *tunnel,
-                 odp_port_t *odp_port)
-{
-    struct get_vport_netdev_aux aux = {
-        .tunnel = tunnel,
-        .odp_port = odp_port,
-        .vport = NULL,
-    };
-
-    netdev_ports_traverse(dpif_type, get_vxlan_netdev_cb, &aux);
-    return aux.vport;
+    return true;
 }
 
 static struct netdev *
@@ -2171,11 +2618,21 @@ get_vport_netdev(const char *dpif_type,
                  struct rte_flow_tunnel *tunnel,
                  odp_port_t *odp_port)
 {
-    if (tunnel->type == RTE_FLOW_ITEM_TYPE_VXLAN) {
-        return get_vxlan_netdev(dpif_type, tunnel, odp_port);
-    }
+    struct get_vport_netdev_aux aux = {
+        .tunnel = tunnel,
+        .odp_port = odp_port,
+        .vport = NULL,
+        .type = NULL,
+    };
 
-    OVS_NOT_REACHED();
+    if (tunnel->type == RTE_FLOW_ITEM_TYPE_VXLAN) {
+        aux.type = "vxlan";
+    } else if (tunnel->type == RTE_FLOW_ITEM_TYPE_GRE) {
+        aux.type = "gre";
+    }
+    netdev_ports_traverse(dpif_type, get_vport_netdev_cb, &aux);
+
+    return aux.vport;
 }
 
 static int
@@ -2190,8 +2647,12 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
     odp_port_t vport_odp;
     int ret = 0;
 
-    if (netdev_dpdk_rte_flow_get_restore_info(netdev, packet,
-                                              &rte_restore_info, NULL)) {
+    ret = netdev_dpdk_rte_flow_get_restore_info(netdev, packet,
+                                                &rte_restore_info, NULL);
+    if (ret) {
+        if (ret == -EOPNOTSUPP) {
+            return -ret;
+        }
         /* This function is called for every packet, and in most cases there
          * will be no restore info from the HW, thus error is expected.
          */
@@ -2228,7 +2689,7 @@ netdev_offload_dpdk_hw_miss_packet_recover(struct netdev *netdev,
             ret = EOPNOTSUPP;
             goto close_vport_netdev;
         }
-        parse_tcp_flags(packet);
+        parse_tcp_flags(packet, NULL, NULL, NULL);
         if (vport_netdev->netdev_class->pop_header(packet) == NULL) {
             /* If there is an error with popping the header, the packet is
              * freed. In this case it should not continue SW processing.
@@ -2265,13 +2726,35 @@ close_vport_netdev:
     return ret;
 }
 
+static int
+netdev_offload_dpdk_get_n_flows(struct netdev *netdev,
+                                uint64_t *n_flows)
+{
+    struct netdev_offload_dpdk_data *data;
+    unsigned int tid;
+
+    data = (struct netdev_offload_dpdk_data *)
+        ovsrcu_get(void *, &netdev->hw_info.offload_data);
+    if (!data) {
+        return -1;
+    }
+
+    for (tid = 0; tid < netdev_offload_thread_nb(); tid++) {
+        n_flows[tid] = data->rte_flow_counters[tid];
+    }
+
+    return 0;
+}
+
 //dpdk流表下发
 const struct netdev_flow_api netdev_offload_dpdk = {
     .type = "dpdk_flow_api",
     .flow_put = netdev_offload_dpdk_flow_put,/*通过rte flow下发流表给设备*/
     .flow_del = netdev_offload_dpdk_flow_del,
     .init_flow_api = netdev_offload_dpdk_init_flow_api,
+    .uninit_flow_api = netdev_offload_dpdk_uninit_flow_api,
     .flow_get = netdev_offload_dpdk_flow_get,
     .flow_flush = netdev_offload_dpdk_flow_flush,
     .hw_miss_packet_recover = netdev_offload_dpdk_hw_miss_packet_recover,
+    .flow_get_n_flows = netdev_offload_dpdk_get_n_flows,
 };

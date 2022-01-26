@@ -45,7 +45,7 @@ struct nlattr;
 /* Accessing headers and data. */
 struct nlmsghdr *nl_msg_nlmsghdr(const struct ofpbuf *);
 struct genlmsghdr *nl_msg_genlmsghdr(const struct ofpbuf *);
-bool nl_msg_nlmsgerr(const struct ofpbuf *, int *error);
+bool nl_msg_nlmsgerr(const struct ofpbuf *, int *error, const char **attr_msg);
 void nl_msg_reserve(struct ofpbuf *, size_t);
 
 /* Appending and prepending headers and raw data. */
@@ -126,6 +126,8 @@ struct nlmsghdr *nl_msg_next(struct ofpbuf *buffer, struct ofpbuf *msg);
 #define NL_A_BE128_SIZE NL_ATTR_SIZE(sizeof(ovs_be128))
 #define NL_A_FLAG_SIZE NL_ATTR_SIZE(0)
 #define NL_A_IPV6_SIZE NL_ATTR_SIZE(sizeof(struct in6_addr))
+#define NL_A_LL_ADDR_ETH_SIZE NL_ATTR_SIZE(sizeof(struct eth_addr))
+#define NL_A_LL_ADDR_IB_SIZE NL_ATTR_SIZE(sizeof(struct ib_addr))
 
 bool nl_attr_oversized(size_t payload_size);
 
@@ -147,6 +149,7 @@ enum nl_attr_type
     NL_A_FLAG,
     NL_A_IPV6,
     NL_A_NESTED,
+    NL_A_LL_ADDR,
     N_NL_ATTR_TYPES
 };
 
@@ -218,6 +221,8 @@ struct in6_addr nl_attr_get_in6_addr(const struct nlattr *nla);
 odp_port_t nl_attr_get_odp_port(const struct nlattr *);
 const char *nl_attr_get_string(const struct nlattr *);
 void nl_attr_get_nested(const struct nlattr *, struct ofpbuf *);
+struct eth_addr nl_attr_get_eth_addr(const struct nlattr *nla);
+struct ib_addr nl_attr_get_ib_addr(const struct nlattr *nla);
 
 /* Netlink attribute policy.
  *

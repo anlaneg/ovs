@@ -48,6 +48,7 @@
 #include "timeval.h"
 #include "unixctl.h"
 #include "util.h"
+#include "openvswitch/usdt-probes.h"
 #include "openvswitch/vconn.h"
 #include "openvswitch/vlog.h"
 #include "lib/vswitch-idl.h"
@@ -126,6 +127,7 @@ main(int argc, char *argv[])
     cleanup = false;
 
     while (!exiting) {
+        OVS_USDT_PROBE(main, run_start);
         memory_run();
         if (memory_should_report()) {
             /*收集内存用量*/
@@ -157,6 +159,7 @@ main(int argc, char *argv[])
             poll_immediate_wake();
         }
 
+        OVS_USDT_PROBE(main, poll_block);
         //阻塞等待事件
         poll_block();
         if (should_service_stop()) {

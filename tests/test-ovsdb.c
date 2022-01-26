@@ -512,6 +512,18 @@ do_diff_data(struct ovs_cmdl_context *ctx)
             ovs_fatal(0, "failed to apply diff");
         }
 
+        /* Apply diff to 'old' in place. */
+        error = ovsdb_datum_apply_diff_in_place(&old, &diff, &type);
+        if (error) {
+            char *string = ovsdb_error_to_string_free(error);
+            ovs_fatal(0, "%s", string);
+        }
+
+        /* Test to make sure 'old' equals 'new' now.  */
+        if (!ovsdb_datum_equals(&new, &old, &type)) {
+            ovs_fatal(0, "failed to apply diff in place");
+        }
+
         /* Print diff */
         json = ovsdb_datum_to_json(&diff, &type);
         printf ("diff: ");
@@ -520,6 +532,11 @@ do_diff_data(struct ovs_cmdl_context *ctx)
         /* Print reincarnation */
         json = ovsdb_datum_to_json(&reincarnation, &type);
         printf ("apply diff: ");
+        print_and_free_json(json);
+
+        /* Print updated 'old' */
+        json = ovsdb_datum_to_json(&old, &type);
+        printf ("apply diff in place: ");
         print_and_free_json(json);
 
         ovsdb_datum_destroy(&new, &type);
@@ -2727,13 +2744,15 @@ print_idl_row_simple2(const struct idltest_simple2 *s, int step)
     printf("%03d: name=%s smap=[",
            step, s->name);
     for (i = 0; i < smap->n; i++) {
-        printf("[%s : %s]%s", smap->keys[i].string, smap->values[i].string,
-                i < smap->n-1? ",": "");
+        printf("[%s : %s]%s",
+               json_string(smap->keys[i].s), json_string(smap->values[i].s),
+               i < smap->n - 1 ? "," : "");
     }
     printf("] imap=[");
     for (i = 0; i < imap->n; i++) {
-        printf("[%"PRId64" : %s]%s", imap->keys[i].integer, imap->values[i].string,
-                i < imap->n-1? ",":"");
+        printf("[%"PRId64" : %s]%s",
+               imap->keys[i].integer, json_string(imap->values[i].s),
+               i < imap->n - 1 ? "," : "");
     }
     printf("]\n");
 }
@@ -2802,8 +2821,9 @@ do_idl_partial_update_map_column(struct ovs_cmdl_context *ctx)
     myTxn = ovsdb_idl_txn_create(idl);
     smap = idltest_simple2_get_smap(myRow, OVSDB_TYPE_STRING,
                                     OVSDB_TYPE_STRING);
-    strcpy(key_to_delete, smap->keys[0].string);
-    idltest_simple2_update_smap_delkey(myRow, smap->keys[0].string);
+    ovs_strlcpy(key_to_delete,
+                json_string(smap->keys[0].s), sizeof key_to_delete);
+    idltest_simple2_update_smap_delkey(myRow, json_string(smap->keys[0].s));
     ovsdb_idl_txn_commit_block(myTxn);
     ovsdb_idl_txn_destroy(myTxn);
     ovsdb_idl_get_initial_snapshot(idl);
@@ -3268,6 +3288,86 @@ do_idl_compound_index(struct ovs_cmdl_context *ctx)
     printf("%03d: done\n", step);
 }
 
+static void
+do_idl_table_column_check(struct ovs_cmdl_context *ctx)
+{
+    struct jsonrpc *rpc;
+    struct ovsdb_idl *idl;
+    unsigned int seqno = 0;
+    int error;
+
+    idl = ovsdb_idl_create(ctx->argv[1], &idltest_idl_class, true, true);
+    ovsdb_idl_omit(idl, &idltest_link1_col_i);
+    ovsdb_idl_omit(idl, &idltest_simple7_col_id);
+    ovsdb_idl_set_leader_only(idl, false);
+    struct stream *stream;
+
+    error = stream_open_block(jsonrpc_stream_open(ctx->argv[1], &stream,
+                              DSCP_DEFAULT), -1, &stream);
+    if (error) {
+        ovs_fatal(error, "failed to connect to \"%s\"", ctx->argv[1]);
+    }
+    rpc = jsonrpc_open(stream);
+
+    for (int r = 1; r <= 2; r++) {
+        ovsdb_idl_set_remote(idl, ctx->argv[r], true);
+        ovsdb_idl_force_reconnect(idl);
+
+        /* Wait for update. */
+        for (;;) {
+            ovsdb_idl_run(idl);
+            ovsdb_idl_check_consistency(idl);
+            if (ovsdb_idl_get_seqno(idl) != seqno) {
+                break;
+            }
+            jsonrpc_run(rpc);
+
+            ovsdb_idl_wait(idl);
+            jsonrpc_wait(rpc);
+            poll_block();
+        }
+
+        seqno = ovsdb_idl_get_seqno(idl);
+
+        bool has_table = idltest_server_has_simple_table(idl);
+        printf("%s remote %s table simple\n",
+               ctx->argv[r], has_table ? "has" : "doesn't have");
+
+        has_table = idltest_server_has_link1_table(idl);
+        printf("%s remote %s table link1\n",
+               ctx->argv[r], has_table ? "has" : "doesn't have");
+
+        has_table = idltest_server_has_link2_table(idl);
+        printf("%s remote %s table link2\n",
+               ctx->argv[r], has_table ? "has" : "doesn't have");
+
+        has_table = idltest_server_has_simple5_table(idl);
+        printf("%s remote %s table simple5\n",
+               ctx->argv[r], has_table ? "has" : "doesn't have");
+
+        bool has_col = idltest_server_has_simple5_table_col_irefmap(idl);
+        printf("%s remote %s col irefmap in table simple5\n",
+               ctx->argv[r], has_col ? "has" : "doesn't have");
+
+        has_col = idltest_server_has_link1_table_col_l2(idl);
+        printf("%s remote %s col l2 in table link1\n",
+               ctx->argv[r], has_col ? "has" : "doesn't have");
+
+        has_col = idltest_server_has_link1_table_col_i(idl);
+        printf("%s remote %s col i in table link1\n",
+               ctx->argv[r], has_col ? "has" : "doesn't have");
+
+        has_col = idltest_server_has_simple7_table_col_id(idl);
+        printf("%s remote %s col id in table simple7\n",
+               ctx->argv[r], has_col ? "has" : "doesn't have");
+
+        printf("--- remote %s done ---\n", ctx->argv[r]);
+    }
+
+    jsonrpc_close(rpc);
+    ovsdb_idl_destroy(idl);
+}
+
 static struct ovs_cmdl_command all_commands[] = {
     { "log-io", NULL, 2, INT_MAX, do_log_io, OVS_RO },
     { "default-atoms", NULL, 0, 0, do_default_atoms, OVS_RO },
@@ -3306,6 +3406,8 @@ static struct ovs_cmdl_command all_commands[] = {
         do_idl_partial_update_map_column, OVS_RO },
     { "idl-partial-update-set-column", NULL, 1, INT_MAX,
         do_idl_partial_update_set_column, OVS_RO },
+    { "idl-table-column-check", NULL, 2, 2,
+        do_idl_table_column_check, OVS_RO },
     { "help", NULL, 0, INT_MAX, do_help, OVS_RO },
     { NULL, NULL, 0, 0, NULL, OVS_RO },
 };

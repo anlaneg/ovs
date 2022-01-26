@@ -46,7 +46,7 @@ Alexey Roytman                     roytman@il.ibm.com
 Alex Wang                          ee07b291@gmail.com
 Alfredo Finelli                    alf@computationes.de
 Alin Balutoiu                      abalutoiu@cloudbasesolutions.com
-Alin Serdean                       aserdean@cloudbasesolutions.com
+Alin Serdean                       aserdean@ovn.org
 Amber Kumar                        kumar.amber@intel.com
 Ambika Arora                       ambika.arora@tcs.com
 Amit Bose                          bose@noironetworks.com
@@ -164,6 +164,7 @@ Frédéric Tobias Christ             fchrist@live.de
 Frode Nordahl                      frode.nordahl@gmail.com
 FUJITA Tomonori                    fujita.tomonori@lab.ntt.co.jp
 Gabe Beged-Dov                     gabe@begeddov.com
+Gaetan Rivet                       grive@u256.net
 Gaetano Catalli                    gaetano.catalli@gmail.com
 Gal Sagie                          gal.sagie@gmail.com
 Genevieve LEsperance               glesperance@pivotal.io
@@ -248,6 +249,7 @@ Leif Madsen                        lmadsen@redhat.com
 Leo Alterman
 Li RongQing                        lirongqing@baidu.com
 Lian-min Wang                      liang-min.wang@intel.com
+Lin Huang                          linhuang@ruijie.com.cn
 Liu Chang                          liuchang@cmss.chinamobile.com
 Lilijun                            jerry.lilijun@huawei.com
 Lili Huang                         huanglili.huang@huawei.com
@@ -295,6 +297,7 @@ Mickey Spiegel                     mickeys.dev@gmail.com
 Miguel Angel Ajo                   majopela@redhat.com
 Mijo Safradin                      mijo@linux.vnet.ibm.com
 Mika Vaisanen                      mika.vaisanen@gmail.com
+Mike Pattrick                      mkp@redhat.com
 Minoru TAKAHASHI                   takahashi.minoru7@gmail.com
 Moshe Levi                         moshele@mellanox.com
 Murphy McCauley                    murphy.mccauley@gmail.com
@@ -304,9 +307,11 @@ Neil McKee                         neil.mckee@inmon.com
 Neil Zhu                           zhuj@centecnetworks.com
 Nicolas J. Bouliane                nbouliane@digitalocean.com
 Nimay Desai                        nimaydesai1@gmail.com
+Nir Anteby                         nanteby@nvidia.com
 Nithin Raju                        nithin@vmware.com
 Niti Rohilla                       niti.rohilla@tcs.com
 Nitin Katiyar                      nitin.katiyar@ericsson.com
+Nobuhiro MIKI                      nmiki@yahoo-corp.jp
 Numan Siddique                     nusiddiq@redhat.com
 Ofer Ben-Yacov                     ofer.benyacov@gmail.com
 Ophir Munk                         ophirmu@mellanox.com
@@ -337,6 +342,7 @@ Randall Sharo                      andall.sharo@navy.mil
 Ravi Kerur                         Ravi.Kerur@telekom.com
 Raymond Burkholder                 ray@oneunified.net
 Reid Price
+Remi Jouannet                      remi.jouannet@outscale.com
 Remko Tronçon                      git@el-tramo.be
 Renat Nurgaliyev                   impleman@gmail.com
 Rich Lane                          rlane@bigswitch.com
@@ -358,6 +364,7 @@ Ryan Wilson
 Sairam Venugopal                   vsairam@vmware.com
 Sajjad Lateef
 Saloni Jain                        saloni.jain@tcs.com
+Salvatore Daniele                  sdaniele@redhat.com
 Samuel Ghinet                      sghinet@cloudbasesolutions.com
 Sanjay Sane
 Saurabh Mohan                      saurabh@cplanenetworks.com
@@ -367,6 +374,7 @@ Scott Cheloha                      scottcheloha@gmail.com
 Scott Lowe                         scott.lowe@scottlowe.org
 Scott Mann                         sdmnix@gmail.com
 Selvamuthukumar                    smkumar@merunetworks.com
+Sergey Madaminov                   sergey.madaminov@gmail.com
 Sha Zhang                          zhangsha.zhang@huawei.com
 Shad Ansari                        shad.ansari@hpe.com
 Shahar Klein                       sklein@nvidia.com
@@ -376,9 +384,9 @@ Shashank Ram                       rams@vmware.com
 Shashwat Srivastava                shashwat.srivastava@tcs.com
 Shih-Hao Li                        shihli@vmware.com
 Shu Shen                           shu.shen@radisys.com
-Simon Horman                       horms@verge.net.au
-Simon Horman                       simon.horman@netronome.com
+Simon Horman                       simon.horman@corigine.com
 Sivaprasad Tummala                 sivaprasad.tummala@intel.com
+Somnath Chatterjee                 somnath.b.chatterjee@ericsson.com
 Sorin Vinturis                     svinturis@cloudbasesolutions.com
 Sriharsha Basavapatna              sriharsha.basavapatna@broadcom.com
 Steffen Gebert                     steffen.gebert@informatik.uni-wuerzburg.de
@@ -405,6 +413,7 @@ Todd Deshane                       deshantm@gmail.com
 Tom Everman                        teverman@google.com
 Tomasz Konieczny                   tomaszx.konieczny@intel.com
 Toms Atteka                        cpp.code.lv@gmail.com
+Tony van der Peet                  tony.vanderpeet@alliedtelesis.co.nz
 Torgny Lindberg                    torgny.lindberg@ericsson.com
 Tsvi Slonim                        tsvi@toroki.com
 Tuan Nguyen                        tuan.nguyen@veriksystems.com
@@ -416,6 +425,7 @@ Valient Gough                      vgough@pobox.com
 Venkata Anil Kommaddi              vkommadi@redhat.com
 Vishal Deep Ajmera                 vishal.deep.ajmera@ericsson.com
 Vivien Bernet-Rollande             vbr@soprive.net
+Vlad Buslov                        vladbu@nvidia.com
 Volkan Atlı                        volkan.atli@b-ulltech.com
 Wang Li                            wangli39@baidu.com
 Wang Liang                         wangliangrt@didiglobal.com
@@ -454,6 +464,7 @@ Zhenyu Gao                         sysugaozhenyu@gmail.com
 ZhiPeng Lu                         luzhipeng@uniudc.com
 Zhou Yangchao                      1028519445@qq.com
 aginwala                           amginwal@gmail.com
+lic121                             lic121@chinatelecom.cn
 lzhecheng                          lzhecheng@vmware.com
 parameswaran krishnamurthy         parkrish@gmail.com
 solomon                            liwei.solomon@gmail.com
@@ -706,6 +717,7 @@ neeraj mehta                    mehtaneeraj07@gmail.com
 rahim entezari                  rahim.entezari@gmail.com
 shaoke xi                       xishaoke.xsk@gmail.com
 shivani dommeti                 shivani.dommeti@gmail.com
+Wentao Jia                      wentao.jia@easystack.cn
 weizj                           34965317@qq.com
 俊 赵                           zhaojun12@outlook.com
 冯全树(Crab)                    fqs888@126.com

@@ -99,7 +99,7 @@ struct conn {
     struct conn_key parent_key; /* Only used for orig_tuple support. */
     struct ovs_list exp_node;//过期挂链用
     struct cmap_node cm_node;//挂connect链
-    struct nat_action_info_t *nat_info;//nat分配信息
+    uint16_t nat_action;//nat分配信息
     char *alg;
     struct conn *nat_conn; /* The NAT 'conn' context, if there is one. */
 

@@ -121,6 +121,7 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
     struct nl_sock *sock;
 #ifndef _WIN32
     struct sockaddr_nl local, remote;
+    int one = 1;
 #endif
     socklen_t local_size;
     int rcvbuf;
@@ -193,6 +194,11 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
         goto error;
     }
 #else
+    if (setsockopt(sock->fd, SOL_NETLINK, NETLINK_EXT_ACK, &one, sizeof one)) {
+        VLOG_WARN_RL(&rl, "setting extended ack support failed (%s)",
+                     ovs_strerror(errno));
+    }
+
     //设置接收缓冲区大小
     if (setsockopt(sock->fd, SOL_SOCKET, SO_RCVBUFFORCE,
                    &rcvbuf, sizeof rcvbuf)) {
@@ -941,14 +947,16 @@ nl_sock_transact_multiple__(struct nl_sock *sock,
         i = seq - base_seq;
         txn = transactions[i];
 
+        const char *err_msg = NULL;
         /* Fill in the results for 'txn'. */
-        if (nl_msg_nlmsgerr(buf_txn->reply, &txn->error)) {
+        if (nl_msg_nlmsgerr(buf_txn->reply, &txn->error, &err_msg)) {
+            if (txn->error) {
+                VLOG_DBG_RL(&rl, "received NAK error=%d - %s",
+                            txn->error,
+                            err_msg ? err_msg : ovs_strerror(txn->error));
+            }
             if (txn->reply) {
                 ofpbuf_clear(txn->reply);
-            }
-            if (txn->error) {
-                VLOG_DBG_RL(&rl, "received NAK error=%d (%s)",
-                            error, ovs_strerror(txn->error));
             }
         } else {
             txn->error = 0;
@@ -1030,7 +1038,7 @@ nl_sock_transact_multiple__(struct nl_sock *sock,
             /* Handle errors embedded within the netlink message. */
             ofpbuf_use_stub(&tmp_reply, reply_buf, sizeof reply_buf);
             tmp_reply.size = sizeof reply_buf;
-            if (nl_msg_nlmsgerr(&tmp_reply, &txn->error)) {
+            if (nl_msg_nlmsgerr(&tmp_reply, &txn->error, NULL)) {
                 if (txn->reply) {
                     ofpbuf_clear(txn->reply);
                 }
@@ -1235,7 +1243,7 @@ nl_dump_refill(struct nl_dump *dump, struct ofpbuf *buffer)
     }
 
     /*包含error的消息检查*/
-    if (nl_msg_nlmsgerr(buffer, &error) && error) {
+    if (nl_msg_nlmsgerr(buffer, &error, NULL) && error) {
         VLOG_INFO_RL(&rl, "netlink dump request error (%s)",
                      ovs_strerror(error));
         ofpbuf_clear(buffer);

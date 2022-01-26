@@ -19,13 +19,16 @@ dnl This enables automatically running all unit tests with all MFEX
 dnl implementations.
 AC_DEFUN([OVS_CHECK_MFEX_AUTOVALIDATOR], [
   AC_ARG_ENABLE([mfex-default-autovalidator],
-                [AC_HELP_STRING([--enable-mfex-default-autovalidator], [Enable MFEX autovalidator as default miniflow_extract implementation.])],
+                [AC_HELP_STRING([--enable-mfex-default-autovalidator],
+                                [Enable MFEX autovalidator as default
+                                 miniflow_extract implementation.])],
                 [autovalidator=yes],[autovalidator=no])
   AC_MSG_CHECKING([whether MFEX Autovalidator is default implementation])
   if test "$autovalidator" != yes; then
     AC_MSG_RESULT([no])
   else
-    OVS_CFLAGS="$OVS_CFLAGS -DMFEX_AUTOVALIDATOR_DEFAULT"
+    AC_DEFINE([MFEX_AUTOVALIDATOR_DEFAULT], [1],
+              [Autovalidator for miniflow_extract is a default implementation.])
     AC_MSG_RESULT([yes])
   fi
 ])
@@ -35,13 +38,17 @@ dnl This enables automatically running all unit tests with all DPCLS
 dnl implementations.
 AC_DEFUN([OVS_CHECK_DPCLS_AUTOVALIDATOR], [
   AC_ARG_ENABLE([autovalidator],
-                [AC_HELP_STRING([--enable-autovalidator], [Enable DPCLS autovalidator as default subtable search implementation.])],
+                [AC_HELP_STRING([--enable-autovalidator],
+                                [Enable DPCLS autovalidator as default subtable
+                                 search implementation.])],
                 [autovalidator=yes],[autovalidator=no])
   AC_MSG_CHECKING([whether DPCLS Autovalidator is default implementation])
   if test "$autovalidator" != yes; then
     AC_MSG_RESULT([no])
   else
-    OVS_CFLAGS="$OVS_CFLAGS -DDPCLS_AUTOVALIDATOR_DEFAULT"
+    AC_DEFINE([DPCLS_AUTOVALIDATOR_DEFAULT], [1],
+              [Autovalidator for the userspace datapath classifier is a
+               default implementation.])
     AC_MSG_RESULT([yes])
   fi
 ])
@@ -50,14 +57,31 @@ dnl Set OVS DPIF default implementation at configure time for running the unit
 dnl tests on the whole codebase without modifying tests per DPIF impl
 AC_DEFUN([OVS_CHECK_DPIF_AVX512_DEFAULT], [
   AC_ARG_ENABLE([dpif-default-avx512],
-                [AC_HELP_STRING([--enable-dpif-default-avx512], [Enable DPIF AVX512 implementation as default.])],
+                [AC_HELP_STRING([--enable-dpif-default-avx512],
+                                [Enable DPIF AVX512 implementation as default.])],
                 [dpifavx512=yes],[dpifavx512=no])
   AC_MSG_CHECKING([whether DPIF AVX512 is default implementation])
   if test "$dpifavx512" != yes; then
     AC_MSG_RESULT([no])
   else
-    OVS_CFLAGS="$OVS_CFLAGS -DDPIF_AVX512_DEFAULT"
+    AC_DEFINE([DPIF_AVX512_DEFAULT], [1],
+              [DPIF AVX512 is a default implementation of the userspace
+               datapath interface.])
     AC_MSG_RESULT([yes])
+  fi
+])
+
+dnl OVS_CHECK_AVX512
+dnl
+dnl Checks if compiler and binutils supports AVX512.
+AC_DEFUN([OVS_CHECK_AVX512], [
+  OVS_CHECK_BINUTILS_AVX512
+  OVS_CHECK_CC_OPTION(
+    [-mavx512f], [ovs_have_cc_mavx512f=yes], [ovs_have_cc_mavx512f=no])
+  AM_CONDITIONAL([HAVE_AVX512F], [test $ovs_have_cc_mavx512f = yes])
+  if test "$ovs_have_cc_mavx512f" = yes; then
+    AC_DEFINE([HAVE_AVX512F], [1],
+              [Define to 1 if compiler supports AVX512.])
   fi
 ])
 
@@ -422,11 +446,11 @@ AC_DEFUN([OVS_CHECK_DPDK], [
       OVS_FIND_DEPENDENCY([get_mempolicy], [numa], [libnuma])
     ], [], [[#include <rte_config.h>]])
 
-    AC_CHECK_DECL([RTE_LIBRTE_PMD_PCAP], [
+    AC_CHECK_DECL([RTE_NET_PCAP], [
       OVS_FIND_DEPENDENCY([pcap_dump_close], [pcap], [libpcap])
     ], [], [[#include <rte_config.h>]])
 
-    AC_CHECK_DECL([RTE_LIBRTE_PMD_AF_XDP], [
+    AC_CHECK_DECL([RTE_NET_AF_XDP], [
       LIBBPF_LDADD="-lbpf"
     ], [], [[#include <rte_config.h>]])
 
@@ -434,19 +458,25 @@ AC_DEFUN([OVS_CHECK_DPDK], [
       AC_DEFINE([VHOST_NUMA], [1], [NUMA Aware vHost support detected in DPDK.])
     ], [], [[#include <rte_config.h>]])
 
-    AC_CHECK_DECL([RTE_LIBRTE_MLX5_PMD], [dnl found
+    AC_CHECK_DECL([RTE_NET_MLX5], [dnl found
       AC_CHECK_DECL([RTE_IBVERBS_LINK_DLOPEN], [], [dnl not found
         OVS_FIND_DEPENDENCY([mlx5dv_create_wq], [mlx5], [libmlx5])
         OVS_FIND_DEPENDENCY([verbs_init_cq], [ibverbs], [libibverbs])
       ], [[#include <rte_config.h>]])
     ], [], [[#include <rte_config.h>]])
 
-    AC_CHECK_DECL([RTE_LIBRTE_MLX4_PMD], [dnl found
+    AC_CHECK_DECL([RTE_NET_MLX4], [dnl found
       AC_CHECK_DECL([RTE_IBVERBS_LINK_DLOPEN], [], [dnl not found
         OVS_FIND_DEPENDENCY([mlx4dv_init_obj], [mlx4], [libmlx4])
         OVS_FIND_DEPENDENCY([verbs_init_cq], [ibverbs], [libibverbs])
       ], [[#include <rte_config.h>]])
     ], [], [[#include <rte_config.h>]])
+
+    AC_CHECK_DECL([MAP_HUGE_SHIFT], [
+      AC_DEFINE([DPDK_IN_MEMORY_SUPPORTED], [1], [If MAP_HUGE_SHIFT is
+                 defined, anonymous memory mapping is supported by the
+                 kernel, and --in-memory can be used.])
+    ], [], [[#include <sys/mman.h>]])
 
     # DPDK uses dlopen to load plugins.
     OVS_FIND_DEPENDENCY([dlopen], [dl], [libdl])
@@ -462,9 +492,10 @@ AC_DEFUN([OVS_CHECK_DPDK], [
        DPDKLIB_FOUND=true],
       [AC_MSG_RESULT([no])
        AC_MSG_ERROR(m4_normalize([
-          Could not find DPDK library in default search path, update
-          PKG_CONFIG_PATH for pkg-config to find the .pc file in
-          non-standard location]))
+          Failed to link with DPDK, check the config.log for more details.
+          If a working DPDK library was not found in the default search path,
+          update PKG_CONFIG_PATH for pkg-config to find the .pc file in a
+          non-standard location.]))
       ])
 
     CFLAGS="$ovs_save_CFLAGS"

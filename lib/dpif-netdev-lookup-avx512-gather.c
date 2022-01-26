@@ -21,7 +21,9 @@
 
 #include "dpif-netdev.h"
 #include "dpif-netdev-lookup.h"
+
 #include "cmap.h"
+#include "cpu.h"
 #include "flow.h"
 #include "pvector.h"
 #include "openvswitch/vlog.h"
@@ -53,15 +55,6 @@
 
 VLOG_DEFINE_THIS_MODULE(dpif_lookup_avx512_gather);
 
-
-/* Wrapper function required to enable ISA. */
-static inline __m512i
-__attribute__((__target__("avx512vpopcntdq")))
-_mm512_popcnt_epi64_wrapper(__m512i v_in)
-{
-    return _mm512_popcnt_epi64(v_in);
-}
-
 static inline __m512i
 _mm512_popcnt_epi64_manual(__m512i v_in)
 {
@@ -83,6 +76,23 @@ _mm512_popcnt_epi64_manual(__m512i v_in)
     __m512i v_u8_pop = _mm512_add_epi8(v_lo_pop, v_hi_pop);
 
     return _mm512_sad_epu8(v_u8_pop, _mm512_setzero_si512());
+}
+
+/* Wrapper function required to enable ISA. First enable the ISA via the
+ * attribute target for this function, then check if the compiler actually
+ * #defines the ISA itself. If the ISA is not #define-ed by the compiler it
+ * indicates the compiler is too old or is not capable of compiling the
+ * requested ISA level, so fallback to the integer manual implementation.
+ */
+static inline __m512i
+__attribute__((__target__("avx512vpopcntdq")))
+_mm512_popcnt_epi64_wrapper(__m512i v_in)
+{
+#ifdef __AVX512VPOPCNTDQ__
+    return _mm512_popcnt_epi64(v_in);
+#else
+    return _mm512_popcnt_epi64_manual(v_in);
+#endif
 }
 
 static inline uint64_t
@@ -390,13 +400,13 @@ dpcls_subtable_avx512_gather_probe(uint32_t u0_bits, uint32_t u1_bits)
 {
     dpcls_subtable_lookup_func f = NULL;
 
-    int avx512f_available = dpdk_get_cpu_has_isa("x86_64", "avx512f");
-    int bmi2_available = dpdk_get_cpu_has_isa("x86_64", "bmi2");
+    int avx512f_available = cpu_has_isa(OVS_CPU_ISA_X86_AVX512F);
+    int bmi2_available = cpu_has_isa(OVS_CPU_ISA_X86_BMI2);
     if (!avx512f_available || !bmi2_available) {
         return NULL;
     }
 
-    int use_vpop = dpdk_get_cpu_has_isa("x86_64", "avx512vpopcntdq");
+    int use_vpop = cpu_has_isa(OVS_CPU_ISA_X86_VPOPCNTDQ);
 
     CHECK_LOOKUP_FUNCTION(9, 4, use_vpop);
     CHECK_LOOKUP_FUNCTION(9, 1, use_vpop);

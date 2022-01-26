@@ -4862,6 +4862,54 @@ recirc_id(0),in_port(90),packet_type(ns=0,id=0),eth_type(0x0800),ipv4(proto=6,fr
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
+AT_SETUP([ofproto-dpif - handling of malformed TCP packets])
+OVS_VSWITCHD_START
+add_of_ports br0 1 90
+
+dnl drop packet has tcp port 0-f but allow other tcp packets
+AT_DATA([flows.txt], [dnl
+priority=75 tcp tp_dst=0/0xfff0     actions=drop
+priority=50 tcp                     actions=output:1
+])
+AT_CHECK([ovs-ofctl replace-flows br0 flows.txt])
+
+dnl good tcp pkt, tcp(sport=100,dpor=16)
+pkt1="be95df40fb57fa163e5ee3570800450000280001000040063e940a0a0a0a141414140064001000000000000000005002200053330000"
+
+dnl malformed tcp pkt(tcp_hdr < 20 byte), tcp(sport=100,dport=16,dataofs=1)
+pkt2="be95df40fb57fa163e5ee3570800450000280001000040063e940a0a0a0a141414140064001000000000000000001002200093330000"
+
+dnl malformed tcp pkt(tcp_hdr > pkt_len), tcp(sport=100,dport=16,dataofs=15)
+pkt3="be95df40fb57fa163e5ee3570800450000280001000040063e940a0a0a0a14141414006400100000000000000000f002200093330000"
+
+AT_CHECK([ovs-appctl vlog/set dpif:dbg dpif_netdev:dbg])
+
+AT_CHECK([ovs-appctl netdev-dummy/receive p90 "$pkt1"], [0], [stdout])
+dnl for good tcp pkt, ovs can extract the tp_dst=16
+AT_CHECK([ovs-appctl dpctl/dump-flows filter=in_port\(90\),tcp], [0], [dnl
+flow-dump from the main thread:
+recirc_id(0),in_port(90),packet_type(ns=0,id=0),eth_type(0x0800),ipv4(proto=6,frag=no),tcp(dst=16/0xfff0), packets:0, bytes:0, used:never, actions:1
+])
+
+AT_CHECK([ovs-appctl revalidator/purge], [0], [stdout])
+AT_CHECK([ovs-appctl netdev-dummy/receive p90 "$pkt2"], [0], [stdout])
+dnl for malformed tcp pkt(tcp_hdr < 20 byte), ovs uses default value tp_dst=0
+AT_CHECK([ovs-appctl dpctl/dump-flows filter=in_port\(90\),tcp], [0], [dnl
+flow-dump from the main thread:
+recirc_id(0),in_port(90),packet_type(ns=0,id=0),eth_type(0x0800),ipv4(proto=6,frag=no),tcp(dst=0/0xfff0), packets:0, bytes:0, used:never, actions:drop
+])
+
+AT_CHECK([ovs-appctl revalidator/purge], [0], [stdout])
+AT_CHECK([ovs-appctl netdev-dummy/receive p90 "$pkt3"], [0], [stdout])
+dnl for malformed tcp pkt(tcp_hdr > pkt_len), ovs uses default value tp_dst=0
+AT_CHECK([ovs-appctl dpctl/dump-flows filter=in_port\(90\),tcp], [0], [dnl
+flow-dump from the main thread:
+recirc_id(0),in_port(90),packet_type(ns=0,id=0),eth_type(0x0800),ipv4(proto=6,frag=no),tcp(dst=0/0xfff0), packets:0, bytes:0, used:never, actions:drop
+])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
 AT_SETUP([ofproto-dpif - exit])
 OVS_VSWITCHD_START
 add_of_ports br0 1 2 3 10 11 12 13 14
@@ -8619,6 +8667,34 @@ AT_CHECK([sed -n 's/=[[0-9]][[0-9]]\(\.[[0-9]][[0-9]]*\)\{0,1\}s/=?s/p' stdout],
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
+
+AT_SETUP([ofproto-dpif - patch ports - meter (clone)])
+
+OVS_VSWITCHD_START(
+  [add-port br0 p0 -- set Interface p0 type=dummy ofport_request=1 -- \
+   add-port br0 p1 -- set Interface p1 type=patch \
+                                       options:peer=p2 ofport_request=2 -- \
+   add-br br1 -- \
+   set bridge br1 other-config:hwaddr=aa:66:aa:66:00:00 -- \
+   set bridge br1 datapath-type=dummy other-config:datapath-id=1234 \
+                  fail-mode=secure -- \
+   add-port br1 p2 -- set Interface p2 type=patch \
+                                       options:peer=p1 -- \
+   add-port br1 p3 -- set Interface p3 type=dummy ofport_request=3])
+
+AT_CHECK([ovs-ofctl -O OpenFlow13 add-meter br1 'meter=1 pktps stats bands=type=drop rate=2'])
+AT_CHECK([ovs-ofctl del-flows br0])
+AT_CHECK([ovs-ofctl -O OpenFlow13 add-flow br0 in_port=local,ip,actions=2,1])
+AT_CHECK([ovs-ofctl -O OpenFlow13 add-flow br1 in_port=1,ip,actions=meter:1,3])
+
+AT_CHECK([ovs-appctl ofproto/trace ovs-dummy 'in_port(100),eth(src=f8:bc:12:44:34:b6,dst=f8:bc:12:46:58:e0),eth_type(0x0800),ipv4(src=10.1.1.22,dst=10.0.0.3,proto=6,tos=0,ttl=64,frag=no),tcp(src=53295,dst=8080)'], [0], [stdout])
+AT_CHECK([tail -1 stdout], [0],
+  [Datapath actions: clone(meter(0),3),1
+])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
 dnl ----------------------------------------------------------------------
 AT_BANNER([ofproto-dpif -- megaflows])
 
@@ -9718,6 +9794,26 @@ OFPST_TABLE reply (OF1.3) (xid=0x2):
     active=0, lookup=0, matched=0
 
   tables 3...253: ditto
+])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([ofproto-dpif packet-out table meter drop])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2
+
+AT_CHECK([ovs-ofctl -O OpenFlow13 add-meter br0 'meter=1 pktps bands=type=drop rate=1'])
+AT_CHECK([ovs-ofctl -O OpenFlow13 add-flow br0 'in_port=1 action=meter:1,output:2'])
+
+ovs-ofctl -O OpenFlow13 packet-out br0 "in_port=1 packet=50540000000a50540000000908004500001c000000000011a4cd0a0101010a0101020001000400080000 actions=resubmit(,0)"
+ovs-ofctl -O OpenFlow13 packet-out br0 "in_port=1 packet=50540000000a50540000000908004500001c000000000011a4cd0a0101010a0101020001000400080000 actions=resubmit(,0)"
+
+# Check that vswitchd hasn't crashed by dumping the meter added above
+AT_CHECK([ovs-ofctl -O OpenFlow13 dump-meters br0 | ofctl_strip], [0], [dnl
+OFPST_METER_CONFIG reply (OF1.3):
+meter=1 pktps bands=
+type=drop rate=1
 ])
 
 OVS_VSWITCHD_STOP
@@ -11430,6 +11526,23 @@ Datapath actions: 2
 --
 Megaflow: recirc_id=0x3,eth,ip,in_port=1,nw_frag=no
 Datapath actions: 4
+])
+
+ovs-ofctl del-flows br0
+
+AT_DATA([flows.txt], [dnl
+table=0,in_port=1 actions=load:0x1->NXM_NX_REG1[[]],resubmit(,1),load:0x2->NXM_NX_REG1[[]],resubmit(,1),load:0x3->NXM_NX_REG1[[]],resubmit(,1)
+table=1,in_port=1,reg1=0x1 actions=check_pkt_larger(200)->NXM_NX_REG0[[0]],resubmit(,4)
+table=1,in_port=1,reg1=0x2 actions=output:2
+table=1,in_port=1,reg1=0x3 actions=output:4
+table=4,in_port=1 actions=output:3
+])
+
+AT_CHECK([ovs-ofctl --protocols=OpenFlow10 add-flows br0 flows.txt])
+AT_CHECK([ovs-appctl ofproto/trace ovs-dummy 'in_port(1),eth(src=50:54:00:00:00:09,dst=50:54:00:00:00:0a),eth_type(0x0800),ipv4(src=10.10.10.2,dst=10.10.10.1,proto=1,tos=1,ttl=128,frag=no),icmp(type=8,code=0)'], [0], [stdout])
+AT_CHECK([cat stdout | grep Datapath -B1], [0], [dnl
+Megaflow: recirc_id=0,eth,ip,in_port=1,nw_frag=no
+Datapath actions: check_pkt_len(size=200,gt(3),le(3)),2,4
 ])
 
 OVS_VSWITCHD_STOP

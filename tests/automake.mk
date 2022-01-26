@@ -454,6 +454,7 @@ tests_ovstest_SOURCES = \
 	tests/ovstest.h \
 	tests/test-aes128.c \
 	tests/test-atomic.c \
+	tests/test-barrier.c \
 	tests/test-bundle.c \
 	tests/test-byte-order.c \
 	tests/test-classifier.c \
@@ -466,11 +467,13 @@ tests_ovstest_SOURCES = \
 	tests/test-heap.c \
 	tests/test-hindex.c \
 	tests/test-hmap.c \
+	tests/test-id-fpool.c \
 	tests/test-json.c \
 	tests/test-jsonrpc.c \
 	tests/test-list.c \
 	tests/test-lockfile.c \
 	tests/test-multipath.c \
+	tests/test-mpsc-queue.c \
 	tests/test-netflow.c \
 	tests/test-odp.c \
 	tests/test-ofpbuf.c \
@@ -498,7 +501,8 @@ endif
 
 if LINUX
 tests_ovstest_SOURCES += \
-	tests/test-netlink-conntrack.c
+	tests/test-netlink-conntrack.c \
+	tests/test-netlink-policy.c
 endif
 
 tests_ovstest_LDADD = lib/libopenvswitch.la

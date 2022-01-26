@@ -214,6 +214,8 @@ static void ofproto_rule_insert__(struct ofproto *, struct rule *)
     OVS_REQUIRES(ofproto_mutex);
 static void ofproto_rule_remove__(struct ofproto *, struct rule *)
     OVS_REQUIRES(ofproto_mutex);
+static void remove_rules_postponed(struct rule_collection *)
+    OVS_REQUIRES(ofproto_mutex);
 
 /* The source of an OpenFlow request.
  *
@@ -555,6 +557,8 @@ ofproto_create(const char *datapath_name, const char *datapath_type/*ofproto对�
     hindex_init(&ofproto->cookies);
     hmap_init(&ofproto->learned_cookies);
     ovs_list_init(&ofproto->expirable);
+    ofproto->to_remove = xzalloc(sizeof *ofproto->to_remove);
+    rule_collection_init(ofproto->to_remove);
     ofproto->connmgr = connmgr_create(ofproto, datapath_name, datapath_name);
     ofproto->min_mtu = INT_MAX;
     cmap_init(&ofproto->groups);
@@ -1670,6 +1674,7 @@ ofproto_flush__(struct ofproto *ofproto, bool del)
     }
     ofproto_group_delete_all__(ofproto);
     meter_delete_all(ofproto);
+    remove_rules_postponed(ofproto->to_remove);
     /* XXX: Concurrent handler threads may insert new learned flows based on
      * learn actions of the now deleted flows right after we release
      * 'ofproto_mutex'. */
@@ -1720,6 +1725,11 @@ ofproto_destroy__(struct ofproto *ofproto)
 
     ovs_assert(hmap_is_empty(&ofproto->learned_cookies));
     hmap_destroy(&ofproto->learned_cookies);
+
+    ovs_mutex_lock(&ofproto_mutex);
+    rule_collection_destroy(ofproto->to_remove);
+    free(ofproto->to_remove);
+    ovs_mutex_unlock(&ofproto_mutex);
 
     ofproto->ofproto_class->dealloc(ofproto);
 }
@@ -1930,6 +1940,9 @@ ofproto_run(struct ofproto *p)
     //处理openflow的消息的增删改
     connmgr_run(p->connmgr, handle_openflow/*处理openflow*/);
 
+    ovs_mutex_lock(&ofproto_mutex);
+    remove_rules_postponed(p->to_remove);
+    ovs_mutex_unlock(&ofproto_mutex);
     return error;
 }
 
@@ -4533,6 +4546,20 @@ rule_criteria_destroy(struct rule_criteria *criteria)
     criteria->version = OVS_VERSION_NOT_REMOVED; /* Mark as destroyed. */
 }
 
+/* Adds rules to the 'to_remove' collection, so they can be destroyed
+ * later all together.  Destroys 'rules'. */
+static void
+rules_mark_for_removal(struct ofproto *ofproto, struct rule_collection *rules)
+    OVS_REQUIRES(ofproto_mutex)
+{
+    struct rule *rule;
+
+    RULE_COLLECTION_FOR_EACH (rule, rules) {
+        rule_collection_add(ofproto->to_remove, rule);
+    }
+    rule_collection_destroy(rules);
+}
+
 /* Schedules postponed removal of rules, destroys 'rules'. */
 static void
 remove_rules_postponed(struct rule_collection *rules)
@@ -5956,7 +5983,7 @@ modify_flows_finish(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
             }
         }
         learned_cookies_flush(ofproto, &dead_cookies);
-        remove_rules_postponed(old_rules);
+        rules_mark_for_removal(ofproto, old_rules);
     }
 
     return error;
@@ -6064,7 +6091,7 @@ delete_flows_finish__(struct ofproto *ofproto,
             learned_cookies_dec(ofproto, rule_get_actions(rule),
                                 &dead_cookies);
         }
-        remove_rules_postponed(rules);
+        rules_mark_for_removal(ofproto, rules);
 
         learned_cookies_flush(ofproto, &dead_cookies);
     }
@@ -8125,6 +8152,7 @@ ofproto_flow_mod_init(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
     ofm->criteria.version = OVS_VERSION_NOT_REMOVED;
     ofm->conjs = NULL;
     ofm->n_conjs = 0;
+    ofm->table_id = fm->table_id;
 
     bool check_buffer_id = false;
 
@@ -8269,6 +8297,33 @@ ofproto_flow_mod_finish(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
     return error;
 }
 
+static void
+ofproto_table_classifier_defer(struct ofproto *ofproto,
+                               const struct ofproto_flow_mod *ofm)
+{
+    if (check_table_id(ofproto, ofm->table_id)) {
+        if (ofm->table_id == OFPTT_ALL) {
+            struct oftable *table;
+
+            OFPROTO_FOR_EACH_TABLE (table, ofproto) {
+                classifier_defer(&table->cls);
+            }
+        } else {
+            classifier_defer(&ofproto->tables[ofm->table_id].cls);
+        }
+    }
+}
+
+static void
+ofproto_publish_classifiers(struct ofproto *ofproto)
+{
+    struct oftable *table;
+
+    OFPROTO_FOR_EACH_TABLE (table, ofproto) {
+        classifier_publish(&table->cls);
+    }
+}
+
 /* Commit phases (all while locking ofproto_mutex):
  *
  * 1. Begin: Gather resources and make changes visible in the next version.
@@ -8330,6 +8385,10 @@ do_bundle_commit(struct ofconn *ofconn, uint32_t id, uint16_t flags)
                     /* Store the version in which the changes should take
                      * effect. */
                     be->ofm.version = version;
+                    /* Publishing of the classifier update for every flow
+                     * modification in a bundle separately is expensive in
+                     * CPU time and memory.  Deferring. */
+                    ofproto_table_classifier_defer(ofproto, &be->ofm);
                     error = ofproto_flow_mod_start(ofproto, &be->ofm);
                 } else if (be->type == OFPTYPE_GROUP_MOD) {
                     /* Store the version in which the changes should take
@@ -8338,6 +8397,9 @@ do_bundle_commit(struct ofconn *ofconn, uint32_t id, uint16_t flags)
                     error = ofproto_group_mod_start(ofproto, &be->ogm);
                 } else if (be->type == OFPTYPE_PACKET_OUT) {
                     be->opo.version = version;
+                    /* Need to use current version of flows for packet-out,
+                     * so publishing all classifiers now. */
+                    ofproto_publish_classifiers(ofproto);
                     error = ofproto_packet_out_start(ofproto, &be->opo);
                 } else {
                     OVS_NOT_REACHED();
@@ -8348,6 +8410,9 @@ do_bundle_commit(struct ofconn *ofconn, uint32_t id, uint16_t flags)
             }
         }
 
+        /* Publishing all changes made to classifiers. */
+        ofproto_publish_classifiers(ofproto);
+
         if (error) {
             /* Send error referring to the original message. */
             ofconn_send_error(ofconn, be->msg, error);
@@ -8356,14 +8421,23 @@ do_bundle_commit(struct ofconn *ofconn, uint32_t id, uint16_t flags)
             /* 2. Revert.  Undo all the changes made above. */
             LIST_FOR_EACH_REVERSE_CONTINUE(be, node, &bundle->msg_list) {
                 if (be->type == OFPTYPE_FLOW_MOD) {
+                    /* Publishing of the classifier update for every flow
+                     * modification in a bundle separately is expensive in
+                     * CPU time and memory.  Deferring. */
+                    ofproto_table_classifier_defer(ofproto, &be->ofm);
                     ofproto_flow_mod_revert(ofproto, &be->ofm);
                 } else if (be->type == OFPTYPE_GROUP_MOD) {
                     ofproto_group_mod_revert(ofproto, &be->ogm);
                 } else if (be->type == OFPTYPE_PACKET_OUT) {
+                    /* Need to use current version of flows for packet-out,
+                     * so publishing all classifiers now. */
+                    ofproto_publish_classifiers(ofproto);
                     ofproto_packet_out_revert(ofproto, &be->opo);
                 }
                 /* Nothing needs to be reverted for a port mod. */
             }
+            /* Publishing all changes made to classifiers. */
+            ofproto_publish_classifiers(ofproto);
         } else {
             /* 4. Finish. */
             LIST_FOR_EACH (be, node, &bundle->msg_list) {

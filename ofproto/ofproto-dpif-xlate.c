@@ -469,7 +469,7 @@ static void xlate_commit_actions(struct xlate_ctx *ctx);
 
 static void
 patch_port_output(struct xlate_ctx *ctx, const struct xport *in_dev,
-                  struct xport *out_dev);
+                  struct xport *out_dev, bool is_last_action);
 
 //触发冻结状态
 static void
@@ -3707,7 +3707,7 @@ propagate_tunnel_data_to_flow(struct xlate_ctx *ctx, struct eth_addr dmac,
 static int
 native_tunnel_output(struct xlate_ctx *ctx, const struct xport *xport,
                      const struct flow *flow, odp_port_t tunnel_odp_port,
-                     bool truncate)
+                     bool truncate, bool is_last_action)
 {
     struct netdev_tnl_build_header_params tnl_params;
     struct ovs_action_push_tnl tnl_push_data;
@@ -3795,6 +3795,7 @@ native_tunnel_output(struct xlate_ctx *ctx, const struct xport *xport,
     //采用tnl_params走tunnel口（xport)创建tnl_push_data,以便再后面push tunnel header时使用
     err = tnl_port_build_header(xport->ofport, &tnl_push_data, &tnl_params);
     if (err) {
+        xlate_report(ctx, OFT_WARN, "native tunnel header build failed");
         return err;
     }
     tnl_push_data.tnl_port = tunnel_odp_port;//这个应与xport->ofport相同，需要查看上层调用（上层保证了这一点)
@@ -3843,7 +3844,7 @@ native_tunnel_output(struct xlate_ctx *ctx, const struct xport *xport,
         entry->tunnel_hdr.hdr_size = tnl_push_data.header_len;
         entry->tunnel_hdr.operation = ADD;
 
-        patch_port_output(ctx, xport, out_dev);
+        patch_port_output(ctx, xport, out_dev, is_last_action);
 
         /* Similar to the stats update in revalidation, the x_cache entries
          * are populated by the previous translation are used to update the
@@ -3939,7 +3940,7 @@ xlate_flow_is_protected(const struct xlate_ctx *ctx, const struct flow *flow, co
  */
 static void
 patch_port_output(struct xlate_ctx *ctx, const struct xport *in_dev,
-                  struct xport *out_dev)
+                  struct xport *out_dev, bool is_last_action)
 {
     struct flow *flow = &ctx->xin->flow;
     struct flow old_flow = ctx->xin->flow;
@@ -3981,8 +3982,9 @@ patch_port_output(struct xlate_ctx *ctx, const struct xport *in_dev,
     if (!process_special(ctx, out_dev) && may_receive(out_dev, ctx)) {
         if (xport_stp_forward_state(out_dev) &&
             xport_rstp_forward_state(out_dev)) {
+
             xlate_table_action(ctx, flow->in_port.ofp_port, 0, true, true,
-                               false, true, clone_xlate_actions);
+                               false, is_last_action, clone_xlate_actions);
             if (!ctx->freezing) {
                 xlate_action_set(ctx);
             }
@@ -3998,7 +4000,7 @@ patch_port_output(struct xlate_ctx *ctx, const struct xport *in_dev,
 
             //从表0重查
             xlate_table_action(ctx, flow->in_port.ofp_port, 0, true, true,
-                               false, true, clone_xlate_actions);
+                               false, is_last_action, clone_xlate_actions);
             ctx->mirrors = old_mirrors2;
             ctx->base_flow = old_base_flow;
             ctx->odp_actions->size = old_size;
@@ -4202,14 +4204,35 @@ is_neighbor_reply_correct(const struct xlate_ctx *ctx, const struct flow *flow)
 }
 
 static bool
-terminate_native_tunnel(struct xlate_ctx *ctx, struct flow *flow,
-                        struct flow_wildcards *wc, odp_port_t *tnl_port)
+xport_has_ip(const struct xport *xport)
+{
+    struct in6_addr *ip_addr, *mask;
+    int n_in6 = 0;
+
+    if (netdev_get_addr_list(xport->netdev, &ip_addr, &mask, &n_in6)) {
+        n_in6 = 0;
+    } else {
+        free(ip_addr);
+        free(mask);
+    }
+    return n_in6 ? true : false;
+}
+
+static bool
+terminate_native_tunnel(struct xlate_ctx *ctx, const struct xport *xport,
+                        struct flow *flow, struct flow_wildcards *wc,
+                        odp_port_t *tnl_port)
 {
     *tnl_port = ODPP_NONE;
 
     /* XXX: Write better Filter for tunnel port. We can use in_port
-     * in tunnel-port flow to avoid these checks completely. */
-    if (ovs_native_tunneling_is_on(ctx->xbridge->ofproto)) {
+     * in tunnel-port flow to avoid these checks completely.
+     *
+     * Port without an IP address cannot be a tunnel termination point.
+     * Not performing a lookup in this case to avoid unwildcarding extra
+     * flow fields (dl_dst). */
+    if (ovs_native_tunneling_is_on(ctx->xbridge->ofproto)
+        && xport_has_ip(xport)) {
         *tnl_port = tnl_port_map_lookup(flow, wc);
 
         /* If no tunnel port was found and it's about an ARP or ICMPv6 packet,
@@ -4218,7 +4241,21 @@ terminate_native_tunnel(struct xlate_ctx *ctx, struct flow *flow,
             (flow->dl_type == htons(ETH_TYPE_ARP) ||
              flow->nw_proto == IPPROTO_ICMPV6) &&
              is_neighbor_reply_correct(ctx, flow)) {
-            tnl_neigh_snoop(flow, wc, ctx->xbridge->name);
+            tnl_neigh_snoop(flow, wc, ctx->xbridge->name,
+                            ctx->xin->allow_side_effects);
+        } else if (*tnl_port != ODPP_NONE &&
+                   ctx->xin->allow_side_effects &&
+                   dl_type_is_ip_any(flow->dl_type)) {
+            struct eth_addr mac = flow->dl_src;
+            struct in6_addr s_ip6;
+
+            if (flow->dl_type == htons(ETH_TYPE_IP)) {
+                in6_addr_set_mapped_ipv4(&s_ip6, flow->nw_src);
+            } else {
+                s_ip6 = flow->ipv6_src;
+            }
+
+            tnl_neigh_set(ctx->xbridge->name, &s_ip6, mac);
         }
     }
 
@@ -4228,7 +4265,7 @@ terminate_native_tunnel(struct xlate_ctx *ctx, struct flow *flow,
 static void
 compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
                         const struct xlate_bond_recirc *xr, bool check_stp,
-                        bool is_last_action OVS_UNUSED, bool truncate)
+                        bool is_last_action, bool truncate)
 {
 	//取ofp_port口对应配置
     const struct xport *xport = get_ofp_port(ctx->xbridge, ofp_port);
@@ -4270,7 +4307,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
        if (truncate) {
            xlate_report_error(ctx, "Cannot truncate output to patch port");
        }
-       patch_port_output(ctx, xport, xport->peer);
+       patch_port_output(ctx, xport, xport->peer, is_last_action);
        return;
     }
 
@@ -4379,10 +4416,11 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         } else if (is_native_tunnel) {
             /* Output to native tunnel port. */
             //构造 tunnel发送处理
-            native_tunnel_output(ctx, xport, flow, odp_port, truncate);
+            native_tunnel_output(ctx, xport, flow, odp_port, truncate,
+                                 is_last_action);
             flow->tunnel = flow_tnl; /* Restore tunnel metadata */
 
-        } else if (terminate_native_tunnel(ctx, flow, wc,
+        } else if (terminate_native_tunnel(ctx, xport, flow, wc,
                                            &odp_tnl_port)) {
             /* Intercept packet to be received on native tunnel port. */
             nl_msg_put_odp_port(ctx->odp_actions, OVS_ACTION_ATTR_TUNNEL_POP,
@@ -6425,11 +6463,32 @@ static void
 compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc,
                          bool is_last_action)
 {
+    uint16_t zone;
+    if (ofc->zone_src.field) {
+        union mf_subvalue value;
+        memset(&value, 0xff, sizeof(value));
+
+        zone = mf_get_subfield(&ofc->zone_src, &ctx->xin->flow);
+        if (ctx->xin->frozen_state) {
+            /* If the upcall is a resume of a recirculation, we only need to
+             * unwildcard the fields that are not in the frozen_metadata, as
+             * when the rules update, OVS will generate a new recirc_id,
+             * which will invalidate the megaflow with old the recirc_id.
+             */
+            if (!mf_is_frozen_metadata(ofc->zone_src.field)) {
+                mf_write_subfield_flow(&ofc->zone_src, &value,
+                                       &ctx->wc->masks);
+            }
+        } else {
+            mf_write_subfield_flow(&ofc->zone_src, &value, &ctx->wc->masks);
+        }
+    } else {
+        zone = ofc->zone_imm;
+    }
+
+    size_t ct_offset;
     ovs_u128 old_ct_label_mask = ctx->wc->masks.ct_label;
     uint32_t old_ct_mark_mask = ctx->wc->masks.ct_mark;
-    size_t ct_offset;
-    uint16_t zone;
-
     /* Ensure that any prior actions are applied before composing the new
      * conntrack action. */
     xlate_commit_actions(ctx);
@@ -6441,14 +6500,6 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc,
     //处理连接跟踪的子action
     do_xlate_actions(ofc->actions, ofpact_ct_get_action_len(ofc), ctx,
                      is_last_action, false);
-
-    if (ofc->zone_src.field) {
-        /*如果指定的zone_src，则自flow中提取zone*/
-        zone = mf_get_subfield(&ofc->zone_src, &ctx->xin->flow);
-    } else {
-        /*如果未指定zonee_src，则自zone立即数中提取*/
-        zone = ofc->zone_imm;
-    }
 
     /*指明开始存入ct action*/
     ct_offset = nl_msg_start_nested(ctx->odp_actions, OVS_ACTION_ATTR_CT);
@@ -6592,6 +6643,7 @@ xlate_check_pkt_larger(struct xlate_ctx *ctx,
      * then ctx->exit would be true. Reset to false so that we can
      * do flow translation for 'IF_LESS_EQUAL' case. finish_freezing()
      * would have taken care of Undoing the changes done for freeze. */
+    bool old_exit = ctx->exit;
     ctx->exit = false;
 
     offset_attr = nl_msg_start_nested(
@@ -6616,7 +6668,7 @@ xlate_check_pkt_larger(struct xlate_ctx *ctx,
     ctx->was_mpls = old_was_mpls;
     ctx->conntracked = old_conntracked;
     ctx->xin->flow = old_flow;
-    ctx->exit = true;
+    ctx->exit = old_exit;
 }
 
 static void
@@ -6638,6 +6690,47 @@ rewrite_flow_encap_ethernet(struct xlate_ctx *ctx,
                            "Dropping packet as encap(ethernet) is not "
                            "supported for packet type ethernet.");
         ctx->error = XLATE_UNSUPPORTED_PACKET_TYPE;
+    }
+}
+
+static void
+rewrite_flow_encap_mpls(struct xlate_ctx *ctx,
+                        const struct ofpact_encap *encap,
+                        struct flow *flow,
+                        struct flow_wildcards *wc)
+{
+    ovs_be16 ether_type = pt_ns_type_be(encap->new_pkt_type);
+    int n;
+
+    n = flow_count_mpls_labels(flow, ctx->wc);
+    if (n < FLOW_MAX_MPLS_LABELS) {
+        wc->masks.packet_type = OVS_BE32_MAX;
+
+       /* If the current packet is already a MPLS packet with ethernet header
+        * the existing MPLS states must be cleared before the encap MPLS action
+        * is applied. */
+       if (flow->packet_type == htonl(PT_ETH) &&
+           flow->dl_type == htons(ETH_TYPE_MPLS)) {
+           memset(&ctx->wc->masks.mpls_lse, 0x0,
+                  sizeof *wc->masks.mpls_lse * FLOW_MAX_MPLS_LABELS);
+           memset(&flow->mpls_lse, 0x0, sizeof *flow->mpls_lse *
+                  FLOW_MAX_MPLS_LABELS);
+           memset(&ctx->base_flow.mpls_lse, 0x0,
+                  sizeof *ctx->base_flow.mpls_lse * FLOW_MAX_MPLS_LABELS);
+       }
+       flow->packet_type = encap->new_pkt_type;
+       flow_push_mpls(flow, n, ether_type, ctx->wc, true);
+       flow->dl_src = eth_addr_zero;
+       flow->dl_dst = eth_addr_zero;
+    } else {
+        if (ctx->xin->packet != NULL) {
+            xlate_report_error(ctx, "dropping packet on which an encap MPLS "
+                               "action can't be performed as it would have "
+                               "more MPLS LSEs than the %d supported.",
+                               FLOW_MAX_MPLS_LABELS);
+        }
+        ctx->error = XLATE_TOO_MANY_MPLS_LABELS;
+        return;
     }
 }
 
@@ -6772,6 +6865,13 @@ xlate_generic_encap_action(struct xlate_ctx *ctx,
         case PT_NSH:
             encap_data = rewrite_flow_push_nsh(ctx, encap, flow, wc);
             break;
+        case PT_MPLS:
+        case PT_MPLS_MC:
+            rewrite_flow_encap_mpls(ctx, encap, flow, wc);
+            if (!ctx->xbridge->support.add_mpls) {
+                ctx->xout->slow |= SLOW_ACTION;
+            }
+            break;
         default:
             /* New packet type was checked during decoding. */
             OVS_NOT_REACHED();
@@ -6843,6 +6943,43 @@ xlate_generic_decap_action(struct xlate_ctx *ctx,
             ctx->pending_decap = true;
             /* Trigger recirculation. */
             return true;
+        case PT_MPLS: {
+            int n;
+            ovs_be16 ethertype;
+
+            flow->packet_type = decap->new_pkt_type;
+            ethertype = pt_ns_type_be(flow->packet_type);
+
+            n = flow_count_mpls_labels(flow, ctx->wc);
+            if (!ethertype) {
+                ethertype = htons(ETH_TYPE_TEB);
+            }
+            if (flow_pop_mpls(flow, n, ethertype, ctx->wc)) {
+                if (!ctx->xbridge->support.add_mpls) {
+                   ctx->xout->slow |= SLOW_ACTION;
+                }
+                ctx->pending_decap = true;
+                if (n == 1) {
+                    /* Trigger recirculation. */
+                    return true;
+                } else {
+                    return false;
+                }
+            } else if (n >= FLOW_MAX_MPLS_LABELS) {
+                if (ctx->xin->packet != NULL) {
+                    xlate_report_error(ctx, "dropping packet on which an "
+                                       "MPLS decap can't be performed as "
+                                       "it has more MPLS LSEs than the %d "
+                                       "supported.",
+                                       FLOW_MAX_MPLS_LABELS);
+                }
+                ctx->error = XLATE_TOO_MANY_MPLS_LABELS;
+                ofpbuf_clear(ctx->odp_actions);
+                return false;
+            } else {
+                return false;
+            }
+        }
         default:
             /* Error handling: drop packet. */
             xlate_report_debug(
@@ -7002,6 +7139,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
         return;
     }
 
+    bool exit = false;
     //遍历actions集合，按action进行转换
     OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
         struct ofpact_controller *controller;
@@ -7009,7 +7147,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
         const struct ofpact_set_field *set_field;
         const struct mf_field *mf;
         bool last = is_last_action && ofpact_last(a, ofpacts, ofpacts_len)
-                    && ctx->action_set.size;
+                    && !ctx->action_set.size;
 
         if (ctx->error) {
         	//如转换出错，则退出
@@ -7018,7 +7156,7 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
 
         recirc_for_mpls(a, ctx);
 
-        if (ctx->exit) {
+        if (ctx->exit || exit) {
             /* Check if need to store the remaining actions for later
              * execution. */
             if (ctx->freezing) {
@@ -7470,17 +7608,18 @@ do_xlate_actions(const struct ofpact *ofpacts/*待处理的action*/, size_t ofpa
             break;
 
         case OFPACT_CHECK_PKT_LARGER: {
-            if (last) {
-                /* If this is last action, then there is no need to
-                 * translate the action. */
-                break;
-            }
             const struct ofpact *remaining_acts = ofpact_next(a);
             size_t remaining_acts_len = ofpact_remaining_len(remaining_acts,
                                                              ofpacts,
                                                              ofpacts_len);
             xlate_check_pkt_larger(ctx, ofpact_get_CHECK_PKT_LARGER(a),
                                    remaining_acts, remaining_acts_len);
+            if (ctx->xbridge->support.check_pkt_len) {
+                /* If datapath supports check_pkt_len, then
+                 * xlate_check_pkt_larger() does the translation for the
+                 * ofpacts following 'a'. */
+                exit = true;
+            }
             break;
         }
         }

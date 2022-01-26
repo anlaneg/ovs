@@ -20,6 +20,7 @@
 
 #include <config.h>
 
+#include "cpu.h"
 #include "dpif-netdev.h"
 #include "dpif-netdev-perf.h"
 #include "dpif-netdev-private.h"
@@ -61,8 +62,8 @@ struct dpif_userdata {
 int32_t
 dp_netdev_input_outer_avx512_probe(void)
 {
-    bool avx512f_available = dpdk_get_cpu_has_isa("x86_64", "avx512f");
-    bool bmi2_available = dpdk_get_cpu_has_isa("x86_64", "bmi2");
+    bool avx512f_available = cpu_has_isa(OVS_CPU_ISA_X86_AVX512F);
+    bool bmi2_available = cpu_has_isa(OVS_CPU_ISA_X86_BMI2);
 
     if (!avx512f_available || !bmi2_available) {
         return -ENOTSUP;
@@ -186,7 +187,7 @@ dp_netdev_input_outer_avx512(struct dp_netdev_pmd_thread *pmd,
 
         /* Check for a partial hardware offload match. */
         if (hwol_enabled) {
-            if (OVS_UNLIKELY(dp_netdev_hw_flow(pmd, in_port, packet, &f))) {
+            if (OVS_UNLIKELY(dp_netdev_hw_flow(pmd, packet, &f))) {
                 /* Packet restoration failed and it was dropped, do not
                  * continue processing. */
                 continue;
@@ -197,7 +198,8 @@ dp_netdev_input_outer_avx512(struct dp_netdev_pmd_thread *pmd,
                 if (mfex_hit) {
                     pkt_meta[i].tcp_flags = miniflow_get_tcp_flags(&key->mf);
                 } else {
-                    pkt_meta[i].tcp_flags = parse_tcp_flags(packet);
+                    pkt_meta[i].tcp_flags = parse_tcp_flags(packet,
+                                                            NULL, NULL, NULL);
                 }
 
                 pkt_meta[i].bytes = dp_packet_size(packet);

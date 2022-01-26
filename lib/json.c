@@ -146,6 +146,7 @@ json_type_to_string(enum json_type type)
     case JSON_STRING:
         return "string";
 
+    case JSON_SERIALIZED_OBJECT:
     case JSON_N_TYPES:
     default:
         return "<invalid>";
@@ -178,6 +179,14 @@ struct json *
 json_string_create(const char *s)
 {
     return json_string_create_nocopy(xstrdup(s));
+}
+
+struct json *
+json_serialized_object_create(const struct json *src)
+{
+    struct json *json = json_create(JSON_SERIALIZED_OBJECT);
+    json->string = json_to_string(src, JSSF_SORT);
+    return json;
 }
 
 struct json *
@@ -309,6 +318,13 @@ json_string(const struct json *json)
     return json->string;
 }
 
+const char *
+json_serialized_object(const struct json *json)
+{
+    ovs_assert(json->type == JSON_SERIALIZED_OBJECT);
+    return json->string;
+}
+
 struct json_array *
 json_array(const struct json *json)
 {
@@ -350,34 +366,33 @@ static void json_destroy_array(struct json_array *array);
 
 /* Frees 'json' and everything it points to, recursively. */
 void
-json_destroy(struct json *json)
+json_destroy__(struct json *json)
 {
-    if (json && !--json->count) {
-        switch (json->type) {
-        case JSON_OBJECT:
-            json_destroy_object(json->object);
-            break;
+    switch (json->type) {
+    case JSON_OBJECT:
+        json_destroy_object(json->object);
+        break;
 
-        case JSON_ARRAY:
-            json_destroy_array(&json->array);
-            break;
+    case JSON_ARRAY:
+        json_destroy_array(&json->array);
+        break;
 
-        case JSON_STRING:
-            free(json->string);
-            break;
+    case JSON_STRING:
+    case JSON_SERIALIZED_OBJECT:
+        free(json->string);
+        break;
 
-        case JSON_NULL:
-        case JSON_FALSE:
-        case JSON_TRUE:
-        case JSON_INTEGER:
-        case JSON_REAL:
-            break;
+    case JSON_NULL:
+    case JSON_FALSE:
+    case JSON_TRUE:
+    case JSON_INTEGER:
+    case JSON_REAL:
+        break;
 
-        case JSON_N_TYPES:
-            OVS_NOT_REACHED();
-        }
-        free(json);
+    case JSON_N_TYPES:
+        OVS_NOT_REACHED();
     }
+    free(json);
 }
 
 static void
@@ -423,6 +438,9 @@ json_deep_clone(const struct json *json)
     case JSON_STRING:
         return json_string_create(json->string);
 
+    case JSON_SERIALIZED_OBJECT:
+        return json_serialized_object_create(json);
+
     case JSON_NULL:
     case JSON_FALSE:
     case JSON_TRUE:
@@ -438,15 +456,6 @@ json_deep_clone(const struct json *json)
     default:
         OVS_NOT_REACHED();
     }
-}
-
-/* Returns 'json', with the reference count incremented. */
-struct json *
-json_clone(const struct json *json_)
-{
-    struct json *json = CONST_CAST(struct json *, json_);
-    json->count++;
-    return json;
 }
 
 struct json *
@@ -522,6 +531,7 @@ json_hash(const struct json *json, size_t basis)
         return json_hash_array(&json->array, basis);
 
     case JSON_STRING:
+    case JSON_SERIALIZED_OBJECT:
         return hash_string(json->string, basis);
 
     case JSON_NULL:
@@ -597,6 +607,7 @@ json_equal(const struct json *a, const struct json *b)
         return json_equal_array(&a->array, &b->array);
 
     case JSON_STRING:
+    case JSON_SERIALIZED_OBJECT:
         return !strcmp(a->string, b->string);
 
     case JSON_NULL:
@@ -1071,6 +1082,14 @@ json_from_string(const char *string)
     struct json_parser *p = json_parser_create(JSPF_TRAILER);
     json_parser_feed(p, string, strlen(string));
     return json_parser_finish(p);
+}
+
+/* Parses data of JSON_SERIALIZED_OBJECT to the real JSON. */
+struct json *
+json_from_serialized_object(const struct json *json)
+{
+    ovs_assert(json->type == JSON_SERIALIZED_OBJECT);
+    return json_from_string(json->string);
 }
 
 /* Reads the file named 'file_name', parses its contents as a JSON object or
@@ -1567,6 +1586,10 @@ json_serialize(const struct json *json, struct json_serializer *s)
         json_serialize_string(json->string, ds);
         break;
 
+    case JSON_SERIALIZED_OBJECT:
+        ds_put_cstr(ds, json->string);
+        break;
+
     case JSON_N_TYPES:
     default:
         OVS_NOT_REACHED();
@@ -1700,14 +1723,30 @@ json_serialize_string(const char *string, struct ds *ds)
 {
     uint8_t c;
     uint8_t c2;
+    size_t count;
     const char *escape;
+    const char *start;
 
     ds_put_char(ds, '"');
+    count = 0;
+    start = string;
     while ((c = *string++) != '\0') {
-        escape = chars_escaping[c];
-        while ((c2 = *escape++) != '\0') {
-            ds_put_char(ds, c2);
+        if (c >= ' ' && c != '"' && c != '\\') {
+            count++;
+        } else {
+            if (count) {
+                ds_put_buffer(ds, start, count);
+                count = 0;
+            }
+            start = string;
+            escape = chars_escaping[c];
+            while ((c2 = *escape++) != '\0') {
+                ds_put_char(ds, c2);
+            }
         }
+    }
+    if (count) {
+        ds_put_buffer(ds, start, count);
     }
     ds_put_char(ds, '"');
 }
