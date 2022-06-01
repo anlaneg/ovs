@@ -81,11 +81,12 @@ recirc_id(0),in_port(4),packet_type(ns=0,id=0),eth(src=50:54:00:00:00:0b,dst=ff:
 
 ovs-appctl netdev-dummy/set-admin-state p1 up
 ovs-appctl time/warp 100
-OVS_WAIT_UNTIL([ovs-appctl bond/show | STRIP_RECIRC_ID | STRIP_ACTIVE_MEMBER_MAC], [0], [dnl
+OVS_WAIT_UNTIL_EQUAL([ovs-appctl bond/show | STRIP_RECIRC_ID | STRIP_ACTIVE_MEMBER_MAC], [dnl
 ---- bond0 ----
 bond_mode: active-backup
 bond may use recirculation: no, <del>
 bond-hash-basis: 0
+lb_output action: disabled, bond-id: -1
 updelay: 0 ms
 downdelay: 0 ms
 lacp_status: off
@@ -99,7 +100,6 @@ member p1: enabled
 
 member p2: enabled
   may_enable: true
-
 ])
 
 OVS_VSWITCHD_STOP
@@ -129,11 +129,12 @@ ovs-appctl time/warp 100
 OVS_WAIT_UNTIL([test -n "`ovs-appctl bond/show | fgrep 'member p1: disabled'`"])
 ovs-appctl netdev-dummy/set-admin-state p1 up
 ovs-appctl time/warp 100
-OVS_WAIT_UNTIL([ovs-appctl bond/show | STRIP_RECIRC_ID | STRIP_ACTIVE_MEMBER_MAC], [0], [dnl
+OVS_WAIT_UNTIL_EQUAL([ovs-appctl bond/show | STRIP_RECIRC_ID | STRIP_ACTIVE_MEMBER_MAC], [dnl
 ---- bond0 ----
 bond_mode: active-backup
 bond may use recirculation: no, <del>
 bond-hash-basis: 0
+lb_output action: disabled, bond-id: -1
 updelay: 0 ms
 downdelay: 0 ms
 lacp_status: off
@@ -150,7 +151,6 @@ member p2: enabled
 
 member p3: enabled
   may_enable: true
-
 ])
 
 dnl Now delete the primary and verify that the output shows that the
@@ -171,11 +171,12 @@ ovs-vsctl \
    --id=@p1 create Interface name=p1 type=dummy options:pstream=punix:$OVS_RUNDIR/p1.sock ofport_request=1 -- \
    set Port bond0 interfaces="$uuids, @p1]"
 ovs-appctl time/warp 100
-OVS_WAIT_UNTIL([ovs-appctl bond/show | STRIP_RECIRC_ID | STRIP_ACTIVE_MEMBER_MAC], [0], [dnl
+OVS_WAIT_UNTIL_EQUAL([ovs-appctl bond/show | STRIP_RECIRC_ID | STRIP_ACTIVE_MEMBER_MAC], [dnl
 ---- bond0 ----
 bond_mode: active-backup
 bond may use recirculation: no, <del>
 bond-hash-basis: 0
+lb_output action: disabled, bond-id: -1
 updelay: 0 ms
 downdelay: 0 ms
 lacp_status: off
@@ -192,17 +193,17 @@ member p2: enabled
 
 member p3: enabled
   may_enable: true
-
 ])
 
 dnl Switch to another primary
 ovs-vsctl set port bond0 other_config:bond-primary=p2
 ovs-appctl time/warp 100
-OVS_WAIT_UNTIL([ovs-appctl bond/show | STRIP_RECIRC_ID | STRIP_ACTIVE_MEMBER_MAC], [0], [dnl
+OVS_WAIT_UNTIL_EQUAL([ovs-appctl bond/show | STRIP_RECIRC_ID | STRIP_ACTIVE_MEMBER_MAC], [dnl
 ---- bond0 ----
 bond_mode: active-backup
 bond may use recirculation: no, <del>
 bond-hash-basis: 0
+lb_output action: disabled, bond-id: -1
 updelay: 0 ms
 downdelay: 0 ms
 lacp_status: off
@@ -211,25 +212,25 @@ active-backup primary: p2
 <active member mac del>
 
 member p1: enabled
-  active member
   may_enable: true
 
 member p2: enabled
+  active member
   may_enable: true
 
 member p3: enabled
   may_enable: true
-
 ])
 
 dnl Remove the "bond-primary" config directive from the bond.
 AT_CHECK([ovs-vsctl remove Port bond0 other_config bond-primary])
 ovs-appctl time/warp 100
-OVS_WAIT_UNTIL([ovs-appctl bond/show | STRIP_RECIRC_ID | STRIP_ACTIVE_MEMBER_MAC], [0], [dnl
+OVS_WAIT_UNTIL_EQUAL([ovs-appctl bond/show | STRIP_RECIRC_ID | STRIP_ACTIVE_MEMBER_MAC], [dnl
 ---- bond0 ----
 bond_mode: active-backup
 bond may use recirculation: no, <del>
 bond-hash-basis: 0
+lb_output action: disabled, bond-id: -1
 updelay: 0 ms
 downdelay: 0 ms
 lacp_status: off
@@ -238,15 +239,14 @@ active-backup primary: <none>
 <active member mac del>
 
 member p1: enabled
-  active member
   may_enable: true
 
 member p2: enabled
+  active member
   may_enable: true
 
 member p3: enabled
   may_enable: true
-
 ])
 
 OVS_VSWITCHD_STOP
@@ -5573,7 +5573,36 @@ check_flows () {
     echo "n_packets=$n"
     test "$n" = 1
 }
-OVS_WAIT_UNTIL([check_flows], [ovs dump-flows br0])
+OVS_WAIT_UNTIL([check_flows], [ovs-ofctl dump-flows br0])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+# Checks for regression against a bug in which OVS crashed
+# with in_port=OFPP_NONE or in_port=OFPP_CONTROLLER and
+# recirculation is involved.
+AT_SETUP([ofproto-dpif - packet-out recirculation with OFPP_NONE and OFPP_CONTROLLER])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2
+
+AT_DATA([flows.txt], [dnl
+table=0 ip actions=mod_dl_dst:83:83:83:83:83:83,ct(table=1)
+table=1 ip actions=ct(commit),normal
+])
+AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
+
+packet=ffffffffffff00102030405008004500001c00000000401100000a000002ffffffff0035111100080000
+AT_CHECK([ovs-ofctl packet-out br0 "in_port=none,packet=$packet actions=table"])
+AT_CHECK([ovs-ofctl packet-out br0 "in_port=controller,packet=$packet actions=table"])
+
+# Dumps out the flow table, extracts the number of packets that have gone
+# through the (single) flow in table 1, and returns success if it's exactly 2.
+check_flows () {
+    n=$(ovs-ofctl dump-flows br0 table=1 | sed -n 's/.*n_packets=\([[0-9]]\{1,\}\).*/\1/p')
+    echo "n_packets=$n"
+    test "$n" = 2
+}
+OVS_WAIT_UNTIL([check_flows], [ovs-ofctl dump-flows br0])
 
 OVS_VSWITCHD_STOP
 AT_CLEANUP
@@ -7600,7 +7629,7 @@ dnl configure bridge IPFIX and ensure that sample action generation works at the
 dnl datapath level.
 AT_SETUP([ofproto-dpif - Bridge IPFIX sanity check])
 OVS_VSWITCHD_START
-add_of_ports br0 1 2
+add_of_ports br0 1 2 3
 
 dnl Sample every packet using bridge-based sampling.
 AT_CHECK([ovs-vsctl -- set bridge br0 ipfix=@fix -- \
@@ -7615,6 +7644,28 @@ AT_CHECK([ovs-appctl dpctl/dump-flows | sed 's/.*\(packets:\)/\1/' | sed 's/used
 flow-dump from the main thread:
 packets:2, bytes:68, used:0.001s, actions:userspace(pid=0,ipfix(output_port=4294967295))
 ])
+
+AT_CHECK([ovs-appctl revalidator/purge])
+
+dnl Check sample is performed even if only one of the ports is present.
+AT_DATA([flows.txt], [dnl
+table=0,in_port=3,tcp actions=load:0xffff->NXM_OF_IN_PORT[],ct(zone=1,table=1)
+table=1,tcp, actions=output:2
+])
+AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
+
+for i in `seq 1 3`; do
+    AT_CHECK([ovs-appctl netdev-dummy/receive p3 'in_port(3),eth(src=50:54:00:00:00:08,dst=50:54:00:00:00:0a),eth_type(0x0800),ipv4(src=192.168.0.2,dst=192.168.0.1,proto=6,tos=0,ttl=64,frag=no)'])
+done
+
+AT_CHECK([ovs-appctl dpctl/dump-flows | sed 's/.*\(packets:\)/\1/' | sed 's/used:[[0-9]].[[0-9]]*s/used:0.001s/'], [0], [dnl
+flow-dump from the main thread:
+packets:2, bytes:236, used:0.001s, actions:userspace(pid=0,ipfix(output_port=2)),2
+packets:2, bytes:236, used:0.001s, actions:userspace(pid=0,ipfix(output_port=4294967295)),ct(zone=1),recirc(0x1)
+])
+
+AT_CHECK([ovs-ofctl del-flows br0 in_port=3])
+AT_CHECK([ovs-ofctl del-flows br0 table=1])
 
 AT_CHECK([ovs-appctl revalidator/purge])
 dnl
@@ -10903,6 +10954,12 @@ dnl AT_CHECK([ovs-appctl netdev-dummy/receive p2 '50540000000a505400000009080045
 AT_CHECK([ovs-appctl netdev-dummy/receive p1 '50540000000950540000000a080045000028fc264000400628a50a0101020a01010100020001396bb35a8cadbdb45010000a629b0000'])
 AT_CHECK([ovs-appctl netdev-dummy/receive p1 '50540000000950540000000a080045000029fc274000400628a30a0101020a01010100020001396bb35a8cadbdb45018000a589200000a'])
 AT_CHECK([ovs-appctl netdev-dummy/receive p2 '50540000000a505400000009080045000028f2c84000400632030a0101010a010102000100028cadbdb4396bb35b5010000a629a0000'])
+
+# dnl Check that the protocol state moved to established after the pickup
+AT_CHECK([ovs-appctl dpctl/dump-conntrack], [0], [dnl
+tcp,orig=(src=10.1.1.2,dst=10.1.1.1,sport=2,dport=1),reply=(src=10.1.1.1,dst=10.1.1.2,sport=1,dport=2),protoinfo=(state=ESTABLISHED)
+])
+
 AT_CHECK([ovs-appctl netdev-dummy/receive p1 '50540000000950540000000a08004500022afc284000400626a10a0101020a01010100020001396bb35b8cadbdb45018000a941f0000 dnl
                                               666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666 dnl
                                               666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666 dnl

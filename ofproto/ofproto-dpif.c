@@ -219,10 +219,6 @@ struct shash all_dpif_backers = SHASH_INITIALIZER(&all_dpif_backers);
 static struct hmap all_ofproto_dpifs_by_name =
                           HMAP_INITIALIZER(&all_ofproto_dpifs_by_name);
 
-/* All existing ofproto_dpif instances, indexed by ->uuid. */
-static struct hmap all_ofproto_dpifs_by_uuid =
-                          HMAP_INITIALIZER(&all_ofproto_dpifs_by_uuid);
-
 static bool ofproto_use_tnl_push_pop = true;
 static void ofproto_unixctl_init(void);
 static void ct_zone_config_init(struct dpif_backer *backer);
@@ -1723,7 +1719,7 @@ static int
 construct(struct ofproto *ofproto_)
 {
     struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofproto_);
-    struct shash_node *node, *next;
+    struct shash_node *node;
     int error;
 
     /* Tunnel module can get used right after the udpif threads are running. */
@@ -1766,7 +1762,7 @@ construct(struct ofproto *ofproto_)
     //我们在ofproto初始化时，传入了ovsdb中传来的首次port信息
     //我们现在正在创建ofproto，所以需要查看是否有这个交换机的port需要创建
     //这个适用于在我们启动前ovsdb中已存在某一交换机的配置。
-    SHASH_FOR_EACH_SAFE (node, next, &init_ofp_ports) {
+    SHASH_FOR_EACH_SAFE (node, &init_ofp_ports) {
         struct iface_hint *iface_hint = node->data;
 
         if (!strcmp(iface_hint->br_name, ofproto->up.name)) {
@@ -1789,10 +1785,6 @@ construct(struct ofproto *ofproto_)
     hmap_insert(&all_ofproto_dpifs_by_name,
                 &ofproto->all_ofproto_dpifs_by_name_node,
                 hash_string(ofproto->up.name, 0));
-    hmap_insert(&all_ofproto_dpifs_by_uuid,
-                &ofproto->all_ofproto_dpifs_by_uuid_node,
-                uuid_hash(&ofproto->uuid));
-
     //准备统计状态
     memset(&ofproto->stats, 0, sizeof ofproto->stats);
 
@@ -1895,8 +1887,6 @@ destruct(struct ofproto *ofproto_, bool del)
 
     hmap_remove(&all_ofproto_dpifs_by_name,
                 &ofproto->all_ofproto_dpifs_by_name_node);
-    hmap_remove(&all_ofproto_dpifs_by_uuid,
-                &ofproto->all_ofproto_dpifs_by_uuid_node);
 
     OFPROTO_FOR_EACH_TABLE (table, &ofproto->up) {
         CLS_FOR_EACH (rule, up.cr, &table->cls) {
@@ -1932,6 +1922,8 @@ destruct(struct ofproto *ofproto_, bool del)
 
     seq_destroy(ofproto->ams_seq);
 
+    /* Wait for all the meter destroy work to finish. */
+    ovsrcu_barrier();
     close_dpif_backer(ofproto->backer, del);
 }
 
@@ -2023,7 +2015,7 @@ run(struct ofproto *ofproto_)
 
     new_dump_seq = seq_read(udpif_dump_seq(ofproto->backer->udpif));
     if (ofproto->dump_seq != new_dump_seq) {
-        struct rule *rule, *next_rule;
+        struct rule *rule;
         long long now = time_msec();
 
         /* We know stats are relatively fresh, so now is a good time to do some
@@ -2033,7 +2025,7 @@ run(struct ofproto *ofproto_)
         /* Expire OpenFlow flows whose idle_timeout or hard_timeout
          * has passed. */
         ovs_mutex_lock(&ofproto_mutex);
-        LIST_FOR_EACH_SAFE (rule, next_rule, expirable,
+        LIST_FOR_EACH_SAFE (rule, expirable,
                             &ofproto->up.expirable) {
             rule_expire(rule_dpif_cast(rule), now);
         }
@@ -2459,6 +2451,12 @@ set_ipfix(
         if (!has_options) {
             dpif_ipfix_unref(di);
             ofproto->ipfix = NULL;
+        }
+
+        /* TODO: need to consider ipfix option changes more than
+         * enable/disable */
+        if (new_di || !ofproto->ipfix) {
+            ofproto->backer->need_revalidate = REV_RECONFIGURE;
         }
     }
 
@@ -3195,11 +3193,11 @@ bundle_flush_macs(struct ofbundle *bundle, bool all_ofprotos)//强制过期bundl
 {
     struct ofproto_dpif *ofproto = bundle->ofproto;
     struct mac_learning *ml = ofproto->ml;
-    struct mac_entry *mac, *next_mac;
+    struct mac_entry *mac;
 
     ofproto->backer->need_revalidate = REV_RECONFIGURE;
     ovs_rwlock_wrlock(&ml->rwlock);
-    LIST_FOR_EACH_SAFE (mac, next_mac, lru_node, &ml->lrus) {
+    LIST_FOR_EACH_SAFE (mac, lru_node, &ml->lrus) {
         if (mac_entry_get_port(ml, mac) == bundle) {//这个反向查找太扯了
             if (all_ofprotos) {
                 struct ofproto_dpif *o;
@@ -3230,13 +3228,13 @@ bundle_move(struct ofbundle *old, struct ofbundle *new)
 {
     struct ofproto_dpif *ofproto = old->ofproto;
     struct mac_learning *ml = ofproto->ml;
-    struct mac_entry *mac, *next_mac;
+    struct mac_entry *mac;
 
     ovs_assert(new->ofproto == old->ofproto);
 
     ofproto->backer->need_revalidate = REV_RECONFIGURE;
     ovs_rwlock_wrlock(&ml->rwlock);
-    LIST_FOR_EACH_SAFE (mac, next_mac, lru_node, &ml->lrus) {
+    LIST_FOR_EACH_SAFE (mac, lru_node, &ml->lrus) {
         if (mac_entry_get_port(ml, mac) == old) {
             mac_entry_set_port(ml, mac, new);
         }
@@ -3336,7 +3334,7 @@ static void
 bundle_destroy(struct ofbundle *bundle)//bundle口销毁
 {
     struct ofproto_dpif *ofproto;
-    struct ofport_dpif *port, *next_port;
+    struct ofport_dpif *port;
 
     if (!bundle) {
         return;
@@ -3349,7 +3347,7 @@ bundle_destroy(struct ofbundle *bundle)//bundle口销毁
     xlate_bundle_remove(bundle);
     xlate_txn_commit();
 
-    LIST_FOR_EACH_SAFE (port, next_port, bundle_node, &bundle->ports) {
+    LIST_FOR_EACH_SAFE (port, bundle_node, &bundle->ports) {
         bundle_del_port(port);
     }
 
@@ -3446,9 +3444,7 @@ bundle_set(struct ofproto *ofproto_, void *aux,
     }
     //删除不存加入的成员
     if (!ok || ovs_list_size(&bundle->ports) != s->n_members) {
-        struct ofport_dpif *next_port;
-
-        LIST_FOR_EACH_SAFE (port, next_port, bundle_node, &bundle->ports) {
+        LIST_FOR_EACH_SAFE (port, bundle_node, &bundle->ports) {
             for (i = 0; i < s->n_members; i++) {
                 if (s->members[i] == port->up.ofp_port) {
                     goto found;
@@ -4084,6 +4080,10 @@ port_add(struct ofproto *ofproto_, struct netdev *netdev)
             simap_put(&ofproto->backer->tnl_backers,
                       dp_port_name, odp_to_u32(port_no));
         }
+    } else {
+        struct dpif *dpif = ofproto->backer->dpif;
+        const char *dpif_type_str = dpif_normalize_type(dpif_type(dpif));
+        netdev_set_dpif_type(netdev, dpif_type_str);
     }
 
     if (netdev_get_tunnel_config(netdev)) {
@@ -4614,12 +4614,14 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto/*所属datapath*/,
                 atomic_add_relaxed(&tbl->n_matched, stats->n_packets, &orig);
             }
             if (xcache) {
-                struct xc_entry *entry;
+                if (ofproto_try_ref(&ofproto->up)) {
+                    struct xc_entry *entry;
 
-                entry = xlate_cache_add_entry(xcache, XC_TABLE);
-                entry->table.ofproto = ofproto;
-                entry->table.id = *table_id;
-                entry->table.match = true;
+                    entry = xlate_cache_add_entry(xcache, XC_TABLE);
+                    entry->table.ofproto = ofproto;
+                    entry->table.id = *table_id;
+                    entry->table.match = true;
+                }
             }
             return rule;//直接返回drop分片包规则
         }
@@ -4652,12 +4654,14 @@ rule_dpif_lookup_from_table(struct ofproto_dpif *ofproto/*所属datapath*/,
                                stats->n_packets, &orig);
         }
         if (xcache) {
-            struct xc_entry *entry;
+            if (ofproto_try_ref(&ofproto->up)) {
+                struct xc_entry *entry;
 
-            entry = xlate_cache_add_entry(xcache, XC_TABLE);
-            entry->table.ofproto = ofproto;
-            entry->table.id = next_id;
-            entry->table.match = (rule != NULL);
+                entry = xlate_cache_add_entry(xcache, XC_TABLE);
+                entry->table.ofproto = ofproto;
+                entry->table.id = next_id;
+                entry->table.match = (rule != NULL);
+            }
         }
         if (rule) {
         	//查找规则了
@@ -5703,9 +5707,9 @@ ct_zone_timeout_policy_sweep(struct dpif_backer *backer)
 {
     if (!ovs_list_is_empty(&backer->ct_tp_kill_list)
         && time_msec() >= timeout_policy_cleanup_timer) {
-        struct ct_timeout_policy *ct_tp, *next;
+        struct ct_timeout_policy *ct_tp;
 
-        LIST_FOR_EACH_SAFE (ct_tp, next, list_node, &backer->ct_tp_kill_list) {
+        LIST_FOR_EACH_SAFE (ct_tp, list_node, &backer->ct_tp_kill_list) {
             if (!ct_dpif_del_timeout_policy(backer->dpif, ct_tp->tp_id)) {
                 ovs_list_remove(&ct_tp->list_node);
                 ct_timeout_policy_destroy(ct_tp, backer->tp_ids);
@@ -5747,6 +5751,7 @@ ct_set_zone_timeout_policy(const char *datapath_type, uint16_t zone_id,
             ct_timeout_policy_unref(backer, ct_zone->ct_tp);
             ct_zone->ct_tp = ct_tp;
             ct_tp->ref_count++;
+            backer->need_revalidate = REV_RECONFIGURE;
         }
     } else {
         struct ct_zone *new_ct_zone = ct_zone_alloc(zone_id);
@@ -5754,6 +5759,7 @@ ct_set_zone_timeout_policy(const char *datapath_type, uint16_t zone_id,
         cmap_insert(&backer->ct_zones, &new_ct_zone->node,
                     hash_int(zone_id, 0));
         ct_tp->ref_count++;
+        backer->need_revalidate = REV_RECONFIGURE;
     }
 }
 
@@ -5770,6 +5776,7 @@ ct_del_zone_timeout_policy(const char *datapath_type, uint16_t zone_id)
     if (ct_zone) {
         ct_timeout_policy_unref(backer, ct_zone->ct_tp);
         ct_zone_remove_and_destroy(backer, ct_zone);
+        backer->need_revalidate = REV_RECONFIGURE;
     }
 }
 
@@ -5974,15 +5981,7 @@ ofproto_dpif_lookup_by_name(const char *name)
 struct ofproto_dpif *
 ofproto_dpif_lookup_by_uuid(const struct uuid *uuid)
 {
-    struct ofproto_dpif *ofproto;
-
-    HMAP_FOR_EACH_WITH_HASH (ofproto, all_ofproto_dpifs_by_uuid_node,
-                             uuid_hash(uuid), &all_ofproto_dpifs_by_uuid) {
-        if (uuid_equals(&ofproto->uuid, uuid)) {
-            return ofproto;
-        }
-    }
-    return NULL;
+    return xlate_ofproto_lookup(uuid);
 }
 
 static void

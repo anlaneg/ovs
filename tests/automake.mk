@@ -117,6 +117,7 @@ FUZZ_REGRESSION_TESTS = \
 	tests/fuzz-regression/flow_extract_fuzzer-5457710546944000 \
 	tests/fuzz-regression/json_parser_fuzzer-4790908707930112 \
 	tests/fuzz-regression/ofp_print_fuzzer-4584019764183040 \
+	tests/fuzz-regression/ofp_print_fuzzer-4671928750702592 \
 	tests/fuzz-regression/ofp_print_fuzzer-4730143510626304 \
 	tests/fuzz-regression/ofp_print_fuzzer-4854119633256448 \
 	tests/fuzz-regression/ofp_print_fuzzer-5070973479944192 \
@@ -213,6 +214,7 @@ check-local:
 	set $(SHELL) '$(TESTSUITE)' -C tests AUTOTEST_PATH=$(AUTOTEST_PATH); \
 	"$$@" $(TESTSUITEFLAGS) || \
 	(test -z "$$(find $(TESTSUITE_DIR) -name 'asan.*')" && \
+	 test -z "$$(find $(TESTSUITE_DIR) -name 'ubsan.*')" && \
 	 test X'$(RECHECK)' = Xyes && "$$@" --recheck)
 
 # Python Coverage support.

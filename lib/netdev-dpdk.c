@@ -146,13 +146,14 @@ typedef uint16_t dpdk_port_t;
 #define IF_NAME_SZ (PATH_MAX > IFNAMSIZ ? PATH_MAX : IFNAMSIZ)
 
 /* List of required flags advertised by the hardware that will be used
- * if TSO is enabled. Ideally this should include DEV_TX_OFFLOAD_SCTP_CKSUM.
- * However, very few drivers supports that the moment and SCTP is not a
- * widely used protocol as TCP and UDP, so it's optional. */
-#define DPDK_TX_TSO_OFFLOAD_FLAGS (DEV_TX_OFFLOAD_TCP_TSO        \
-                                   | DEV_TX_OFFLOAD_TCP_CKSUM    \
-                                   | DEV_TX_OFFLOAD_UDP_CKSUM    \
-                                   | DEV_TX_OFFLOAD_IPV4_CKSUM)
+ * if TSO is enabled. Ideally this should include
+ * RTE_ETH_TX_OFFLOAD_SCTP_CKSUM. However, very few drivers support that
+ * at the moment and SCTP is not a widely used protocol like TCP and UDP,
+ * so it's optional. */
+#define DPDK_TX_TSO_OFFLOAD_FLAGS (RTE_ETH_TX_OFFLOAD_TCP_TSO        \
+                                   | RTE_ETH_TX_OFFLOAD_TCP_CKSUM    \
+                                   | RTE_ETH_TX_OFFLOAD_UDP_CKSUM    \
+                                   | RTE_ETH_TX_OFFLOAD_IPV4_CKSUM)
 
 
 static const struct rte_eth_conf port_conf = {
@@ -163,11 +164,11 @@ static const struct rte_eth_conf port_conf = {
     .rx_adv_conf = {
         .rss_conf = {
             .rss_key = NULL,
-            .rss_hf = ETH_RSS_IP | ETH_RSS_UDP | ETH_RSS_TCP,
+            .rss_hf = RTE_ETH_RSS_IP | RTE_ETH_RSS_UDP | RTE_ETH_RSS_TCP,
         },
     },
     .txmode = {
-        .mq_mode = ETH_MQ_TX_NONE,
+        .mq_mode = RTE_ETH_MQ_TX_NONE,
     },
 };
 
@@ -624,16 +625,16 @@ return rte_mempool_full(mp);
 static void
 dpdk_mp_sweep(void) OVS_REQUIRES(dpdk_mp_mutex)
 {
-struct dpdk_mp *dmp, *next;
+    struct dpdk_mp *dmp;
 
-LIST_FOR_EACH_SAFE (dmp, next, list_node, &dpdk_mp_list) {
-if (!dmp->refcount && dpdk_mp_full(dmp->mp)) {
-    VLOG_DBG("Freeing mempool \"%s\"", dmp->mp->name);
-    ovs_list_remove(&dmp->list_node);
-    rte_mempool_free(dmp->mp);
-    rte_free(dmp);
-}
-}
+    LIST_FOR_EACH_SAFE (dmp, list_node, &dpdk_mp_list) {
+        if (!dmp->refcount && dpdk_mp_full(dmp->mp)) {
+            VLOG_DBG("Freeing mempool \"%s\"", dmp->mp->name);
+            ovs_list_remove(&dmp->list_node);
+            rte_mempool_free(dmp->mp);
+            rte_free(dmp);
+        }
+    }
 }
 
 /* Calculating the required number of mbufs differs depending on the
@@ -919,19 +920,19 @@ rte_eth_link_get_nowait(dev->port_id, &link);
 if (dev->link.link_status != link.link_status) {//dpdk link发生变化
 netdev_change_seq_changed(&dev->up);
 
-dev->link_reset_cnt++;
-dev->link = link;
-if (dev->link.link_status) {
-    VLOG_DBG_RL(&rl,
-		"Port "DPDK_PORT_ID_FMT" Link Up - speed %u Mbps - %s",
-		dev->port_id, (unsigned) dev->link.link_speed,
-		(dev->link.link_duplex == ETH_LINK_FULL_DUPLEX)
-		? "full-duplex" : "half-duplex");
-} else {
-    VLOG_DBG_RL(&rl, "Port "DPDK_PORT_ID_FMT" Link Down",
-		dev->port_id);
-}
-}
+        dev->link_reset_cnt++;
+        dev->link = link;
+        if (dev->link.link_status) {
+            VLOG_DBG_RL(&rl,
+                        "Port "DPDK_PORT_ID_FMT" Link Up - speed %u Mbps - %s",
+                        dev->port_id, (unsigned) dev->link.link_speed,
+                        (dev->link.link_duplex == RTE_ETH_LINK_FULL_DUPLEX)
+                        ? "full-duplex" : "half-duplex");
+        } else {
+            VLOG_DBG_RL(&rl, "Port "DPDK_PORT_ID_FMT" Link Down",
+                        dev->port_id);
+        }
+    }
 }
 
 static void *
@@ -974,26 +975,25 @@ dpdk_eth_dev_port_config(struct netdev_dpdk *dev, int n_rxq, int n_txq)
      * scatter support in the device capabilites. */
     if (dev->mtu > RTE_ETHER_MTU) {
         if (dev->hw_ol_features & NETDEV_RX_HW_SCATTER) {
-            conf.rxmode.offloads |= DEV_RX_OFFLOAD_SCATTER;
+            conf.rxmode.offloads |= RTE_ETH_RX_OFFLOAD_SCATTER;
         }
     }
 
 rte_eth_dev_info_get(dev->port_id, &info);
 
-/* As of DPDK 17.11.1 a few PMDs require to explicitly enable
-* scatter to support jumbo RX.
-* Setting scatter for the device is done after checking for
-* scatter support in the device capabilites. */
-if (dev->mtu > ETHER_MTU) {
-if (dev->hw_ol_features & NETDEV_RX_HW_SCATTER) {
-    conf.rxmode.offloads |= DEV_RX_OFFLOAD_SCATTER;
-}
-}
+    if (dev->hw_ol_features & NETDEV_RX_CHECKSUM_OFFLOAD) {
+        conf.rxmode.offloads |= RTE_ETH_RX_OFFLOAD_CHECKSUM;
+    }
+
+    if (!(dev->hw_ol_features & NETDEV_RX_HW_CRC_STRIP)
+        && info.rx_offload_capa & RTE_ETH_RX_OFFLOAD_KEEP_CRC) {
+        conf.rxmode.offloads |= RTE_ETH_RX_OFFLOAD_KEEP_CRC;
+    }
 
     if (dev->hw_ol_features & NETDEV_TX_TSO_OFFLOAD) {
         conf.txmode.offloads |= DPDK_TX_TSO_OFFLOAD_FLAGS;
         if (dev->hw_ol_features & NETDEV_TX_SCTP_CHECKSUM_OFFLOAD) {
-            conf.txmode.offloads |= DEV_TX_OFFLOAD_SCTP_CKSUM;
+            conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_SCTP_CKSUM;
         }
     }
 
@@ -1001,9 +1001,9 @@ if (dev->hw_ol_features & NETDEV_RX_HW_SCATTER) {
      * by the eth device. */
     conf.rx_adv_conf.rss_conf.rss_hf &= info.flow_type_rss_offloads;
     if (conf.rx_adv_conf.rss_conf.rss_hf == 0) {
-        conf.rxmode.mq_mode = ETH_MQ_RX_NONE;
+        conf.rxmode.mq_mode = RTE_ETH_MQ_RX_NONE;
     } else {
-        conf.rxmode.mq_mode = ETH_MQ_RX_RSS;
+        conf.rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
     }
 
 if (dev->hw_ol_features & NETDEV_RX_CHECKSUM_OFFLOAD) {
@@ -1117,9 +1117,9 @@ OVS_REQUIRES(dev->mutex)
     int diag;
     int n_rxq, n_txq;
     uint32_t tx_tso_offload_capa = DPDK_TX_TSO_OFFLOAD_FLAGS;
-    uint32_t rx_chksm_offload_capa = DEV_RX_OFFLOAD_UDP_CKSUM |
-                                     DEV_RX_OFFLOAD_TCP_CKSUM |
-                                     DEV_RX_OFFLOAD_IPV4_CKSUM;
+    uint32_t rx_chksm_offload_capa = RTE_ETH_RX_OFFLOAD_UDP_CKSUM |
+                                     RTE_ETH_RX_OFFLOAD_TCP_CKSUM |
+                                     RTE_ETH_RX_OFFLOAD_IPV4_CKSUM;
 
 rte_eth_dev_info_get(dev->port_id, &info);
 
@@ -1139,19 +1139,19 @@ dev->hw_ol_features &= ~NETDEV_RX_CHECKSUM_OFFLOAD;
 dev->hw_ol_features |= NETDEV_RX_CHECKSUM_OFFLOAD;
 }
 
-if (info.rx_offload_capa & DEV_RX_OFFLOAD_SCATTER) {
-dev->hw_ol_features |= NETDEV_RX_HW_SCATTER;
-} else {
-/* Do not warn on lack of scatter support */
-dev->hw_ol_features &= ~NETDEV_RX_HW_SCATTER;
-}
+    if (info.rx_offload_capa & RTE_ETH_RX_OFFLOAD_SCATTER) {
+        dev->hw_ol_features |= NETDEV_RX_HW_SCATTER;
+    } else {
+        /* Do not warn on lack of scatter support */
+        dev->hw_ol_features &= ~NETDEV_RX_HW_SCATTER;
+    }
 
     dev->hw_ol_features &= ~NETDEV_TX_TSO_OFFLOAD;
     if (userspace_tso_enabled()) {
         if ((info.tx_offload_capa & tx_tso_offload_capa)
             == tx_tso_offload_capa) {
             dev->hw_ol_features |= NETDEV_TX_TSO_OFFLOAD;
-            if (info.tx_offload_capa & DEV_TX_OFFLOAD_SCTP_CKSUM) {
+            if (info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_SCTP_CKSUM) {
                 dev->hw_ol_features |= NETDEV_TX_SCTP_CHECKSUM_OFFLOAD;
             } else {
                 VLOG_WARN("%s: Tx SCTP checksum offload is not supported, "
@@ -1929,8 +1929,8 @@ netdev_dpdk_set_config(struct netdev *netdev, const struct smap *args,
     bool flow_control_requested = true;
     enum rte_eth_fc_mode fc_mode;
     static const enum rte_eth_fc_mode fc_mode_set[2][2] = {
-        {RTE_FC_NONE,     RTE_FC_TX_PAUSE},
-        {RTE_FC_RX_PAUSE, RTE_FC_FULL    }
+        {RTE_ETH_FC_NONE,     RTE_ETH_FC_TX_PAUSE},
+        {RTE_ETH_FC_RX_PAUSE, RTE_ETH_FC_FULL    }
     };
     const char *new_devargs;
     const char *vf_mac;
@@ -2630,97 +2630,6 @@ netdev_dpdk_vhost_update_tx_counters(struct netdev_dpdk *dev,
 
 //ovs向qid队列发送报文
 static void
-__netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
-                         struct dp_packet **pkts, int cnt)
-{
-    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-    struct rte_mbuf **cur_pkts = (struct rte_mbuf **) pkts;
-    struct netdev_dpdk_sw_stats sw_stats_add;
-    unsigned int n_packets_to_free = cnt;
-    unsigned int total_packets = cnt;
-    int i, retries = 0;
-    int max_retries = VHOST_ENQ_RETRY_MIN;
-    int vid = netdev_dpdk_get_vid(dev);
-
-    //选择一个队列发送
-    qid = dev->tx_q[qid % netdev->n_txq].map;
-
-    if (OVS_UNLIKELY(vid < 0 || !dev->vhost_reconfigured || qid < 0
-                     || !(dev->flags & NETDEV_UP))) {
-        rte_spinlock_lock(&dev->stats_lock);
-        dev->stats.tx_dropped+= cnt;
-        rte_spinlock_unlock(&dev->stats_lock);
-        goto out;
-    }
-
-    if (OVS_UNLIKELY(!rte_spinlock_trylock(&dev->tx_q[qid].tx_lock))) {
-        COVERAGE_INC(vhost_tx_contention);
-        rte_spinlock_lock(&dev->tx_q[qid].tx_lock);
-    }
-
-    sw_stats_add.tx_invalid_hwol_drops = cnt;
-    if (userspace_tso_enabled()) {
-        cnt = netdev_dpdk_prep_hwol_batch(dev, cur_pkts, cnt);
-    }
-
-    sw_stats_add.tx_invalid_hwol_drops -= cnt;
-    sw_stats_add.tx_mtu_exceeded_drops = cnt;
-    //如果要发送的报文超过dev容许的最大长度，则丢包（不想分片）
-    cnt = netdev_dpdk_filter_packet_len(dev, cur_pkts, cnt);
-    sw_stats_add.tx_mtu_exceeded_drops -= cnt;
-
-    /* Check has QoS has been configured for the netdev */
-    sw_stats_add.tx_qos_drops = cnt;
-    //出口qos处理
-    cnt = netdev_dpdk_qos_run(dev, cur_pkts, cnt, true);
-    sw_stats_add.tx_qos_drops -= cnt;
-
-    n_packets_to_free = cnt;
-
-    do {
-        int vhost_qid = qid * VIRTIO_QNUM + VIRTIO_RXQ;
-        unsigned int tx_pkts;
-
-        //将报文入队至vhost队列
-        tx_pkts = rte_vhost_enqueue_burst(vid, vhost_qid, cur_pkts, cnt);
-        if (OVS_LIKELY(tx_pkts)) {
-            /* Packets have been sent.*/
-        	//防止没有发送完，继续尝试
-            cnt -= tx_pkts;
-            /* Prepare for possible retry.*/
-            cur_pkts = &cur_pkts[tx_pkts];
-            if (OVS_UNLIKELY(cnt && !retries)) {
-                /*
-                 * Read max retries as there are packets not sent
-                 * and no retries have already occurred.
-                 */
-                atomic_read_relaxed(&dev->vhost_tx_retries_max, &max_retries);
-            }
-        } else {
-            /* No packets sent - do not retry.*/
-            break;
-        }
-    } while (cnt && (retries++ < max_retries));
-
-    rte_spinlock_unlock(&dev->tx_q[qid].tx_lock);
-
-    sw_stats_add.tx_failure_drops = cnt;
-    sw_stats_add.tx_retries = MIN(retries, max_retries);
-
-    rte_spinlock_lock(&dev->stats_lock);
-    //将没有发送去的报文计在dropped中
-    netdev_dpdk_vhost_update_tx_counters(dev, pkts, total_packets,
-                                         &sw_stats_add);
-    rte_spinlock_unlock(&dev->stats_lock);
-
-out:
-    //将没有发出去的报文扔掉（这里没有log）
-    for (i = 0; i < n_packets_to_free; i++) {
-        dp_packet_delete(pkts[i]);
-    }
-}
-
-static void
 netdev_dpdk_extbuf_free(void *addr OVS_UNUSED, void *opaque)
 {
     rte_free(opaque);
@@ -2824,76 +2733,69 @@ dpdk_copy_dp_packet_to_mbuf(struct rte_mempool *mp, struct dp_packet *pkt_orig)
     return pkt_dest;
 }
 
-/* Tx function. Transmit packets indefinitely */
-static void
-dpdk_do_tx_copy(struct netdev *netdev, int qid, struct dp_packet_batch *batch)
-    OVS_NO_THREAD_SAFETY_ANALYSIS
+/* Replace packets in a 'batch' with their corresponding copies using
+ * DPDK memory.
+ *
+ * Returns the number of good packets in the batch. */
+static size_t
+dpdk_copy_batch_to_mbuf(struct netdev *netdev, struct dp_packet_batch *batch)
 {
-    const size_t batch_cnt = dp_packet_batch_size(batch);
-#if !defined(__CHECKER__) && !defined(_WIN32)
-    const size_t PKT_ARRAY_SIZE = batch_cnt;
-#else
-    /* Sparse or MSVC doesn't like variable length array. */
-    enum { PKT_ARRAY_SIZE = NETDEV_MAX_BURST };
-#endif
     struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-    struct dp_packet *pkts[PKT_ARRAY_SIZE];
-    struct netdev_dpdk_sw_stats *sw_stats = dev->sw_stats;
-    uint32_t cnt = batch_cnt;
-    uint32_t dropped = 0;
-    uint32_t tx_failure = 0;
-    uint32_t mtu_drops = 0;
-    uint32_t qos_drops = 0;
+    size_t i, size = dp_packet_batch_size(batch);
+    struct dp_packet *packet;
 
-    if (dev->type != DPDK_DEV_VHOST) {
-        /* Check if QoS has been configured for this netdev. */
-        cnt = netdev_dpdk_qos_run(dev, (struct rte_mbuf **) batch->packets,
-                                  batch_cnt, false);
-        qos_drops = batch_cnt - cnt;
-    }
-
-    uint32_t txcnt = 0;
-
-    for (uint32_t i = 0; i < cnt; i++) {
-        struct dp_packet *packet = batch->packets[i];
-        uint32_t size = dp_packet_size(packet);
-
-        if (size > dev->max_packet_len
-            && !(packet->mbuf.ol_flags & RTE_MBUF_F_TX_TCP_SEG)) {
-            VLOG_WARN_RL(&rl, "Too big size %u max_packet_len %d", size,
-                         dev->max_packet_len);
-            mtu_drops++;
-            continue;
-        }
-
-        pkts[txcnt] = dpdk_copy_dp_packet_to_mbuf(dev->dpdk_mp->mp, packet);
-        if (OVS_UNLIKELY(!pkts[txcnt])) {
-            dropped = cnt - i;
-            break;
-        }
-
-        txcnt++;
-    }
-
-    if (OVS_LIKELY(txcnt)) {
-        if (dev->type == DPDK_DEV_VHOST) {
-            __netdev_dpdk_vhost_send(netdev, qid, pkts, txcnt);
+    DP_PACKET_BATCH_REFILL_FOR_EACH (i, size, packet, batch) {
+        if (OVS_UNLIKELY(packet->source == DPBUF_DPDK)) {
+            dp_packet_batch_refill(batch, packet, i);
         } else {
-            tx_failure += netdev_dpdk_eth_tx_burst(dev, qid,
-                                                   (struct rte_mbuf **)pkts,
-                                                   txcnt);
+            struct dp_packet *pktcopy;
+
+            pktcopy = dpdk_copy_dp_packet_to_mbuf(dev->dpdk_mp->mp, packet);
+            if (pktcopy) {
+                dp_packet_batch_refill(batch, pktcopy, i);
+            }
+
+            dp_packet_delete(packet);
         }
     }
 
-    dropped += qos_drops + mtu_drops + tx_failure;
-    if (OVS_UNLIKELY(dropped)) {
-        rte_spinlock_lock(&dev->stats_lock);
-        dev->stats.tx_dropped += dropped;
-        sw_stats->tx_failure_drops += tx_failure;
-        sw_stats->tx_mtu_exceeded_drops += mtu_drops;
-        sw_stats->tx_qos_drops += qos_drops;
-        rte_spinlock_unlock(&dev->stats_lock);
+    return dp_packet_batch_size(batch);
+}
+
+static size_t
+netdev_dpdk_common_send(struct netdev *netdev, struct dp_packet_batch *batch,
+                        struct netdev_dpdk_sw_stats *stats)
+{
+    struct rte_mbuf **pkts = (struct rte_mbuf **) batch->packets;
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    size_t cnt, pkt_cnt = dp_packet_batch_size(batch);
+
+    memset(stats, 0, sizeof *stats);
+
+    /* Copy dp-packets to mbufs. */
+    if (OVS_UNLIKELY(batch->packets[0]->source != DPBUF_DPDK)) {
+        cnt = dpdk_copy_batch_to_mbuf(netdev, batch);
+        stats->tx_failure_drops += pkt_cnt - cnt;
+        pkt_cnt = cnt;
     }
+
+    /* Drop oversized packets. */
+    cnt = netdev_dpdk_filter_packet_len(dev, pkts, pkt_cnt);
+    stats->tx_mtu_exceeded_drops += pkt_cnt - cnt;
+    pkt_cnt = cnt;
+
+    /* Prepare each mbuf for hardware offloading. */
+    if (userspace_tso_enabled()) {
+        cnt = netdev_dpdk_prep_hwol_batch(dev, pkts, pkt_cnt);
+        stats->tx_invalid_hwol_drops += pkt_cnt - cnt;
+        pkt_cnt = cnt;
+    }
+
+    /* Apply Quality of Service policy. */
+    cnt = netdev_dpdk_qos_run(dev, pkts, pkt_cnt, true);
+    stats->tx_qos_drops += pkt_cnt - cnt;
+
+    return cnt;
 }
 
 static int
@@ -2901,25 +2803,92 @@ netdev_dpdk_vhost_send(struct netdev *netdev, int qid,
                        struct dp_packet_batch *batch,
                        bool concurrent_txq OVS_UNUSED)
 {
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    int max_retries = VHOST_ENQ_RETRY_MIN;
+    int cnt, batch_cnt, vhost_batch_cnt;
+    int vid = netdev_dpdk_get_vid(dev);
+    struct netdev_dpdk_sw_stats stats;
+    struct rte_mbuf **pkts;
+    int retries;
 
-    if (OVS_UNLIKELY(batch->packets[0]->source != DPBUF_DPDK)) {
-        dpdk_do_tx_copy(netdev, qid, batch);
+    batch_cnt = cnt = dp_packet_batch_size(batch);
+    qid = dev->tx_q[qid % netdev->n_txq].map;
+    if (OVS_UNLIKELY(vid < 0 || !dev->vhost_reconfigured || qid < 0
+                     || !(dev->flags & NETDEV_UP))) {
+        rte_spinlock_lock(&dev->stats_lock);
+        dev->stats.tx_dropped += cnt;
+        rte_spinlock_unlock(&dev->stats_lock);
         dp_packet_delete_batch(batch, true);
-    } else {
-        __netdev_dpdk_vhost_send(netdev, qid, batch->packets,
-                                 dp_packet_batch_size(batch));
+        return 0;
     }
+
+    if (OVS_UNLIKELY(!rte_spinlock_trylock(&dev->tx_q[qid].tx_lock))) {
+        COVERAGE_INC(vhost_tx_contention);
+        rte_spinlock_lock(&dev->tx_q[qid].tx_lock);
+    }
+
+    cnt = netdev_dpdk_common_send(netdev, batch, &stats);
+
+    pkts = (struct rte_mbuf **) batch->packets;
+    vhost_batch_cnt = cnt;
+    retries = 0;
+    do {
+        int vhost_qid = qid * VIRTIO_QNUM + VIRTIO_RXQ;
+        int tx_pkts;
+
+        tx_pkts = rte_vhost_enqueue_burst(vid, vhost_qid, pkts, cnt);
+        if (OVS_LIKELY(tx_pkts)) {
+            /* Packets have been sent.*/
+            cnt -= tx_pkts;
+            /* Prepare for possible retry.*/
+            pkts = &pkts[tx_pkts];
+            if (OVS_UNLIKELY(cnt && !retries)) {
+                /*
+                 * Read max retries as there are packets not sent
+                 * and no retries have already occurred.
+                 */
+                atomic_read_relaxed(&dev->vhost_tx_retries_max, &max_retries);
+            }
+        } else {
+            /* No packets sent - do not retry.*/
+            break;
+        }
+    } while (cnt && (retries++ < max_retries));
+
+    rte_spinlock_unlock(&dev->tx_q[qid].tx_lock);
+
+    stats.tx_failure_drops += cnt;
+    stats.tx_retries = MIN(retries, max_retries);
+
+    rte_spinlock_lock(&dev->stats_lock);
+    netdev_dpdk_vhost_update_tx_counters(dev, batch->packets, batch_cnt,
+                                         &stats);
+    rte_spinlock_unlock(&dev->stats_lock);
+
+    pkts = (struct rte_mbuf **) batch->packets;
+    for (int i = 0; i < vhost_batch_cnt; i++) {
+        rte_pktmbuf_free(pkts[i]);
+    }
+
     return 0;
 }
 
-static inline void
-netdev_dpdk_send__(struct netdev_dpdk *dev, int qid,
-                   struct dp_packet_batch *batch,
-                   bool concurrent_txq)
+static int
+netdev_dpdk_eth_send(struct netdev *netdev, int qid,
+                     struct dp_packet_batch *batch, bool concurrent_txq)
 {
+    struct rte_mbuf **pkts = (struct rte_mbuf **) batch->packets;
+    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
+    int batch_cnt = dp_packet_batch_size(batch);
+    struct netdev_dpdk_sw_stats stats;
+    int cnt, dropped;
+
     if (OVS_UNLIKELY(!(dev->flags & NETDEV_UP))) {
+        rte_spinlock_lock(&dev->stats_lock);
+        dev->stats.tx_dropped += dp_packet_batch_size(batch);
+        rte_spinlock_unlock(&dev->stats_lock);
         dp_packet_delete_batch(batch, true);
-        return;
+        return 0;
     }
 
     //由于concurrent-txq为true,故需要对此队列加锁
@@ -2928,56 +2897,27 @@ netdev_dpdk_send__(struct netdev_dpdk *dev, int qid,
         rte_spinlock_lock(&dev->tx_q[qid].tx_lock);
     }
 
-    if (OVS_UNLIKELY(batch->packets[0]->source != DPBUF_DPDK)) {
-        struct netdev *netdev = &dev->up;
+    cnt = netdev_dpdk_common_send(netdev, batch, &stats);
 
-        dpdk_do_tx_copy(netdev, qid, batch);
-        dp_packet_delete_batch(batch, true);
-    } else {
+    dropped = batch_cnt - cnt;
+
+    dropped += netdev_dpdk_eth_tx_burst(dev, qid, pkts, cnt);
+    if (OVS_UNLIKELY(dropped)) {
         struct netdev_dpdk_sw_stats *sw_stats = dev->sw_stats;
-        int dropped;
-        int tx_failure, mtu_drops, qos_drops, hwol_drops;
-        int batch_cnt = dp_packet_batch_size(batch);
-        struct rte_mbuf **pkts = (struct rte_mbuf **) batch->packets;
 
-        hwol_drops = batch_cnt;
-        if (userspace_tso_enabled()) {
-            batch_cnt = netdev_dpdk_prep_hwol_batch(dev, pkts, batch_cnt);
-        }
-        hwol_drops -= batch_cnt;
-        mtu_drops = batch_cnt;
-        batch_cnt = netdev_dpdk_filter_packet_len(dev, pkts, batch_cnt);
-        mtu_drops -= batch_cnt;
-        qos_drops = batch_cnt;
-        batch_cnt = netdev_dpdk_qos_run(dev, pkts, batch_cnt, true);
-        qos_drops -= batch_cnt;
-
-        tx_failure = netdev_dpdk_eth_tx_burst(dev, qid, pkts, batch_cnt);//报文发送
-
-        dropped = tx_failure + mtu_drops + qos_drops + hwol_drops;
-        if (OVS_UNLIKELY(dropped)) {
-            rte_spinlock_lock(&dev->stats_lock);
-            dev->stats.tx_dropped += dropped;
-            sw_stats->tx_failure_drops += tx_failure;
-            sw_stats->tx_mtu_exceeded_drops += mtu_drops;
-            sw_stats->tx_qos_drops += qos_drops;
-            sw_stats->tx_invalid_hwol_drops += hwol_drops;
-            rte_spinlock_unlock(&dev->stats_lock);
-        }
+        rte_spinlock_lock(&dev->stats_lock);
+        dev->stats.tx_dropped += dropped;
+        sw_stats->tx_failure_drops += stats.tx_failure_drops;
+        sw_stats->tx_mtu_exceeded_drops += stats.tx_mtu_exceeded_drops;
+        sw_stats->tx_qos_drops += stats.tx_qos_drops;
+        sw_stats->tx_invalid_hwol_drops += stats.tx_invalid_hwol_drops;
+        rte_spinlock_unlock(&dev->stats_lock);
     }
 
     if (OVS_UNLIKELY(concurrent_txq)) {
         rte_spinlock_unlock(&dev->tx_q[qid].tx_lock);
     }
-}
 
-static int
-netdev_dpdk_eth_send(struct netdev *netdev, int qid,
-                     struct dp_packet_batch *batch, bool concurrent_txq)
-{
-    struct netdev_dpdk *dev = netdev_dpdk_cast(netdev);
-
-    netdev_dpdk_send__(dev, qid, batch, concurrent_txq);
     return 0;
 }
 
@@ -3355,38 +3295,38 @@ netdev_dpdk_get_features(const struct netdev *netdev,
     ovs_mutex_unlock(&dev->mutex);
 
     /* Match against OpenFlow defined link speed values. */
-    if (link.link_duplex == ETH_LINK_FULL_DUPLEX) {
+    if (link.link_duplex == RTE_ETH_LINK_FULL_DUPLEX) {
         switch (link.link_speed) {
-        case ETH_SPEED_NUM_10M:
+        case RTE_ETH_SPEED_NUM_10M:
             feature |= NETDEV_F_10MB_FD;
             break;
-        case ETH_SPEED_NUM_100M:
+        case RTE_ETH_SPEED_NUM_100M:
             feature |= NETDEV_F_100MB_FD;
             break;
-        case ETH_SPEED_NUM_1G:
+        case RTE_ETH_SPEED_NUM_1G:
             feature |= NETDEV_F_1GB_FD;
             break;
-        case ETH_SPEED_NUM_10G:
+        case RTE_ETH_SPEED_NUM_10G:
             feature |= NETDEV_F_10GB_FD;
             break;
-        case ETH_SPEED_NUM_40G:
+        case RTE_ETH_SPEED_NUM_40G:
             feature |= NETDEV_F_40GB_FD;
             break;
-        case ETH_SPEED_NUM_100G:
+        case RTE_ETH_SPEED_NUM_100G:
             feature |= NETDEV_F_100GB_FD;
             break;
         default:
             feature |= NETDEV_F_OTHER;
         }
-    } else if (link.link_duplex == ETH_LINK_HALF_DUPLEX) {
+    } else if (link.link_duplex == RTE_ETH_LINK_HALF_DUPLEX) {
         switch (link.link_speed) {
-        case ETH_SPEED_NUM_10M:
+        case RTE_ETH_SPEED_NUM_10M:
             feature |= NETDEV_F_10MB_HD;
             break;
-        case ETH_SPEED_NUM_100M:
+        case RTE_ETH_SPEED_NUM_100M:
             feature |= NETDEV_F_100MB_HD;
             break;
-        case ETH_SPEED_NUM_1G:
+        case RTE_ETH_SPEED_NUM_1G:
             feature |= NETDEV_F_1GB_HD;
             break;
         default:
@@ -3696,19 +3636,19 @@ static const char *
 netdev_dpdk_link_speed_to_str__(uint32_t link_speed)
 {
     switch (link_speed) {
-    case ETH_SPEED_NUM_10M:    return "10Mbps";
-    case ETH_SPEED_NUM_100M:   return "100Mbps";
-    case ETH_SPEED_NUM_1G:     return "1Gbps";
-    case ETH_SPEED_NUM_2_5G:   return "2.5Gbps";
-    case ETH_SPEED_NUM_5G:     return "5Gbps";
-    case ETH_SPEED_NUM_10G:    return "10Gbps";
-    case ETH_SPEED_NUM_20G:    return "20Gbps";
-    case ETH_SPEED_NUM_25G:    return "25Gbps";
-    case ETH_SPEED_NUM_40G:    return "40Gbps";
-    case ETH_SPEED_NUM_50G:    return "50Gbps";
-    case ETH_SPEED_NUM_56G:    return "56Gbps";
-    case ETH_SPEED_NUM_100G:   return "100Gbps";
-    default:                   return "Not Defined";
+    case RTE_ETH_SPEED_NUM_10M:    return "10Mbps";
+    case RTE_ETH_SPEED_NUM_100M:   return "100Mbps";
+    case RTE_ETH_SPEED_NUM_1G:     return "1Gbps";
+    case RTE_ETH_SPEED_NUM_2_5G:   return "2.5Gbps";
+    case RTE_ETH_SPEED_NUM_5G:     return "5Gbps";
+    case RTE_ETH_SPEED_NUM_10G:    return "10Gbps";
+    case RTE_ETH_SPEED_NUM_20G:    return "20Gbps";
+    case RTE_ETH_SPEED_NUM_25G:    return "25Gbps";
+    case RTE_ETH_SPEED_NUM_40G:    return "40Gbps";
+    case RTE_ETH_SPEED_NUM_50G:    return "50Gbps";
+    case RTE_ETH_SPEED_NUM_56G:    return "56Gbps";
+    case RTE_ETH_SPEED_NUM_100G:   return "100Gbps";
+    default:                       return "Not Defined";
     }
 }
 
@@ -3941,6 +3881,9 @@ netdev_dpdk_get_mempool_info(struct unixctl_conn *conn,
         ovs_mutex_lock(&dpdk_mp_mutex);
 
         rte_mempool_dump(stream, dev->dpdk_mp->mp);
+        fprintf(stream, "    count: avail (%u), in use (%u)\n",
+                rte_mempool_avail_count(dev->dpdk_mp->mp),
+                rte_mempool_in_use_count(dev->dpdk_mp->mp));
 
         ovs_mutex_unlock(&dpdk_mp_mutex);
         ovs_mutex_unlock(&dev->mutex);
@@ -4766,11 +4709,11 @@ trtcm_policer_qos_construct(const struct smap *details,
 static void
 trtcm_policer_qos_destruct(struct qos_conf *conf)
 {
-    struct trtcm_policer_queue *queue, *next_queue;
+    struct trtcm_policer_queue *queue;
     struct trtcm_policer *policer = CONTAINER_OF(conf, struct trtcm_policer,
                                                  qos_conf);
 
-    HMAP_FOR_EACH_SAFE (queue, next_queue, hmap_node, &policer->queues) {
+    HMAP_FOR_EACH_SAFE (queue, hmap_node, &policer->queues) {
         hmap_remove(&policer->queues, &queue->hmap_node);
         free(queue);
     }

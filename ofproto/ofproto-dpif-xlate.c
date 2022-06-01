@@ -883,7 +883,7 @@ xlate_xbridge_init(struct xlate_cfg *xcfg, struct xbridge *xbridge)
     ovs_list_init(&xbridge->xbundles);
     hmap_init(&xbridge->xports);
     hmap_insert(&xcfg->xbridges, &xbridge->hmap_node,
-                hash_pointer(xbridge->ofproto, 0));
+                uuid_hash(&xbridge->ofproto->uuid));
 }
 
 static void
@@ -1247,13 +1247,13 @@ xlate_txn_start(void)
 static void
 xlate_xcfg_free(struct xlate_cfg *xcfg)
 {
-    struct xbridge *xbridge, *next_xbridge;
+    struct xbridge *xbridge;
 
     if (!xcfg) {
         return;
     }
 
-    HMAP_FOR_EACH_SAFE (xbridge, next_xbridge, hmap_node, &xcfg->xbridges) {
+    HMAP_FOR_EACH_SAFE (xbridge, hmap_node, &xcfg->xbridges) {
         xlate_xbridge_remove(xcfg, xbridge);
     }
 
@@ -1308,18 +1308,18 @@ xlate_ofproto_set(struct ofproto_dpif *ofproto, const char *name,//ofproto,ofpro
 static void
 xlate_xbridge_remove(struct xlate_cfg *xcfg, struct xbridge *xbridge)
 {
-    struct xbundle *xbundle, *next_xbundle;
-    struct xport *xport, *next_xport;
+    struct xbundle *xbundle;
+    struct xport *xport;
 
     if (!xbridge) {
         return;
     }
 
-    HMAP_FOR_EACH_SAFE (xport, next_xport, ofp_node, &xbridge->xports) {
+    HMAP_FOR_EACH_SAFE (xport, ofp_node, &xbridge->xports) {
         xlate_xport_remove(xcfg, xport);
     }
 
-    LIST_FOR_EACH_SAFE (xbundle, next_xbundle, list_node, &xbridge->xbundles) {
+    LIST_FOR_EACH_SAFE (xbundle, list_node, &xbridge->xbundles) {
         xlate_xbundle_remove(xcfg, xbundle);
     }
 
@@ -1676,7 +1676,7 @@ xbridge_lookup(struct xlate_cfg *xcfg, const struct ofproto_dpif *ofproto)
     xbridges = &xcfg->xbridges;
 
     //遍历所有xbridges，找匹配的ofproto
-    HMAP_FOR_EACH_IN_BUCKET (xbridge, hmap_node, hash_pointer(ofproto, 0),
+    HMAP_FOR_EACH_IN_BUCKET (xbridge, hmap_node, uuid_hash(&ofproto->uuid),
                              xbridges) {
         if (xbridge->ofproto == ofproto) {
             return xbridge;
@@ -1694,6 +1694,23 @@ xbridge_lookup_by_uuid(struct xlate_cfg *xcfg, const struct uuid *uuid)
         if (uuid_equals(&xbridge->ofproto->uuid, uuid)) {
             return xbridge;
         }
+    }
+    return NULL;
+}
+
+struct ofproto_dpif *
+xlate_ofproto_lookup(const struct uuid *uuid)
+{
+    struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
+    struct xbridge *xbridge;
+
+    if (!xcfg) {
+        return NULL;
+    }
+
+    xbridge = xbridge_lookup_by_uuid(xcfg, uuid);
+    if (xbridge != NULL) {
+        return xbridge->ofproto;
     }
     return NULL;
 }
@@ -2173,9 +2190,14 @@ mirror_packet(struct xlate_ctx *ctx, struct xbundle *xbundle,
         int snaplen;
 
         /* Get the details of the mirror represented by the rightmost 1-bit. */
-        ovs_assert(mirror_get(xbridge->mbridge, raw_ctz(mirrors),
-                              &vlans, &dup_mirrors,
-                              &out, &snaplen, &out_vlan));
+        if (OVS_UNLIKELY(!mirror_get(xbridge->mbridge, raw_ctz(mirrors),
+                                     &vlans, &dup_mirrors,
+                                     &out, &snaplen, &out_vlan))) {
+            /* The mirror got reconfigured before we got to read it's
+             * configuration. */
+            mirrors = zero_rightmost_1bit(mirrors);
+            continue;
+        }
 
 
         /* If this mirror selects on the basis of VLAN, and it does not select
@@ -3090,7 +3112,7 @@ xlate_normal(struct xlate_ctx *ctx)
     bool is_grat_arp = is_gratuitous_arp(flow, wc);
     if (ctx->xin->allow_side_effects
         && flow->packet_type == htonl(PT_ETH)
-        && in_port->pt_mode != NETDEV_PT_LEGACY_L3
+        && in_port && in_port->pt_mode != NETDEV_PT_LEGACY_L3
     ) {
     	//fdb表学习,仅在二层口时启用fdb学习
         update_learning_table(ctx, in_xbundle, flow->dl_src, vlan,
@@ -3100,12 +3122,14 @@ xlate_normal(struct xlate_ctx *ctx)
         struct xc_entry *entry;
 
         /* Save just enough info to update mac learning table later. */
-        entry = xlate_cache_add_entry(ctx->xin->xcache, XC_NORMAL);
-        entry->normal.ofproto = ctx->xbridge->ofproto;
-        entry->normal.in_port = flow->in_port.ofp_port;
-        entry->normal.dl_src = flow->dl_src;
-        entry->normal.vlan = vlan;
-        entry->normal.is_gratuitous_arp = is_grat_arp;
+        if (ofproto_try_ref(&ctx->xbridge->ofproto->up)) {
+            entry = xlate_cache_add_entry(ctx->xin->xcache, XC_NORMAL);
+            entry->normal.ofproto = ctx->xbridge->ofproto;
+            entry->normal.in_port = flow->in_port.ofp_port;
+            entry->normal.dl_src = flow->dl_src;
+            entry->normal.vlan = vlan;
+            entry->normal.is_gratuitous_arp = is_grat_arp;
+        }
     }
 
     /* Determine output bundle. */
@@ -3125,9 +3149,8 @@ xlate_normal(struct xlate_ctx *ctx)
              */
             ctx->xout->slow |= SLOW_ACTION;
 
-            memset(&wc->masks.tp_src, 0xff, sizeof wc->masks.tp_src);
-            if (mcast_snooping_is_membership(flow->tp_src) || //是成员关系（加入，离开）
-                mcast_snooping_is_query(flow->tp_src)) { //是成员关系查询报文（query)
+            if (mcast_snooping_is_membership(flow->tp_src) ||//是成员关系（加入，离开）
+                mcast_snooping_is_query(flow->tp_src)) {//是成员关系查询报文（query)
                 if (ctx->xin->allow_side_effects && ctx->xin->packet) {
                 	//尝试着更新igmp snooping表
                     update_mcast_snooping_table(ctx, flow, vlan,
@@ -3363,7 +3386,9 @@ compose_ipfix_action(struct xlate_ctx *ctx, odp_port_t output_odp_port)
     struct dpif_ipfix *ipfix = ctx->xbridge->ipfix;
     odp_port_t tunnel_out_port = ODPP_NONE;
 
-    if (!ipfix || ctx->xin->flow.in_port.ofp_port == OFPP_NONE) {
+    if (!ipfix ||
+        (output_odp_port == ODPP_NONE &&
+         ctx->xin->flow.in_port.ofp_port == OFPP_NONE)) {
         return;
     }
 
@@ -3628,6 +3653,9 @@ propagate_tunnel_data_to_flow__(struct flow *dst_flow,
     dst_flow->dl_dst = dmac;
     dst_flow->dl_src = smac;
 
+    /* Clear VLAN entries which do not apply for tunnel flows. */
+    memset(dst_flow->vlans, 0, sizeof dst_flow->vlans);
+
     dst_flow->packet_type = htonl(PT_ETH);
     dst_flow->nw_dst = src_flow->tunnel.ip_dst;
     dst_flow->nw_src = src_flow->tunnel.ip_src;
@@ -3763,15 +3791,29 @@ native_tunnel_output(struct xlate_ctx *ctx, const struct xport *xport,
     //查d_ip6的目的mac,我们需要发送给它，如果查不到，就发送arp或者nd请求
     err = tnl_neigh_lookup(out_dev->xbridge->name, &d_ip6, &dmac);
     if (err) {//没有查找到
+        struct in6_addr nh_s_ip6 = in6addr_any;
+
         xlate_report(ctx, OFT_DETAIL,
                      "neighbor cache miss for %s on bridge %s, "
                      "sending %s request",
                      buf_dip6, out_dev->xbridge->name, d_ip ? "ARP" : "ND");
 
-        if (d_ip) {//发送arp请求
-            tnl_send_arp_request(ctx, out_dev, smac, s_ip, d_ip);
-        } else {//发送nd请求
-            tnl_send_nd_request(ctx, out_dev, smac, &s_ip6, &d_ip6);
+        err = ovs_router_get_netdev_source_address(&d_ip6,
+                                                   out_dev->xbridge->name,
+                                                   &nh_s_ip6);
+        if (err) {
+            nh_s_ip6 = s_ip6;
+        }
+
+        if (d_ip) {
+            ovs_be32 nh_s_ip;
+
+            nh_s_ip = in6_addr_get_mapped_ipv4(&nh_s_ip6);
+	    //发送arp请求
+            tnl_send_arp_request(ctx, out_dev, smac, nh_s_ip, d_ip);
+        } else {
+	    //发送nd请求
+            tnl_send_nd_request(ctx, out_dev, smac, &nh_s_ip6, &d_ip6);
         }
         return err;//返回失败，此报文将被丢掉（但它触发了arp请求）
     }
@@ -4299,6 +4341,10 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         if (xport->pt_mode == NETDEV_PT_LEGACY_L3) {
             flow->packet_type = PACKET_TYPE_BE(OFPHTN_ETHERTYPE,
                                                ntohs(flow->dl_type));
+            if (ctx->pending_encap) {
+                /* The Ethernet header was not actually added yet. */
+                ctx->pending_encap = false;
+            }
         }
     }
 
@@ -5837,7 +5883,8 @@ xlate_sample_action(struct xlate_ctx *ctx,
 
     /* Scale the probability from 16-bit to 32-bit while representing
      * the same percentage. */
-    uint32_t probability = (os->probability << 16) | os->probability;
+    uint32_t probability =
+        ((uint32_t) os->probability << 16) | os->probability;
 
     /* If ofp_port in flow sample action is equel to ofp_port,
      * this sample action is a input port action. */
@@ -6943,7 +6990,8 @@ xlate_generic_decap_action(struct xlate_ctx *ctx,
             ctx->pending_decap = true;
             /* Trigger recirculation. */
             return true;
-        case PT_MPLS: {
+        case PT_MPLS:
+        case PT_MPLS_MC: {
             int n;
             ovs_be16 ethertype;
 

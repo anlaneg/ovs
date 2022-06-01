@@ -36,7 +36,10 @@ raft_address_validate(const char *address)
         return NULL;
     } else if (!strncmp(address, "ssl:", 4) || !strncmp(address, "tcp:", 4)) {
         struct sockaddr_storage ss;
-        if (!inet_parse_active(address + 4, -1, &ss, true)) {
+        bool dns_failure = false;
+
+        if (!inet_parse_active(address + 4, -1, &ss, true, &dns_failure)
+            && !dns_failure) {
             return ovsdb_error(NULL, "%s: syntax error in address", address);
         }
         return NULL;
@@ -147,8 +150,8 @@ raft_server_destroy(struct raft_server *s)
 void
 raft_servers_destroy(struct hmap *servers)
 {
-    struct raft_server *s, *next;
-    HMAP_FOR_EACH_SAFE (s, next, hmap_node, servers) {
+    struct raft_server *s;
+    HMAP_FOR_EACH_SAFE (s, hmap_node, servers) {
         hmap_remove(servers, &s->hmap_node);
         raft_server_destroy(s);
     }

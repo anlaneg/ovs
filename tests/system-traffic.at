@@ -218,6 +218,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over vxlan tunnel])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_VXLAN()
 
 OVS_TRAFFIC_VSWITCHD_START()
@@ -258,7 +259,55 @@ NS_CHECK_EXEC([at_ns0], [ping -s 3200 -q -c 3 -i 0.3 -w 2 10.1.1.100 | FORMAT_PI
 OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
+AT_SETUP([datapath - ping vlan over vxlan tunnel])
+OVS_CHECK_TUNNEL_TSO()
+OVS_CHECK_VXLAN()
+
+OVS_TRAFFIC_VSWITCHD_START()
+ADD_BR([br-underlay])
+
+AT_CHECK([ovs-ofctl add-flow br0 "actions=normal"])
+AT_CHECK([ovs-ofctl add-flow br-underlay "actions=normal"])
+
+ADD_NAMESPACES(at_ns0)
+
+dnl Set up underlay link from host into the namespace using veth pair.
+ADD_VETH(p0, at_ns0, br-underlay, "172.31.2.1/24")
+AT_CHECK([ip addr add dev br-underlay "172.31.1.100/24"])
+AT_CHECK([ip link set dev br-underlay up])
+
+dnl Set up tunnel endpoints on OVS outside the namespace and with a native
+dnl linux device inside the namespace.
+ADD_OVS_TUNNEL([vxlan], [br0], [at_vxlan0], [172.31.1.1], [10.1.1.100/24])
+ADD_NATIVE_TUNNEL([vxlan], [at_vxlan1], [at_ns0], [172.31.1.100], [10.2.1.1/24],
+                  [id 0 dstport 4789])
+
+AT_CHECK([ovs-vsctl set port br0 tag=100])
+AT_CHECK([ovs-vsctl set port br-underlay tag=42])
+
+ADD_VLAN(at_vxlan1, at_ns0, 100, "10.1.1.1/24")
+ADD_VLAN(p0, at_ns0, 42, "172.31.1.1/24")
+
+dnl First, check the underlay
+NS_CHECK_EXEC([at_ns0], [ping -q -c 3 -i 0.3 -w 2 172.31.1.100 | FORMAT_PING], [0], [dnl
+3 packets transmitted, 3 received, 0% packet loss, time 0ms
+])
+dnl Okay, now check the overlay with different packet sizes
+NS_CHECK_EXEC([at_ns0], [ping -q -c 3 -i 0.3 -w 2 10.1.1.100 | FORMAT_PING], [0], [dnl
+3 packets transmitted, 3 received, 0% packet loss, time 0ms
+])
+NS_CHECK_EXEC([at_ns0], [ping -s 1600 -q -c 3 -i 0.3 -w 2 10.1.1.100 | FORMAT_PING], [0], [dnl
+3 packets transmitted, 3 received, 0% packet loss, time 0ms
+])
+NS_CHECK_EXEC([at_ns0], [ping -s 3200 -q -c 3 -i 0.3 -w 2 10.1.1.100 | FORMAT_PING], [0], [dnl
+3 packets transmitted, 3 received, 0% packet loss, time 0ms
+])
+
+OVS_TRAFFIC_VSWITCHD_STOP
+AT_CLEANUP
+
 AT_SETUP([datapath - ping over vxlan6 tunnel])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_VXLAN_UDP6ZEROCSUM()
 
 OVS_TRAFFIC_VSWITCHD_START()
@@ -302,6 +351,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over gre tunnel])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_KERNEL_EXCL(3, 10, 4, 15)
 OVS_CHECK_GRE()
 
@@ -343,6 +393,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over ip6gre L2 tunnel])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_KERNEL_EXCL(3, 10, 4, 15)
 OVS_CHECK_GRE()
 OVS_CHECK_ERSPAN()
@@ -383,6 +434,7 @@ AT_CLEANUP
 
 
 AT_SETUP([datapath - ping over erspan v1 tunnel])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_KERNEL_EXCL(3, 10, 4, 15)
 OVS_CHECK_GRE()
 OVS_CHECK_ERSPAN()
@@ -419,6 +471,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over erspan v2 tunnel])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_KERNEL_EXCL(3, 10, 4, 15)
 OVS_CHECK_GRE()
 OVS_CHECK_ERSPAN()
@@ -455,6 +508,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over ip6erspan v1 tunnel])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_KERNEL_EXCL(3, 10, 4, 15)
 OVS_CHECK_GRE()
 OVS_CHECK_ERSPAN()
@@ -494,6 +548,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over ip6erspan v2 tunnel])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_KERNEL_EXCL(3, 10, 4, 15)
 OVS_CHECK_GRE()
 OVS_CHECK_ERSPAN()
@@ -534,6 +589,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over geneve tunnel])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_GENEVE()
 
 OVS_TRAFFIC_VSWITCHD_START()
@@ -575,6 +631,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over geneve tunnel, delete flow regression])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_GENEVE()
 
 OVS_TRAFFIC_VSWITCHD_START()
@@ -629,6 +686,7 @@ OVS_TRAFFIC_VSWITCHD_STOP(["/|ERR|/d
 AT_CLEANUP
 
 AT_SETUP([datapath - flow resume with geneve tun_metadata])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_GENEVE()
 
 OVS_TRAFFIC_VSWITCHD_START()
@@ -680,6 +738,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over geneve6 tunnel])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_GENEVE_UDP6ZEROCSUM()
 
 OVS_TRAFFIC_VSWITCHD_START()
@@ -723,6 +782,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over gre tunnel by simulated packets])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_MIN_KERNEL(3, 10)
 
 OVS_TRAFFIC_VSWITCHD_START()
@@ -769,6 +829,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over erspan v1 tunnel by simulated packets])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_MIN_KERNEL(3, 10)
 
 OVS_TRAFFIC_VSWITCHD_START()
@@ -817,6 +878,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over erspan v2 tunnel by simulated packets])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_MIN_KERNEL(3, 10)
 
 OVS_TRAFFIC_VSWITCHD_START()
@@ -870,6 +932,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over ip6erspan v1 tunnel by simulated packets])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_MIN_KERNEL(3, 10)
 
 OVS_TRAFFIC_VSWITCHD_START()
@@ -925,6 +988,7 @@ OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
 AT_SETUP([datapath - ping over ip6erspan v2 tunnel by simulated packets])
+OVS_CHECK_TUNNEL_TSO()
 OVS_CHECK_MIN_KERNEL(3, 10)
 
 OVS_TRAFFIC_VSWITCHD_START()
@@ -1087,7 +1151,7 @@ NS_CHECK_EXEC([at_ns1], [ping -q -c 3 -i 0.3 -w 2 10.1.1.1 | FORMAT_PING], [0], 
 OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
-AT_SETUP([datapath - Encap Decap mpls actions])
+AT_SETUP([datapath - encap decap mpls actions])
 OVS_TRAFFIC_VSWITCHD_START([_ADD_BR([br1])])
 
 ADD_NAMESPACES(at_ns0, at_ns1)
@@ -1120,6 +1184,45 @@ NS_CHECK_EXEC([at_ns0], [ping -q -c 3 -i 0.3  10.1.1.2 | FORMAT_PING], [0], [dnl
 3 packets transmitted, 3 received, 0% packet loss, time 0ms
 ])
 
+NS_CHECK_EXEC([at_ns1], [ping -q -c 3 -i 0.3  10.1.1.1 | FORMAT_PING], [0], [dnl
+3 packets transmitted, 3 received, 0% packet loss, time 0ms
+])
+
+OVS_TRAFFIC_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([datapath - encap decap mpls_mc actions])
+OVS_TRAFFIC_VSWITCHD_START([_ADD_BR([br1])])
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
+ADD_VETH(p1, at_ns1, br1, "10.1.1.2/24")
+
+AT_CHECK([ip link add patch0 type veth peer name patch1])
+on_exit 'ip link del patch0'
+
+AT_CHECK([ip link set dev patch0 up])
+AT_CHECK([ip link set dev patch1 up])
+AT_CHECK([ovs-vsctl add-port br0 patch0 -- set interface patch0 ofport_request=100])
+AT_CHECK([ovs-vsctl add-port br1 patch1 -- set interface patch1 ofport_request=100])
+
+AT_DATA([flows.txt], [dnl
+table=0,priority=100,in_port=ovs-p0 actions=encap(mpls_mc),set_mpls_label:2,encap(ethernet),set_field:00:00:00:00:00:02->dl_dst,set_field:00:00:00:00:00:01->dl_src,output:100
+table=0,priority=100,in_port=100,dl_type=0x8848,mpls_label=2 actions=decap(),decap(packet_type(ns=0,type=0)),ovs-p0
+])
+
+AT_DATA([flows1.txt], [dnl
+table=0,priority=100,in_port=ovs-p1 actions=encap(mpls_mc),set_mpls_label:2,encap(ethernet),set_field:00:00:00:00:00:02->dl_dst,set_field:00:00:00:00:00:01->dl_src,output:100
+table=0,priority=100,in_port=100,dl_type=0x8848,mpls_label=2 actions=decap(),decap(packet_type(ns=0,type=0)),ovs-p1
+])
+
+AT_CHECK([ovs-ofctl  -Oopenflow13 add-flows br0 flows.txt])
+AT_CHECK([ovs-ofctl  -Oopenflow13 add-flows br1 flows1.txt])
+
+NS_CHECK_EXEC([at_ns0], [ping -q -c 3 -i 0.3  10.1.1.2 | FORMAT_PING], [0], [dnl
+3 packets transmitted, 3 received, 0% packet loss, time 0ms
+])
 
 NS_CHECK_EXEC([at_ns1], [ping -q -c 3 -i 0.3  10.1.1.1 | FORMAT_PING], [0], [dnl
 3 packets transmitted, 3 received, 0% packet loss, time 0ms
@@ -1161,6 +1264,45 @@ NS_CHECK_EXEC([at_ns0], [ping -q -c 3 -i 0.3 10.1.1.2 | FORMAT_PING], [0], [dnl
 3 packets transmitted, 3 received, 0% packet loss, time 0ms
 ])
 
+NS_CHECK_EXEC([at_ns1], [ping -q -c 3 -i 0.3 10.1.1.1 | FORMAT_PING], [0], [dnl
+3 packets transmitted, 3 received, 0% packet loss, time 0ms
+])
+
+OVS_TRAFFIC_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([datapath - multiple encap decap mpls_mc actions])
+OVS_TRAFFIC_VSWITCHD_START([_ADD_BR([br1])])
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
+ADD_VETH(p1, at_ns1, br1, "10.1.1.2/24")
+
+AT_CHECK([ip link add patch0 type veth peer name patch1])
+on_exit 'ip link del patch0'
+
+AT_CHECK([ip link set dev patch0 up])
+AT_CHECK([ip link set dev patch1 up])
+AT_CHECK([ovs-vsctl add-port br0 patch0 -- set interface patch0 ofport_request=100])
+AT_CHECK([ovs-vsctl add-port br1 patch1 -- set interface patch1 ofport_request=100])
+
+AT_DATA([flows.txt], [dnl
+table=0,priority=100,in_port=ovs-p0 actions=encap(mpls_mc),set_mpls_label:3, encap(mpls_mc),set_mpls_label:2,encap(ethernet),set_field:00:00:00:00:00:02->dl_dst,set_field:00:00:00:00:00:01->dl_src,output:100
+table=0,priority=100,in_port=100,dl_type=0x8848,mpls_label=2 actions=decap(),decap(packet_type(ns=1,type=0x8848)),decap(packet_type(ns=0,type=0)),ovs-p0
+])
+
+AT_DATA([flows1.txt], [dnl
+table=0,priority=100,in_port=ovs-p1 actions=encap(mpls_mc),set_mpls_label:3, encap(mpls_mc),set_mpls_label:2,encap(ethernet),set_field:00:00:00:00:00:02->dl_dst,set_field:00:00:00:00:00:01->dl_src,output:100
+table=0,priority=100,in_port=100,dl_type=0x8848,mpls_label=2 actions=decap(),decap(packet_type(ns=1,type=0x8848)),decap(packet_type(ns=0,type=0)),ovs-p1
+])
+
+AT_CHECK([ovs-ofctl  -Oopenflow13 add-flows br0 flows.txt])
+AT_CHECK([ovs-ofctl  -Oopenflow13 add-flows br1 flows1.txt])
+
+NS_CHECK_EXEC([at_ns0], [ping -q -c 3 -i 0.3 10.1.1.2 | FORMAT_PING], [0], [dnl
+3 packets transmitted, 3 received, 0% packet loss, time 0ms
+])
 
 NS_CHECK_EXEC([at_ns1], [ping -q -c 3 -i 0.3 10.1.1.1 | FORMAT_PING], [0], [dnl
 3 packets transmitted, 3 received, 0% packet loss, time 0ms
@@ -4022,15 +4164,15 @@ action=normal
 
 AT_CHECK([ovs-ofctl --bundle add-flows br0 flows.txt])
 
-AT_CHECK([ovs-ofctl packet-out br0 "packet=52540003287c525400444ab586dd6006f70605b02c4020010001000000000000000000000020200100010000000000000000000000101100000134e88deb13891389080803136161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616"dnl
+AT_CHECK([ovs-ofctl packet-out br0 "in_port=42,packet=52540003287c525400444ab586dd6006f70605b02c4020010001000000000000000000000020200100010000000000000000000000101100000134e88deb13891389080803136161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616"dnl
 "16161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161"dnl
 "61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616"dnl
 "1616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161, actions=ct(table=1)"])
 
-AT_CHECK([ovs-ofctl packet-out br0 "packet=52540003287c525400444ab586dd6006f70602682c402001000100000000000000000000002020010001000000000000000000000010110005a834e88deb6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616"dnl
+AT_CHECK([ovs-ofctl packet-out br0 "in_port=42,packet=52540003287c525400444ab586dd6006f70602682c402001000100000000000000000000002020010001000000000000000000000010110005a834e88deb6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616"dnl
 "161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161, actions=ct(table=1)"])
 
-AT_CHECK([ovs-ofctl packet-out br0 "packet=52540003287c525400444ab586dd6006f706033d1140200100010000000000000000000000202001000100000000000000000000001013891389033d923861616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616"dnl
+AT_CHECK([ovs-ofctl packet-out br0 "in_port=42,packet=52540003287c525400444ab586dd6006f706033d1140200100010000000000000000000000202001000100000000000000000000001013891389033d923861616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616"dnl
 "1616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161610a, actions=ct(table=1)"])
 
 AT_CHECK([ovs-appctl dpctl/dump-flows | head -2 | tail -1 | grep -q -e ["]udp[(]src=5001["]])
@@ -4083,8 +4225,8 @@ OVS_TRAFFIC_VSWITCHD_START()
 
 ADD_NAMESPACES(at_ns0, at_ns1)
 
-ADD_VETH(p0, at_ns0, br0, "fc00::1/96")
-ADD_VETH(p1, at_ns1, br0, "fc00::2/96")
+ADD_VETH(p0, at_ns0, br0, "fc00::1/96", [], [], "nodad")
+ADD_VETH(p1, at_ns1, br0, "fc00::2/96", [], [], "nodad")
 
 dnl Allow any traffic from ns0->ns1. Only allow nd, return traffic from ns1->ns0.
 AT_DATA([flows.txt], [dnl
@@ -4107,6 +4249,7 @@ OVS_START_L7([at_ns1], [http6])
 
 dnl HTTP requests from ns0->ns1 should work fine.
 NS_CHECK_EXEC([at_ns0], [wget http://[[fc00::2]] -t 3 -T 1 --retry-connrefused -v -o wget0.log])
+
 AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(fc00::2)], [0], [dnl
 tcp,orig=(src=fc00::1,dst=fc00::2,sport=<cleared>,dport=<cleared>),reply=(src=fc00::2,dst=fc00::1,sport=<cleared>,dport=<cleared>),protoinfo=(state=<cleared>)
 ])
@@ -4510,8 +4653,8 @@ OVS_TRAFFIC_VSWITCHD_START()
 
 ADD_NAMESPACES(at_ns0, at_ns1)
 
-ADD_VETH(p0, at_ns0, br0, "fc00::1/96")
-ADD_VETH(p1, at_ns1, br0, "fc00::2/96")
+ADD_VETH(p0, at_ns0, br0, "fc00::1/96", [], [], "nodad")
+ADD_VETH(p1, at_ns1, br0, "fc00::2/96", [], [], "nodad")
 
 dnl Allow any traffic from ns0->ns1.
 dnl Only allow nd, return traffic from ns1->ns0.
@@ -4565,9 +4708,9 @@ OVS_TRAFFIC_VSWITCHD_START()
 
 ADD_NAMESPACES(at_ns0, at_ns1)
 
-ADD_VETH(p0, at_ns0, br0, "fc00::1/96")
+ADD_VETH(p0, at_ns0, br0, "fc00::1/96", [], [], "nodad")
 NS_CHECK_EXEC([at_ns0], [ip link set dev p0 address 80:88:88:88:88:88])
-ADD_VETH(p1, at_ns1, br0, "fc00::2/96")
+ADD_VETH(p1, at_ns1, br0, "fc00::2/96", [], [], "nodad")
 NS_CHECK_EXEC([at_ns1], [ip link set dev p1 address 80:88:88:88:88:99])
 NS_CHECK_EXEC([at_ns0], [ip -6 neigh add fc00::2 lladdr 80:88:88:88:88:99 dev p0])
 NS_CHECK_EXEC([at_ns1], [ip -6 neigh add fc00::1 lladdr 80:88:88:88:88:88 dev p1])
@@ -4771,7 +4914,7 @@ ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
 
 dnl Allow any traffic from ns0->ns1. Only allow nd, return traffic from ns1->ns0.
 AT_DATA([flows.txt], [dnl
-in_port=1,ip,action=ct(commit,zone=1,nat(src=10.1.1.240-10.1.1.255)),2
+in_port=1,ip,action=ct(commit,zone=1,nat(src=10.1.1.240-10.1.1.254)),2
 in_port=2,ct_state=-trk,ip,action=ct(table=0,zone=1,nat)
 in_port=2,ct_state=+trk,ct_zone=1,ip,action=1
 dnl
@@ -4860,7 +5003,7 @@ ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
 
 dnl Allow any traffic from ns0->ns1. Only allow nd, return traffic from ns1->ns0.
 AT_DATA([flows.txt], [dnl
-in_port=1,tcp,action=ct(commit,zone=1,nat(src=10.1.1.240-10.1.1.255:34567-34568,random)),2
+in_port=1,tcp,action=ct(commit,zone=1,nat(src=10.1.1.240-10.1.1.254:34567-34568,random)),2
 in_port=2,ct_state=-trk,tcp,tp_dst=34567,action=ct(table=0,zone=1,nat)
 in_port=2,ct_state=-trk,tcp,tp_dst=34568,action=ct(table=0,zone=1,nat)
 in_port=2,ct_state=+trk,ct_zone=1,tcp,action=1
@@ -4908,7 +5051,7 @@ ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
 
 dnl Allow any traffic from ns0->ns1. Only allow nd, return traffic from ns1->ns0.
 AT_DATA([flows.txt], [dnl
-in_port=1,ip,action=ct(commit,zone=1,nat(src=10.1.1.240-10.1.1.255:20000)),2
+in_port=1,ip,action=ct(commit,zone=1,nat(src=10.1.1.240-10.1.1.254:20000)),2
 in_port=2,ct_state=-trk,ip,action=ct(table=0,zone=1,nat)
 in_port=2,ct_state=+trk,ct_zone=1,action=1
 dnl
@@ -5013,8 +5156,8 @@ priority=100 arp arp_op=1 action=move:OXM_OF_ARP_TPA[[]]->NXM_NX_REG2[[]],resubm
 priority=10 arp action=normal
 priority=0 action=drop
 dnl
-dnl Allow any traffic from ns0->ns1. SNAT ns0 to 10.1.1.240-10.1.1.255
-table=1 priority=100 in_port=1 ip ct_state=+trk+new-est action=ct(commit,zone=1,nat(src=10.1.1.240-10.1.1.255)),2
+dnl Allow any traffic from ns0->ns1. SNAT ns0 to 10.1.1.240-10.1.1.254
+table=1 priority=100 in_port=1 ip ct_state=+trk+new-est action=ct(commit,zone=1,nat(src=10.1.1.240-10.1.1.254)),2
 table=1 priority=100 in_port=1 ip ct_state=+trk-new+est action=2
 dnl Only allow established traffic from ns1->ns0.
 table=1 priority=100 in_port=2 ip ct_state=+trk-new+est action=1
@@ -5258,7 +5401,7 @@ ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
 dnl Allow UDP traffic from ns0->ns1. Only allow related ICMP responses back.
 dnl Make sure ICMP responses are reverse-NATted.
 AT_DATA([flows.txt], [dnl
-in_port=1,udp,action=ct(commit,nat(src=10.1.1.240-10.1.1.255),exec(set_field:1->ct_mark)),2
+in_port=1,udp,action=ct(commit,nat(src=10.1.1.240-10.1.1.254),exec(set_field:1->ct_mark)),2
 in_port=2,icmp,ct_state=-trk,action=ct(table=0,nat)
 in_port=2,icmp,nw_dst=10.1.1.1,ct_state=+trk+rel,ct_mark=1,action=1
 dnl
@@ -5290,7 +5433,7 @@ NS_CHECK_EXEC([at_ns0], [bash -c "echo a | nc $NC_EOF_OPT -u 10.1.1.2 10000"])
 AT_CHECK([ovs-appctl revalidator/purge], [0])
 AT_CHECK([ovs-ofctl -O OpenFlow15 dump-flows br0 | ofctl_strip | sort | grep -v drop], [0], [dnl
  n_packets=1, n_bytes=42, priority=10,arp actions=NORMAL
- n_packets=1, n_bytes=44, udp,in_port=1 actions=ct(commit,nat(src=10.1.1.240-10.1.1.255),exec(set_field:0x1->ct_mark)),output:2
+ n_packets=1, n_bytes=44, udp,in_port=1 actions=ct(commit,nat(src=10.1.1.240-10.1.1.254),exec(set_field:0x1->ct_mark)),output:2
  n_packets=1, n_bytes=72, ct_state=+rel+trk,ct_mark=0x1,icmp,in_port=2,nw_dst=10.1.1.1 actions=output:1
  n_packets=1, n_bytes=72, ct_state=-trk,icmp,in_port=2 actions=ct(table=0,nat)
  n_packets=2, n_bytes=84, priority=100,arp,arp_op=1 actions=move:NXM_OF_ARP_TPA[[]]->NXM_NX_REG2[[]],resubmit(,8),goto_table:10
@@ -6375,7 +6518,7 @@ on_exit 'ovs-appctl revalidator/purge'
 on_exit 'ovs-appctl dpif/dump-flows br0'
 
 dnl Should work with the virtual IP address through NAT
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+for i in $(seq 1 50); do
     echo Request $i
     NS_CHECK_EXEC([at_ns1], [wget 10.1.1.64 -t 5 -T 1 --retry-connrefused -v -o wget$i.log])
 done
@@ -6659,6 +6802,85 @@ AT_CHECK([ovs-ofctl dump-flows br0 | grep table=2, | OFPROTO_CLEAR_DURATION_IDLE
          [0], [dnl
  cookie=0x0, duration=<cleared>, table=2, n_packets=2, n_bytes=84, idle_age=<cleared>, priority=10,ct_state=+new+trk,in_port=1 actions=drop
  cookie=0x0, duration=<cleared>, table=2, n_packets=0, n_bytes=0, idle_age=<cleared>, priority=10,ct_state=+est+trk actions=drop
+])
+
+OVS_TRAFFIC_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_BANNER([IGMP])
+
+AT_SETUP([IGMP - flood under normal action])
+
+OVS_TRAFFIC_VSWITCHD_START()
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p1, at_ns0, br0, "10.1.1.1/24", "f0:00:00:01:01:01")
+ADD_VETH(p2, at_ns1, br0, "10.1.1.2/24", "f0:00:00:01:01:02")
+
+AT_CHECK([ovs-ofctl add-flow br0 "actions=NORMAL"])
+
+NS_CHECK_EXEC([at_ns0], [$PYTHON3 $srcdir/sendpkt.py p1 01 00 5e 01 01 03 dnl
+f0 00 00 01 01 01 08 00 46 c0 00 28 00 00 40 00 01 02 d3 49 45 65 eb 4a e0 dnl
+00 00 16 94 04 00 00 22 00 f9 02 00 00 00 01 04 00 00 00 e0 00 00 fb 00 00 dnl
+00 00 00 00 > /dev/null])
+
+AT_CHECK([ovs-appctl dpctl/dump-flows --names | grep -e .*ipv4 | sort | dnl
+          strip_stats | strip_used | strip_recirc | dnl
+          sed 's/,packet_type(ns=[[0-9]]*,id=[[0-9]]*),/,/'],
+                     [0], [dnl
+recirc_id(<recirc>),in_port(ovs-p1),eth(src=f0:00:00:01:01:01,dst=01:00:5e:01:01:03),eth_type(0x0800),ipv4(frag=no), packets:0, bytes:0, used:never, actions:br0,ovs-p2
+])
+OVS_TRAFFIC_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([IGMP - forward with ICMP])
+
+OVS_TRAFFIC_VSWITCHD_START()
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p1, at_ns0, br0, "10.1.1.1/24", "f0:00:00:01:01:01")
+ADD_VETH(p2, at_ns1, br0, "10.1.1.2/24", "f0:00:00:01:01:02")
+
+AT_DATA([flows.txt], [dnl
+table=0, arp actions=NORMAL
+table=0, ip,in_port=1 actions=ct(table=1,zone=64000)
+table=0, in_port=2 actions=output:1
+table=1, ip,ct_state=+trk+inv actions=drop
+table=1  ip,in_port=1,icmp,ct_state=+trk+new actions=output:2
+table=1, in_port=1,ip,ct_state=+trk+new actions=controller(userdata=00.de.ad.be.ef.ca.fe.01)
+table=1, in_port=1,ip,ct_state=+trk+est actions=output:2
+])
+AT_CHECK([ovs-ofctl del-flows br0])
+AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
+
+dnl Send the IGMP, followed by a unicast ICMP - ensure we won't black hole
+
+NS_CHECK_EXEC([at_ns0], [$PYTHON3 $srcdir/sendpkt.py p1 f0 00 00 01 01 02 dnl
+f0 00 00 01 01 01 08 00 46 c0 00 28 00 00 40 00 01 02 d3 49 45 65 eb 4a e0 dnl
+00 00 16 94 04 00 00 22 00 f9 02 00 00 00 01 04 00 00 00 e0 00 00 fb 00 00 dnl
+00 00 00 00 > /dev/null])
+
+NS_CHECK_EXEC([at_ns0], [$PYTHON3 $srcdir/sendpkt.py p1 f0 00 00 01 01 02 dnl
+f0 00 00 01 01 01 08 00 45 00 00 1c 00 01 00 00 40 01 64 dc 0a 01 01 01 0a dnl
+01 01 02 08 00 f7 ff ff ff ff ff > /dev/null])
+
+sleep 1
+
+dnl Prefer the OpenFlow rules, because different datapaths will behave slightly
+dnl differently with respect to the exact dp rules.
+dnl
+dnl This is also why we clear n_bytes / n_packets - some kernels with ipv6
+dnl enabled will bump some of these counters non-deterministically
+
+AT_CHECK([ovs-ofctl dump-flows br0 | grep -v NXST | dnl
+          strip_duration | grep -v arp | grep -v n_packets=0 | dnl
+          grep -v 'in_port=2 actions=output:1' | dnl
+          sed 's/n_bytes=[[0-9]]*/n_bytes=0/
+               s/idle_age=[[0-9]]*/idle_age=0/
+               s/n_packets=[[1-9]]/n_packets=0/' | sort], [0], [dnl
+ cookie=0x0,  table=0, n_packets=0, n_bytes=0, idle_age=0, ip,in_port=1 actions=ct(table=1,zone=64000)
+ cookie=0x0,  table=1, n_packets=0, n_bytes=0, idle_age=0, ct_state=+new+trk,icmp,in_port=1 actions=output:2
+ cookie=0x0,  table=1, n_packets=0, n_bytes=0, idle_age=0, ct_state=+new+trk,ip,in_port=1 actions=controller(userdata=00.de.ad.be.ef.ca.fe.01)
 ])
 
 OVS_TRAFFIC_VSWITCHD_STOP

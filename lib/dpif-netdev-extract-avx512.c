@@ -48,10 +48,10 @@
 #include "dpif-netdev-private-dpcls.h"
 #include "dpif-netdev-private-extract.h"
 #include "dpif-netdev-private-flow.h"
+#include "dp-packet.h"
 
 /* AVX512-BW level permutex2var_epi8 emulation. */
 static inline __m512i
-__attribute__((target("avx512bw")))
 _mm512_maskz_permutex2var_epi8_skx(__mmask64 k_mask,
                                    __m512i v_data_0,
                                    __m512i v_shuf_idxs,
@@ -108,12 +108,41 @@ _mm512_maskz_permutex2var_epi8_skx(__mmask64 k_mask,
     return v_result_kmskd;
 }
 
-/* Wrapper function required to enable ISA. */
+/* Wrapper function to enable VBMI ISA required by the
+ * _mm512_maskz_permutexvar_epi8 intrinsic. */
+#if HAVE_AVX512VBMI
 static inline __m512i
 __attribute__((__target__("avx512vbmi")))
 _mm512_maskz_permutexvar_epi8_wrap(__mmask64 kmask, __m512i idx, __m512i a)
 {
     return _mm512_maskz_permutexvar_epi8(kmask, idx, a);
+}
+#endif
+
+static inline __m512i
+_mm512_maskz_permutexvar_epi8_selector(__mmask64 k_shuf, __m512i v_shuf,
+                                       __m512i v_pkt0,
+                                       const uint32_t use_vbmi OVS_UNUSED)
+{
+    /* Permute the packet layout into miniflow blocks shape. */
+    __m512i v512_zeros = _mm512_setzero_si512();
+    __m512i v_blk0;
+#if HAVE_AVX512VBMI
+    if (__builtin_constant_p(use_vbmi) && use_vbmi) {
+        /* As different AVX512 ISA levels have different implementations,
+        * this specializes on the use_vbmi attribute passed in.
+        */
+        v_blk0 = _mm512_maskz_permutexvar_epi8_wrap(k_shuf, v_shuf, v_pkt0);
+
+    } else {
+        v_blk0 = _mm512_maskz_permutex2var_epi8_skx(k_shuf, v_pkt0, v_shuf,
+                                                    v512_zeros);
+    }
+#else
+    v_blk0 = _mm512_maskz_permutex2var_epi8_skx(k_shuf, v_pkt0, v_shuf,
+                                                v512_zeros);
+#endif
+    return v_blk0;
 }
 
 
@@ -157,7 +186,7 @@ _mm512_maskz_permutexvar_epi8_wrap(__mmask64 kmask, __m512i idx, __m512i a)
   0, 0, 0, 0, /* Src IP */                                              \
   0, 0, 0, 0, /* Dst IP */
 
-#define PATTERN_IPV4_MASK PATTERN_IPV4_GEN(0xFF, 0xFE, 0xFF, 0xFF)
+#define PATTERN_IPV4_MASK PATTERN_IPV4_GEN(0xFF, 0xBF, 0xFF, 0xFF)
 #define PATTERN_IPV4_UDP PATTERN_IPV4_GEN(0x45, 0, 0, 0x11)
 #define PATTERN_IPV4_TCP PATTERN_IPV4_GEN(0x45, 0, 0, 0x06)
 
@@ -226,6 +255,25 @@ _mm512_maskz_permutexvar_epi8_wrap(__mmask64 kmask, __m512i idx, __m512i a)
 #define PATTERN_DT1Q_IPV4_TCP_KMASK \
     (KMASK_ETHER | (KMASK_DT1Q << 16) | (KMASK_IPV4 << 24) | (KMASK_TCP << 40))
 
+/* Miniflow Strip post-processing masks.
+ * This allows unsetting specific bits from the resulting miniflow. It is used
+ * for e.g. IPv4 where the "DF" bit is never pushed to the miniflow itself.
+ * The NC define is for "No Change", allowing the bits to pass through.
+ */
+#define NC 0xFF
+
+#define PATTERN_STRIP_IPV4_MASK                                         \
+    NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC,     \
+    NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, 0xBF, NC, NC, NC,   \
+    NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC,     \
+    NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC
+
+#define PATTERN_STRIP_DOT1Q_IPV4_MASK                                   \
+    NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC,     \
+    NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC,     \
+    NC, NC, NC, NC, 0xBF, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC,   \
+    NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC, NC
+
 /* This union allows initializing static data as u8, but easily loading it
  * into AVX512 registers too. The union ensures proper alignment for the zmm.
  */
@@ -250,8 +298,9 @@ struct mfex_profile {
     union mfex_data probe_mask;
     union mfex_data probe_data;
 
-    /* Required for reshaping packet into miniflow. */
+    /* Required for reshaping packet into miniflow and post-processing it. */
     union mfex_data store_shuf;
+    union mfex_data strip_mask;
     __mmask64 store_kmsk;
 
     /* Constant data to set in mf.bits and dp_packet data on hit. */
@@ -319,6 +368,7 @@ static const struct mfex_profile mfex_profiles[PROFILE_COUNT] =
         .probe_data.u8_data = { PATTERN_ETHERTYPE_IPV4 PATTERN_IPV4_UDP},
 
         .store_shuf.u8_data = { PATTERN_IPV4_UDP_SHUFFLE },
+        .strip_mask.u8_data = { PATTERN_STRIP_IPV4_MASK },
         .store_kmsk = PATTERN_IPV4_UDP_KMASK,
 
         .mf_bits = { 0x18a0000000000000, 0x0000000000040401},
@@ -341,6 +391,7 @@ static const struct mfex_profile mfex_profiles[PROFILE_COUNT] =
         },
 
         .store_shuf.u8_data = { PATTERN_IPV4_TCP_SHUFFLE },
+        .strip_mask.u8_data = { PATTERN_STRIP_IPV4_MASK },
         .store_kmsk = PATTERN_IPV4_TCP_KMASK,
 
         .mf_bits = { 0x18a0000000000000, 0x0000000000044401},
@@ -359,6 +410,7 @@ static const struct mfex_profile mfex_profiles[PROFILE_COUNT] =
         },
 
         .store_shuf.u8_data = { PATTERN_DT1Q_IPV4_UDP_SHUFFLE },
+        .strip_mask.u8_data = { PATTERN_STRIP_DOT1Q_IPV4_MASK },
         .store_kmsk = PATTERN_DT1Q_IPV4_UDP_KMASK,
 
         .mf_bits = { 0x38a0000000000000, 0x0000000000040401},
@@ -383,13 +435,14 @@ static const struct mfex_profile mfex_profiles[PROFILE_COUNT] =
         },
 
         .store_shuf.u8_data = { PATTERN_DT1Q_IPV4_TCP_SHUFFLE },
+        .strip_mask.u8_data = { PATTERN_STRIP_DOT1Q_IPV4_MASK },
         .store_kmsk = PATTERN_DT1Q_IPV4_TCP_KMASK,
 
         .mf_bits = { 0x38a0000000000000, 0x0000000000044401},
         .dp_pkt_offs = {
             14, UINT16_MAX, 18, 38,
         },
-        .dp_pkt_min_size = 46,
+        .dp_pkt_min_size = 58,
     },
 };
 
@@ -457,7 +510,7 @@ mfex_avx512_process(struct dp_packet_batch *packets,
                     odp_port_t in_port,
                     void *pmd_handle OVS_UNUSED,
                     const enum MFEX_PROFILES profile_id,
-                    const uint32_t use_vbmi)
+                    const uint32_t use_vbmi OVS_UNUSED)
 {
     uint32_t hitmask = 0;
     struct dp_packet *packet;
@@ -471,6 +524,7 @@ mfex_avx512_process(struct dp_packet_batch *packets,
     __m512i v_vals = _mm512_loadu_si512(&profile->probe_data);
     __m512i v_mask = _mm512_loadu_si512(&profile->probe_mask);
     __m512i v_shuf = _mm512_loadu_si512(&profile->store_shuf);
+    __m512i v_strp = _mm512_loadu_si512(&profile->strip_mask);
 
     __mmask64 k_shuf = profile->store_kmsk;
     __m128i v_bits = _mm_loadu_si128((void *) &profile->mf_bits);
@@ -498,7 +552,7 @@ mfex_avx512_process(struct dp_packet_batch *packets,
 
         __m512i v_pkt0_masked = _mm512_and_si512(v_pkt0, v_mask);
         __mmask64 k_cmp = _mm512_cmpeq_epi8_mask(v_pkt0_masked, v_vals);
-        if (k_cmp != UINT64_MAX) {
+        if (OVS_UNLIKELY(k_cmp != UINT64_MAX)) {
             continue;
         }
 
@@ -513,21 +567,12 @@ mfex_avx512_process(struct dp_packet_batch *packets,
         _mm_storeu_si128((void *) bits, v_bits);
         _mm_storeu_si128((void *) blocks, v_blocks01);
 
-        /* Permute the packet layout into miniflow blocks shape.
-         * As different AVX512 ISA levels have different implementations,
-         * this specializes on the "use_vbmi" attribute passed in.
-         */
-        __m512i v512_zeros = _mm512_setzero_si512();
-        __m512i v_blk0;
-        if (__builtin_constant_p(use_vbmi) && use_vbmi) {
-            v_blk0 = _mm512_maskz_permutexvar_epi8_wrap(k_shuf, v_shuf,
-                                                        v_pkt0);
-        } else {
-            v_blk0 = _mm512_maskz_permutex2var_epi8_skx(k_shuf, v_pkt0,
-                                                        v_shuf, v512_zeros);
-        }
-        _mm512_storeu_si512(&blocks[2], v_blk0);
+        __m512i v_blk0 = _mm512_maskz_permutexvar_epi8_selector(k_shuf, v_shuf,
+                                                                v_pkt0,
+                                                                use_vbmi);
 
+        __m512i v_blk0_strip = _mm512_and_si512(v_blk0, v_strp);
+        _mm512_storeu_si512(&blocks[2], v_blk0_strip);
 
         /* Perform "post-processing" per profile, handling details not easily
          * handled in the above generic AVX512 code. Examples include TCP flag
@@ -551,6 +596,7 @@ mfex_avx512_process(struct dp_packet_batch *packets,
                 /* Process TCP flags, and store to blocks. */
                 const struct tcp_header *tcp = (void *)&pkt[38];
                 mfex_handle_tcp_flags(tcp, &blocks[7]);
+                dp_packet_update_rss_hash_ipv4_tcp_udp(packet);
             } break;
 
         case PROFILE_ETH_VLAN_IPV4_UDP: {
@@ -562,6 +608,7 @@ mfex_avx512_process(struct dp_packet_batch *packets,
                                               UDP_HEADER_LEN)) {
                     continue;
                 }
+                dp_packet_update_rss_hash_ipv4_tcp_udp(packet);
             } break;
 
         case PROFILE_ETH_IPV4_TCP: {
@@ -576,6 +623,7 @@ mfex_avx512_process(struct dp_packet_batch *packets,
                                               TCP_HEADER_LEN)) {
                     continue;
                 }
+                dp_packet_update_rss_hash_ipv4_tcp_udp(packet);
             } break;
 
         case PROFILE_ETH_IPV4_UDP: {
@@ -586,24 +634,23 @@ mfex_avx512_process(struct dp_packet_batch *packets,
                                               UDP_HEADER_LEN)) {
                     continue;
                 }
-
+                dp_packet_update_rss_hash_ipv4_tcp_udp(packet);
             } break;
         default:
             break;
         };
 
         /* This packet has its miniflow created, add to hitmask. */
-        hitmask |= 1 << i;
+        hitmask |= UINT32_C(1) << i;
     }
 
     return hitmask;
 }
 
 
-#define DECLARE_MFEX_FUNC(name, profile)                                \
+#if HAVE_AVX512VBMI
+#define VBMI_MFEX_FUNC(name, profile)                                   \
 uint32_t                                                                \
-__attribute__((__target__("avx512f")))                                  \
-__attribute__((__target__("avx512vl")))                                 \
 __attribute__((__target__("avx512vbmi")))                               \
 mfex_avx512_vbmi_##name(struct dp_packet_batch *packets,                \
                         struct netdev_flow_key *keys, uint32_t keys_size,\
@@ -612,11 +659,13 @@ mfex_avx512_vbmi_##name(struct dp_packet_batch *packets,                \
 {                                                                       \
     return mfex_avx512_process(packets, keys, keys_size, in_port,       \
                                pmd_handle, profile, 1);                 \
-}                                                                       \
-                                                                        \
+}
+#else
+#define VBMI_MFEX_FUNC(name, profile)
+#endif
+
+#define BASIC_MFEX_FUNC(name, profile)                                  \
 uint32_t                                                                \
-__attribute__((__target__("avx512f")))                                  \
-__attribute__((__target__("avx512vl")))                                 \
 mfex_avx512_##name(struct dp_packet_batch *packets,                     \
                    struct netdev_flow_key *keys, uint32_t keys_size,    \
                    odp_port_t in_port, struct dp_netdev_pmd_thread      \
@@ -625,6 +674,10 @@ mfex_avx512_##name(struct dp_packet_batch *packets,                     \
     return mfex_avx512_process(packets, keys, keys_size, in_port,       \
                                pmd_handle, profile, 0);                 \
 }
+
+#define DECLARE_MFEX_FUNC(name, profile)                                \
+VBMI_MFEX_FUNC(name, profile)                                           \
+BASIC_MFEX_FUNC(name, profile)                                          \
 
 /* Each profile gets a single declare here, which specializes the function
  * as required.

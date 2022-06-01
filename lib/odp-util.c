@@ -193,6 +193,7 @@ ovs_key_attr_to_string(enum ovs_key_attr attr, char *namebuf, size_t bufsize)
     case OVS_KEY_ATTR_PACKET_TYPE: return "packet_type";
     case OVS_KEY_ATTR_NSH: return "nsh";
 
+    case OVS_KEY_ATTR_TUNNEL_INFO: return "<error: kernel-only tunnel_info>";
     case __OVS_KEY_ATTR_MAX:
     default:
         snprintf(namebuf, bufsize, "key%u", (unsigned int) attr);
@@ -3275,7 +3276,7 @@ tun_key_to_attr(struct ofpbuf *a, const struct flow_tnl *tun_key,
 
         opts.flags = tun_key->gtpu_flags;
         opts.msgtype = tun_key->gtpu_msgtype;
-        nl_msg_put_unspec(a, OVS_TUNNEL_KEY_ATTR_GENEVE_OPTS,
+        nl_msg_put_unspec(a, OVS_TUNNEL_KEY_ATTR_GTPU_OPTS,
                           &opts, sizeof(opts));
     }
     nl_msg_end_nested(a, tun_key_ofs);//完成tunnel nested写
@@ -3295,6 +3296,7 @@ odp_mask_is_constant__(enum ovs_key_attr attr, const void *mask, size_t size,
     switch (attr) {
     case OVS_KEY_ATTR_UNSPEC:
     case OVS_KEY_ATTR_ENCAP:
+    case OVS_KEY_ATTR_TUNNEL_INFO:
     case __OVS_KEY_ATTR_MAX:
     default:
         return false;
@@ -4454,6 +4456,7 @@ format_odp_key_attr__(const struct nlattr *a, const struct nlattr *ma,
         break;
     }
     case OVS_KEY_ATTR_UNSPEC:
+    case OVS_KEY_ATTR_TUNNEL_INFO:
     case __OVS_KEY_ATTR_MAX:
     default:
         format_generic_odp_key(a, ds);
@@ -4677,6 +4680,11 @@ odp_flow_format(const struct nlattr *key, size_t key_len/*match字段长度*/,
                     ds_put_char(ds, ',');
                 }
                 ds_put_cstr(ds, "eth()");
+            } else if (attr_type == OVS_KEY_ATTR_PACKET_TYPE && is_wildcard) {
+                /* See the above help text, however in the case where the
+                 * packet type is not shown, we still need to display the
+                 * eth() header if the packets type is wildcarded. */
+                has_packet_type_key = false;
             }
             ofpbuf_clear(&ofp);
         }
@@ -6674,6 +6682,7 @@ odp_key_to_dp_packet(const struct nlattr *key, size_t key_len,
         case OVS_KEY_ATTR_MPLS:
         case OVS_KEY_ATTR_PACKET_TYPE:
         case OVS_KEY_ATTR_NSH:
+        case OVS_KEY_ATTR_TUNNEL_INFO:
         case __OVS_KEY_ATTR_MAX:
         default:
             break;
@@ -7234,11 +7243,6 @@ parse_l2_5_onward(const struct nlattr *attrs[OVS_KEY_ATTR_MAX + 1],
                 }
             }
         }
-    } else if (src_flow->nw_proto == IPPROTO_IGMP
-               && src_flow->dl_type == htons(ETH_TYPE_IP)) {
-        /* OVS userspace parses the IGMP type, code, and group, but its
-         * datapaths do not, so there is always missing information. */
-        return ODP_FIT_TOO_LITTLE;
     }
     if (is_mask && expected_bit != OVS_KEY_ATTR_UNSPEC) {
         if ((flow->tp_src || flow->tp_dst) && flow->nw_proto != 0xff) {

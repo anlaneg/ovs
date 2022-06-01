@@ -365,6 +365,8 @@ dump_flow_pattern(struct ds *s,
 
         ds_put_cstr(s, "eth ");
         if (eth_spec) {
+            uint32_t has_vlan_mask;
+
             if (!eth_mask) {
                 eth_mask = &rte_flow_item_eth_mask;
             }
@@ -379,6 +381,9 @@ dump_flow_pattern(struct ds *s,
             DUMP_PATTERN_ITEM(eth_mask->type, false, "type", "0x%04"PRIx16,
                               ntohs(eth_spec->type),
                               ntohs(eth_mask->type), 0);
+            has_vlan_mask = eth_mask->has_vlan ? UINT32_MAX : 0;
+            DUMP_PATTERN_ITEM(has_vlan_mask, false, "has_vlan", "%d",
+                              eth_spec->has_vlan, eth_mask->has_vlan, 0);
         }
         ds_put_cstr(s, "/ ");
     } else if (item->type == RTE_FLOW_ITEM_TYPE_VLAN) {
@@ -1377,6 +1382,7 @@ parse_flow_match(struct netdev *netdev,
                  struct flow_patterns *patterns,
                  struct match *match)
 {
+    struct rte_flow_item_eth *eth_spec = NULL, *eth_mask = NULL;
     struct flow *consumed_masks;
     uint8_t proto = 0;
 
@@ -1424,6 +1430,11 @@ parse_flow_match(struct netdev *netdev,
         memset(&consumed_masks->dl_src, 0, sizeof consumed_masks->dl_src);
         consumed_masks->dl_type = 0;
 
+        spec->has_vlan = 0;
+        mask->has_vlan = 1;
+        eth_spec = spec;
+        eth_mask = mask;
+
         //转换ether header的match
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_ETH, spec, mask, NULL);
     }
@@ -1439,8 +1450,14 @@ parse_flow_match(struct netdev *netdev,
         spec->tci = match->flow.vlans[0].tci & ~htons(VLAN_CFI);
         mask->tci = match->wc.masks.vlans[0].tci & ~htons(VLAN_CFI);
 
-        /* Match any protocols. */
-        mask->inner_type = 0;
+        if (eth_spec && eth_mask) {
+            eth_spec->has_vlan = 1;
+            eth_mask->has_vlan = 1;
+            spec->inner_type = eth_spec->type;
+            mask->inner_type = eth_mask->type;
+            eth_spec->type = match->flow.vlans[0].tpid;
+            eth_mask->type = match->wc.masks.vlans[0].tpid;
+        }
 
         add_flow_pattern(patterns, RTE_FLOW_ITEM_TYPE_VLAN, spec, mask, NULL);
     }

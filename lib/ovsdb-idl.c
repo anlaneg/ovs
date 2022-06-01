@@ -392,25 +392,25 @@ ovsdb_idl_clear(struct ovsdb_idl *db)
      */
     for (size_t i = 0; i < db->class_->n_tables; i++) {
         struct ovsdb_idl_table *table = &db->tables[i];
-        struct ovsdb_idl_row *row, *next_row;
+        struct ovsdb_idl_row *row;
 
         if (hmap_is_empty(&table->rows)) {
             continue;
         }
 
-        HMAP_FOR_EACH_SAFE (row, next_row, hmap_node, &table->rows) {
-            struct ovsdb_idl_arc *arc, *next_arc;
+        HMAP_FOR_EACH_SAFE (row, hmap_node, &table->rows) {
+            struct ovsdb_idl_arc *arc;
 
             if (!ovsdb_idl_row_is_orphan(row)) {
                 ovsdb_idl_remove_from_indexes(row);
                 ovsdb_idl_row_unparse(row);
             }
-            LIST_FOR_EACH_SAFE (arc, next_arc, src_node, &row->src_arcs) {
+            LIST_FOR_EACH_SAFE (arc, src_node, &row->src_arcs) {
                 ovs_list_remove(&arc->src_node);
                 ovs_list_remove(&arc->dst_node);
                 free(arc);
             }
-            LIST_FOR_EACH_SAFE (arc, next_arc, dst_node, &row->dst_arcs) {
+            LIST_FOR_EACH_SAFE (arc, dst_node, &row->dst_arcs) {
                 ovs_list_remove(&arc->src_node);
                 ovs_list_remove(&arc->dst_node);
                 free(arc);
@@ -1048,8 +1048,8 @@ ovsdb_idl_condition_destroy(struct ovsdb_idl_condition *cond)
 void
 ovsdb_idl_condition_clear(struct ovsdb_idl_condition *cond)
 {
-    struct ovsdb_idl_clause *clause, *next;
-    HMAP_FOR_EACH_SAFE (clause, next, hmap_node, &cond->clauses) {
+    struct ovsdb_idl_clause *clause;
+    HMAP_FOR_EACH_SAFE (clause, hmap_node, &cond->clauses) {
         hmap_remove(&cond->clauses, &clause->hmap_node);
         ovsdb_idl_clause_destroy(clause);
     }
@@ -1352,9 +1352,9 @@ ovsdb_idl_track_clear__(struct ovsdb_idl *idl, bool flush_all)
         struct ovsdb_idl_table *table = &idl->tables[i];
 
         if (!ovs_list_is_empty(&table->track_list)) {
-            struct ovsdb_idl_row *row, *next;
+            struct ovsdb_idl_row *row;
 
-            LIST_FOR_EACH_SAFE(row, next, track_node, &table->track_list) {
+            LIST_FOR_EACH_SAFE (row, track_node, &table->track_list) {
                 if (row->updated) {
                     free(row->updated);
                     row->updated = NULL;
@@ -1402,6 +1402,45 @@ void
 ovsdb_idl_track_clear(struct ovsdb_idl *idl)
 {
     ovsdb_idl_track_clear__(idl, false);
+}
+
+/* Sets or clears (depending on 'enable') OVSDB_IDL_WRITE_CHANGED_ONLY
+ * for 'column' in 'idl', ensuring that the column will be included in a
+ * transaction only if its value has actually changed locally.  Normally
+ * read/write columns that are written to are always included in the
+ * transaction but, in specific cases, when the application doesn't
+ * require atomicity of writes across different columns, the ones that
+ * don't change value may be skipped.
+ *
+ * This function should be called between ovsdb_idl_create() and
+ * the first call to ovsdb_idl_run().
+ */
+void
+ovsdb_idl_set_write_changed_only(struct ovsdb_idl *idl,
+                                 const struct ovsdb_idl_column *column,
+                                 bool enable)
+{
+    if (enable) {
+        *ovsdb_idl_get_mode(idl, column) |= OVSDB_IDL_WRITE_CHANGED_ONLY;
+    } else {
+        *ovsdb_idl_get_mode(idl, column) &= ~OVSDB_IDL_WRITE_CHANGED_ONLY;
+    }
+}
+
+/* Helper function to wrap calling ovsdb_idl_set_write_changed_only() for
+ * all columns that are part of 'idl'.
+ */
+void
+ovsdb_idl_set_write_changed_only_all(struct ovsdb_idl *idl, bool enable)
+{
+    for (size_t i = 0; i < idl->class_->n_tables; i++) {
+        const struct ovsdb_idl_table_class *tc = &idl->class_->tables[i];
+
+        for (size_t j = 0; j < tc->n_columns; j++) {
+            const struct ovsdb_idl_column *column = &tc->columns[j];
+            ovsdb_idl_set_write_changed_only(idl, column, enable);
+        }
+    }
 }
 
 //向数据库请求模式
@@ -1490,9 +1529,9 @@ ovsdb_idl_parse_update(struct ovsdb_idl *idl,
 static void
 ovsdb_idl_reparse_deleted(struct ovsdb_idl *db)
 {
-    struct ovsdb_idl_row *row, *next;
+    struct ovsdb_idl_row *row;
 
-    LIST_FOR_EACH_SAFE (row, next, track_node, &db->deleted_untracked_rows) {
+    LIST_FOR_EACH_SAFE (row, track_node, &db->deleted_untracked_rows) {
         ovsdb_idl_row_untrack_change(row);
         add_tracked_change_for_references(row);
         ovsdb_idl_row_reparse_backrefs(row);
@@ -1928,8 +1967,8 @@ ovsdb_idl_index_create2(struct ovsdb_idl *idl,
 static void
 ovsdb_idl_destroy_indexes(struct ovsdb_idl_table *table)
 {
-    struct ovsdb_idl_index *index, *next;
-    LIST_FOR_EACH_SAFE (index, next, node, &table->indexes) {
+    struct ovsdb_idl_index *index;
+    LIST_FOR_EACH_SAFE (index, node, &table->indexes) {
         skiplist_destroy(index->skiplist, NULL);
         free(index->columns);
         free(index);
@@ -2167,12 +2206,12 @@ ovsdb_idl_row_clear_new(struct ovsdb_idl_row *row)
 static void
 ovsdb_idl_row_clear_arcs(struct ovsdb_idl_row *row, bool destroy_dsts)
 {
-    struct ovsdb_idl_arc *arc, *next;
+    struct ovsdb_idl_arc *arc;
 
     /* Delete all forward arcs.  If 'destroy_dsts', destroy any orphaned rows
      * that this causes to be unreferenced.
      */
-    LIST_FOR_EACH_SAFE (arc, next, src_node, &row->src_arcs) {
+    LIST_FOR_EACH_SAFE (arc, src_node, &row->src_arcs) {
         ovs_list_remove(&arc->dst_node);
         if (destroy_dsts
             && ovsdb_idl_row_is_orphan(arc->dst)
@@ -2189,7 +2228,7 @@ ovsdb_idl_row_clear_arcs(struct ovsdb_idl_row *row, bool destroy_dsts)
 static void
 ovsdb_idl_row_reparse_backrefs(struct ovsdb_idl_row *row)
 {
-    struct ovsdb_idl_arc *arc, *next;
+    struct ovsdb_idl_arc *arc;
 
     /* This is trickier than it looks.  ovsdb_idl_row_clear_arcs() will destroy
      * 'arc', so we need to use the "safe" variant of list traversal.  However,
@@ -2201,7 +2240,7 @@ ovsdb_idl_row_reparse_backrefs(struct ovsdb_idl_row *row)
      * (If duplicate arcs were possible then we would need to make sure that
      * 'next' didn't also point into 'arc''s destination, but we forbid
      * duplicate arcs.) */
-    LIST_FOR_EACH_SAFE (arc, next, dst_node, &row->dst_arcs) {
+    LIST_FOR_EACH_SAFE (arc, dst_node, &row->dst_arcs) {
         struct ovsdb_idl_row *ref = arc->src;
 
         ovsdb_idl_row_unparse(ref);
@@ -2353,9 +2392,9 @@ ovsdb_idl_row_destroy_postprocess(struct ovsdb_idl *idl)
         struct ovsdb_idl_table *table = &idl->tables[i];
 
         if (!ovs_list_is_empty(&table->track_list)) {
-            struct ovsdb_idl_row *row, *next;
+            struct ovsdb_idl_row *row;
 
-            LIST_FOR_EACH_SAFE(row, next, track_node, &table->track_list) {
+            LIST_FOR_EACH_SAFE (row, track_node, &table->track_list) {
                 if (!ovsdb_idl_track_is_set(row->table)) {
                     ovs_list_remove(&row->track_node);
                     ovsdb_idl_row_unparse(row);
@@ -2761,7 +2800,7 @@ ovsdb_idl_txn_increment(struct ovsdb_idl_txn *txn,
 void
 ovsdb_idl_txn_destroy(struct ovsdb_idl_txn *txn)
 {
-    struct ovsdb_idl_txn_insert *insert, *next;
+    struct ovsdb_idl_txn_insert *insert;
 
     if (txn->status == TXN_INCOMPLETE) {
         ovsdb_cs_forget_transaction(txn->idl->cs, txn->request_id);
@@ -2771,7 +2810,7 @@ ovsdb_idl_txn_destroy(struct ovsdb_idl_txn *txn)
     ovsdb_idl_txn_abort(txn);
     ds_destroy(&txn->comment);
     free(txn->error);
-    HMAP_FOR_EACH_SAFE (insert, next, hmap_node, &txn->inserted_rows) {
+    HMAP_FOR_EACH_SAFE (insert, hmap_node, &txn->inserted_rows) {
         free(insert);
     }
     hmap_destroy(&txn->inserted_rows);
@@ -2856,7 +2895,7 @@ substitute_uuids(struct json *json, const struct ovsdb_idl_txn *txn)
 static void
 ovsdb_idl_txn_disassemble(struct ovsdb_idl_txn *txn)
 {
-    struct ovsdb_idl_row *row, *next;
+    struct ovsdb_idl_row *row;
 
     /* This must happen early.  Otherwise, ovsdb_idl_row_parse() will call an
      * ovsdb_idl_column's 'parse' function, which will call
@@ -2864,7 +2903,7 @@ ovsdb_idl_txn_disassemble(struct ovsdb_idl_txn *txn)
      * transaction and fail to update the graph.  */
     txn->idl->txn = NULL;
 
-    HMAP_FOR_EACH_SAFE (row, next, txn_node, &txn->txn_rows) {
+    HMAP_FOR_EACH_SAFE (row, txn_node, &txn->txn_rows) {
         enum { INSERTED, MODIFIED, DELETED } op
             = (!row->new_datum ? DELETED
                : !row->old_datum ? INSERTED
@@ -3538,6 +3577,8 @@ ovsdb_idl_txn_write__(const struct ovsdb_idl_row *row_,
 {
     struct ovsdb_idl_row *row = CONST_CAST(struct ovsdb_idl_row *, row_);
     const struct ovsdb_idl_table_class *class;
+    unsigned char column_mode;
+    bool optimize_rewritten;
     size_t column_idx;
     bool write_only;
 
@@ -3548,12 +3589,15 @@ ovsdb_idl_txn_write__(const struct ovsdb_idl_row *row_,
 
     class = row->table->class_;
     column_idx = column - class->columns;
-    write_only = row->table->modes[column_idx] == OVSDB_IDL_MONITOR;
+    column_mode = row->table->modes[column_idx];
+    write_only = column_mode == OVSDB_IDL_MONITOR;
+    optimize_rewritten =
+        write_only || (column_mode & OVSDB_IDL_WRITE_CHANGED_ONLY);
+
 
     ovs_assert(row->new_datum != NULL);
     ovs_assert(column_idx < class->n_columns);
-    ovs_assert(row->old_datum == NULL ||
-               row->table->modes[column_idx] & OVSDB_IDL_MONITOR);
+    ovs_assert(row->old_datum == NULL || column_mode & OVSDB_IDL_MONITOR);
 
     if (row->table->idl->verify_write_only && !write_only) {
         VLOG_ERR("Bug: Attempt to write to a read/write column (%s:%s) when"
@@ -3571,9 +3615,13 @@ ovsdb_idl_txn_write__(const struct ovsdb_idl_row *row_,
      * different value in that column since we read it.  (But if a whole
      * transaction only does writes of existing values, without making any real
      * changes, we will drop the whole transaction later in
-     * ovsdb_idl_txn_commit().) */
-    if (write_only && ovsdb_datum_equals(ovsdb_idl_read(row, column),
-                                         datum, &column->type)) {
+     * ovsdb_idl_txn_commit().)
+     *
+     * The application may choose to bypass this restriction and always
+     * optimize by setting OVSDB_IDL_WRITE_CHANGED_ONLY.
+     */
+    if (optimize_rewritten && ovsdb_datum_equals(ovsdb_idl_read(row, column),
+                                                 datum, &column->type)) {
         goto discard_datum;
     }
 
@@ -4293,6 +4341,9 @@ void
 ovsdb_idl_loop_destroy(struct ovsdb_idl_loop *loop)
 {
     if (loop) {
+        if (loop->committing_txn) {
+            ovsdb_idl_txn_destroy(loop->committing_txn);
+        }
         ovsdb_idl_destroy(loop->idl);
     }
 }
@@ -4302,8 +4353,8 @@ ovsdb_idl_loop_run(struct ovsdb_idl_loop *loop)
 {
     ovsdb_idl_run(loop->idl);//向ovsdb请求同步
 
-    /* See if we can commit the loop->committing_txn. */
-    if (loop->committing_txn) {
+    /* See if the 'committing_txn' succeeded in the meantime. */
+    if (loop->committing_txn && loop->committing_txn->status == TXN_SUCCESS) {
         ovsdb_idl_try_commit_loop_txn(loop, NULL);
     }
 

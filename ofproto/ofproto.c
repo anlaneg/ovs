@@ -574,6 +574,7 @@ ofproto_create(const char *datapath_name, const char *datapath_type/*ofproto对�
 
     ovs_mutex_init(&ofproto->vl_mff_map.mutex);
     cmap_init(&ofproto->vl_mff_map.cmap);
+    ovs_refcount_init(&ofproto->refcount);
 
     //初始化ofproto
     error = ofproto->ofproto_class->construct(ofproto);
@@ -1734,9 +1735,33 @@ ofproto_destroy__(struct ofproto *ofproto)
     ofproto->ofproto_class->dealloc(ofproto);
 }
 
-/* Destroying rules is doubly deferred, must have 'ofproto' around for them.
- * - 1st we defer the removal of the rules from the classifier
- * - 2nd we defer the actual destruction of the rules. */
+/*
+ * Rule destruction requires ofproto to remain accessible.
+ * Depending on the rule destruction call (shown in below), it can take several
+ * RCU grace periods before the ofproto reference is not needed anymore.
+ * The ofproto destruction callback is thus protected by a refcount,
+ * and such destruction is itself deferred.
+ *
+ * remove_rules_postponed (one grace period)
+ *       -> remove_rule_rcu
+ *           -> remove_rule_rcu__
+ *               -> ofproto_rule_unref -> ref count != 1
+ *                   -> ... more grace periods.
+ *                   -> rule_destroy_cb (> 2 grace periods)
+ *                       -> free
+ *
+ * NOTE: The original ofproto destruction is only deferred by two grace
+ * periods to keep ofproto accessible. By using refcount together the
+ * destruction can be deferred for longer time. Now ofproto has 3 states:
+ *
+ * state 1: alive, with refcount >= 1
+ * state 2: dying, with refcount == 0, however pointer is valid
+ * state 3: died, memory freed, pointer might be dangling.
+ *
+ * We only need to add refcount to certain objects whose destruction can
+ * take several RCU grace periods (rule, group, xlate_cache). Other
+ * references to ofproto must be cleared before the 2 RCU grace periods.
+ */
 static void
 ofproto_destroy_defer__(struct ofproto *ofproto)
     OVS_EXCLUDED(ofproto_mutex)
@@ -1745,10 +1770,30 @@ ofproto_destroy_defer__(struct ofproto *ofproto)
 }
 
 void
+ofproto_ref(struct ofproto *ofproto)
+{
+    ovs_refcount_ref(&ofproto->refcount);
+}
+
+bool
+ofproto_try_ref(struct ofproto *ofproto)
+{
+    return ovs_refcount_try_ref_rcu(&ofproto->refcount);
+}
+
+void
+ofproto_unref(struct ofproto *ofproto)
+{
+    if (ofproto && ovs_refcount_unref(&ofproto->refcount) == 1) {
+        ovsrcu_postpone(ofproto_destroy_defer__, ofproto);
+    }
+}
+
+void
 ofproto_destroy(struct ofproto *p, bool del)
     OVS_EXCLUDED(ofproto_mutex)
 {
-    struct ofport *ofport, *next_ofport;
+    struct ofport *ofport;
     struct ofport_usage *usage;
 
     if (!p) {
@@ -1757,7 +1802,7 @@ ofproto_destroy(struct ofproto *p, bool del)
 
     ofproto_flush__(p, del);
     //销毁ofproto上所有ofport
-    HMAP_FOR_EACH_SAFE (ofport, next_ofport, hmap_node, &p->ports) {
+    HMAP_FOR_EACH_SAFE (ofport, hmap_node, &p->ports) {
         ofport_destroy(ofport, del);
     }
 
@@ -1777,8 +1822,7 @@ ofproto_destroy(struct ofproto *p, bool del)
     p->connmgr = NULL;
     ovs_mutex_unlock(&ofproto_mutex);
 
-    /* Destroying rules is deferred, must have 'ofproto' around for them. */
-    ovsrcu_postpone(ofproto_destroy_defer__, p);
+    ofproto_unref(p);
 }
 
 /* Destroys the datapath with the respective 'name' and 'type'.  With the Linux
@@ -2862,7 +2906,7 @@ init_ports(struct ofproto *p)
 {
     struct ofproto_port_dump dump;
     struct ofproto_port ofproto_port;
-    struct shash_node *node, *next;
+    struct shash_node *node;
 
     //用ofproto_port遍历交换机所有接口(数据信息来源于ghost_ports,ports)
     OFPROTO_PORT_FOR_EACH (&ofproto_port, &dump, p) {
@@ -2896,7 +2940,7 @@ init_ports(struct ofproto *p)
         }
     }
 
-    SHASH_FOR_EACH_SAFE(node, next, &init_ofp_ports) {
+    SHASH_FOR_EACH_SAFE (node, &init_ofp_ports) {
         struct iface_hint *iface_hint = node->data;
 
         if (!strcmp(iface_hint->br_name, p->name)) {
@@ -3013,6 +3057,9 @@ ofproto_rule_destroy__(struct rule *rule)
     cls_rule_destroy(CONST_CAST(struct cls_rule *, &rule->cr));
     rule_actions_destroy(rule_get_actions(rule));
     ovs_mutex_destroy(&rule->mutex);
+    /* ofproto_unref() must be called first. It is possible because ofproto
+     * destruction is deferred by an RCU grace period. */
+    ofproto_unref(rule->ofproto);
     rule->ofproto->ofproto_class->rule_dealloc(rule);
 }
 
@@ -3153,6 +3200,9 @@ group_destroy_cb(struct ofgroup *group)
                                                 &group->props));
     ofputil_bucket_list_destroy(CONST_CAST(struct ovs_list *,
                                            &group->buckets));
+    /* ofproto_unref() must be called first. It is possible because ofproto
+     * destruction is deferred by an RCU grace period. */
+    ofproto_unref(group->ofproto);
     group->ofproto->ofproto_class->group_dealloc(group);
 }
 
@@ -3254,7 +3304,7 @@ ofproto_rule_has_out_port(const struct rule *rule, ofp_port_t port)
 }
 
 /* Returns true if 'rule' has group and equals group_id. */
-static bool
+bool
 ofproto_rule_has_out_group(const struct rule *rule, uint32_t group_id)
     OVS_REQUIRES(ofproto_mutex)
 {
@@ -5361,7 +5411,7 @@ add_flow_finish(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
     if (old_rule) {
         ovsrcu_postpone(remove_rule_rcu, old_rule);
     } else {
-        ofmonitor_report(ofproto->connmgr, new_rule, NXFME_ADDED, 0,
+        ofmonitor_report(ofproto->connmgr, new_rule, OFPFME_ADDED, 0,
                          req ? req->ofconn : NULL,
                          req ? req->request->xid : 0, NULL);
 
@@ -5390,10 +5440,15 @@ ofproto_rule_create(struct ofproto *ofproto, struct cls_rule *cr,
     struct rule *rule;
     enum ofperr error;
 
+    if (!ofproto_try_ref(ofproto)) {
+        return OFPERR_OFPFMFC_UNKNOWN;
+    }
+
     /* Allocate new rule. */
     rule = ofproto->ofproto_class->rule_alloc();
     if (!rule) {
         cls_rule_destroy(cr);
+        ofproto_unref(ofproto);
         VLOG_WARN_RL(&rl, "%s: failed to allocate a rule.", ofproto->name);
         return OFPERR_OFPFMFC_UNKNOWN;
     }
@@ -5780,8 +5835,8 @@ replace_rule_finish(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
         learned_cookies_dec(ofproto, old_actions, dead_cookies);
 
         if (replaced_rule) {
-            enum nx_flow_update_event event = ofm->command == OFPFC_ADD
-                ? NXFME_ADDED : NXFME_MODIFIED;
+            enum ofp_flow_update_event event = ofm->command == OFPFC_ADD
+                ? OFPFME_ADDED : OFPFME_MODIFIED;
 
             bool changed_cookie = (new_rule->flow_cookie
                                    != old_rule->flow_cookie);
@@ -5791,7 +5846,7 @@ replace_rule_finish(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
                                                   old_actions->ofpacts,
                                                   old_actions->ofpacts_len);
 
-            if (event != NXFME_MODIFIED || changed_actions
+            if (event != OFPFME_MODIFIED || changed_actions
                 || changed_cookie) {
                 ofmonitor_report(ofproto->connmgr, new_rule, event, 0,
                                  req ? req->ofconn : NULL,
@@ -5800,7 +5855,7 @@ replace_rule_finish(struct ofproto *ofproto, struct ofproto_flow_mod *ofm,
             }
         } else {
             /* XXX: This is slight duplication with delete_flows_finish__() */
-            ofmonitor_report(ofproto->connmgr, old_rule, NXFME_DELETED,
+            ofmonitor_report(ofproto->connmgr, old_rule, OFPFME_REMOVED,
                              OFPRR_EVICTION,
                              req ? req->ofconn : NULL,
                              req ? req->request->xid : 0, NULL);
@@ -6081,7 +6136,7 @@ delete_flows_finish__(struct ofproto *ofproto,
              * before the rule is actually destroyed. */
             rule->removed_reason = reason;
 
-            ofmonitor_report(ofproto->connmgr, rule, NXFME_DELETED, reason,
+            ofmonitor_report(ofproto->connmgr, rule, OFPFME_REMOVED, reason,
                              req ? req->ofconn : NULL,
                              req ? req->request->xid : 0, NULL);
 
@@ -6495,16 +6550,18 @@ handle_barrier_request(struct ofconn *ofconn, const struct ofp_header *oh)
 
 static void
 ofproto_compose_flow_refresh_update(const struct rule *rule,
-                                    enum nx_flow_monitor_flags flags,
+                                    enum ofp14_flow_monitor_flags flags,
                                     struct ovs_list *msgs,
-                                    const struct tun_table *tun_table)
+                                    const struct tun_table *tun_table,
+                                    enum ofputil_protocol protocol)
     OVS_REQUIRES(ofproto_mutex)
 {
     const struct rule_actions *actions;
     struct ofputil_flow_update fu;
 
-    fu.event = (flags & (NXFMF_INITIAL | NXFMF_ADD)
-                ? NXFME_ADDED : NXFME_MODIFIED);
+    fu.event = flags & OFPFMF_INITIAL ? OFPFME_INITIAL :
+               flags & OFPFMF_ADD ?
+                         OFPFME_ADDED : OFPFME_MODIFIED;
     fu.reason = 0;
     ovs_mutex_lock(&rule->mutex);
     fu.idle_timeout = rule->idle_timeout;
@@ -6515,29 +6572,30 @@ ofproto_compose_flow_refresh_update(const struct rule *rule,
     minimatch_expand(&rule->cr.match, &fu.match);
     fu.priority = rule->cr.priority;
 
-    actions = flags & NXFMF_ACTIONS ? rule_get_actions(rule) : NULL;
+    actions = flags & OFPFMF_INSTRUCTIONS ? rule_get_actions(rule) : NULL;
     fu.ofpacts = actions ? actions->ofpacts : NULL;
     fu.ofpacts_len = actions ? actions->ofpacts_len : 0;
 
     if (ovs_list_is_empty(msgs)) {
-        ofputil_start_flow_update(msgs);
+        ofputil_start_flow_update(msgs, protocol);
     }
     ofputil_append_flow_update(&fu, msgs, tun_table);
 }
 
 void
 ofmonitor_compose_refresh_updates(struct rule_collection *rules,
-                                  struct ovs_list *msgs)
+                                  struct ovs_list *msgs,
+                                  enum ofputil_protocol protocol)
     OVS_REQUIRES(ofproto_mutex)
 {
     struct rule *rule;
 
     RULE_COLLECTION_FOR_EACH (rule, rules) {
-        enum nx_flow_monitor_flags flags = rule->monitor_flags;
+        enum ofp14_flow_monitor_flags flags = rule->monitor_flags;
         rule->monitor_flags = 0;
 
         ofproto_compose_flow_refresh_update(rule, flags, msgs,
-                ofproto_get_tun_tab(rule->ofproto));
+                ofproto_get_tun_tab(rule->ofproto), protocol);
     }
 }
 
@@ -6547,7 +6605,7 @@ ofproto_collect_ofmonitor_refresh_rule(const struct ofmonitor *m,
                                        struct rule_collection *rules)
     OVS_REQUIRES(ofproto_mutex)
 {
-    enum nx_flow_monitor_flags update;
+    enum ofp14_flow_monitor_flags update;
 
     if (rule_is_hidden(rule)) {
         return;
@@ -6557,11 +6615,15 @@ ofproto_collect_ofmonitor_refresh_rule(const struct ofmonitor *m,
         return;
     }
 
+    if (!ofproto_rule_has_out_group(rule, m->out_group)) {
+        return;
+    }
+
     if (seqno) {
         if (rule->add_seqno > seqno) {
-            update = NXFMF_ADD | NXFMF_MODIFY;
+            update = OFPFMF_ADD | OFPFMF_MODIFY;
         } else if (rule->modify_seqno > seqno) {
-            update = NXFMF_MODIFY;
+            update = OFPFMF_MODIFY;
         } else {
             return;
         }
@@ -6570,13 +6632,13 @@ ofproto_collect_ofmonitor_refresh_rule(const struct ofmonitor *m,
             return;
         }
     } else {
-        update = NXFMF_INITIAL;
+        update = OFPFMF_INITIAL;
     }
 
     if (!rule->monitor_flags) {
         rule_collection_add(rules, rule);
     }
-    rule->monitor_flags |= update | (m->flags & NXFMF_ACTIONS);
+    rule->monitor_flags |= update | (m->flags & OFPFMF_INSTRUCTIONS);
 }
 
 static void
@@ -6605,7 +6667,7 @@ ofproto_collect_ofmonitor_initial_rules(struct ofmonitor *m,
                                         struct rule_collection *rules)
     OVS_REQUIRES(ofproto_mutex)
 {
-    if (m->flags & NXFMF_INITIAL) {
+    if (m->flags & OFPFMF_INITIAL) {
         ofproto_collect_ofmonitor_refresh_rules(m, 0, rules);
     }
 }
@@ -6668,16 +6730,50 @@ handle_flow_monitor_request(struct ofconn *ofconn, const struct ovs_list *msgs)
             }
 
             struct ofmonitor *m;
-            error = ofmonitor_create(&request, ofconn, &m);
-            if (error) {
-                goto error;
-            }
+            switch (request.command) {
+            case OFPFMC_ADD: {
+                error = ofmonitor_create(&request, ofconn, &m);
+                if (error) {
+                    goto error;
+                }
 
-            if (n_monitors >= allocated_monitors) {
-                monitors = x2nrealloc(monitors, &allocated_monitors,
-                                      sizeof *monitors);
+                if (n_monitors >= allocated_monitors) {
+                    monitors = x2nrealloc(monitors, &allocated_monitors,
+                                          sizeof *monitors);
+                }
+                monitors[n_monitors++] = m;
+                break;
             }
-            monitors[n_monitors++] = m;
+            case OFPFMC_MODIFY:
+                /* Modify operation is to delete old monitor and create a
+                 * new one. */
+                m = ofmonitor_lookup(ofconn, request.id);
+                if (!m) {
+                    error = OFPERR_OFPMOFC_UNKNOWN_MONITOR;
+                    goto error;
+                }
+                ofmonitor_destroy(m);
+
+                error = ofmonitor_create(&request, ofconn, &m);
+                if (error) {
+                    goto error;
+                }
+
+                if (n_monitors >= allocated_monitors) {
+                    monitors = x2nrealloc(monitors, &allocated_monitors,
+                                          sizeof *monitors);
+                }
+                monitors[n_monitors++] = m;
+                break;
+            case OFPFMC_DELETE:
+                m = ofmonitor_lookup(ofconn, request.id);
+                if (!m) {
+                    error = OFPERR_OFPMOFC_UNKNOWN_MONITOR;
+                    goto error;
+                }
+                ofmonitor_destroy(m);
+                break;
+            }
             continue;
 
         error:
@@ -6701,7 +6797,8 @@ handle_flow_monitor_request(struct ofconn *ofconn, const struct ovs_list *msgs)
 
     struct ovs_list replies;
     ofpmp_init(&replies, ofpbuf_from_list(ovs_list_back(msgs))->header);
-    ofmonitor_compose_refresh_updates(&rules, &replies);
+    ofmonitor_compose_refresh_updates(&rules, &replies,
+                                      ofconn_get_protocol(ofconn));
     ovs_mutex_unlock(&ofproto_mutex);
 
     rule_collection_destroy(&rules);
@@ -6941,9 +7038,9 @@ static void
 meter_delete_all(struct ofproto *ofproto)
     OVS_REQUIRES(ofproto_mutex)
 {
-    struct meter *meter, *next;
+    struct meter *meter;
 
-    HMAP_FOR_EACH_SAFE (meter, next, node, &ofproto->meters) {
+    HMAP_FOR_EACH_SAFE (meter, node, &ofproto->meters) {
         hmap_remove(&ofproto->meters, &meter->node);
         meter_destroy(ofproto, meter);
     }
@@ -7497,8 +7594,13 @@ init_group(struct ofproto *ofproto, const struct ofputil_group_mod *gm,
         return OFPERR_OFPGMFC_BAD_TYPE;
     }
 
+    if (!ofproto_try_ref(ofproto)) {
+        return OFPERR_OFPFMFC_UNKNOWN;
+    }
+
     *ofgroup = ofproto->ofproto_class->group_alloc();
     if (!*ofgroup) {
+        ofproto_unref(ofproto);
         VLOG_WARN_RL(&rl, "%s: failed to allocate group", ofproto->name);
         return OFPERR_OFPGMFC_OUT_OF_GROUPS;
     }
@@ -7535,6 +7637,7 @@ init_group(struct ofproto *ofproto, const struct ofputil_group_mod *gm,
                                                     &(*ofgroup)->props));
         ofputil_bucket_list_destroy(CONST_CAST(struct ovs_list *,
                                                &(*ofgroup)->buckets));
+        ofproto_unref(ofproto);
         ofproto->ofproto_class->group_dealloc(*ofgroup);
     }
     return error;
@@ -9087,7 +9190,7 @@ eviction_group_hash_rule(struct rule *rule)
     hash = table->eviction_group_id_basis;
     miniflow_expand(rule->cr.match.flow, &flow);
     for (sf = table->eviction_fields;
-         sf < &table->eviction_fields[table->n_eviction_fields];
+         sf && sf < &table->eviction_fields[table->n_eviction_fields];
          sf++)
     {
         if (mf_are_prereqs_ok(sf->field, &flow, NULL)) {
@@ -9328,8 +9431,8 @@ oftable_configure_eviction(struct oftable *table, unsigned int eviction,
 
     /* Destroy existing eviction groups, then destroy and recreate data
      * structures to recover memory. */
-    struct eviction_group *evg, *next;
-    HMAP_FOR_EACH_SAFE (evg, next, id_node, &table->eviction_groups_by_id) {
+    struct eviction_group *evg;
+    HMAP_FOR_EACH_SAFE (evg, id_node, &table->eviction_groups_by_id) {
         eviction_group_destroy(table, evg);
     }
     hmap_destroy(&table->eviction_groups_by_id);

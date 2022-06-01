@@ -1,8 +1,40 @@
 Post-v2.17.0
 ---------------------
+   - libopenvswitch API change:
+     * To fix the Undefined Behavior issue causing the compiler to incorrectly
+       optimize important parts of code, container iteration macros (e.g.,
+       LIST_FOR_EACH) have been re-implemented in a UB-safe way.
+     * Backwards compatibility has mostly been preserved, however the
+       user-provided pointer is now set to NULL after the loop (unless it
+       exited via "break;")
+     * Users of libopenvswitch will need to double-check the use of such loop
+       macros before compiling with a new version.
+     * Since the change is limited to the definitions within the headers, the
+       ABI is not affected.
+   - OVSDB:
+     * 'relay' service model now supports transaction history, i.e. honors the
+       'last-txn-id' field in 'monitor_cond_since' requests from clients.
+   - OVSDB-IDL:
+     * New monitor mode flag, OVSDB_IDL_WRITE_CHANGED_ONLY, allowing
+       applications to relax atomicity requirements when dealing with
+       columns whose value has been rewritten (but not changed).
+   - OpenFlow:
+     * Extended Flow Monitoring support for all supported OpenFlow versions:
+         OpenFlow versions 1.0-1.2 with Nicira Extensions
+         OpenFlow versions 1.3 with Open Network Foundation extension
+         OpenFlow versions 1.4+, as defined in the OpenFlow specification
+   - IPsec:
+     * Added support for custom per-tunnel options via 'options:ipsec_*' knobs.
+       See Documentation/tutorials/ipsec.rst for details.
+   - Windows:
+     * Conntrack support for TCPv6, UDPv6, ICMPv6, FTPv6.
+     * IPv6 Geneve tunnel support.
+   - DPDK:
+     * OVS validated with DPDK 21.11.1.  It is recommended to use this version
+       until further releases.
 
 
-v2.17.0 - xx xxx xxxx
+v2.17.0 - 17 Feb 2022
 ---------------------
    - Userspace datapath:
      * Optimized flow lookups for datapath flows with simple match criteria.
@@ -36,6 +68,8 @@ v2.17.0 - xx xxx xxxx
      * Python library for OVSDB clients now also supports faster
        resynchronization with a clustered database after a brief disconnection,
        i.e. 'monitor_cond_since' monitoring method.
+     * Major improvement in the performance of the OVSDB server.  See the
+       "OVSDB: Performance and Scale Journey '21" talk of OVS+OVN Conf'21.
    - ovs-dpctl and 'ovs-appctl dpctl/':
      * New commands 'cache-get-size' and 'cache-set-size' that allows to
        get or configure linux kernel datapath cache sizes.

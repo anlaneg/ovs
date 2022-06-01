@@ -54,42 +54,44 @@ static struct dpif_miniflow_extract_impl mfex_impls[] = {
         .name = "study", },
 
 /* Compile in implementations only if the compiler ISA checks pass. */
-#if (__x86_64__ && HAVE_AVX512F && HAVE_LD_AVX512_GOOD && __SSE4_2__)
-    [MFEX_IMPL_VMBI_IPv4_UDP] = {
+#if (__x86_64__ && HAVE_AVX512F && HAVE_LD_AVX512_GOOD && HAVE_AVX512BW \
+     && __SSE4_2__)
+#if HAVE_AVX512VBMI
+    [MFEX_IMPL_VBMI_IPv4_UDP] = {
         .probe = mfex_avx512_vbmi_probe,
         .extract_func = mfex_avx512_vbmi_ip_udp,
         .name = "avx512_vbmi_ipv4_udp", },
-
+#endif
     [MFEX_IMPL_IPv4_UDP] = {
         .probe = mfex_avx512_probe,
         .extract_func = mfex_avx512_ip_udp,
         .name = "avx512_ipv4_udp", },
-
-    [MFEX_IMPL_VMBI_IPv4_TCP] = {
+#if HAVE_AVX512VBMI
+    [MFEX_IMPL_VBMI_IPv4_TCP] = {
         .probe = mfex_avx512_vbmi_probe,
         .extract_func = mfex_avx512_vbmi_ip_tcp,
         .name = "avx512_vbmi_ipv4_tcp", },
-
+#endif
     [MFEX_IMPL_IPv4_TCP] = {
         .probe = mfex_avx512_probe,
         .extract_func = mfex_avx512_ip_tcp,
         .name = "avx512_ipv4_tcp", },
-
-    [MFEX_IMPL_VMBI_DOT1Q_IPv4_UDP] = {
+#if HAVE_AVX512VBMI
+    [MFEX_IMPL_VBMI_DOT1Q_IPv4_UDP] = {
         .probe = mfex_avx512_vbmi_probe,
         .extract_func = mfex_avx512_vbmi_dot1q_ip_udp,
         .name = "avx512_vbmi_dot1q_ipv4_udp", },
-
+#endif
     [MFEX_IMPL_DOT1Q_IPv4_UDP] = {
         .probe = mfex_avx512_probe,
         .extract_func = mfex_avx512_dot1q_ip_udp,
         .name = "avx512_dot1q_ipv4_udp", },
-
-    [MFEX_IMPL_VMBI_DOT1Q_IPv4_TCP] = {
+#if HAVE_AVX512VBMI
+    [MFEX_IMPL_VBMI_DOT1Q_IPv4_TCP] = {
         .probe = mfex_avx512_vbmi_probe,
         .extract_func = mfex_avx512_vbmi_dot1q_ip_tcp,
         .name = "avx512_vbmi_dot1q_ipv4_tcp", },
-
+#endif
     [MFEX_IMPL_DOT1Q_IPv4_TCP] = {
         .probe = mfex_avx512_probe,
         .extract_func = mfex_avx512_dot1q_ip_tcp,
@@ -241,9 +243,7 @@ dpif_miniflow_extract_autovalidator(struct dp_packet_batch *packets,
     struct netdev_flow_key test_keys[NETDEV_MAX_BURST];
 
     if (keys_size < cnt) {
-        miniflow_extract_func default_func = NULL;
-        atomic_uintptr_t *pmd_func = (void *)&pmd->miniflow_extract_opt;
-        atomic_store_relaxed(pmd_func, (uintptr_t) default_func);
+        atomic_store_relaxed(&pmd->miniflow_extract_opt, NULL);
         VLOG_ERR("Invalid key size supplied, Key_size: %d less than"
                  "batch_size:  %" PRIuSIZE"\n", keys_size, cnt);
         VLOG_ERR("Autovalidatior is disabled.\n");
@@ -350,9 +350,7 @@ dpif_miniflow_extract_autovalidator(struct dp_packet_batch *packets,
 
     /* Having dumped the debug info for the batch, disable autovalidator. */
     if (batch_failed) {
-        miniflow_extract_func default_func = NULL;
-        atomic_uintptr_t *pmd_func = (void *)&pmd->miniflow_extract_opt;
-        atomic_store_relaxed(pmd_func, (uintptr_t) default_func);
+        atomic_store_relaxed(&pmd->miniflow_extract_opt, NULL);
     }
 
     /* Preserve packet correctness by storing back the good offsets in

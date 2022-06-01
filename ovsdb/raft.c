@@ -74,9 +74,12 @@ enum raft_failure_test {
     FT_CRASH_BEFORE_SEND_EXEC_REQ,
     FT_CRASH_AFTER_SEND_EXEC_REQ,
     FT_CRASH_AFTER_RECV_APPEND_REQ_UPDATE,
+    FT_CRASH_BEFORE_SEND_SNAPSHOT_REP,
     FT_DELAY_ELECTION,
     FT_DONT_SEND_VOTE_REQUEST,
     FT_STOP_RAFT_RPC,
+    FT_TRANSFER_LEADERSHIP,
+    FT_TRANSFER_LEADERSHIP_AFTER_SEND_APPEND_REQ,
 };
 static enum raft_failure_test failure_test;
 
@@ -379,10 +382,17 @@ static bool raft_handle_write_error(struct raft *, struct ovsdb_error *);
 static void raft_run_reconfigure(struct raft *);
 
 static void raft_set_leader(struct raft *, const struct uuid *sid);
+
 static struct raft_server *
 raft_find_server(const struct raft *raft, const struct uuid *sid)
 {
     return raft_server_find(&raft->servers, sid);
+}
+
+static struct raft_server *
+raft_find_new_server(struct raft *raft, const struct uuid *uuid)
+{
+    return raft_server_find(&raft->add_servers, uuid);
 }
 
 static char *
@@ -692,8 +702,8 @@ static void
 raft_set_servers(struct raft *raft, const struct hmap *new_servers,
                  enum vlog_level level)
 {
-    struct raft_server *s, *next;
-    HMAP_FOR_EACH_SAFE (s, next, hmap_node, &raft->servers) {
+    struct raft_server *s;
+    HMAP_FOR_EACH_SAFE (s, hmap_node, &raft->servers) {
         if (!raft_server_find(new_servers, &s->sid)) {
             ovs_assert(s != raft->remove_server);
 
@@ -703,7 +713,7 @@ raft_set_servers(struct raft *raft, const struct hmap *new_servers,
         }
     }
 
-    HMAP_FOR_EACH_SAFE (s, next, hmap_node, new_servers) {
+    HMAP_FOR_EACH_SAFE (s, hmap_node, new_servers) {
         if (!raft_find_server(raft, &s->sid)) {
             VLOG(level, "server %s added to configuration", s->nickname);
 
@@ -1376,8 +1386,8 @@ raft_close__(struct raft *raft)
         raft->remove_server = NULL;
     }
 
-    struct raft_conn *conn, *next;
-    LIST_FOR_EACH_SAFE (conn, next, list_node, &raft->conns) {
+    struct raft_conn *conn;
+    LIST_FOR_EACH_SAFE (conn, list_node, &raft->conns) {
         raft_conn_close(conn);
     }
 }
@@ -1713,8 +1723,8 @@ raft_waiters_run(struct raft *raft)
     }
 
     uint64_t cur = ovsdb_log_commit_progress(raft->log);
-    struct raft_waiter *w, *next;
-    LIST_FOR_EACH_SAFE (w, next, list_node, &raft->waiters) {
+    struct raft_waiter *w;
+    LIST_FOR_EACH_SAFE (w, list_node, &raft->waiters) {
         if (cur < w->commit_ticket) {
             break;
         }
@@ -1736,8 +1746,8 @@ raft_waiters_wait(struct raft *raft)
 static void
 raft_waiters_destroy(struct raft *raft)
 {
-    struct raft_waiter *w, *next;
-    LIST_FOR_EACH_SAFE (w, next, list_node, &raft->waiters) {
+    struct raft_waiter *w;
+    LIST_FOR_EACH_SAFE (w, list_node, &raft->waiters) {
         raft_waiter_destroy(w);
     }
 }
@@ -1867,6 +1877,8 @@ raft_open_conn(struct raft *raft, const char *address, const struct uuid *sid)
 static void
 raft_conn_close(struct raft_conn *conn)
 {
+    VLOG_DBG("closing connection to server %s (%s)",
+             conn->nickname, jsonrpc_session_get_name(conn->js));
     jsonrpc_session_close(conn->js);
     ovs_list_remove(&conn->list_node);
     free(conn->nickname);
@@ -1921,6 +1933,13 @@ raft_run(struct raft *raft)
         return;
     }
 
+    if (failure_test == FT_TRANSFER_LEADERSHIP) {
+        /* Using this function as it conveniently implements all we need and
+         * snapshotting is the main test scenario for leadership transfer. */
+        raft_notify_snapshot_recommended(raft);
+        failure_test = FT_NO_TEST;
+    }
+
     raft_waiters_run(raft);
 
     if (!raft->listener && time_msec() >= raft->listen_backoff) {
@@ -1957,16 +1976,29 @@ raft_run(struct raft *raft)
     }
 
     /* Close unneeded sessions. */
-    struct raft_conn *next;
-    LIST_FOR_EACH_SAFE (conn, next, list_node, &raft->conns) {
+    struct raft_server *server;
+    LIST_FOR_EACH_SAFE (conn, list_node, &raft->conns) {
         if (!raft_conn_should_stay_open(raft, conn)) {
+            server = raft_find_new_server(raft, &conn->sid);
+            if (server) {
+                /* We only have one incoming connection from joining servers,
+                 * so if it's closed, we need to destroy the record about the
+                 * server.  This way the process can be started over on the
+                 * next join request. */
+                static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
+                VLOG_INFO_RL(&rl, "cluster "CID_FMT": server %s (%s) "
+                                  "disconnected while joining",
+                                  CID_ARGS(&raft->cid),
+                                  server->nickname, server->address);
+                hmap_remove(&raft->add_servers, &server->hmap_node);
+                raft_server_destroy(server);
+            }
             raft->n_disconnections++;
             raft_conn_close(conn);
         }
     }
 
     /* Open needed sessions. */
-    struct raft_server *server;
     HMAP_FOR_EACH (server, hmap_node, &raft->servers) {
         raft_open_conn(raft, server->address, &server->sid);
     }
@@ -2039,11 +2071,18 @@ raft_run(struct raft *raft)
          * commands becomes new leader: the pending commands can still complete
          * if the crashed leader has replicated the transactions to majority of
          * followers before it crashed. */
-        struct raft_command *cmd, *next_cmd;
-        HMAP_FOR_EACH_SAFE (cmd, next_cmd, hmap_node, &raft->commands) {
+        struct raft_command *cmd;
+        HMAP_FOR_EACH_SAFE (cmd, hmap_node, &raft->commands) {
             if (cmd->timestamp
                 && now - cmd->timestamp > raft->election_timer * 2) {
-                raft_command_complete(raft, cmd, RAFT_CMD_TIMEOUT);
+                if (cmd->index && raft->role != RAFT_LEADER) {
+                    /* This server lost leadership and command didn't complete
+                     * in time.  Likely, it wasn't replicated to the majority
+                     * of servers before losing the leadership. */
+                    raft_command_complete(raft, cmd, RAFT_CMD_LOST_LEADERSHIP);
+                } else {
+                    raft_command_complete(raft, cmd, RAFT_CMD_TIMEOUT);
+                }
             }
         }
         raft_reset_ping_timer(raft);
@@ -2235,6 +2274,9 @@ raft_command_initiate(struct raft *raft,
     if (failure_test == FT_CRASH_AFTER_SEND_APPEND_REQ) {
         ovs_fatal(0, "Raft test: crash after sending append_request.");
     }
+    if (failure_test == FT_TRANSFER_LEADERSHIP_AFTER_SEND_APPEND_REQ) {
+        failure_test = FT_TRANSFER_LEADERSHIP;
+    }
     raft_reset_ping_timer(raft);
 
     return cmd;
@@ -2243,8 +2285,12 @@ raft_command_initiate(struct raft *raft,
 static void
 log_all_commands(struct raft *raft)
 {
-    struct raft_command *cmd, *next;
-    HMAP_FOR_EACH_SAFE (cmd, next, hmap_node, &raft->commands) {
+    if (!VLOG_IS_DBG_ENABLED()) {
+        return;
+    }
+
+    struct raft_command *cmd;
+    HMAP_FOR_EACH (cmd, hmap_node, &raft->commands) {
         VLOG_DBG("raft command eid: "UUID_FMT, UUID_ARGS(&cmd->eid));
     }
 }
@@ -2398,8 +2444,8 @@ raft_command_complete(struct raft *raft,
 static void
 raft_complete_all_commands(struct raft *raft, enum raft_command_status status)
 {
-    struct raft_command *cmd, *next;
-    HMAP_FOR_EACH_SAFE (cmd, next, hmap_node, &raft->commands) {
+    struct raft_command *cmd;
+    HMAP_FOR_EACH_SAFE (cmd, hmap_node, &raft->commands) {
         raft_command_complete(raft, cmd, status);
     }
 }
@@ -2601,7 +2647,13 @@ raft_become_follower(struct raft *raft)
      * configuration is already part of the log.  Possibly the configuration
      * log entry will not be committed, but until we know that we must use the
      * new configuration.  Our AppendEntries processing will properly update
-     * the server configuration later, if necessary. */
+     * the server configuration later, if necessary.
+     *
+     * Also we do not complete commands here, as they can still be completed
+     * if their log entries have already been replicated to other servers.
+     * If the entries were actually committed according to the new leader, our
+     * AppendEntries processing will complete the corresponding commands.
+     */
     struct raft_server *s;
     HMAP_FOR_EACH (s, hmap_node, &raft->add_servers) {
         raft_send_add_server_reply__(raft, &s->sid, s->address, false,
@@ -2615,8 +2667,6 @@ raft_become_follower(struct raft *raft)
         raft_server_destroy(raft->remove_server);
         raft->remove_server = NULL;
     }
-
-    raft_complete_all_commands(raft, RAFT_CMD_LOST_LEADERSHIP);
 }
 
 static void
@@ -2865,61 +2915,56 @@ raft_update_commit_index(struct raft *raft, uint64_t new_commit_index)
         return false;
     }
 
-    if (raft->role == RAFT_LEADER) {
-        while (raft->commit_index < new_commit_index) {
-            uint64_t index = ++raft->commit_index;
-            const struct raft_entry *e = raft_get_entry(raft, index);
-            if (raft_entry_has_data(e)) {
-                struct raft_command *cmd
-                    = raft_find_command_by_eid(raft, &e->eid);
-                if (cmd) {
-                    if (!cmd->index) {
-                        VLOG_DBG("Command completed after role change from"
-                                 " follower to leader "UUID_FMT,
-                                 UUID_ARGS(&e->eid));
-                        cmd->index = index;
-                    }
-                    raft_command_complete(raft, cmd, RAFT_CMD_SUCCESS);
-                }
-            }
-            if (e->election_timer) {
-                VLOG_INFO("Election timer changed from %"PRIu64" to %"PRIu64,
-                          raft->election_timer, e->election_timer);
-                raft->election_timer = e->election_timer;
-                raft->election_timer_new = 0;
-                raft_update_probe_intervals(raft);
-            }
-            if (e->servers) {
-                /* raft_run_reconfigure() can write a new Raft entry, which can
-                 * reallocate raft->entries, which would invalidate 'e', so
-                 * this case must be last, after the one for 'e->data'. */
-                raft_run_reconfigure(raft);
-            }
-        }
-    } else {
-        while (raft->commit_index < new_commit_index) {
-            uint64_t index = ++raft->commit_index;
-            const struct raft_entry *e = raft_get_entry(raft, index);
-            if (e->election_timer) {
-                VLOG_INFO("Election timer changed from %"PRIu64" to %"PRIu64,
-                          raft->election_timer, e->election_timer);
-                raft->election_timer = e->election_timer;
-                raft_update_probe_intervals(raft);
-            }
-        }
-        /* Check if any pending command can be completed, and complete it.
-         * This can happen when leader fail-over before sending
-         * execute_command_reply. */
-        const struct uuid *eid = raft_get_eid(raft, new_commit_index);
-        struct raft_command *cmd = raft_find_command_by_eid(raft, eid);
-        if (cmd) {
+    while (raft->commit_index < new_commit_index) {
+        uint64_t index = ++raft->commit_index;
+        const struct raft_entry *e = raft_get_entry(raft, index);
+
+        if (raft_entry_has_data(e)) {
+            struct raft_command *cmd = raft_find_command_by_eid(raft, &e->eid);
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
-            VLOG_INFO_RL(&rl,
-                         "Command completed without reply (eid: "UUID_FMT", "
-                         "commit index: %"PRIu64")",
-                         UUID_ARGS(eid), new_commit_index);
-            cmd->index = new_commit_index;
-            raft_command_complete(raft, cmd, RAFT_CMD_SUCCESS);
+
+            if (cmd) {
+                if (!cmd->index && raft->role == RAFT_LEADER) {
+                    VLOG_INFO_RL(&rl,
+                        "command completed after role change from "
+                        "follower to leader (eid: "UUID_FMT", "
+                        "commit index: %"PRIu64")", UUID_ARGS(&e->eid), index);
+                } else if (!cmd->index && raft->role != RAFT_LEADER) {
+                    /* This can happen when leader fail-over before sending
+                     * execute_command_reply. */
+                    VLOG_INFO_RL(&rl,
+                        "command completed without reply (eid: "UUID_FMT", "
+                        "commit index: %"PRIu64")", UUID_ARGS(&e->eid), index);
+                } else if (cmd->index && raft->role != RAFT_LEADER) {
+                    /* This can happen if current server lost leadership after
+                     * sending append requests to the majority of servers, but
+                     * before receiving majority of append replies. */
+                    VLOG_INFO_RL(&rl,
+                        "command completed after role change from "
+                        "leader to follower (eid: "UUID_FMT", "
+                        "commit index: %"PRIu64")", UUID_ARGS(&e->eid), index);
+                    /* Clearing 'sid' to avoid sending cmd execution reply. */
+                    cmd->sid = UUID_ZERO;
+                } else {
+                    /* (cmd->index && raft->role == RAFT_LEADER)
+                     * Normal command completion on a leader. */
+                }
+                cmd->index = index;
+                raft_command_complete(raft, cmd, RAFT_CMD_SUCCESS);
+            }
+        }
+        if (e->election_timer) {
+            VLOG_INFO("Election timer changed from %"PRIu64" to %"PRIu64,
+                      raft->election_timer, e->election_timer);
+            raft->election_timer = e->election_timer;
+            raft->election_timer_new = 0;
+            raft_update_probe_intervals(raft);
+        }
+        if (e->servers && raft->role == RAFT_LEADER) {
+            /* raft_run_reconfigure() can write a new Raft entry, which can
+             * reallocate raft->entries, which would invalidate 'e', so
+             * this case must be last, after the one for 'e->data'. */
+            raft_run_reconfigure(raft);
         }
     }
 
@@ -3352,12 +3397,6 @@ raft_find_peer(struct raft *raft, const struct uuid *uuid)
 {
     struct raft_server *s = raft_find_server(raft, uuid);
     return s && !uuid_equals(&raft->sid, &s->sid) ? s : NULL;
-}
-
-static struct raft_server *
-raft_find_new_server(struct raft *raft, const struct uuid *uuid)
-{
-    return raft_server_find(&raft->add_servers, uuid);
 }
 
 /* Figure 3.1: "If there exists an N such that N > commitIndex, a
@@ -4142,6 +4181,10 @@ static void
 raft_handle_install_snapshot_request(
     struct raft *raft, const struct raft_install_snapshot_request *rq)
 {
+    if (failure_test == FT_CRASH_BEFORE_SEND_SNAPSHOT_REP) {
+        ovs_fatal(0, "Raft test: crash before sending install_snapshot_reply");
+    }
+
     if (raft_handle_install_snapshot_request__(raft, rq)) {
         union raft_rpc rpy = {
             .install_snapshot_reply = {
@@ -4940,6 +4983,8 @@ raft_unixctl_failure_test(struct unixctl_conn *conn OVS_UNUSED,
         failure_test = FT_CRASH_AFTER_SEND_EXEC_REQ;
     } else if (!strcmp(test, "crash-after-receiving-append-request-update")) {
         failure_test = FT_CRASH_AFTER_RECV_APPEND_REQ_UPDATE;
+    } else if (!strcmp(test, "crash-before-sending-install-snapshot-reply")) {
+        failure_test = FT_CRASH_BEFORE_SEND_SNAPSHOT_REP;
     } else if (!strcmp(test, "delay-election")) {
         failure_test = FT_DELAY_ELECTION;
         struct raft *raft;
@@ -4952,6 +4997,11 @@ raft_unixctl_failure_test(struct unixctl_conn *conn OVS_UNUSED,
         failure_test = FT_DONT_SEND_VOTE_REQUEST;
     } else if (!strcmp(test, "stop-raft-rpc")) {
         failure_test = FT_STOP_RAFT_RPC;
+    } else if (!strcmp(test,
+                       "transfer-leadership-after-sending-append-request")) {
+        failure_test = FT_TRANSFER_LEADERSHIP_AFTER_SEND_APPEND_REQ;
+    } else if (!strcmp(test, "transfer-leadership")) {
+        failure_test = FT_TRANSFER_LEADERSHIP;
     } else if (!strcmp(test, "clear")) {
         failure_test = FT_NO_TEST;
         unixctl_command_reply(conn, "test dismissed");

@@ -429,9 +429,9 @@ unixctl_server_run(struct unixctl_server *server)//unixctl-server处理
         }
     }
 
-    struct unixctl_conn *conn, *next;
+    struct unixctl_conn *conn;
     //遍历server管理的connect
-    LIST_FOR_EACH_SAFE (conn, next, node, &server->conns) {
+    LIST_FOR_EACH_SAFE (conn, node, &server->conns) {
         //处理unixctl消息
         int error = run_connection(conn);
         if (error && error != EAGAIN) {
@@ -466,9 +466,9 @@ void
 unixctl_server_destroy(struct unixctl_server *server)
 {
     if (server) {
-        struct unixctl_conn *conn, *next;
+        struct unixctl_conn *conn;
 
-        LIST_FOR_EACH_SAFE (conn, next, node, &server->conns) {
+        LIST_FOR_EACH_SAFE (conn, node, &server->conns) {
             kill_connection(conn);
         }
 

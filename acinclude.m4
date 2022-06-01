@@ -73,16 +73,13 @@ AC_DEFUN([OVS_CHECK_DPIF_AVX512_DEFAULT], [
 
 dnl OVS_CHECK_AVX512
 dnl
-dnl Checks if compiler and binutils supports AVX512.
+dnl Checks if compiler and binutils supports various AVX512 ISA.
 AC_DEFUN([OVS_CHECK_AVX512], [
   OVS_CHECK_BINUTILS_AVX512
-  OVS_CHECK_CC_OPTION(
-    [-mavx512f], [ovs_have_cc_mavx512f=yes], [ovs_have_cc_mavx512f=no])
-  AM_CONDITIONAL([HAVE_AVX512F], [test $ovs_have_cc_mavx512f = yes])
-  if test "$ovs_have_cc_mavx512f" = yes; then
-    AC_DEFINE([HAVE_AVX512F], [1],
-              [Define to 1 if compiler supports AVX512.])
-  fi
+  OVS_CONDITIONAL_CC_OPTION_DEFINE([-mavx512f], [HAVE_AVX512F])
+  OVS_CONDITIONAL_CC_OPTION_DEFINE([-mavx512bw], [HAVE_AVX512BW])
+  OVS_CONDITIONAL_CC_OPTION_DEFINE([-mavx512vbmi], [HAVE_AVX512VBMI])
+  OVS_CONDITIONAL_CC_OPTION_DEFINE([-mavx512vpopcntdq], [HAVE_AVX512VPOPCNTDQ])
 ])
 
 dnl OVS_ENABLE_WERROR
@@ -305,6 +302,13 @@ AC_DEFUN([OVS_CHECK_LINUX_TC], [
     ])],
     [AC_DEFINE([HAVE_TCA_SKBEDIT_FLAGS], [1],
                [Define to 1 if TCA_SKBEDIT_FLAGS is available.])])
+
+  AC_COMPILE_IFELSE([
+    AC_LANG_PROGRAM([#include <linux/gen_stats.h>], [
+        int x = TCA_STATS_PKT64;
+    ])],
+    [AC_DEFINE([HAVE_TCA_STATS_PKT64], [1],
+               [Define to 1 if TCA_STATS_PKT64 is available.])])
 ])
 
 dnl OVS_CHECK_LINUX_SCTP_CT
@@ -1353,6 +1357,19 @@ AC_DEFUN([OVS_CONDITIONAL_CC_OPTION],
    AM_CONDITIONAL([$2], [test $ovs_have_cc_option = yes])])
 dnl ----------------------------------------------------------------------
 
+dnl OVS_CONDITIONAL_CC_OPTION_DEFINE([OPTION], [CONDITIONAL])
+dnl Check whether the given C compiler OPTION is accepted.
+dnl If so, enable the given Automake CONDITIONAL and define it.
+dnl Example: OVS_CONDITIONAL_CC_OPTION_DEFINE([-mavx512f], [HAVE_AVX512F])
+AC_DEFUN([OVS_CONDITIONAL_CC_OPTION_DEFINE],
+  [OVS_CHECK_CC_OPTION(
+    [$1], [ovs_have_cc_option=yes], [ovs_have_cc_option=no])
+   AM_CONDITIONAL([$2], [test $ovs_have_cc_option = yes])
+   if test "$ovs_have_cc_option" = yes; then
+     AC_DEFINE([$2], [1],
+               [Define to 1 if compiler supports the '$1' option.])
+   fi])
+
 dnl Check for too-old XenServer.
 AC_DEFUN([OVS_CHECK_XENSERVER_VERSION],
   [AC_CACHE_CHECK([XenServer release], [ovs_cv_xsversion],
@@ -1424,7 +1441,7 @@ AC_DEFUN([OVS_ENABLE_SPARSE],
    : ${SPARSE=sparse}
    AC_SUBST([SPARSE])
    AC_CONFIG_COMMANDS_PRE(
-     [CC='$(if $(C:0=),env REAL_CC="'"$CC"'" CHECK="$(SPARSE) $(SPARSE_WERROR) -I $(top_srcdir)/include/sparse $(SPARSEFLAGS) $(SPARSE_EXTRA_INCLUDES) " cgcc $(CGCCFLAGS),'"$CC"')'])
+     [CC='$(if $(C:0=),env REAL_CC="'"$CC"'" CHECK="$(SPARSE) $(SPARSE_WERROR) -I $(top_srcdir)/include/sparse -I $(top_srcdir)/include $(SPARSEFLAGS) $(SPARSE_EXTRA_INCLUDES) " cgcc $(CGCCFLAGS),'"$CC"')'])
 
    AC_ARG_ENABLE(
      [sparse],

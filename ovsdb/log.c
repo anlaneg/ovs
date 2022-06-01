@@ -408,7 +408,8 @@ parse_body(struct ovsdb_log *file, off_t offset, unsigned long int length,
 
         chunk = MIN(length, sizeof input);
         if (fread(input, 1, chunk, file->stream) != chunk) {
-        	//未读够，说明文件有误
+            sha1_final(&ctx, sha1);
+	    //未读够，说明文件有误
             json_parser_abort(parser);
             return ovsdb_io_error(ferror(file->stream) ? errno : EOF,
                                   "%s: error reading %lu bytes "

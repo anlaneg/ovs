@@ -41,10 +41,10 @@ ovsdb_query(struct ovsdb_table *table, const struct ovsdb_condition *cnd,
         }
     } else {
         /* Linear scan. */
-        const struct ovsdb_row *row, *next;
+        const struct ovsdb_row *row;
 
         //表扫描
-        HMAP_FOR_EACH_SAFE (row, next, hmap_node, &table->rows) {
+        HMAP_FOR_EACH_SAFE (row, hmap_node, &table->rows) {
             if (ovsdb_condition_match_every_clause(row, cnd) &&
                 !output_row(row, aux)) {
                 break;

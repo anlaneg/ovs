@@ -175,9 +175,10 @@ static void rt_init_match(struct match *match, uint32_t mark,
 }
 
 //通过查找对应netdev设备，选择源地址
-static int
-get_src_addr(const struct in6_addr *ip6_dst,
-             const char output_bridge[], struct in6_addr *psrc)
+int
+ovs_router_get_netdev_source_address(const struct in6_addr *ip6_dst,
+                                     const char output_bridge[],
+                                     struct in6_addr *psrc)
 {
     struct in6_addr *mask, *addr6;
     int err, n_in6, i, max_plen = -1;
@@ -250,9 +251,11 @@ ovs_router_insert__(uint32_t mark, uint8_t priority, bool local,
     p->local = local;
     p->priority = priority;
     //自设备output_bridge上查找合适的ip地址
-    err = get_src_addr(ip6_dst, output_bridge, &p->src_addr);
+    err = ovs_router_get_netdev_source_address(ip6_dst, output_bridge,
+                                               &p->src_addr);
     if (err && ipv6_addr_is_set(gw)) {//出错，且gw被设置为非０
-        err = get_src_addr(gw, output_bridge, &p->src_addr);//尝试gw
+        err = ovs_router_get_netdev_source_address(gw, output_bridge,
+                                                   &p->src_addr);//尝试gw
     }
     if (err) {
         //不可达

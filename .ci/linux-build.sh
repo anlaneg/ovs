@@ -220,7 +220,7 @@ fi
 
 if [ "$DPDK" ] || [ "$DPDK_SHARED" ]; then
     if [ -z "$DPDK_VER" ]; then
-        DPDK_VER="21.11"
+        DPDK_VER="21.11.1"
     fi
     install_dpdk $DPDK_VER
 fi
@@ -246,8 +246,14 @@ if [ "$ASAN" ]; then
     export ASAN_OPTIONS='detect_leaks=1'
     # -O2 generates few false-positive memory leak reports in test-ovsdb
     # application, so lowering optimizations to -O1 here.
-    CLFAGS_ASAN="-O1 -fno-omit-frame-pointer -fno-common -fsanitize=address"
-    CFLAGS_FOR_OVS="${CFLAGS_FOR_OVS} ${CLFAGS_ASAN}"
+    CFLAGS_ASAN="-O1 -fno-omit-frame-pointer -fno-common -fsanitize=address"
+    CFLAGS_FOR_OVS="${CFLAGS_FOR_OVS} ${CFLAGS_ASAN}"
+fi
+
+if [ "$UBSAN" ]; then
+    # Use the default options configured in tests/atlocal.in, in UBSAN_OPTIONS.
+    CFLAGS_UBSAN="-O1 -fno-omit-frame-pointer -fno-common -fsanitize=undefined"
+    CFLAGS_FOR_OVS="${CFLAGS_FOR_OVS} ${CFLAGS_UBSAN}"
 fi
 
 save_OPTS="${OPTS} $*"

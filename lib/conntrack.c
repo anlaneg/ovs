@@ -1604,7 +1604,7 @@ set_label(struct dp_packet *pkt, struct conn *conn,
 static long long
 ct_sweep(struct conntrack *ct, long long now, size_t limit)
 {
-    struct conn *conn, *next;
+    struct conn *conn;
     long long min_expiration = LLONG_MAX;
     size_t count = 0;
 
@@ -1612,7 +1612,7 @@ ct_sweep(struct conntrack *ct, long long now, size_t limit)
 
     //遍历所有过期链
     for (unsigned i = 0; i < N_CT_TM; i++) {
-        LIST_FOR_EACH_SAFE (conn, next, exp_node, &ct->exp_lists[i]) {
+        LIST_FOR_EACH_SAFE (conn, exp_node, &ct->exp_lists[i]) {
             ovs_mutex_lock(&conn->lock);
             if (now < conn->expiration || count >= limit) {
                 min_expiration = MIN(min_expiration, conn->expiration);
@@ -2374,8 +2374,16 @@ set_sport_range(const struct nat_action_info_t *ni, const struct conn_key *k,
     if (((ni->nat_action & NAT_ACTION_SNAT_ALL) == NAT_ACTION_SRC) ||
         ((ni->nat_action & NAT_ACTION_DST))) {
         *curr = ntohs(k->src.port);
-        *min = MIN_NAT_EPHEMERAL_PORT;
-        *max = MAX_NAT_EPHEMERAL_PORT;
+        if (*curr < 512) {
+            *min = 1;
+            *max = 511;
+        } else if (*curr < 1024) {
+            *min = 600;
+            *max = 1023;
+        } else {
+            *min = MIN_NAT_EPHEMERAL_PORT;
+            *max = MAX_NAT_EPHEMERAL_PORT;
+        }
     } else {
         *min = ni->min_port;
         *max = ni->max_port;
@@ -2502,6 +2510,26 @@ next_addr_in_range_guarded(union ct_addr *curr, union ct_addr *min,
     return exhausted;
 }
 
+static bool
+nat_get_unique_l4(struct conntrack *ct, struct conn *nat_conn,
+                  ovs_be16 *port, uint16_t curr, uint16_t min,
+                  uint16_t max)
+{
+    uint16_t orig = curr;
+
+    FOR_EACH_PORT_IN_RANGE (curr, min, max) {
+        *port = htons(curr);
+        if (!conn_lookup(ct, &nat_conn->rev_key,
+                         time_msec(), NULL, NULL)) {
+            return true;
+        }
+    }
+
+    *port = htons(orig);
+
+    return false;
+}
+
 /* This function tries to get a unique tuple.
  * Every iteration checks that the reverse tuple doesn't
  * collide with any existing one.
@@ -2516,9 +2544,11 @@ next_addr_in_range_guarded(union ct_addr *curr, union ct_addr *min,
  *
  * In case of DNAT:
  *    - For each dst IP address in the range (if any).
- *        - For each dport in range (if any).
- *             - Try to find a source port in the ephemeral range
- *               (after testing the port used by the sender).
+ *        - For each dport in range (if any) tries to find
+ *          an unique tuple.
+ *        - Eventually, if the previous attempt fails,
+ *          tries to find a source port in the ephemeral
+ *          range (after testing the port used by the sender).
  *
  * If none can be found, return exhaustion to the caller. */
 static bool
@@ -2549,6 +2579,11 @@ nat_get_unique_tuple(struct conntrack *ct, const struct conn *conn,
     set_dport_range(nat_info, &conn->key, hash, &curr_dport,
                     &min_dport, &max_dport);
 
+    if (pat_proto) {
+        nat_conn->rev_key.src.port = htons(curr_dport);
+        nat_conn->rev_key.dst.port = htons(curr_sport);
+    }
+
 another_round:
     store_addr_to_key(&curr_addr, &nat_conn->rev_key,
                       nat_info->nat_action);
@@ -2562,15 +2597,19 @@ another_round:
         goto next_addr;
     }
 
-    FOR_EACH_PORT_IN_RANGE(curr_dport, min_dport, max_dport) {
-        nat_conn->rev_key.src.port = htons(curr_dport);
-        FOR_EACH_PORT_IN_RANGE(curr_sport, min_sport, max_sport) {
-            nat_conn->rev_key.dst.port = htons(curr_sport);
-            if (!conn_lookup(ct, &nat_conn->rev_key,
-                             time_msec(), NULL, NULL)) {
-                return true;
-            }
-        }
+    bool found = false;
+    if (nat_info->nat_action & NAT_ACTION_DST_PORT) {
+        found = nat_get_unique_l4(ct, nat_conn, &nat_conn->rev_key.src.port,
+                                  curr_dport, min_dport, max_dport);
+    }
+
+    if (!found) {
+        found = nat_get_unique_l4(ct, nat_conn, &nat_conn->rev_key.dst.port,
+                                  curr_sport, min_sport, max_sport);
+    }
+
+    if (found) {
+        return true;
     }
 
     /* Check if next IP is in range and respin. Otherwise, notify
@@ -2977,8 +3016,8 @@ expectation_clean(struct conntrack *ct, const struct conn_key *parent_key)
 {
     ovs_rwlock_wrlock(&ct->resources_lock);
 
-    struct alg_exp_node *node, *next;
-    HINDEX_FOR_EACH_WITH_HASH_SAFE (node, next, node_ref,
+    struct alg_exp_node *node;
+    HINDEX_FOR_EACH_WITH_HASH_SAFE (node, node_ref,
                                     conn_key_hash(parent_key, ct->hash_basis),
                                     &ct->alg_expectation_refs) {
         if (!conn_key_cmp(&node->parent_key, parent_key)) {
