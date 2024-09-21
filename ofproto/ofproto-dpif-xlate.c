@@ -1536,9 +1536,11 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer,
     const struct xport *xport;
 
     /* If packet is recirculated, xport can be retrieved from frozen state. */
+    /*如果flow 有Recirc_id,则xport自recirc_id中提取并获得*/
     if (flow->recirc_id) {
         const struct recirc_id_node *recirc_id_node;
 
+        /*查找此recirc_id对应的上下文*/
         recirc_id_node = recirc_id_node_find(flow->recirc_id);
 
         //未查找到recirc_id_node，故recirc_id不合法
@@ -1627,7 +1629,7 @@ xlate_lookup_ofproto(const struct dpif_backer *backer, const struct flow *flow,
  * Returns 0 if successful, ENODEV if the parsed flow has no associated ofproto.
  */
 int
-xlate_lookup(const struct dpif_backer *backer, const struct flow *flow,
+xlate_lookup(const struct dpif_backer *backer, const struct flow *flow/*flow信息*/,
              struct ofproto_dpif **ofprotop/*出参，此流对应的ofproto*/, struct dpif_ipfix **ipfix,
              struct dpif_sflow **sflow, struct netflow **netflow,
              ofp_port_t *ofp_in_port/*出参，此流对应的入接口*/)
@@ -1644,9 +1646,11 @@ xlate_lookup(const struct dpif_backer *backer, const struct flow *flow,
     }
 
     if (ofprotop) {
+        /*返回in-port对应的ofprotop*/
         *ofprotop = ofproto;
     }
 
+    /*返回对应的ipfix,sflow,netflow*/
     if (ipfix) {
         *ipfix = xport ? xport->xbridge->ipfix : NULL;
     }
@@ -1749,6 +1753,7 @@ xport_lookup(struct xlate_cfg *xcfg, const struct ofport_dpif *ofport)
 
     xports = &xcfg->xports;
 
+    /*遍历xports，取指定的xport,并返回*/
     HMAP_FOR_EACH_IN_BUCKET (xport, hmap_node, hash_pointer(ofport, 0),
                              xports) {
         if (xport->ofport == ofport) {
@@ -4305,7 +4310,7 @@ terminate_native_tunnel(struct xlate_ctx *ctx, const struct xport *xport,
 }
 
 static void
-compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
+compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port/*出接口*/,
                         const struct xlate_bond_recirc *xr, bool check_stp,
                         bool is_last_action, bool truncate)
 {
@@ -4371,7 +4376,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         }
     }
 
-    //此接口为tunnel接口,需要生成相应的隧道封装动作
+    //出接口为tunnel接口,需要生成相应的隧道封装动作
     if (xport->is_tunnel) {
         struct in6_addr dst;
          /* Save tunnel metadata so that changes made due to

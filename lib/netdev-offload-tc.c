@@ -48,7 +48,7 @@ static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(60, 5);
 static struct hmap ufid_to_tc = HMAP_INITIALIZER(&ufid_to_tc);
 static struct hmap tc_to_ufid = HMAP_INITIALIZER(&tc_to_ufid);
 static bool multi_mask_per_prio = false;
-//是否支持dev block(
+//是否支持dev block
 static bool block_support = false;
 static uint16_t ct_state_support;
 
@@ -245,7 +245,9 @@ add_ufid_tc_mapping(struct netdev *netdev, const ovs_u128 *ufid,
     new_data->netdev = netdev_ref(netdev);
 
     ovs_mutex_lock(&ufid_lock);
+    /*添加ufid到ufid_tc_data映射*/
     hmap_insert(&ufid_to_tc, &new_data->ufid_to_tc_node, ufid_hash);
+    /*添加id到ufid_tc_data映射*/
     hmap_insert(&tc_to_ufid, &new_data->tc_to_ufid_node, tc_hash);
     ovs_mutex_unlock(&ufid_lock);
 }
@@ -280,7 +282,7 @@ get_ufid_tc_mapping(const ovs_u128 *ufid, struct tcf_id *id)
  *
  * Returns true on success.
  */
-//通过（prio,handle）查找ufid及其对应的规则所属的netdev
+//通过id查找ufid及其对应的规则所属的netdev
 static bool
 find_ufid(struct netdev *netdev, struct tcf_id *id, ovs_u128 *ufid)
 {
@@ -291,6 +293,7 @@ find_ufid(struct netdev *netdev, struct tcf_id *id, ovs_u128 *ufid)
     tc_hash = hash_int(id->chain, tc_hash);
 
     ovs_mutex_lock(&ufid_lock);
+    /*通过id查找此规则对应的ufid*/
     HMAP_FOR_EACH_WITH_HASH (data, tc_to_ufid_node, tc_hash,  &tc_to_ufid) {
         if (netdev == data->netdev && is_tcf_id_eq(&data->id, id)) {
             *ufid = data->ufid;
@@ -373,6 +376,7 @@ get_block_id_from_netdev(struct netdev *netdev)
         return netdev_get_block_id(netdev);
     }
 
+    /*如果不支持block id，则返回0*/
     return 0;
 }
 
@@ -461,6 +465,7 @@ netdev_tc_flow_flush(struct netdev *netdev)
     return 0;
 }
 
+/*创建netdev对应的flow dump context*/
 static int
 netdev_tc_flow_dump_create(struct netdev *netdev,
                            struct netdev_flow_dump **dump_out,
@@ -481,13 +486,14 @@ netdev_tc_flow_dump_create(struct netdev *netdev,
         return -ifindex;
     }
 
+    /*取此netdev对应的block_id,只有bond的为ifindex,其它均为0*/
     block_id = get_block_id_from_netdev(netdev);
     dump = xzalloc(sizeof *dump);
     dump->nl_dump = xzalloc(sizeof *dump->nl_dump);
     dump->netdev = netdev_ref(netdev);
     dump->terse = terse;
 
-    //构造tc filter的id
+    //构造tc filter的id，并向kernel发送此请求
     id = tc_make_tcf_id(ifindex, block_id, prio, hook);
     tc_dump_flower_start(&id, dump->nl_dump, terse);
 
@@ -1086,7 +1092,7 @@ netdev_tc_flow_dump_next(struct netdev_flow_dump *dump,
                          struct nlattr **actions,
                          struct dpif_flow_stats *stats,
                          struct dpif_flow_attrs *attrs,
-                         ovs_u128 *ufid,
+                         ovs_u128 *ufid/*出参，此flow对应的唯一id*/,
                          struct ofpbuf *rbuffer,
                          struct ofpbuf *wbuffer)
 {
@@ -2428,10 +2434,11 @@ netdev_tc_init_flow_api(struct netdev *netdev)
     return 0;
 }
 
-//offload流的api
+//tc offload flow对应的api
 const struct netdev_flow_api netdev_offload_tc = {
    .type = "linux_tc",
    .flow_flush = netdev_tc_flow_flush,
+   /*创建flow dump相关的context*/
    .flow_dump_create = netdev_tc_flow_dump_create,
    .flow_dump_destroy = netdev_tc_flow_dump_destroy,
    /*通过tc dump flow*/

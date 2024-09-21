@@ -139,7 +139,7 @@ netdev_vport_get_dpif_port(const struct netdev *netdev,
     }
 
     if (netdev_vport_needs_dst_port(netdev)) {
-    	//如果是隧道，且有dst_port,返回“type_dstport“方式，例如"vxlan_sys_7499"
+    	//如果是隧道接口，且有dst_port,返回“type_dstport“方式，例如"vxlan_sys_7499"
         const struct netdev_vport *vport = netdev_vport_cast(netdev);
 
         /*
@@ -206,7 +206,8 @@ netdev_vport_construct(struct netdev *netdev_)//构造vport,针对隧道口进�
     uint16_t port = 0;
 
     ovs_mutex_init(&dev->mutex);
-    eth_addr_random(&dev->etheraddr);//生成随机mac地址
+    //生成随机mac地址
+    eth_addr_random(&dev->etheraddr);
 
     if (name && dpif_port && (strlen(name) > strlen(dpif_port) + 1) &&
         (!strncmp(name, dpif_port, strlen(dpif_port)))) {

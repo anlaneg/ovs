@@ -69,13 +69,14 @@ coverage_unixctl_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
     char *reply;
 
     svec_init(&lines);
-    coverage_read(&lines);
+    coverage_read(&lines);/*格式化coverage内容*/
     reply = svec_join(&lines, "\n", "\n");
     unixctl_command_reply(conn, reply);
     free(reply);
     svec_destroy(&lines);
 }
 
+/*接收用户输入，获取给定名称counter对应的统计计数*/
 static void
 coverage_unixctl_read_counter(struct unixctl_conn *conn, int argc OVS_UNUSED,
                               const char *argv[], void *aux OVS_UNUSED)
@@ -101,6 +102,7 @@ coverage_init(void)
     /*显示coverage counter的统计值*/
     unixctl_command_register("coverage/show", "", 0, 0,
                              coverage_unixctl_show, NULL);
+    /*通过命令行读取counter*/
     unixctl_command_register("coverage/read-counter", "COUNTER", 1, 1,
                              coverage_unixctl_read_counter, NULL);
 }
@@ -121,6 +123,11 @@ compare_coverage_counters(const void *a_, const void *b_)
     }
 }
 
+/*
+ * 此hash针对total未发生计数变更的情况，计算出来的hash总是相等.
+ * 此hash针对所有total总数总不相等的情况，计算出来的hash总是相等。
+ *
+ * */
 static uint32_t
 coverage_hash(void)
 {
@@ -137,7 +144,7 @@ coverage_hash(void)
     }
     ovs_mutex_unlock(&coverage_mutex);
     //将c数组按计数大小进行排序
-    qsort(c, n_coverage_counters, sizeof *c, compare_coverage_counters);
+    qsort(c, n_coverage_counters, sizeof *c, compare_coverage_counters/*从大到小排列*/);
 
     /* Hash the names in each group along with the rank. */
     //遍历每个coverage计数器
@@ -146,16 +153,21 @@ coverage_hash(void)
         int j;
 
         if (!c[i]->total) {
-            //丢掉总计数为0的
+            //由于从大到小排列，则自i位置开始到n_coverage_counters开始计数均为0
+            //不再计算hash
             break;
         }
-        /*总计数非零的coverage计数口数目*/
+        /*不同total数量的组数*/
         n_groups++;
+        /*通过index进行hash(这样在n_coverage_counters一样的情况下，这部分hash基本相等）*/
         hash = hash_int(i, hash);
+        /*对同组进行hash*/
         for (j = i; j < n_coverage_counters; j++) {
+            /*两者total不相等，不属于同组，跳出,使n_groups增加。*/
             if (c[j]->total != c[i]->total) {
                 break;
             }
+            /*同group,采用name进行hash*/
             hash = hash_string(c[j]->name, hash);
         }
         i = j;
@@ -163,6 +175,7 @@ coverage_hash(void)
 
     free(c);
 
+    /*糅合上group数量，进行hash*/
     return hash_int(n_groups, hash);
 }
 
@@ -208,6 +221,7 @@ coverage_log(void)
     if (!VLOG_DROP_INFO(&rl)) {
         uint32_t hash = coverage_hash();
         if (coverage_hit(hash)) {
+            /*计算出的hash出现冲突，不显示详细的内容*/
             VLOG_INFO("Skipping details of duplicate event coverage for "
                       "hash=%08"PRIx32, hash);
         } else {
@@ -226,7 +240,7 @@ coverage_log(void)
 }
 
 /* Adds coverage counter information to 'lines'. */
-//生成统计数据
+//生成统计数据到lines中
 static void
 coverage_read(struct svec *lines)
 {
@@ -236,7 +250,6 @@ coverage_read(struct svec *lines)
     uint32_t hash;
     size_t i;
 
-    //这个hash的计算代价有点大
     hash = coverage_hash();
 
     n_never_hit = 0;
@@ -288,19 +301,24 @@ coverage_read(struct svec *lines)
  *
  * */
 static void
-coverage_clear__(bool trylock)
+coverage_clear__(bool trylock/*是否采用trylock进行加锁尝试*/)
 {
+    /*每隔COVERAGE_CLEAR_INTERVAL间隔统计一清除counter*/
     long long int now, *thread_time;
 
+    /*取当前时间*/
     now = time_msec();
+    /*取上次clear time的时间*/
     thread_time = coverage_clear_time_get();
 
     /* Initialize the coverage_clear_time. */
     if (*thread_time == LLONG_MIN) {
+        /*首次初始化*/
         *thread_time = now + COVERAGE_CLEAR_INTERVAL;
     }
 
-    if (now >= *thread_time) {//每COVERAGE_CLEAR_INTERVAL间隔统计一次
+    //每COVERAGE_CLEAR_INTERVAL间隔统计一次
+    if (now >= *thread_time) {
         size_t i;
 
         if (trylock) {
@@ -315,7 +333,8 @@ coverage_clear__(bool trylock)
         //使所有记数器进行统计
         for (i = 0; i < n_coverage_counters; i++) {
             struct coverage_counter *c = coverage_counters[i];
-            c->total += c->count();//计算总数到total
+            //计算总数到total，自身会被减为0
+            c->total += c->count();
         }
         ovs_mutex_unlock(&coverage_mutex);
         *thread_time = now + COVERAGE_CLEAR_INTERVAL;
@@ -325,6 +344,7 @@ coverage_clear__(bool trylock)
 void
 coverage_clear(void)
 {
+    /*统计各计数，并清空其自身count*/
     coverage_clear__(false);
 }
 
@@ -419,6 +439,7 @@ coverage_array_sum(const unsigned int *arr, const unsigned int len)
     return sum;
 }
 
+/*按给定名称，查询对应counter*/
 static bool
 coverage_read_counter(const char *name, unsigned long long int *count)
 {

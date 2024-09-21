@@ -263,6 +263,7 @@ struct hmap_node *hmap_at_position(const struct hmap *,
 static inline size_t
 hmap_count(const struct hmap *hmap)
 {
+    /*hmap元素数量*/
     return hmap->n;
 }
 

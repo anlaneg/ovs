@@ -178,11 +178,13 @@ ovsrcu_quiesce(void)
 {
     struct ovsrcu_perthread *perthread;
 
+    /*取当前线程对应的私有变量*/
     perthread = ovsrcu_perthread_get();
+
     //变更本线程的seqno
     perthread->seqno = seq_read(global_seqno);
 
-    //如果本线程有cbset，则提交cbset给waiter进行执行
+    //如果本线程有cbset，则提交本线程cbset给全局cbset flushed_cbsets,唤醒waiter进行执行
     if (perthread->cbset) {
         ovsrcu_flush_cbset(perthread);
     }
@@ -190,6 +192,7 @@ ovsrcu_quiesce(void)
     //变更系统全局seqno处（１）
     seq_change(global_seqno);
 
+    /*单线程情况下主动触发回调，多线程情况下除第一次外，无操作*/
     ovsrcu_quiesced();
 }
 

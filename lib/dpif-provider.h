@@ -322,6 +322,7 @@ struct dpif_class {
         struct dpif_flow_dump_types *types);
     int (*flow_dump_destroy)(struct dpif_flow_dump *dump);
 
+    /*各线程专用的flow dump下下文create,每线程独立调用一次*/
     struct dpif_flow_dump_thread *(*flow_dump_thread_create)(
         struct dpif_flow_dump *dump);
     void (*flow_dump_thread_destroy)(struct dpif_flow_dump_thread *thread);

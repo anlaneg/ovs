@@ -58,7 +58,7 @@ struct flow_tnl {
 #define FLOW_TNL_PUB_F_MASK ((1 << 1) - 1)
 
 /* Private flags */
-#define FLOW_TNL_F_DONT_FRAGMENT (1 << 1)
+#define FLOW_TNL_F_DONT_FRAGMENT (1 << 1) /*标记不容许分片*/
 #define FLOW_TNL_F_CSUM (1 << 2) //标记checksum已校验
 #define FLOW_TNL_F_KEY (1 << 3) //（标记key已被填充）
 

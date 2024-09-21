@@ -126,6 +126,7 @@ do_init_time(void)
 {
     struct timespec ts;
 
+    /*注册coverage相关命令行*/
     coverage_init();
 
     timewarp_seq = seq_create();
@@ -298,6 +299,7 @@ time_poll(struct pollfd *pollfds/*需要poll的fd*/, int n_pollfds/*需要poll�
     coverage_run();//计算各时间段统计值
 
     if (*last_wakeup && !thread_is_pmd()) {
+        /*如果间隔过大，则进行告警*/
         log_poll_interval(*last_wakeup);
     }
     start = time_msec();
@@ -310,12 +312,13 @@ time_poll(struct pollfd *pollfds/*需要poll的fd*/, int n_pollfds/*需要poll�
         int time_left;
 
         if (now >= timeout_when) {
-        	//timeout时间已过
+        	//当前时间大于要求的timeout时间，故将left置为0，用于立即返回
             time_left = 0;
         } else if ((unsigned long long int) timeout_when - now > INT_MAX) {
-        	//timeout时间过大
+        	//调用时给定的timeout时间过大,将其最大置为INT_MAX
             time_left = INT_MAX;
         } else {
+            /*利用两者相减，计算left时间*/
             time_left = timeout_when - now;
         }
 
@@ -328,7 +331,7 @@ time_poll(struct pollfd *pollfds/*需要poll的fd*/, int n_pollfds/*需要poll�
         }
 
 #ifndef _WIN32
-        //在此阻塞接受fd
+        //在此阻塞接受fd，这里采用poll方式，防止上面未操作则继续进行触发
         retval = poll(pollfds, n_pollfds, time_left/*poll最长等待时间*/);
         if (retval < 0) {
             retval = -errno;
@@ -646,6 +649,7 @@ is_warped(const struct clock *c)
 static void
 log_poll_interval(long long int last_wakeup)
 {
+    /*本次与上次wakeup时间间隔*/
     long long int interval = time_msec() - last_wakeup;
 
     if (interval >= 1000 && !is_warped(&monotonic_clock)) {

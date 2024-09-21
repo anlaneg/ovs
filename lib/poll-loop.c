@@ -58,8 +58,9 @@ struct poll_loop {
 static struct poll_loop *poll_loop(void);
 
 /* Look up the node with same fd or wevent. */
+//通过fd,wevent在loop上查找poll_node
 static struct poll_node *
-find_poll_node(struct poll_loop *loop, int fd, HANDLE wevent)//通过fd,wevent在loop上查找poll_node
+find_poll_node(struct poll_loop *loop, int fd, HANDLE wevent)
 {
     struct poll_node *node;
 
@@ -102,6 +103,7 @@ find_poll_node(struct poll_loop *loop, int fd, HANDLE wevent)//通过fd,wevent�
 static void
 poll_create_node(int fd, HANDLE wevent, short int events, const char *where)//创建必要的poll_node
 {
+    /*取当前线程的poll loop*/
     struct poll_loop *loop = poll_loop();
     struct poll_node *node;
 
@@ -113,8 +115,10 @@ poll_create_node(int fd, HANDLE wevent, short int events, const char *where)//�
     /* Check for duplicate.  If found, "or" the events. */
     node = find_poll_node(loop, fd, wevent);
     if (node) {
-        node->pollfd.events |= events;//添加关注的事件
-    } else {//如果不存在，则加入新节点
+        //此fd已注册，添加关注的事件
+        node->pollfd.events |= events;
+    } else {
+        //此fd不存在，则加入新节点,添加关注的事件
         node = xzalloc(sizeof *node);
         hmap_insert(&loop->poll_nodes, &node->hmap_node,
                     hash_2words(fd, (uint32_t)wevent));
@@ -147,7 +151,8 @@ poll_create_node(int fd, HANDLE wevent, short int events, const char *where)//�
 void
 poll_fd_wait_at(int fd, short int events, const char *where)
 {
-    poll_create_node(fd, 0, events, where);//创建poll node(为linux wevent事件为0)
+    //创建poll node(为linux wevent事件为0)
+    poll_create_node(fd, 0, events, where);
 }
 
 #ifdef _WIN32
@@ -179,7 +184,7 @@ poll_wevent_wait_at(HANDLE wevent, const char *where)
  * ('where' is used in debug logging.  Commonly one would use poll_timer_wait()
  * to automatically provide the caller's source file and line number for
  * 'where'.) */
-//注册需要本线程等待的最小时间（可以采纳，也可能不采纳）
+//注册需要本线程等待的最小时间（可以采纳，也可能不采纳{不采纳时有更小的等待时间}）
 void
 poll_timer_wait_at(long long int msec, const char *where)
 {
@@ -233,7 +238,7 @@ poll_timer_wait_until_at(long long int when, const char *where)
 void
 poll_immediate_wake_at(const char *where)
 {
-    //暗示poll_block可以返回了
+    //注册为0间隔的timer,暗示poll_block可以立即返回
     poll_timer_wait_at(0, where);
 }
 
@@ -320,7 +325,7 @@ free_poll_nodes(struct poll_loop *loop)
 /* Blocks until one or more of the events registered with poll_fd_wait()
  * occurs, or until the minimum duration registered with poll_timer_wait()
  * elapses, or not at all if poll_immediate_wake() has been called. */
-//等待事件触发（会被递归调用）
+//等待事件触发（会被递归调用）参阅以上注释
 void
 poll_block(void)
 {
@@ -339,7 +344,7 @@ poll_block(void)
     fatal_signal_wait();
 
     if (loop->timeout_when == LLONG_MIN) {
-    	//非常短的超时时间，增加统计
+    	//非常短的超时时间，增加zero timeout统计
         COVERAGE_INC(poll_zero_timeout);
     }
 
@@ -353,7 +358,7 @@ poll_block(void)
 #endif
 
     /* Populate with all the fds and events. */
-    //遍历挂接在loop上的所有node
+    //遍历挂接在loop上的所有node，收集其上注册的fd到pollfds数组
     i = 0;
     HMAP_FOR_EACH (node, hmap_node, &loop->poll_nodes) {
     	//填充这些pollfd到pollfds数组
@@ -382,6 +387,7 @@ poll_block(void)
     } else if (!retval) {
         log_wakeup(loop->timeout_where, NULL, elapsed);
     } else if (get_cpu_usage() > 50 || VLOG_IS_DBG_ENABLED()) {
+        /*cpu利用率大于50%*/
         i = 0;
         HMAP_FOR_EACH (node, hmap_node, &loop->poll_nodes) {
             if (pollfds[i].revents) {

@@ -160,6 +160,7 @@ enum { OVS_KEY_ATTR_BUFSIZE = 3 + INT_STRLEN(unsigned int) + 1 };
 static const char *
 ovs_key_attr_to_string(enum ovs_key_attr attr, char *namebuf, size_t bufsize)
 {
+	/*ovs属性id转字符串*/
     switch (attr) {
     case OVS_KEY_ATTR_UNSPEC: return "unspec";
     case OVS_KEY_ATTR_ENCAP: return "encap";
@@ -176,8 +177,8 @@ ovs_key_attr_to_string(enum ovs_key_attr attr, char *namebuf, size_t bufsize)
     case OVS_KEY_ATTR_ETHERNET: return "eth";
     case OVS_KEY_ATTR_VLAN: return "vlan";
     case OVS_KEY_ATTR_ETHERTYPE: return "eth_type";
-    case OVS_KEY_ATTR_IPV4: return "ipv4";
-    case OVS_KEY_ATTR_IPV6: return "ipv6";
+    case OVS_KEY_ATTR_IPV4: return "ipv4";/*ipv4协议设置*/
+    case OVS_KEY_ATTR_IPV6: return "ipv6";/*ipv6协议设置*/
     case OVS_KEY_ATTR_TCP: return "tcp";
     case OVS_KEY_ATTR_TCP_FLAGS: return "tcp_flags";
     case OVS_KEY_ATTR_UDP: return "udp";
@@ -1172,6 +1173,7 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
         format_odp_hash_action(ds, nl_attr_get(a));
         break;
     case OVS_ACTION_ATTR_SET_MASKED:
+    	/*支持mask格式的set*/
         a = nl_attr_get(a);
         /* OVS_KEY_ATTR_NSH is nested attribute, so it needs special process */
         if (nl_attr_type(a) == OVS_KEY_ATTR_NSH) {
@@ -1199,6 +1201,7 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
         ds_put_cstr(ds, ")");
         break;
     case OVS_ACTION_ATTR_SET:
+    	/*普通set*/
         ds_put_cstr(ds, "set(");
         format_odp_key_attr(nl_attr_get(a), NULL, NULL, ds, true);
         ds_put_cstr(ds, ")");
@@ -1288,7 +1291,7 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
 
 //格式化action输出
 void
-format_odp_actions(struct ds *ds, const struct nlattr *actions,
+format_odp_actions(struct ds *ds/*出参，格式化后的结果*/, const struct nlattr *actions,
                    size_t actions_len, const struct hmap *portno_names)
 {
     if (actions_len) {
@@ -1297,11 +1300,14 @@ format_odp_actions(struct ds *ds, const struct nlattr *actions,
 
         NL_ATTR_FOR_EACH (a, left, actions, actions_len) {
             if (a != actions) {
-            	//非首个action
+            	//非首个action，采用逗号分隔
                 ds_put_char(ds, ',');
             }
+            /*显示具体的action*/
             format_odp_action(ds, a, portno_names);
         }
+
+        /*action内容有误，显示告警*/
         if (left) {
             int i;
 
@@ -2773,6 +2779,7 @@ static int
 odp_key_attr_len(const struct attr_len_tbl tbl[], int max_type, uint16_t type)
 {
     if (type > max_type) {
+        /*type无效*/
         return ATTR_LEN_INVALID;
     }
 
@@ -3044,12 +3051,17 @@ odp_tun_key_from_attr__(const struct nlattr *attr, bool is_mask,
     bool unknown = false;
 
     NL_NESTED_FOR_EACH(a, left, attr) {
+        /*属性type*/
         uint16_t type = nl_attr_type(a);
+        /*属性长度*/
         size_t len = nl_attr_get_size(a);
+
+        /*取tunnel属性对应的属性长度*/
         int expected_len = odp_key_attr_len(ovs_tun_key_attr_lens,
                                             OVS_TUNNEL_ATTR_MAX, type);
 
         if (len != expected_len && expected_len >= 0) {
+            /*长度与预期不一致，报错*/
             odp_parse_error(&rl, errorp, "tunnel key attribute %"PRIu16" "
                             "should have length %d but actually has %"PRIuSIZE,
                             type, expected_len, len);
@@ -3059,6 +3071,7 @@ odp_tun_key_from_attr__(const struct nlattr *attr, bool is_mask,
         //依据每个tunnel类型，填充相应tunnel字段
         switch (type) {
         case OVS_TUNNEL_KEY_ATTR_ID:
+            /*填充tunnel id*/
             tun->tun_id = nl_attr_get_be64(a);
             tun->flags |= FLOW_TNL_F_KEY;
             break;
@@ -3066,39 +3079,49 @@ odp_tun_key_from_attr__(const struct nlattr *attr, bool is_mask,
             /*tunnel的源ip*/
             tun->ip_src = nl_attr_get_be32(a);
             break;
-            /*tunnel的目的ip*/
         case OVS_TUNNEL_KEY_ATTR_IPV4_DST:
+            /*tunnel的目的ip*/
             tun->ip_dst = nl_attr_get_be32(a);
             break;
         case OVS_TUNNEL_KEY_ATTR_IPV6_SRC:
+            /*tunnel的源ipv6*/
             tun->ipv6_src = nl_attr_get_in6_addr(a);
             break;
         case OVS_TUNNEL_KEY_ATTR_IPV6_DST:
+            /*tunnel的目的ipv6*/
             tun->ipv6_dst = nl_attr_get_in6_addr(a);
             break;
         case OVS_TUNNEL_KEY_ATTR_TOS:
+            /*tunnel的tos*/
             tun->ip_tos = nl_attr_get_u8(a);
             break;
         case OVS_TUNNEL_KEY_ATTR_TTL:
+            /*tunnel的ttl*/
             tun->ip_ttl = nl_attr_get_u8(a);
             ttl = true;
             break;
         case OVS_TUNNEL_KEY_ATTR_DONT_FRAGMENT:
+            /*指明不容许分片*/
             tun->flags |= FLOW_TNL_F_DONT_FRAGMENT;
             break;
         case OVS_TUNNEL_KEY_ATTR_CSUM:
+            /*指明csum*/
             tun->flags |= FLOW_TNL_F_CSUM;
             break;
         case OVS_TUNNEL_KEY_ATTR_TP_SRC:
+            /*指明tunnel 传输层srcport*/
             tun->tp_src = nl_attr_get_be16(a);
             break;
         case OVS_TUNNEL_KEY_ATTR_TP_DST:
+            /*指明tunnel传输层dstport*/
             tun->tp_dst = nl_attr_get_be16(a);
             break;
         case OVS_TUNNEL_KEY_ATTR_OAM:
+            /*oam标记*/
             tun->flags |= FLOW_TNL_F_OAM;
             break;
         case OVS_TUNNEL_KEY_ATTR_VXLAN_OPTS: {
+            /*指明vxlan opts*/
             static const struct nl_policy vxlan_opts_policy[] = {
                 [OVS_VXLAN_EXT_GBP] = { .type = NL_A_U32 },
             };
@@ -3122,6 +3145,7 @@ odp_tun_key_from_attr__(const struct nlattr *attr, bool is_mask,
             tun_metadata_from_geneve_nlattr(a, is_mask, tun);
             break;
         case OVS_TUNNEL_KEY_ATTR_ERSPAN_OPTS: {
+            /*erspan隧道opts*/
             const struct erspan_metadata *opts = nl_attr_get(a);
 
             tun->erspan_ver = opts->version;
@@ -3136,6 +3160,7 @@ odp_tun_key_from_attr__(const struct nlattr *attr, bool is_mask,
             break;
         }
         case OVS_TUNNEL_KEY_ATTR_GTPU_OPTS: {
+            /*gtpu隧道opts*/
             const struct gtpu_metadata *opts = nl_attr_get(a);
 
             tun->gtpu_flags = opts->flags;
@@ -3152,10 +3177,12 @@ odp_tun_key_from_attr__(const struct nlattr *attr, bool is_mask,
     }
 
     if (!ttl) {
+        /*没有指明ttl,报错*/
         odp_parse_error(&rl, errorp, "tunnel options missing TTL");
         return ODP_FIT_ERROR;
     }
     if (unknown) {
+        /*遇到不认识的属性，报错*/
         return ODP_FIT_TOO_MUCH;
     }
     return ODP_FIT_PERFECT;
@@ -3436,6 +3463,7 @@ odp_portno_name_format(const struct hmap *portno_names, odp_port_t port_no,
 {
     const char *name = odp_portno_names_get(portno_names, port_no);
     if (name) {
+    	/*port nubmer在map中查询到，则显示名称，否则显示数字*/
         ds_put_cstr(s, name);
     } else {
         ds_put_format(s, "%"PRIu32, port_no);
@@ -4152,7 +4180,7 @@ format_odp_key_attr__(const struct nlattr *a, const struct nlattr *ma,
     //通过ma，检查是否为全'1'掩码
     is_exact = ma ? odp_mask_attr_is_exact(ma) : true;
 
-    //设置属性名称，例如 recirc_id,in_port等
+    //输出属性名称，例如 recirc_id,in_port等
     ds_put_cstr(ds, ovs_key_attr_to_string(attr, namebuf, sizeof namebuf));
 
     ds_put_char(ds, '(');
@@ -5576,7 +5604,9 @@ gtpu_to_attr(struct ofpbuf *a, const void *data_)
         if (call_fn) {                                            \
             /*如果有call_fn，则执行调用*/\
             typedef void (*fn)(struct ofpbuf *, const void *);    \
+            /*检查类型是否匹配*/\
             fn func = FUNC;                                       \
+            /*调用此command*/\
             func(BUF, &(DATA));                                   \
         } else {                                                  \
             /*如果没有call_fn,则直接将attr加入到buf中*/\
@@ -5643,7 +5673,7 @@ gtpu_to_attr(struct ofpbuf *a, const void *data_)
             return -EINVAL;                     \
         }
 
-/*解析完key,mask后需要为')'*/
+/*解析完key,mask后需要为')'，否则报错*/
 #define SCAN_FINISH_SINGLE()                    \
         } while (false);                        \
         if (*s++ != ')') {                      \
@@ -5692,8 +5722,10 @@ gtpu_to_attr(struct ofpbuf *a, const void *data_)
 
 /*如果有mask,也需要将mask加入到key及mask中*/
 #define SCAN_PUT(ATTR, FUNC)                            \
+		/*先设置key到attr*/\
         SCAN_PUT_ATTR(key, ATTR, skey, FUNC);           \
         if (mask)                                       \
+			/*有mask，则将mask设置到attr*/\
             SCAN_PUT_ATTR(mask, ATTR, smask, FUNC);     \
 
 #define SCAN_END(ATTR)                                  \
@@ -5753,6 +5785,7 @@ gtpu_to_attr(struct ofpbuf *a, const void *data_)
         return s - start;                               \
     }
 
+/*解析单个属性*/
 #define SCAN_SINGLE(NAME, TYPE, SCAN_AS, ATTR)       \
     SCAN_BEGIN(NAME, TYPE) {                         \
         SCAN_TYPE(SCAN_AS, &skey, &smask);           \
@@ -5902,6 +5935,7 @@ parse_odp_nsh_key_mask_attr(const char *s, struct ofpbuf *key,
     return 0;
 }
 
+/*解析s的内容，将解析后获得的结果保存在key,mask中*/
 static int
 parse_odp_key_mask_attr(struct parse_odp_context *context, const char *s,
                         struct ofpbuf *key, struct ofpbuf *mask)
@@ -6171,6 +6205,7 @@ odp_flow_from_string(const char *s, const struct simap *port_names,
             s += s[0] == ' ' ? 1 : 0;
         }
 
+        /*按key,mask方式进行解析,例如"eth(src=xx/xx,dst=xx/xx)"格式*/
         retval = parse_odp_key_mask_attr(&context, s, key, mask);
 
         if (retval >= 0) {
@@ -6781,8 +6816,8 @@ odp_to_ovs_frag(uint8_t odp_frag, bool is_mask)
 //将key指向的netlink attr进行解析，将解析出来的内容存入在attrs中，attrs长度大于等于OVS_KEY_ATTR_MAX
 static bool
 parse_flow_nlattrs(const struct nlattr *key, size_t key_len,
-                   const struct nlattr *attrs[], uint64_t *present_attrsp,//哪些属性出现了
-                   int *out_of_range_attrp, char **errorp)//是否有type超过范围，是哪个type (由于不是一遇到就停下来，故报出的为最后一个）
+                   const struct nlattr *attrs[]/*出参，解析的各type对应的attr*/, uint64_t *present_attrsp/*出参，key中哪些属性出现了*/,
+                   int *out_of_range_attrp/*出参，是否有type超过范围，是哪个type (由于不是一遇到就停下来，故报出的为最后一个）*/, char **errorp)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 10);
     const struct nlattr *nla;
@@ -6835,6 +6870,7 @@ parse_flow_nlattrs(const struct nlattr *key, size_t key_len,
         }
     }
     if (left) {
+        /*所有参数解析完成，但仍有剩余，报错*/
         odp_parse_error(&rl, errorp, "trailing garbage in flow key");
         return false;
     }
@@ -6892,6 +6928,7 @@ parse_ethertype(const struct nlattr *attrs[OVS_KEY_ATTR_MAX + 1],
     bool is_mask = flow != src_flow;//是否正在解mask
 
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_ETHERTYPE)) {
+        /*填充dl_type*/
         flow->dl_type = nl_attr_get_be16(attrs[OVS_KEY_ATTR_ETHERTYPE]);
         if (!is_mask && ntohs(flow->dl_type) < ETH_TYPE_MIN) {
             odp_parse_error(&rl, errorp,
@@ -7378,7 +7415,7 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     int out_of_range_attr;
 
     //检查当前填充的是否为mask
-    bool is_mask = src_flow != flow;
+    bool is_mask = src_flow != flow;/*如果src_flow与flow不是同一个指针，则认为是mask flow*/
 
     memset(flow, 0, sizeof *flow);
 
@@ -7393,48 +7430,60 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     //利用attrs填充flow
     /* Metadata. */
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_RECIRC_ID)) {
-    	//如果出现了此属性，在flow中设置此属性
+    	//如果出现了recirc_id属性，在flow中设置此属性
         flow->recirc_id = nl_attr_get_u32(attrs[OVS_KEY_ATTR_RECIRC_ID]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_RECIRC_ID;
     } else if (is_mask) {
-    	//如果填充的是mask,则如果此属性出现，则直接设置为全1
+    	//如果填充的是mask,则如果recirc_id出现，则直接设置为全1
         /* Always exact match recirc_id if it is not specified. */
         flow->recirc_id = UINT32_MAX;
     }
 
+    /*dp hash填充*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_DP_HASH)) {
         flow->dp_hash = nl_attr_get_u32(attrs[OVS_KEY_ATTR_DP_HASH]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_DP_HASH;
     }
+
+    /*skb_priority填充*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_PRIORITY)) {
         flow->skb_priority = nl_attr_get_u32(attrs[OVS_KEY_ATTR_PRIORITY]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_PRIORITY;
     }
 
+    /*pkt_mark填充*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_SKB_MARK)) {
-    	//填充pkt_mark
         flow->pkt_mark = nl_attr_get_u32(attrs[OVS_KEY_ATTR_SKB_MARK]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_SKB_MARK;
     }
 
+    /*ct_state填充*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CT_STATE)) {
         uint32_t odp_state = nl_attr_get_u32(attrs[OVS_KEY_ATTR_CT_STATE]);
 
         flow->ct_state = odp_to_ovs_ct_state(odp_state);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CT_STATE;
     }
+
+    /*ct_zone填充*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CT_ZONE)) {
         flow->ct_zone = nl_attr_get_u16(attrs[OVS_KEY_ATTR_CT_ZONE]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CT_ZONE;
     }
+
+    /*ct mark填充*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CT_MARK)) {
         flow->ct_mark = nl_attr_get_u32(attrs[OVS_KEY_ATTR_CT_MARK]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CT_MARK;
     }
+
+    /*ct label填充*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CT_LABELS)) {
         flow->ct_label = nl_attr_get_u128(attrs[OVS_KEY_ATTR_CT_LABELS]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CT_LABELS;
     }
+
+    /*ipv4 ct相关的srcip,dstip,protocol,srcport,dstport*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV4)) {
         const struct ovs_key_ct_tuple_ipv4 *ct = nl_attr_get(attrs[OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV4]);
         flow->ct_nw_src = ct->ipv4_src;
@@ -7444,6 +7493,8 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
         flow->ct_tp_dst = ct->dst_port;
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV4;
     }
+
+    /*ipv6 ct相关的srcip,dstip,protocol,srcport,dstport*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6)) {
         const struct ovs_key_ct_tuple_ipv6 *ct = nl_attr_get(attrs[OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6]);
 
@@ -7458,15 +7509,18 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_TUNNEL)) {
         enum odp_key_fitness res;
 
+        /*解析tunnel相关的属性*/
         res = odp_tun_key_from_attr__(attrs[OVS_KEY_ATTR_TUNNEL], is_mask,
                                       &flow->tunnel, errorp);
         if (res == ODP_FIT_ERROR) {
             goto exit;
         } else if (res == ODP_FIT_PERFECT) {
+            /*指明tunnel已成功解析*/
             expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_TUNNEL;
         }
     }
 
+    /*填充in-port*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_IN_PORT)) {
         flow->in_port.odp_port
             = nl_attr_get_odp_port(attrs[OVS_KEY_ATTR_IN_PORT]);
@@ -7475,6 +7529,7 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
         flow->in_port.odp_port = ODPP_NONE;
     }
 
+    /*填充packet_type,dl_type*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_PACKET_TYPE)) {
         flow->packet_type
             = nl_attr_get_be32(attrs[OVS_KEY_ATTR_PACKET_TYPE]);
@@ -7487,6 +7542,7 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     }
 
     /* Check for Ethernet header. */
+    /*填充dl_src,dl_dst,packet_type*/
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_ETHERNET)) {
         const struct ovs_key_ethernet *eth_key;
 
@@ -7509,9 +7565,11 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     /* Get Ethertype or 802.1Q TPID or FLOW_DL_TYPE_NONE. */
     if (!parse_ethertype(attrs, present_attrs, &expected_attrs, flow,
                          src_flow, errorp)) {
+        /*解析dl_type失败，退出*/
         goto exit;
     }
 
+    /*填充vlan*/
     if (is_mask
         ? (src_flow->vlans[0].tci & htons(VLAN_CFI)) != 0
         : eth_type_vlan(src_flow->dl_type)) {
@@ -7538,6 +7596,7 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     }
 
 exit:;
+    /*报告退出原因*/
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
     if (fitness == ODP_FIT_ERROR && (errorp || !VLOG_DROP_WARN(&rl))) {
         struct ds s = DS_EMPTY_INITIALIZER;
@@ -7582,11 +7641,11 @@ exit:;
  * If 'errorp' is nonnull, this function uses it for detailed error reports: if
  * the return value is ODP_FIT_ERROR, it stores a malloc()'d error string in
  * '*errorp', otherwise NULL. */
-//解码，将key中的内容解码到flow中
 enum odp_key_fitness
 odp_flow_key_to_flow(const struct nlattr *key, size_t key_len,
                      struct flow *flow, char **errorp)
 {
+    //解码，将key中的内容解码到flow中
     return odp_flow_key_to_flow__(key, key_len, flow, flow, errorp);
 }
 

@@ -342,6 +342,7 @@ stopwatch_packet_create(enum stopwatch_op op)
     return pkt;
 }
 
+/*向stopwatch链表上挂接pkt*/
 static void
 stopwatch_packet_write(struct stopwatch_packet *pkt)
 {
@@ -428,6 +429,7 @@ stopwatch_thread(void *ign OVS_UNUSED)
         struct stopwatch_packet *pkt;
 
         latch_poll(&stopwatch_latch);
+        /*收集挂接在stopwatch上的element*/
         guarded_list_pop_all(&stopwatch_commands, &command_list);
         ovs_mutex_lock(&stopwatches_lock);
         LIST_FOR_EACH_POP (pkt, list_node, &command_list) {
@@ -484,15 +486,18 @@ stopwatch_exit(void)
     latch_destroy(&stopwatch_latch);
 }
 
+/*初始化stopwatch*/
 static void
 do_init_stopwatch(void)
 {
+    /*初始化stopwatch*/
     unixctl_command_register("stopwatch/show", "[NAME]", 0, 1,
                              stopwatch_show, NULL);
     unixctl_command_register("stopwatch/reset", "[NAME]", 0, 1,
                              stopwatch_reset, NULL);
     guarded_list_init(&stopwatch_commands);
     latch_init(&stopwatch_latch);
+    /*创建stopwatch线程*/
     stopwatch_thread_id = ovs_thread_create(
         "stopwatch", stopwatch_thread, NULL);
     atexit(stopwatch_exit);
@@ -523,6 +528,7 @@ stopwatch_create(const char *name, enum stopwatch_units units)
     ovs_mutex_unlock(&stopwatches_lock);
 }
 
+/*构造start并挂接到stopwatch上*/
 void
 stopwatch_start(const char *name, unsigned long long ts)
 {

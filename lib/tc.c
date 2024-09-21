@@ -206,7 +206,7 @@ tc_make_request(int ifindex, int type, unsigned int flags/*构造请求的flags*
     return tcmsg;
 }
 
-static void request_from_tcf_id(struct tcf_id *id, uint16_t eth_type,
+static void request_from_tcf_id(struct tcf_id *id, uint16_t eth_type/*以太帧协议*/,
                                 int type/*tc消息类型*/, unsigned int flags,
                                 struct ofpbuf *request)
 {
@@ -2030,6 +2030,8 @@ tc_dump_flower_start(struct tcf_id *id, struct nl_dump *dump, bool terse)
         nl_msg_put_unspec(&request, TCA_DUMP_FLAGS, &dump_flags,
                           sizeof dump_flags);
     }
+
+    /*向kernel发送此请求*/
     nl_dump_start(dump, NETLINK_ROUTE, &request);
     ofpbuf_uninit(&request);
 

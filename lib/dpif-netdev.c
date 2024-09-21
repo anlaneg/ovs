@@ -4462,7 +4462,7 @@ dpif_netdev_flow_dump_cast(struct dpif_flow_dump *dump)
 }
 
 static struct dpif_flow_dump *
-dpif_netdev_flow_dump_create(const struct dpif *dpif_, bool terse,
+dpif_netdev_flow_dump_create(const struct dpif *dpif_, bool terse/*是否精简模式*/,
                              struct dpif_flow_dump_types *types OVS_UNUSED)
 {
     struct dpif_netdev_flow_dump *dump;
@@ -9843,7 +9843,7 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_port_poll,
     dpif_netdev_port_poll_wait,
     dpif_netdev_flow_flush,
-    dpif_netdev_flow_dump_create,
+    dpif_netdev_flow_dump_create,/*构造flow dump的对象*/
     dpif_netdev_flow_dump_destroy,
     dpif_netdev_flow_dump_thread_create,
     dpif_netdev_flow_dump_thread_destroy,

@@ -274,15 +274,17 @@ fatal_signal_handler(int sig_nr)//信号处理
 {
 #ifndef _WIN32
     if (sig_nr == SIGSEGV) {
+        /*针对SIGSEGV，立即处理*/
         signal(sig_nr, SIG_DFL); /* Set it back immediately. */
         send_backtrace_to_monitor();
         raise(sig_nr);
     }
-	//向管道中发消息，表明已收到信号
+	//向管道中发消息，知会收到信号
     ignore(write(signal_fds[1], "", 1));
 #else
     SetEvent(wevent);
 #endif
+    /*保存收到的信号*/
     stored_sig_nr = sig_nr;
 }
 
@@ -302,8 +304,10 @@ fatal_signal_run(void)
 {
     sig_atomic_t sig_nr;
 
+    /*运行一次，注册信号*/
     fatal_signal_init();
 
+    /*取收到的被缓存的信号*/
     sig_nr = stored_sig_nr;
     if (sig_nr != SIG_ATOMIC_MAX) {
         char namebuf[SIGNAL_NAME_BUFSIZE];
@@ -316,7 +320,8 @@ fatal_signal_run(void)
 #else
         VLOG_WARN("terminating with signal %d", (int)sig_nr);
 #endif
-        call_hooks(sig_nr);//针对此信号调回调
+        //针对此信号调回调
+        call_hooks(sig_nr);
         fflush(stderr);
 
         /* Re-raise the signal with the default handling so that the program

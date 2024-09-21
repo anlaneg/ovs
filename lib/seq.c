@@ -216,6 +216,7 @@ seq_wait__(struct seq *seq, uint64_t value, const char *where)
     ovs_list_push_back(&waiter->thread->waiters, &waiter->list_node);
 
     if (!waiter->thread->waiting) {
+        /*等待latch*/
         latch_wait_at(&waiter->thread->latch, where);
         waiter->thread->waiting = true;
     }
@@ -239,7 +240,8 @@ seq_wait_at(const struct seq *seq_, uint64_t value, const char *where)
 {
     struct seq *seq = CONST_CAST(struct seq *, seq_);
 
-    ovs_mutex_lock(&seq_mutex);//加锁后再检查
+    //加锁后再检查
+    ovs_mutex_lock(&seq_mutex);
     if (value == seq->value) {
     	//seq仍然为value,未发生变更，注册seq等待句柄
         seq_wait__(seq, value, where);
@@ -331,6 +333,7 @@ seq_waiter_destroy(struct seq_waiter *waiter)
     free(waiter);
 }
 
+/*遍历所有waiter,并通知它们开始处理，同时释放waiter变量*/
 static void
 seq_wake_waiters(struct seq *seq)
     OVS_REQUIRES(seq_mutex)

@@ -240,6 +240,7 @@ parse_flow_and_packet(int argc, const char *argv[],
             /*参数指明需要生成packet*/
             generate_packet = true;
         } else if (!strcmp(arg, "--l7")) {
+        	/*--l7用于模拟报文负载*/
             if (i + 1 >= argc) {
                 error = xasprintf("Missing argument for option %s", arg);
                 goto exit;
@@ -254,9 +255,11 @@ parse_flow_and_packet(int argc, const char *argv[],
                 goto exit;
             }
             free(l7);
+            /*利用参数确认负载长度及负载内容*/
             l7_len = dp_packet_size(&payload);
             l7 = dp_packet_steal_data(&payload);
         } else if (!strcmp(arg, "--l7-len")) {
+        	/*用参数指定l7长度*/
             if (i + 1 >= argc) {
                 error = xasprintf("Missing argument for option %s", arg);
                 goto exit;
@@ -287,6 +290,7 @@ parse_flow_and_packet(int argc, const char *argv[],
             }
             oftrace_push_ct_state(next_ct_states, ct_state);
         } else if (arg[0] == '-') {
+        	/*遇到其它不认识的选项*/
             error = xasprintf("%s: unknown option", arg);
             goto exit;
         } else if (n_args >= ARRAY_SIZE(args)) {
@@ -357,6 +361,7 @@ parse_flow_and_packet(int argc, const char *argv[],
         goto exit;
     }
     if (backer && backer->dpif) {
+    	/*加载port名称及port_no之间的映射*/
         struct dpif_port dpif_port;
         struct dpif_port_dump port_dump;
         DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, backer->dpif) {
@@ -414,18 +419,22 @@ parse_flow_and_packet(int argc, const char *argv[],
         free(error);
         error = NULL;
 
+        /*通过名称查找桥*/
         *ofprotop = ofproto_dpif_lookup_by_name(args[0]);
         if (!*ofprotop) {
             error = xasprintf("%s: unknown bridge", args[0]);
             goto exit;
         }
 
+        /*加载此桥的名称与ofp_port映射关系*/
         struct ofputil_port_map map = OFPUTIL_PORT_MAP_INITIALIZER(&map);
         const struct ofport *ofport;
         HMAP_FOR_EACH (ofport, hmap_node, &(*ofprotop)->up.ports) {
             ofputil_port_map_put(&map, ofport->ofp_port,
                                  netdev_get_name(ofport->netdev));
         }
+
+        /*解析配置的字符串得到flow*/
         char *err = parse_ofp_exact_flow(flow, NULL,
                                          ofproto_get_tun_tab(&(*ofprotop)->up),
                                          args[n_args - 1], &map);
@@ -480,12 +489,14 @@ ofproto_unixctl_trace(struct unixctl_conn *conn, int argc, const char *argv[],
     struct flow flow;
     struct ovs_list next_ct_states = OVS_LIST_INITIALIZER(&next_ct_states);
 
+    /*按参数解析构造报文内容*/
     error = parse_flow_and_packet(argc, argv, &ofproto, &flow, &packet,
                                   &next_ct_states, NULL);
     if (!error) {
         struct ds result;
 
         ds_init(&result);
+        /*通过flow查询规则，得到action，并转换成result执行回送*/
         ofproto_trace(ofproto, &flow, packet, NULL, 0, &next_ct_states,
                       &result);
         unixctl_command_reply(conn, ds_cstr(&result));
@@ -526,6 +537,8 @@ ofproto_unixctl_trace_actions(struct unixctl_conn *conn, int argc,
         .ofpacts = &ofpacts,
         .usable_protocols = &usable_protocols,
     };
+
+    /*解析传入的action(最后一个参数为action)*/
     error = ofpacts_parse_actions(argv[--argc], &pp);
     if (error) {
         unixctl_command_reply_error(conn, error);
@@ -533,6 +546,7 @@ ofproto_unixctl_trace_actions(struct unixctl_conn *conn, int argc,
         goto exit;
     }
 
+    /*解析给定的packet*/
     error = parse_flow_and_packet(argc, argv, &ofproto, &match.flow, &packet,
                                   &next_ct_states, &enforce_consistency);
     if (error) {
@@ -776,8 +790,9 @@ ofproto_trace__(struct ofproto_dpif *ofproto, const struct flow *flow,
     match_format(&match, NULL, output, OFP_DEFAULT_PRIORITY);
     ds_put_char(output, '\n');
 
+    /*显示生成的datapath action*/
     ds_put_cstr(output, "Datapath actions: ");
-    format_odp_actions(output, odp_actions.data, odp_actions.size, NULL);
+    format_odp_actions(output, odp_actions.data/*action内容*/, odp_actions.size/*action长度*/, NULL);
 
     if (error != XLATE_OK) {
         ds_put_format(output,
@@ -813,7 +828,7 @@ void
 ofproto_trace(struct ofproto_dpif *ofproto, const struct flow *flow,
               const struct dp_packet *packet,
               const struct ofpact ofpacts[], size_t ofpacts_len,
-              struct ovs_list *next_ct_states, struct ds *output)
+              struct ovs_list *next_ct_states, struct ds *output/*转换后的字符串内容*/)
 {
     struct ovs_list recirc_queue = OVS_LIST_INITIALIZER(&recirc_queue);
     ofproto_trace__(ofproto, flow, packet, &recirc_queue,

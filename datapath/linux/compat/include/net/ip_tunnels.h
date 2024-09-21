@@ -154,7 +154,7 @@ struct ip_tunnel_key {
 			struct in6_addr dst;
 		} ipv6;
 	} u;
-	__be16			tun_flags;
+	__be16			tun_flags;/*tunnel标记位*/
 	u8			tos;		/* TOS for IPv4, TC for IPv6 */
 	u8			ttl;		/* TTL for IPv4, HL for IPv6 */
 	__be32                  label;          /* Flow Label for IPv6 */

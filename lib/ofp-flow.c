@@ -1973,13 +1973,16 @@ parse_ofp_exact_flow(struct flow *flow, struct flow_wildcards *wc,
     flow->tunnel.metadata.tab = tun_table;
 
     pos = copy = xstrdup(s);
+    /*这种格式是key=value形的，遍历并解析其内容*/
     while (ofputil_parse_key_value(&pos, &key, &value_s)) {
         const struct ofp_protocol *p;
+        /*先取key对应的协议*/
         if (ofp_parse_protocol(key, &p)) {
             if (flow->dl_type) {
                 error = xasprintf("%s: Ethernet type set multiple times", s);
                 goto exit;
             }
+            /*设置flow对应的dl_type*/
             flow->dl_type = htons(p->dl_type);
             if (wc) {
                 wc->masks.dl_type = OVS_BE16_MAX;
@@ -1991,41 +1994,48 @@ parse_ofp_exact_flow(struct flow *flow, struct flow_wildcards *wc,
                                       "multiple times", s);
                     goto exit;
                 }
+                /*更新网络层协议*/
                 flow->nw_proto = p->nw_proto;
                 if (wc) {
                     wc->masks.nw_proto = UINT8_MAX;
                 }
             }
         } else {
+        	/*按mf_field解析key*/
             const struct mf_field *mf;
             union mf_value value;
             char *field_error;
 
             mf = mf_from_name(key);
             if (!mf) {
+            	/*对此字段进行报错*/
                 error = xasprintf("%s: unknown field %s", s, key);
                 goto exit;
             }
 
             if (!mf_are_prereqs_ok(mf, flow, NULL)) {
+            	/*使用此字段，但未满足其前置要求*/
                 error = xasprintf("%s: prerequisites not met for setting %s",
                                   s, key);
                 goto exit;
             }
 
             if (mf_is_set(mf, flow)) {
+            	/*此字段被设置多次*/
                 error = xasprintf("%s: field %s set multiple times", s, key);
                 goto exit;
             }
 
             field_error = mf_parse_value(mf, value_s, port_map, &value);
             if (field_error) {
+            	/*解析此字段内容时失败*/
                 error = xasprintf("%s: bad value for %s (%s)",
                                   s, key, field_error);
                 free(field_error);
                 goto exit;
             }
 
+            /*为flow设置此字段对应的value/mask*/
             mf_set_flow_value(mf, &value, flow);
             if (wc) {
                 mf_mask_field(mf, wc);

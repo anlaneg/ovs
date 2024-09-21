@@ -1651,15 +1651,17 @@ dpif_netlink_init_flow_del(struct dpif_netlink *dpif,
 
 struct dpif_netlink_flow_dump {
     struct dpif_flow_dump up;
-    /*dump上下文*/
+    /*kernel ovs dump上下文*/
     struct nl_dump nl_dump;
     atomic_int status;
+    //kernel ovs offload流表dump上下文
     //针对每个port创建一组netdev的dumps
     //这些netdev上需要dump offload的规则
     struct netdev_flow_dump **netdev_dumps;
     //指出netdev_dumps指针数组大小
     int netdev_dumps_num;                    /* Number of netdev_flow_dumps */
     struct ovs_mutex netdev_lock;            /* Guards the following. */
+    /*记录当前已dump的netdev数目*/
     int netdev_current_dump OVS_GUARDED;     /* Shared current dump */
     struct dpif_flow_dump_types types;       /* Type of dump */
 };
@@ -1670,6 +1672,7 @@ dpif_netlink_flow_dump_cast(struct dpif_flow_dump *dump)
     return CONTAINER_OF(dump, struct dpif_netlink_flow_dump, up);
 }
 
+/*针对当前dp的所有netdev，每个netdev创建一个flow dump context*/
 static void
 start_netdev_dump(const struct dpif *dpif_,
                   struct dpif_netlink_flow_dump *dump)
@@ -1700,6 +1703,7 @@ dpif_netlink_populate_flow_dump_types(struct dpif_netlink_flow_dump *dump,
         dump->types.ovs_flows = true;
         dump->types.netdev_flows = true;
     } else {
+        /*指明type，以type为准*/
         memcpy(&dump->types, types, sizeof *types);
     }
 }
@@ -1732,12 +1736,15 @@ dpif_netlink_flow_dump_create(const struct dpif *dpif_, bool terse,
         //将请求输出到buf中
         buf = ofpbuf_new(1024);
         dpif_netlink_flow_to_ofpbuf(&request, buf);
+        /*向kernel发送请求*/
         nl_dump_start(&dump->nl_dump, NETLINK_GENERIC, buf);
+        /*移除用完的buffer*/
         ofpbuf_delete(buf);
     }
     atomic_init(&dump->status, 0);
     dump->up.terse = terse;
 
+    /*创建netdev类型flow dump context*/
     start_netdev_dump(dpif_, dump);
 
     return &dump->up;
@@ -1784,10 +1791,11 @@ struct dpif_netlink_flow_dump_thread {
     /*标记是否所有netdev均完成flow dump*/
     bool netdev_done;           /* If we are finished dumping netdevs */
 
+    /*记录dump用的buffer*/
     /* (Key/Mask/Actions) Buffers for netdev dumping */
-    struct odputil_keybuf keybuf[FLOW_DUMP_MAX_BATCH];
-    struct odputil_keybuf maskbuf[FLOW_DUMP_MAX_BATCH];
-    struct odputil_keybuf actbuf[FLOW_DUMP_MAX_BATCH];
+    struct odputil_keybuf keybuf[FLOW_DUMP_MAX_BATCH];/*key用buffer*/
+    struct odputil_keybuf maskbuf[FLOW_DUMP_MAX_BATCH];/*mask用buffer*/
+    struct odputil_keybuf actbuf[FLOW_DUMP_MAX_BATCH];/*action用buffer*/
 };
 
 static struct dpif_netlink_flow_dump_thread *
@@ -1805,7 +1813,7 @@ dpif_netlink_flow_dump_thread_create(struct dpif_flow_dump *dump_)
 
     thread = xmalloc(sizeof *thread);
     dpif_flow_dump_thread_init(&thread->up, &dump->up);
-    thread->dump = dump;
+    thread->dump = dump;/*复用global的dump context*/
     //使用4096的buffer
     ofpbuf_init(&thread->nl_flows, NL_DUMP_BUFSIZE);
     thread->nl_actions = NULL;
@@ -1970,6 +1978,7 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
     thread->nl_actions = NULL;
 
     n_flows = 0;
+    /*每次最多dump 50条flow*/
     max_flows = MIN(max_flows, FLOW_DUMP_MAX_BATCH);
 
     //dump offload的flow
@@ -1979,9 +1988,12 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         struct odputil_keybuf *actbuf = &thread->actbuf[n_flows];
         struct ofpbuf key, mask, act;
         struct dpif_flow *f = &flows[n_flows];
+
         //获取当前正在dump哪个netdev
         int cur = thread->netdev_dump_idx;
+        /*取得此netdev的dump context*/
         struct netdev_flow_dump *netdev_dump = dump->netdev_dumps[cur];
+
         struct match match;
         struct nlattr *actions;
         struct dpif_flow_stats stats;
@@ -1992,6 +2004,7 @@ dpif_netlink_flow_dump_next(struct dpif_flow_dump_thread *thread_,
         ofpbuf_use_stack(&key, keybuf, sizeof *keybuf);
         ofpbuf_use_stack(&act, actbuf, sizeof *actbuf);
         ofpbuf_use_stack(&mask, maskbuf, sizeof *maskbuf);
+
         //通过offload api实现netdev dump flow
         has_next = netdev_flow_dump_next(netdev_dump, &match,
                                         &actions, &stats, &attrs,
@@ -3290,6 +3303,7 @@ dpif_netlink_recv_wait_vport_dispatch(struct dpif_netlink *dpif,
     if (dpif->handlers && handler_id < dpif->n_handlers) {
         struct dpif_handler *handler = &dpif->handlers[handler_id];
 
+        /*关注每个fd的读事件*/
         poll_fd_wait(handler->epoll_fd, POLLIN);
     }
 }
@@ -3302,11 +3316,13 @@ dpif_netlink_recv_wait_cpu_dispatch(struct dpif_netlink *dpif,
     if (dpif->handlers && handler_id < dpif->n_handlers) {
         struct dpif_handler *handler = &dpif->handlers[handler_id];
 
+        /*关注handler->sock的读事件*/
         poll_fd_wait(nl_sock_fd(handler->sock), POLLIN);
     }
 }
 #endif
 
+/*注册读事件监听*/
 static void
 dpif_netlink_recv_wait(struct dpif *dpif_, uint32_t handler_id)
 {
@@ -4771,6 +4787,7 @@ dpif_netlink_init(void)
                       "the conntrack limit feature.", OVS_CT_LIMIT_FAMILY);
         }
 
+        /*检测genven是否为out of tree模块*/
         ovs_tunnels_out_of_tree = dpif_netlink_rtnl_probe_oot_tunnels();
 
         unixctl_command_register("dpif-netlink/dispatch-mode", "", 0, 0,
@@ -4964,15 +4981,17 @@ dpif_netlink_vport_transact(const struct dpif_netlink_vport *request,
  * '*reply' and '*bufp'.  The caller must free '*bufp' when the reply is no
  * longer needed ('reply' will contain pointers into '*bufp').  */
 int
-dpif_netlink_vport_get(const char *name, struct dpif_netlink_vport *reply,
+dpif_netlink_vport_get(const char *name/*接口名称*/, struct dpif_netlink_vport *reply,
                        struct ofpbuf **bufp)
 {
+    /*向datapath请求接口$name的info信息*/
     struct dpif_netlink_vport request;
 
     dpif_netlink_vport_init(&request);
     request.cmd = OVS_VPORT_CMD_GET;
     request.name = name;
 
+    /*取vport信息*/
     return dpif_netlink_vport_transact(&request, reply, bufp);
 }
 
@@ -5420,6 +5439,7 @@ report_loss(struct dpif_netlink *dpif, struct dpif_channel *ch, uint32_t ch_idx,
                         time_msec() - ch->last_poll);
         }
 
+        //指明在哪个handler的哪个channel上有丢包
         VLOG_WARN("%s: lost packet on port channel %u of handler %u%s",
                   dpif_name(&dpif->dpif), ch_idx, handler_id, ds_cstr(&s));
         ds_destroy(&s);
@@ -5444,9 +5464,11 @@ dpif_netlink_unixctl_dispatch_mode(struct unixctl_conn *conn,
     }
 
     ofpbuf_use_stub(&buf, reply_stub, sizeof reply_stub);
+    /*开始逐个dump datapath*/
     dpif_netlink_dp_dump_start(&dump);
     while (nl_dump_next(&dump, &msg, &buf)) {
         struct dpif_netlink_dp dp;
+        /*显示各datpath的mode信息*/
         if (!dpif_netlink_dp_from_ofpbuf(&dp, &msg)) {
             ds_put_format(&reply, "%s: ", dp.name);
             if (dp.user_features & OVS_DP_F_DISPATCH_UPCALL_PER_CPU) {
@@ -5463,6 +5485,5 @@ dpif_netlink_unixctl_dispatch_mode(struct unixctl_conn *conn,
         unixctl_command_reply(conn, ds_cstr(&reply));
     }
 
-    //指明在哪个handler的哪个channel上有丢包
     ds_destroy(&reply);
 }

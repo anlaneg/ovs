@@ -473,7 +473,7 @@ tnl_port_send(const struct ofport_dpif *ofport, struct flow *flow,
     }
 
     if (cfg->tos_inherit && is_ip_any(flow)) {
-    	//tos inherit处理
+    	//tos inherit处理,指明匹配tos
         wc->masks.nw_tos |= IP_DSCP_MASK;
         flow->tunnel.ip_tos = flow->nw_tos & IP_DSCP_MASK;
     } else {

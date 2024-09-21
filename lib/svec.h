@@ -27,8 +27,8 @@ extern "C" {
 //一个简单的string vector
 struct svec {
     char **names;
-    size_t n;
-    size_t allocated;
+    size_t n;/*当前names指针数组占用长度*/
+    size_t allocated;/*当前names指针数组最大长度*/
 };
 
 #define SVEC_EMPTY_INITIALIZER { NULL, 0, 0 }

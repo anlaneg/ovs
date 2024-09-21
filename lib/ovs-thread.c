@@ -380,13 +380,13 @@ ovs_barrier_block(struct ovs_barrier *barrier)
         //促使seq改变，通知其它先进入的小伙伴，指明人已到齐，可以开始开始活动
         seq_change(impl->seq);
     } else {
-	//早到的小伙伴，需要等其它线程到齐后才能开始
+        //早到的小伙伴，需要等其它线程到齐后才能开始
         /* To prevent thread from waking up by other event,
          * keeps waiting for the change of 'barrier->seq'. */
         while (seq == seq_read(impl->seq)) {
-            //如果seq没有发生变换，则使自已阻塞，等待被唤醒
+            //如果seq没有发生变换，则注册waiter，等待被唤醒
             seq_wait(impl->seq, seq);
-            poll_block();
+            poll_block();/*等待唤醒(注：此处被唤醒后，可能并不是因为seq问题，故会while检查）*/
         }
     }
 

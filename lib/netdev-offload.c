@@ -218,9 +218,11 @@ int
 netdev_flow_dump_create(struct netdev *netdev, struct netdev_flow_dump **dump,
                         bool terse)
 {
+    /*取此netdev的flow_api函数*/
     const struct netdev_flow_api *flow_api =
         ovsrcu_get(const struct netdev_flow_api *, &netdev->flow_api);
 
+    /*针对此netdev创建flow dump的context*/
     return (flow_api && flow_api->flow_dump_create)
            ? flow_api->flow_dump_create(netdev, dump, terse)
            : EOPNOTSUPP;
@@ -361,6 +363,7 @@ netdev_uninit_flow_api(struct netdev *netdev)
     ovs_refcount_unref(&rfa->refcnt);
 }
 
+/*取netdev对应的block id*/
 uint32_t
 netdev_get_block_id(struct netdev *netdev)
 {
@@ -570,6 +573,7 @@ netdev_ports_flow_dump_create(const char *dpif_type, int *ports/*出参，dumps�
     int i = 0;
 
     ovs_rwlock_rdlock(&netdev_hmap_rwlock);
+
     //计算有多少个port(需要为指定的datapath)
     HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
         if (netdev_get_dpif_type(data->netdev) == dpif_type) {
@@ -580,7 +584,7 @@ netdev_ports_flow_dump_create(const char *dpif_type, int *ports/*出参，dumps�
     //针对每个port申请一个dumps
     dumps = count ? xzalloc(sizeof *dumps * count) : NULL;
 
-    //针对每个port创建一个dump
+    //针对每个port创建一个flow dump context
     HMAP_FOR_EACH (data, portno_node, &port_to_netdev) {
         if (netdev_get_dpif_type(data->netdev) == dpif_type) {
             if (netdev_flow_dump_create(data->netdev, &dumps[i], terse)) {

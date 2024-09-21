@@ -90,6 +90,7 @@ rtnetlink_parse(struct ofpbuf *buf, struct rtnetlink_change *change)
 
     change->irrelevant = false;
 
+    /*只处理newlink/deletelink两个事件*/
     if (rtnetlink_type_is_rtnlgrp_link(nlmsg->nlmsg_type)) {
         /* Policy for RTNLGRP_LINK messages.
          *
@@ -150,6 +151,7 @@ rtnetlink_parse(struct ofpbuf *buf, struct rtnetlink_change *change)
                 memset(&change->mac, 0, ETH_ADDR_LEN);
             }
 
+            /*解析linkinfo*/
             if (attrs[IFLA_LINKINFO]) {
                 parsed = rtnetlink_parse_link_info(attrs[IFLA_LINKINFO],
                                                    change);
@@ -158,7 +160,7 @@ rtnetlink_parse(struct ofpbuf *buf, struct rtnetlink_change *change)
                 change->sub = NULL;
             }
         }
-    } else if (rtnetlink_type_is_rtnlgrp_addr(nlmsg->nlmsg_type)) {
+    } else if (rtnetlink_type_is_rtnlgrp_addr(nlmsg->nlmsg_type)/*地址信息处理*/) {
         /* Policy for RTNLGRP_IPV4_IFADDR/RTNLGRP_IPV6_IFADDR messages.
          *
          * There are *many* more fields in these messages, but currently we

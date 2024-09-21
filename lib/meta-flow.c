@@ -81,6 +81,7 @@ static void nxm_init(void);
 const struct mf_field *
 mf_from_name(const char *name)
 {
+	/*利用name查询mf_by_name*/
     nxm_init();
     return shash_find_data(&mf_by_name, name);
 }
@@ -449,6 +450,7 @@ mf_are_prereqs_ok__(const struct mf_field *mf, const struct flow *flow,
     case MFP_ETHERNET:
         return is_ethernet(flow, wc);
     case MFP_ARP:
+    	/*arp mfp使用时要求dl_type必须已设置为arp/rarp*/
         return (dl_type == htons(ETH_TYPE_ARP) ||
                 dl_type == htons(ETH_TYPE_RARP));//arp协议
     case MFP_IPV4:
@@ -3035,10 +3037,12 @@ mf_parse(const struct mf_field *mf, const char *s,
         break;
 
     case MFS_ETHERNET:
+    	/*字段要求按mac格式解析*/
         error = mf_from_ethernet_string(mf, s, &value->mac, &mask->mac);
         break;
 
     case MFS_IPV4:
+    	/*字段要求按ipv4地址解析*/
         error = mf_from_ipv4_string(mf, s, &value->be32, &mask->be32);
         break;
 

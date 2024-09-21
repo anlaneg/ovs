@@ -85,6 +85,7 @@ svec_del(struct svec *svec, const char *name)
     }
 }
 
+/*如果占用长度逼近svec->allocated,执行扩容*/
 static void
 svec_expand(struct svec *svec)
 {
@@ -94,6 +95,7 @@ svec_expand(struct svec *svec)
     }
 }
 
+/*增加字符串*/
 void
 svec_add_nocopy(struct svec *svec, char *name)
 {

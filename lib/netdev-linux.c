@@ -550,6 +550,7 @@ is_tap_netdev(const struct netdev *netdev)
     return netdev_get_class(netdev) == &netdev_tap_class;
 }
 
+/*更新netdev的netnsid*/
 static int
 netdev_linux_netnsid_update__(struct netdev_linux *netdev)
 {
@@ -557,6 +558,7 @@ netdev_linux_netnsid_update__(struct netdev_linux *netdev)
     struct ofpbuf *buf;
     int error;
 
+    /*取此接口信息*/
     error = dpif_netlink_vport_get(netdev_get_name(&netdev->up), &reply, &buf);
     if (error) {
         if (error == ENOENT) {
@@ -569,6 +571,7 @@ netdev_linux_netnsid_update__(struct netdev_linux *netdev)
         return error;
     }
 
+    /*设置取回的netnsid*/
     netnsid_set(&netdev->netnsid, reply.netnsid);
     ofpbuf_delete(buf);
     return 0;
@@ -578,6 +581,8 @@ static int
 netdev_linux_netnsid_update(struct netdev_linux *netdev)
 {
     if (netnsid_is_unset(netdev->netnsid)) {
+        /*此netdev未设置netnsid,这里进行更新，如果是tap口，设置为local
+         * */
         if (netdev_get_class(&netdev->up) == &netdev_tap_class) {
             netnsid_set_local(&netdev->netnsid);
         } else {
@@ -598,6 +603,7 @@ netdev_linux_netnsid_is_eq(struct netdev_linux *netdev, int nsid)
 static bool
 netdev_linux_netnsid_is_remote(struct netdev_linux *netdev)
 {
+    /*检查netdev是否为remote*/
     netdev_linux_netnsid_update(netdev);
     return netnsid_is_remote(netdev->netnsid);
 }
@@ -3485,11 +3491,13 @@ netdev_linux_get_block_id(struct netdev *netdev_)
     ovs_mutex_lock(&netdev->mutex);
     /* Ensure the linux netdev has had its fields populated. */
     if (!(netdev->cache_valid & VALID_IFINDEX)) {
+        /*ifindex没有缓存，这里自kernel同步netdev的相关信息*/
         netdev_linux_update_via_netlink(netdev);
     }
 
     /* Only assigning block ids to linux netdevs that are LAG masters. */
     if (netdev->is_lag_master) {
+        /*lag情况下，以netdev的ifindex做为block_id*/
         block_id = netdev->ifindex;
     }
     ovs_mutex_unlock(&netdev->mutex);
@@ -6439,6 +6447,7 @@ get_ifindex(const struct netdev *netdev_, int *ifindexp)
     return netdev->get_ifindex_error;
 }
 
+/*自kernel同步netdev相关的信息，并填充它*/
 static int
 netdev_linux_update_via_netlink(struct netdev_linux *netdev)
 {
@@ -6459,8 +6468,11 @@ netdev_linux_update_via_netlink(struct netdev_linux *netdev)
      * and the interface name statically stored in ovsdb. */
     nl_msg_put_string(&request, IFLA_IFNAME, netdev_get_name(&netdev->up));
     if (netdev_linux_netnsid_is_remote(netdev)) {
+        /*netdev是remote,则添加netns信息*/
         nl_msg_put_u32(&request, IFLA_IF_NETNSID, netdev->netnsid);
     }
+
+    /*获取ifname的link信息*/
     error = nl_transact(NETLINK_ROUTE, &request, &reply);
     ofpbuf_uninit(&request);
     if (error) {
@@ -6468,6 +6480,7 @@ netdev_linux_update_via_netlink(struct netdev_linux *netdev)
         return error;
     }
 
+    /*解析接口信息到change*/
     if (rtnetlink_parse(reply, change)
         && !change->irrelevant
         && change->nlmsg_type == RTM_NEWLINK) {
@@ -6476,14 +6489,17 @@ netdev_linux_update_via_netlink(struct netdev_linux *netdev)
 
         /* Update netdev from rtnl msg and increment its seq if needed. */
         if ((change->ifi_flags ^ netdev->ifi_flags) & IFF_RUNNING) {
+            /*running标记有变化，增加carrier_resets计数*/
             netdev->carrier_resets++;
             changed = true;
         }
         if (change->ifi_flags != netdev->ifi_flags) {
+            /*更新if标记*/
             netdev->ifi_flags = change->ifi_flags;
             changed = true;
         }
         if (change->mtu && change->mtu != netdev->mtu) {
+            /*更新mtu*/
             netdev->mtu = change->mtu;
             netdev->cache_valid |= VALID_MTU;
             netdev->netdev_mtu_error = 0;
@@ -6491,20 +6507,26 @@ netdev_linux_update_via_netlink(struct netdev_linux *netdev)
         }
         if (!eth_addr_is_zero(change->mac)
             && !eth_addr_equals(change->mac, netdev->etheraddr)) {
+            /*更新mac地址*/
             netdev->etheraddr = change->mac;
             netdev->cache_valid |= VALID_ETHERADDR;
             netdev->ether_addr_error = 0;
             changed = true;
         }
         if (change->if_index != netdev->ifindex) {
+            /*更新ifindex*/
             netdev->ifindex = change->if_index;
             netdev->cache_valid |= VALID_IFINDEX;
             netdev->get_ifindex_error = 0;
             changed = true;
         }
+
+        /*是否为primary*/
         if (change->primary && netdev_linux_kind_is_lag(change->primary)) {
             netdev->is_lag_master = true;
         }
+
+        /*变更seq,指示接口变更*/
         if (changed) {
             netdev_change_seq_changed(&netdev->up);
         }

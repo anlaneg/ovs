@@ -190,6 +190,7 @@ xmemdup(const void *p_, size_t size)
     return p;
 }
 
+/*复制p指向的内容，复制长度length*/
 char *
 xmemdup0(const char *p_, size_t length)
 {
@@ -199,6 +200,7 @@ xmemdup0(const char *p_, size_t length)
     return p;
 }
 
+/*复制字符串s*/
 char *
 xstrdup(const char *s)
 {

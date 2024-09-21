@@ -875,6 +875,7 @@ dpif_port_dump_next(struct dpif_port_dump *dump, struct dpif_port *port)
         return false;
     }
 
+    /*进行下一个dump*/
     dump->error = dpif->dpif_class->port_dump_next(dpif, dump->state, port);
     if (dump->error == EOF) {
         VLOG_DBG_RL(&dpmsg_rl, "%s: dumped all ports", dpif_name(dpif));
@@ -883,6 +884,7 @@ dpif_port_dump_next(struct dpif_port_dump *dump, struct dpif_port *port)
     }
 
     if (dump->error) {
+        /*dump有错误，执行port_dump_done*/
         dpif->dpif_class->port_dump_done(dpif, dump->state);
         return false;
     }
@@ -1721,6 +1723,7 @@ dpif_recv_purge(struct dpif *dpif)
 void
 dpif_recv_wait(struct dpif *dpif, uint32_t handler_id)
 {
+    /*将handler对应的fd加入到poll loop*/
     if (dpif->dpif_class->recv_wait) {
         dpif->dpif_class->recv_wait(dpif, handler_id);
     }

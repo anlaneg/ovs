@@ -62,7 +62,7 @@ struct netdev_linux {
     /* Protects all members below. */
     struct ovs_mutex mutex;
 
-    //标明哪些缓存有效
+    //标明哪些缓存有效(例如VALID_IFINDEX）
     unsigned int cache_valid;
 
     bool miimon;                    /* Link status of last poll. */

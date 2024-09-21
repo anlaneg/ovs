@@ -292,15 +292,15 @@ enum tc_offloaded_state {
 #define TCA_ACT_MAX_NUM 16
 
 struct tcf_id {
-    enum tc_qdisc_hook hook;
-    uint32_t block_id;
-    int ifindex;
+    enum tc_qdisc_hook hook;/*方向，ingress/egress*/
+    uint32_t block_id;/*bonding情况下采用ifindex,非bonding情况下采用0*/
+    int ifindex;/*指出接口*/
     uint32_t chain;/*对应的chain*/
-    uint16_t prio;
+    uint16_t prio;/*优先级*/
     uint32_t handle;/*tc规则对应的handle*/
 };
 
-/*构造tfilter的唯一链编号*/
+/*构造tfilter id*/
 static inline struct tcf_id
 tc_make_tcf_id(int ifindex, uint32_t block_id, uint16_t prio,
                enum tc_qdisc_hook hook)

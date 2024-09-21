@@ -573,12 +573,13 @@ dpif_netlink_rtnl_probe_oot_tunnels(void)
             return true;
         }
 
+        /*取接口名称*/
         name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
 
         /* The geneve module exists when ovs-vswitchd crashes
          * and restarts, handle the case here.
          */
-        error = dpif_netlink_rtnl_getlink(name, &reply);
+        error = dpif_netlink_rtnl_getlink(name, &reply);/*取此接口的link信息*/
         if (!error) {
 
             struct nlattr *linkinfo[ARRAY_SIZE(linkinfo_policy)];
@@ -595,12 +596,13 @@ dpif_netlink_rtnl_probe_oot_tunnels(void)
                            "linkinfo", name);
             }
 
+            /*取接口类型*/
             kind = nl_attr_get_string(linkinfo[IFLA_INFO_KIND]);
 
             if (!strcmp(kind, "ovs_geneve")) {
-                out_of_tree = true;
+                out_of_tree = true;/*out_of_tree的模块*/
             } else if (!strcmp(kind, "geneve")) {
-                out_of_tree = false;
+                out_of_tree = false;/*kernel自带的模块*/
             } else {
                 VLOG_ABORT("Geneve tunnel device %s with kind %s"
                            " not supported", name, kind);
@@ -609,9 +611,10 @@ dpif_netlink_rtnl_probe_oot_tunnels(void)
             ofpbuf_delete(reply);
             netdev_close(netdev);
 
-            return out_of_tree;
+            return out_of_tree;/*返回是否采用out_of_tree的geneve模块*/
         }
 
+        /*创建ovs_geneve类型的link*/
         error = dpif_netlink_rtnl_create(tnl_cfg, name, OVS_VPORT_TYPE_GENEVE,
                                          "ovs_geneve",
                                          (NLM_F_REQUEST | NLM_F_ACK
